@@ -1,0 +1,9 @@
+node_modules/
+dist/
+
+# Local secrets — keep these off any shared repo
+.env
+.env.local
+.env.*.local
+
+.vercel
