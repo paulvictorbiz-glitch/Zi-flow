@@ -1,38 +1,54 @@
 /* Main shell with tabs, role-aware perspective, and global Create FAB. */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { DPill } from "./components.jsx";
 import { PEOPLE, ROLES } from "./shared-data.jsx";
-import { WorkflowProvider } from "./store.jsx";
+import { WorkflowProvider, useWorkflow } from "./store.jsx";
 import { MyWork } from "./my-work.jsx";
 import { Pipeline } from "./pipeline.jsx";
 import { ListView } from "./list-view.jsx";
 import { CalendarView } from "./calendar-view.jsx";
 import { ReelDetail } from "./detail.jsx";
 import { ExportView } from "./export-view.jsx";
+import { FootageLibrary } from "./footage-library.jsx";
 import { Analytics } from "./analytics.jsx";
 import { CreateFab } from "./fab.jsx";
 import { AuthProvider, AuthGate, IdentityGate, useAuth } from "./auth.jsx";
 import { TimeProvider } from "./time.jsx";
 import { ArchivedView } from "./archived-view.jsx";
+import { NotificationsProvider, useNotifications } from "./notifications.jsx";
 
-/* Map the four person.role values onto the three role-switcher
-   keys. `reviewer` (Maya) has no dedicated dashboard yet, so she
-   defaults to viewing the skilled editor's surface. */
+/* Map the four person.role values onto the four role-switcher keys. */
 function defaultRoleKey(person) {
   if (!person) return "skilled";
-  if (person.role === "owner")   return "owner";
-  if (person.role === "variant") return "variant";
+  if (person.role === "owner")    return "owner";
+  if (person.role === "variant")  return "variant";
+  if (person.role === "reviewer") return "reviewer";
   return "skilled";
 }
 
 function AppShell() {
   const { person: me, signOut } = useAuth();
+  const { reels } = useWorkflow();
+  const { totalUnread } = useNotifications();
   const [view, setView]                 = useState("pipeline");
   const [pipelineMode, setPipelineMode] = useState("board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
   const [role, setRole]                 = useState(() => defaultRoleKey(me));
   const [roleMenu, setRoleMenu]         = useState(false);
+
+  /* "Needs you" badge — count of non-archived reels currently
+     assigned to the signed-in person that still need work (any
+     stage before posted). Stage transitions auto-reassign owner
+     per STAGE_ROLE, so this stays accurate without manual updates. */
+  const needsYouCount = useMemo(() => {
+    if (!me) return 0;
+    return reels.filter(r =>
+      !r.archivedAt &&
+      r.owner === me.id &&
+      r.stage !== "posted"
+    ).length;
+  }, [reels, me]);
 
   // Re-sync the perspective default if `me` arrives after first render
   useEffect(() => { if (me) setRole(defaultRoleKey(me)); }, [me?.id]);
@@ -80,6 +96,7 @@ function AppShell() {
             {view === "pipeline"  ? "Pipeline · " + pipelineMode :
              view === "mywork"    ? "My work" :
              view === "detail"    ? "Reel detail" :
+             view === "footage"   ? "Footage library" :
              view === "export"    ? "Export prep" : "Analytics"}
           </span>
           <span className="sep">/</span>
@@ -137,7 +154,16 @@ function AppShell() {
 
         <div className="topbar-actions">
           <DPill>Search reels / blockers</DPill>
-          <DPill tone="amber" active>Triage queue 4</DPill>
+          {/* Comments bell — total unread human comments across
+              every non-archived reel for the signed-in user.
+              Clicking opens the My work tab so you can drill in. */}
+          <DPill tone={totalUnread > 0 ? "amber" : undefined}
+                 active={totalUnread > 0}
+                 onClick={() => setView("mywork")}
+                 title={totalUnread + " unread comment" + (totalUnread === 1 ? "" : "s")}>
+            <span style={{ marginRight: 6 }}>🔔</span>
+            {totalUnread > 0 ? totalUnread + " unread" : "No new comments"}
+          </DPill>
         </div>
       </div>
 
@@ -145,6 +171,11 @@ function AppShell() {
       <div className="tabstrip">
         <button className={"tab " + (view === "mywork" ? "is-active" : "")} onClick={() => setView("mywork")}>
           <span className="n">1 ·</span> My work
+          {needsYouCount > 0 && (
+            <span className="needs-badge" title={needsYouCount + " reel" + (needsYouCount === 1 ? "" : "s") + " waiting on you"}>
+              {needsYouCount}
+            </span>
+          )}
         </button>
         <button className={"tab " + (view === "pipeline" ? "is-active" : "")} onClick={() => setView("pipeline")}>
           <span className="n">2 ·</span> Pipeline
@@ -152,11 +183,14 @@ function AppShell() {
         <button className={"tab " + (view === "detail" ? "is-active" : "")} onClick={() => setView("detail")}>
           <span className="n">3 ·</span> Reel detail
         </button>
+        <button className={"tab " + (view === "footage" ? "is-active" : "")} onClick={() => setView("footage")}>
+          <span className="n">4 ·</span> Footage
+        </button>
         <button className={"tab " + (view === "export" ? "is-active" : "")} onClick={() => setView("export")}>
-          <span className="n">4 ·</span> Export
+          <span className="n">5 ·</span> Export
         </button>
         <button className={"tab " + (view === "analytics" ? "is-active" : "")} onClick={() => setView("analytics")}>
-          <span className="n">5 ·</span> Analytics
+          <span className="n">6 ·</span> Analytics
         </button>
 
         {/* Pipeline sub-mode chips — only when on Pipeline */}
@@ -181,6 +215,7 @@ function AppShell() {
       {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
       {view === "detail"    && <ReelDetail reel={selectedReel} onBack={() => setView("pipeline")} />}
+      {view === "footage"   && <FootageLibrary onOpen={openReel} />}
       {view === "export"    && <ExportView onOpen={openReel} />}
       {view === "analytics" && <Analytics />}
 
@@ -197,7 +232,9 @@ function App() {
         <AuthGate>
           <IdentityGate>
             <WorkflowProvider>
-              <AppShell />
+              <NotificationsProvider>
+                <AppShell />
+              </NotificationsProvider>
             </WorkflowProvider>
           </IdentityGate>
         </AuthGate>

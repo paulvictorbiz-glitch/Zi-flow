@@ -44,6 +44,14 @@
   --f-serif:    "Cormorant Garamond", "Georgia", serif;
   --f-sans:     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --f-mono:     "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+  /* component shorthand */
+  --bg:          var(--bg-1);
+  --bg-alt:      var(--bg-2);
+  --bg-input:    var(--bg-0);
+  --border:      var(--line);
+  --accent:      var(--c-cyan);
+  --fg-warn:     var(--c-red);
 }
 
 * { box-sizing: border-box; }
@@ -161,6 +169,68 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .tab .n { color: var(--fg-faint); }
 .tab.is-active .n { color: var(--c-cyan); opacity: .6; }
+
+/* Footage library — clip thumbnail and reel chip styles. */
+.lib-thumb {
+  width: 80px;
+  height: 48px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.lib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-reel-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px dashed var(--line-hard);
+  border-radius: 10px;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--c-cyan);
+  cursor: pointer;
+  background: var(--bg-2);
+}
+.lib-reel-chip:hover { border-color: var(--c-cyan); border-style: solid; }
+
+/* Unread-comment badge inside a board card's id line. Render as
+   a tiny amber pill so it reads as "attention" without competing
+   with the reel state pill on the right. */
+.reel .id .unread-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 8px;
+  background: var(--c-amber, #f5a524);
+  color: #1a1208;
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+/* "Needs you" badge — small amber chip next to a tab label,
+   indicating how many reels are waiting on the signed-in user. */
+.tab .needs-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--c-amber, #f5a524);
+  color: #1a1208;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  margin-left: 2px;
+}
 
 /* ── Page heading ─────────────────────────────────────── */
 
@@ -376,7 +446,11 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 
 .board {
   display: grid;
-  grid-template-columns: 200px repeat(7, 1fr);
+  /* 1 lane-gutter + 5 stage columns (Not started · In progress ·
+     Review · Completed · Posted). Must match PIPELINE_STAGES.length
+     in pipeline.jsx; otherwise grid auto-flow misplaces items and
+     drag/drop drops into the wrong column. */
+  grid-template-columns: 200px repeat(5, 1fr);
   border-top: 1px solid var(--line-soft);
 }
 .board .col-head {
@@ -421,7 +495,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   background: transparent;
   min-height: 110px;
 }
-.board .cell:nth-last-child(-n+7) { border-bottom: 0; }
+.board .cell:nth-last-child(-n+5) { border-bottom: 0; }
 .board .cell.empty {
   background: repeating-linear-gradient(135deg, transparent, transparent 6px, rgba(255,255,255,0.012) 6px, rgba(255,255,255,0.012) 7px);
 }
@@ -892,6 +966,24 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .comment .who .ts { font-family: var(--f-mono); font-size: 10px; color: var(--fg-dim); }
 .comment .txt { font-size: 12px; color: var(--fg-mute); line-height: 1.4; margin-top: 2px; }
 
+/* System-authored audit lines (stage transitions, etc.). Sits in
+   the same comments list but renders as a single dim row. */
+.comment-system {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line);
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+}
+.comment-system:last-child { border-bottom: 0; }
+.comment-system .dot { color: var(--c-cyan); font-size: 9px; }
+.comment-system .txt { color: var(--fg-mute); }
+.comment-system .ts { margin-left: auto; color: var(--fg-faint); }
+
 /* ── Event log ───────────────────────────────────────── */
 
 .event {
@@ -1269,7 +1361,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 
 .mywork-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Match SKILLED_COLS.length in my-work.jsx — currently 4 lanes
+     (Not started · In progress · Review · Completed). */
+  grid-template-columns: repeat(4, 1fr);
   border-bottom: 1px dashed var(--line);
 }
 .mw-col {

@@ -3,46 +3,22 @@
    ========================================================= */
 
 import React, { useState, useMemo } from "react";
-import { DPill, StageSpine, ReelCard } from "./components.jsx";
+import { DPill, ReelCard } from "./components.jsx";
 import { useWorkflow } from "./store.jsx";
 
 const PIPELINE_STAGES = [
-  { key: "idea",      label: "IDEA POOL",   meta1: "4 aging items",      meta2: "2 worth triage" },
-  { key: "selected",  label: "SELECTED",    meta1: "2 queued",           meta2: "Alex next up" },
-  { key: "main",      label: "MAIN EDIT",   meta1: "3 active",           meta2: "1 blocked on hook" },
-  { key: "review",    label: "REVIEW",      meta1: "2 waiting on PV",    meta2: "oldest 28h" },
-  { key: "variants",  label: "VARIANTS",    meta1: "Sam has 2 active",   meta2: "1 lane may idle" },
-  { key: "ready",     label: "READY",       meta1: "5 ready",            meta2: "next post in 2h" },
-  { key: "posted",    label: "POSTED",      meta1: "147 posted",         meta2: "analytics live" },
+  { key: "not_started", label: "NOT STARTED" },
+  { key: "in_progress", label: "IN PROGRESS" },
+  { key: "review",      label: "REVIEW"      },
+  { key: "completed",   label: "COMPLETED"   },
+  { key: "posted",      label: "POSTED"      },
 ];
 
 const LANES = [
-  {
-    id: "alex",
-    name: "Judy Adawag",
-    role: "Skilled editor · discovery + main edit",
-    stats: "3 active · 1 blocked · 2 due today",
-    badge: { tone: "cyan", text: "Focus lane" },
-  },
-  {
-    id: "paul",
-    name: "Paul Victor",
-    role: "Owner · approvals + handoff prep",
-    stats: "Bottleneck role · review SLA 6h",
-    badge: { tone: "amber", text: "2 reels waiting on you" },
-  },
-  {
-    id: "sam",
-    name: "Jay",
-    role: "Variant editor · trials and packaging",
-    stats: "2 active · may idle if 1 review slips",
-  },
-  {
-    id: "review",
-    name: "Leroy Crosby",
-    role: "Optional reviewer · captions + brand",
-    stats: "1 pass open · 1 cleared today",
-  },
+  { id: "alex", name: "Judy Adawag",  role: "Skilled editor" },
+  { id: "paul", name: "Paul Victor",  role: "Owner / Creative Director" },
+  { id: "sam",  name: "Jay",          role: "Variant editor" },
+  { id: "review", name: "Leroy Crosby", role: "Reviewer" },
 ];
 
 function Pipeline({ onOpen }) {
@@ -118,40 +94,15 @@ function Pipeline({ onOpen }) {
     <div>
       <div className="page-head">
         <div className="titles">
-          <h1>Pipeline board — owner lanes + stage spine</h1>
+          <h1>Pipeline</h1>
           <div className="sub">
-            Rows answer <span style={{ color: "var(--fg)" }}>who has what</span>.
-            Columns answer <span style={{ color: "var(--fg)" }}>where it is</span>.
-            Built for fast bottleneck and idle-risk scanning across 4 operators.
+            Rows = who owns it. Columns = where it is. Drag to move.
           </div>
         </div>
         <div className="actions">
-          <DPill tone="amber" active>● Bottleneck · owner review queue</DPill>
-          <DPill>Collapsible cards</DPill>
-          <DPill solid>View as day plan</DPill>
+          <DPill active={filter === "all"} onClick={() => setFilter("all")}>All reels</DPill>
+          <DPill active={filter === "blocked"} onClick={() => setFilter("blocked")} tone="red">Blocked / warn</DPill>
         </div>
-      </div>
-
-      {/* Stage spine */}
-      <StageSpine stages={PIPELINE_STAGES} activeKey="review" />
-
-      {/* Filter row */}
-      <div style={{
-        display: "flex", gap: 10, padding: "10px 22px",
-        borderBottom: "1px dashed var(--line)",
-        background: "var(--bg-0)",
-        alignItems: "center",
-      }}>
-        <span className="mono muted">filters</span>
-        <DPill active={filter === "all"} onClick={() => setFilter("all")}>All reels</DPill>
-        <DPill active={filter === "blocked"} onClick={() => setFilter("blocked")} tone="red">Blocked / warn</DPill>
-        <DPill>Owned by me</DPill>
-        <DPill>Aging &gt; 24h</DPill>
-        <DPill>Has FootageBrain link</DPill>
-        <span style={{ flex: 1 }} />
-        <span className="mono muted">sort:</span>
-        <DPill solid>Aging desc</DPill>
-        <DPill>Stage</DPill>
       </div>
 
       {/* Board grid */}
@@ -162,28 +113,25 @@ function Pipeline({ onOpen }) {
           <div className="meta">Rows = who has what.</div>
           <div className="meta">Columns = where it is.</div>
         </div>
-        {PIPELINE_STAGES.map(s => (
-          <div className="col-head" key={s.key}>
-            <div className="lbl">{s.label}</div>
-            <div className="meta">{COL_HINT[s.key]}</div>
-          </div>
-        ))}
+        {PIPELINE_STAGES.map(s => {
+          const count = items.filter(r => r.stage === s.key).length;
+          return (
+            <div className="col-head" key={s.key}>
+              <div className="lbl">{s.label}</div>
+              <div className="meta">{count} reel{count === 1 ? "" : "s"}</div>
+            </div>
+          );
+        })}
 
         {/* Lanes */}
-        {LANES.map(lane => (
+        {LANES.map(lane => {
+          const laneCount = items.filter(r => r.lane === lane.id).length;
+          return (
           <React.Fragment key={lane.id}>
             <div className="lane-head">
-              <div className="role">{lane.role.split(" · ")[0]}</div>
+              <div className="role">{lane.role}</div>
               <div className="name">{lane.name}</div>
-              <div className="mono muted" style={{ fontSize: 10.5 }}>
-                {lane.role.includes("·") ? lane.role.split("·").slice(1).join("·").trim() : ""}
-              </div>
-              <div className="stats">{lane.stats}</div>
-              {lane.badge && (
-                <span className={"pill " + lane.badge.tone + " dashed"} style={{ alignSelf: "flex-start" }}>
-                  {lane.badge.text}
-                </span>
-              )}
+              <div className="stats">{laneCount} reel{laneCount === 1 ? "" : "s"}</div>
             </div>
             {PIPELINE_STAGES.map(stage => {
               const reels = cells[lane.id + "::" + stage.key] || [];
@@ -242,7 +190,8 @@ function Pipeline({ onOpen }) {
               );
             })}
           </React.Fragment>
-        ))}
+          );
+        })}
       </div>
 
       {/* Floating multi-select chip — appears whenever any cards
@@ -258,15 +207,5 @@ function Pipeline({ onOpen }) {
     </div>
   );
 }
-
-const COL_HINT = {
-  idea:     "Discovery + raw opportunities",
-  selected: "Queued and greenlit",
-  main:     "Skilled editor work",
-  review:   "Owner sign-off + handoff",
-  variants: "A/B and packaging",
-  ready:    "Ready to post",
-  posted:   "Live and measurable",
-};
 
 export { Pipeline };

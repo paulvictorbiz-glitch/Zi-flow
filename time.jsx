@@ -60,7 +60,7 @@ function formatAge(reel, now) {
   const due          = reel.dueAt ? new Date(reel.dueAt) : null;
 
   // If past due, overdue framing wins for any active stage.
-  if (due && now > due && reel.stage !== "ready" && reel.stage !== "posted") {
+  if (due && now > due && reel.stage !== "completed" && reel.stage !== "posted") {
     return formatDuration(now - due) + " over";
   }
 
@@ -68,18 +68,12 @@ function formatAge(reel, now) {
   const inStage = now - stageEntered;
 
   switch (reel.stage) {
-    case "posted":   return formatDuration(inStage) + " ago";
-    case "ready":    return "scheduled";
-    case "selected": return "queued " + formatDuration(inStage);
-    case "review":   return formatDuration(inStage) + " wait";
-    case "variants":
-      // "idle Xh" if no progress within 30 minutes — matches the
-      // original UX where variants-stage idle was the headline.
-      if (inStage > 30 * MIN && reel.blocker) return "idle " + formatDuration(inStage);
-      return formatDuration(inStage) + " in stage";
-    case "main":
-    case "idea":
-    default:         return formatDuration(inStage);
+    case "posted":      return formatDuration(inStage) + " ago";
+    case "completed":   return "scheduled";
+    case "review":      return formatDuration(inStage) + " wait";
+    case "not_started": return "queued " + formatDuration(inStage);
+    case "in_progress":
+    default:            return formatDuration(inStage);
   }
 }
 

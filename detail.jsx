@@ -1,91 +1,34 @@
 /* =========================================================
-   Reel Detail — 2-column operational surface for one reel.
-   Center column packs: Reel Blueprint · Operational Roadmap
-   (with embedded next-review/handoff/downstream context) ·
-   Editor Checklist · Comments · Task Requests · Variant
-   Readiness (renameable).
+   Reel Detail — minimal dashboard.
+   Three working surfaces only:
+     · Footage Brain search + attached-footage list
+     · Reel Blueprint (logline · script · voiceover)
+     · Comments + feedback
+   Everything else was non-functioning scaffolding and got removed.
    ========================================================= */
 
-import React, { useState, useEffect, useMemo } from "react";
-import { Card, DPill, Pill, StageSpine, Check, TaskObject } from "./components.jsx";
-import { FOOTAGE, EVENTS, COMMENTS, INIT_TASKS, DETAIL_STAGES } from "./detail-data.jsx";
-import { RmNode } from "./rm-node.jsx";
-import { VariantRow } from "./variant-row.jsx";
-import {
-  HandoffPackage, AllowedChanges, GroupedAttachments, ReadyForReview,
-  HANDOFF_REQS, DEFAULT_ALLOWED, DEFAULT_NOTOUCH,
-} from "./handoff.jsx";
+import React, { useState, useEffect } from "react";
+import { Card, DPill } from "./components.jsx";
 import { useWorkflow } from "./store.jsx";
 import { useAuth } from "./auth.jsx";
+import { useNotifications } from "./notifications.jsx";
+import { FootageBrainSearch } from "./FootageBrainSearch.jsx";
+import { AttachedFootageList } from "./AttachedFootageList.jsx";
 
-const DEFAULT_LOGLINE =
-  "Temple chaos in 30 seconds. Bell ring opens the moment, drone reveals the scale, " +
-  "crowd surge sells the energy.";
-const DEFAULT_SCRIPT =
-`00:00 — bell ring close-up (A7IV_0331). Tight, no music.
-00:02 — music drop on the second strike. Cut to wide.
-00:08 — drone reveal of the square. Hold 2.5 beats.
-00:12 — face reactions, intercut with bell ringer.
-00:18 — prayer flag wipe to procession line.
-00:24 — slow push-in on lead monk's gaze.
-00:28 — match-cut back to bell + caption pin.
+/* Blueprint fields start empty for every reel — operators fill them in. */
+const DEFAULT_LOGLINE = "";
+const DEFAULT_SCRIPT  = "";
+const DEFAULT_VO      = "";
 
-Voiceover (optional):
-"Every dawn in Kathmandu starts with a sound. This is the one."`;
-const DEFAULT_VO =
-  "Every dawn in Kathmandu starts with a sound. This is the one. (warm, low register, 6s read)";
-const DEFAULT_ATTACH = "https://drive.google.com/drive/folders/kathmandu-source";
+/* Comments start empty so each reel begins with a clean conversation. */
+const DEFAULT_COMMENTS = [];
 
-/* Default seed for the persisted `detail` blob — checklists,
-   variants, handoff package, allowed-changes/no-touch lists,
-   per-reel task composer, ready-for-review stage. */
-const DEFAULT_CHECKS = [
-  { id: 1, label: "Selects pulled and timecoded.", done: true },
-  { id: 2, label: "Music bed locked.",            done: true },
-  { id: 3, label: "Rough cut at length.",         done: true },
-  { id: 4, label: "First 3s hook chosen — pending owner pick.", warn: true },
-  { id: 5, label: "Captions style approved.",     block: true },
-  { id: 6, label: "Final export package.",        },
-];
-const DEFAULT_HANDOFF_CHECKS = [
-  { id: 1, label: "Reference board linked.", done: true },
-  { id: 2, label: "Frame.io review draft in progress.", warn: true },
-  { id: 3, label: "Final export 1080×1920 attached.", block: true },
-  { id: 4, label: "Allowed variant changes written.",  },
-  { id: 5, label: "No-touch elements marked.",  },
-  { id: 6, label: "Source links ready.",  },
-];
-const DEFAULT_VARIANTS = [
-  { letter: "A", type: "caption", label: "Text caption change", state: "active" },
-  { letter: "B", type: "audio",   label: "Audio hook change",  state: "" },
-  { letter: "C", type: "altclip", label: "Alternative starting hook clip", state: "" },
-  { letter: "D", type: null,      label: "",                    state: "" },
-  { letter: "E", type: null,      label: "",                    state: "" },
-];
-
-/* Seed comments with the historic thread, but tag them with stable
-   ids so adds/deletes work the same as the rest of the slices. */
-const DEFAULT_COMMENTS = COMMENTS.map((c, i) => ({
-  id: "seed-" + i,
-  authorId: null,
-  who: c.who,
-  role: c.role,
-  ts: c.ts,
-  txt: c.txt,
-}));
-
+/* The `detail` jsonb still carries legacy slices (checklists, variants,
+   handoff package, etc.) for old reels — we just don't render them
+   anymore. Preserve them on read/write so nothing is destroyed; only
+   `comments` is rendered. */
 function defaultDetail() {
-  return {
-    checks: DEFAULT_CHECKS,
-    handoffChecks: DEFAULT_HANDOFF_CHECKS,
-    perReelTasks: INIT_TASKS,
-    variants: DEFAULT_VARIANTS,
-    handoffPackage: HANDOFF_REQS,
-    allowed: DEFAULT_ALLOWED,
-    notouch: DEFAULT_NOTOUCH,
-    readyForReview: "editing",
-    comments: DEFAULT_COMMENTS,
-  };
+  return { comments: DEFAULT_COMMENTS };
 }
 
 function initials(name) {
@@ -101,13 +44,14 @@ function formatCommentTs(iso) {
   if (!/^\d{4}-/.test(iso)) return iso;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
+  // Always show full date + time so feedback context is unambiguous
+  // across days. Example: "May 14, 2026 · 14:32".
+  const datePart = d.toLocaleDateString(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+  });
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  if (sameDay) return hh + ":" + mm;
-  const md = (d.getMonth() + 1) + "/" + d.getDate();
-  return md + " " + hh + ":" + mm;
+  return datePart + " · " + hh + ":" + mm;
 }
 
 function ReelDetail({ reel, onBack }) {
@@ -155,6 +99,14 @@ function ReelDetail({ reel, onBack }) {
     setDetail(stored?.detail || defaultDetail());
   }, [current.id]);
 
+  /* Mark this reel's comments as read on open and when the
+     comment list grows while the user is viewing it. The
+     notifications context handles the per-user storage. */
+  const { markRead } = useNotifications();
+  useEffect(() => {
+    if (current?.id) markRead(current.id);
+  }, [current?.id, stored?.detail?.comments?.length, markRead]);
+
   /* Debounced save. Skips no-ops by structural-equality check. */
   useEffect(() => {
     if (!stored) return;
@@ -166,17 +118,14 @@ function ReelDetail({ reel, onBack }) {
     return () => clearTimeout(t);
   }, [detail, stored]);
 
-  /* Slice helpers — sub-components and inline handlers call
-     these to mutate one key without touching the others. */
-  const checks         = detail.checks         || DEFAULT_CHECKS;
-  const handoffChecks  = detail.handoffChecks  || DEFAULT_HANDOFF_CHECKS;
-  const perReelTasks   = detail.perReelTasks   || INIT_TASKS;
-  const variants       = detail.variants       || DEFAULT_VARIANTS;
-  const handoffPackage = detail.handoffPackage || HANDOFF_REQS;
-  const allowed        = detail.allowed        || DEFAULT_ALLOWED;
-  const notouch        = detail.notouch        || DEFAULT_NOTOUCH;
-  const readyForReview = detail.readyForReview || "editing";
-  const comments       = detail.comments       || DEFAULT_COMMENTS;
+  /* Only the comments slice is rendered now — legacy slices (checks,
+     variants, handoff package, etc.) stay untouched in the jsonb. */
+  const comments = detail.comments || DEFAULT_COMMENTS;
+
+  /* updateSlice mutates one key without touching the others, so
+     legacy slices ride through the debounced save unchanged. */
+  const updateSlice = (key) => (next) =>
+    setDetail(d => ({ ...d, [key]: typeof next === "function" ? next(d[key] ?? []) : next }));
 
   const { person: me } = useAuth();
   const [draftComment, setDraftComment] = useState("");
@@ -200,147 +149,121 @@ function ReelDetail({ reel, onBack }) {
     updateSlice("comments")(arr => (arr || []).filter(c => c.id !== id));
   };
 
-  const updateSlice = (key) => (next) =>
-    setDetail(d => ({ ...d, [key]: typeof next === "function" ? next(d[key] ?? []) : next }));
+  /* Footage Brain search modal state */
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
 
-  /* Ephemeral UI state for the task composer — not persisted. */
-  const [composerOpen, setComposerOpen]     = useState(false);
-  const [audience, setAudience]             = useState("owner");
-  const [taskType, setTaskType]             = useState("Decision");
-  const [taskInstruction, setTaskInstruction] = useState("");
+  /* Get attached footage for this reel from store */
+  const { attachedFootage } = useWorkflow();
+  const reelAttachedFootage = attachedFootage.filter(f => f.reel_id === current.id);
 
-  /* External attachment (drive/IG reference) — persisted via
-     reel.attachUrl. The local mirror lets us seed the prompt
-     and react before the realtime echo lands. */
-  const [attachUrl, setAttachUrl] = useState(stored?.attachUrl ?? DEFAULT_ATTACH);
-  useEffect(() => { setAttachUrl(stored?.attachUrl ?? DEFAULT_ATTACH); }, [current.id]);
+  const handleAttachFootage = (footage) => {
+    actions.addAttachedFootage(footage);
+    // Modal stays open so the user can keep adding multiple clips.
+    // Close via the × button or by clicking the backdrop.
+  };
 
-  const updateAttach = () => {
+  const handleRemoveFootage = (footageId) => {
+    actions.removeAttachedFootage(footageId);
+  };
+
+  /* "Current reel state" — a URL pointing to the latest cut/preview/Frame.io
+     draft. Stored on reel.attachUrl (the existing column). Prompt to set,
+     click to open if already set. */
+  const reelStateUrl = stored?.attachUrl || "";
+  const editReelStateUrl = () => {
     const next = window.prompt(
-      "Attach a reference link (Google Drive, Instagram, etc.)",
-      attachUrl
+      "Paste the URL to this reel's current state (Frame.io draft, Drive folder, etc.)",
+      reelStateUrl
     );
     if (next === null) return;
     const trimmed = next.trim();
-    setAttachUrl(trimmed);
     if (stored && stored.attachUrl !== trimmed) {
       actions.updateReel(current.id, { attachUrl: trimmed });
     }
   };
 
-  const doneCount = checks.filter(c => c.done).length;
-  const handoffDone = handoffChecks.filter(c => c.done).length;
-  const variantsActive = variants.filter(v => v.state === "active" || v.state === "done").length;
-
-  /* Toggle a check item in either checklist by key ("checks" or
-     "handoffChecks"). Matches the original behavior: setting done
-     also clears warn/block flags. */
-  const toggleCheck = (key, id) => updateSlice(key)(cs => cs.map(c =>
-    c.id === id ? (c.done ? { ...c, done: false } : { ...c, done: true, warn: false, block: false }) : c
-  ));
+  /* Reference links saved at create-time (audio + inspiration). */
+  const audioUrl = stored?.audio || "";
+  const inspoUrl = stored?.inspo || "";
 
   return (
     <div>
       <div className="page-head">
         <div className="titles">
-          <h1>Reel detail — {current.id} · {current.title}</h1>
-          <div className="sub">
-            Two-pane operational surface. Center holds the blueprint, operational roadmap with
-            inline next-review / handoff / downstream context, and the working layer
-            (checklist, comments, task requests, variant readiness).
-          </div>
+          <h1 style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+            <span>{current.title || "Untitled reel"}</span>
+            <span style={{
+              fontFamily: "var(--f-mono)",
+              fontSize: 13,
+              fontWeight: 400,
+              color: "var(--fg-mute)",
+              letterSpacing: "0.04em",
+            }}>{current.id}</span>
+          </h1>
+          {(audioUrl || inspoUrl) && (
+            <div className="sub" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {audioUrl && (
+                <a href={audioUrl} target="_blank" rel="noopener noreferrer"
+                   style={{ color: "var(--c-cyan, var(--accent))", textDecoration: "none" }}>
+                  ♪ Music ↗
+                </a>
+              )}
+              {inspoUrl && (
+                <a href={inspoUrl} target="_blank" rel="noopener noreferrer"
+                   style={{ color: "var(--c-cyan, var(--accent))", textDecoration: "none" }}>
+                  ✦ Inspiration ↗
+                </a>
+              )}
+            </div>
+          )}
         </div>
-        <div className="actions" style={{ alignItems: "center" }}>
-          <DPill tone="amber" active>● 6h 28m to main due</DPill>
-          {/* REEL-201 turned into an attachment hyperlink */}
-          <a
-            className="attach-link"
-            href={attachUrl || "#"}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={e => { if (!attachUrl) e.preventDefault(); }}
-            title={attachUrl || "No reference attached"}
-          >
-            <span className="icon">↗</span>
-            <span style={{ color: "var(--fg)" }}>{current.id}</span>
-            <span className="url">{attachUrl ? prettyHost(attachUrl) : "attach link"}</span>
-          </a>
-          <DPill onClick={updateAttach}>Edit link</DPill>
-          <DPill primary>Open in FootageBrain</DPill>
+        <div className="actions" style={{ alignItems: "center", gap: 8 }}>
+          {reelStateUrl ? (
+            <DPill onClick={() => window.open(reelStateUrl, "_blank")}
+                   title={reelStateUrl}>
+              ↗ Current reel state
+            </DPill>
+          ) : null}
+          <DPill onClick={editReelStateUrl}>
+            {reelStateUrl ? "Edit link" : "+ Current reel state"}
+          </DPill>
+          <DPill onClick={() => setSearchModalOpen(true)} primary>+ Search Footage</DPill>
         </div>
       </div>
 
-      {/* Compact stage spine */}
-      <StageSpine stages={DETAIL_STAGES} activeKey="main" />
+      {/* Footage Brain Search Modal */}
+      {searchModalOpen && (
+        <FootageBrainSearch
+          reelId={current.id}
+          onAttach={handleAttachFootage}
+          onClose={() => setSearchModalOpen(false)}
+          attachedIds={reelAttachedFootage.map(f => f.footage_file_id)}
+        />
+      )}
 
       <div className="detail-grid">
-        {/* ===== LEFT — sources, deps, log ===== */}
+        {/* ===== LEFT — attached footage ===== */}
         <div className="detail-col">
           <Card
-            title="FootageBrain linked · footage"
-            right={<span className="count-tag cyan">8 selects</span>}
-            footLeft="Linked from semantic search"
+            title="Attached Footage"
+            right={<span className="count-tag cyan">{reelAttachedFootage.length}</span>}
+            footLeft="Footage items linked to this reel"
           >
-            {FOOTAGE.map(f => (
-              <div className="footage-row" key={f.id}>
-                <div className="footage-thumb" />
-                <div className="footage-info">
-                  <div className="id">{f.id} <span className="tc">{f.tc}</span></div>
-                  <div className="desc">{f.desc}</div>
-                </div>
-              </div>
-            ))}
-            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-              <DPill primary>+ Semantic re-search</DPill>
-              <DPill>Open in FootageBrain</DPill>
+            <AttachedFootageList
+              items={reelAttachedFootage}
+              onRemove={handleRemoveFootage}
+            />
+            <div style={{ marginTop: 10 }}>
+              <DPill onClick={() => setSearchModalOpen(true)}>
+                {reelAttachedFootage.length === 0 ? "+ Add Footage" : "+ Add more"}
+              </DPill>
             </div>
-          </Card>
-
-          <Card
-            title="Dependency blocking"
-            tone="block"
-            right={<Pill tone="block">1 critical</Pill>}
-            footLeft="Blockers + upstream context"
-          >
-            <div style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.4 }}>
-              <b>Owner decision on hook A vs B.</b>
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--fg-mute)", marginTop: 6, lineHeight: 1.4 }}>
-              Waiting 3h 12m. SLA breaches at 14:00. Variant brief stays locked
-              until one hook is chosen.
-            </div>
-            <div className="divider" />
-            <div className="h-sub">Other deps</div>
-            <ul style={{ margin: "4px 0 0 0", padding: 0, listStyle: "none", fontSize: 12 }}>
-              <li style={{ padding: "4px 0", color: "var(--fg-mute)" }}>
-                <span style={{ color: "var(--c-amber)" }}>●</span> subtitle style approval pending
-              </li>
-              <li style={{ padding: "4px 0", color: "var(--fg-mute)" }}>
-                <span style={{ color: "var(--c-amber)" }}>●</span> Music choice A/B locked
-              </li>
-              <li style={{ padding: "4px 0", color: "var(--fg-mute)" }}>
-                <span style={{ color: "var(--c-green)" }}>●</span> Reference board linked + available
-              </li>
-            </ul>
-          </Card>
-
-          <Card
-            title="Event log"
-            right={<span className="count-tag">14 entries</span>}
-            footLeft="Operational history"
-          >
-            {EVENTS.map((e, i) => (
-              <div className="event" key={i}>
-                <div className="t">{e.t}</div>
-                <div className="body">{e.body}</div>
-              </div>
-            ))}
           </Card>
         </div>
 
-        {/* ===== CENTER ===== */}
+        {/* ===== CENTER — blueprint + feedback ===== */}
         <div className="detail-col center">
-          {/* 1) Reel Blueprint — replaces the focus/hook area */}
+          {/* 1) Reel Blueprint */}
           <div className="blueprint">
             <div className="blueprint-head">
               <div className="h">Reel Blueprint</div>
@@ -391,104 +314,8 @@ function ReelDetail({ reel, onBack }) {
             </div>
           </div>
 
-          {/* 2) Operational roadmap with expandable nodes — absorbs the old right-side cards */}
-          <div className="roadmap">
-            <div className="roadmap-head">
-              <div className="h">Operational roadmap</div>
-              <div className="meta">where {current.id} is flowing toward · click any step to expand</div>
-            </div>
-
-            <RmNode
-              num="1" tone="cyan" defaultOpen={true}
-              title="Next review"
-              sub="Paul V reviews, writes handoff, clears the reel to move."
-              right={<Pill tone="warn">waits on you · 4h SLA</Pill>}
-            >
-              <div className="p">
-                <b>Paul Victor</b> reviews the locked main. Approves or sends back with notes.
-                4h SLA begins when main edit is marked review-ready.
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <DPill primary>Mark main review-ready</DPill>
-                <DPill>Ping Paul V</DPill>
-                <DPill>Defer 1h</DPill>
-              </div>
-            </RmNode>
-
-            <div className="roadmap-arrow"></div>
-
-            <RmNode
-              num="2"
-              title="Handoff"
-              sub="Owner writes allowed changes, attaches export, opens variant brief."
-              right={<span className="count-tag cyan">{handoffDone} / {handoffChecks.length} prep</span>}
-            >
-              <div className="p">
-                Owner packages the handoff so Jay can start variants without a back-and-forth.
-              </div>
-              <div className="checklist">
-                {handoffChecks.map(c => (
-                  <Check key={c.id} item={c} onToggle={() => toggleCheck("handoffChecks", c.id)} />
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <DPill primary>Open handoff doc</DPill>
-                <DPill>Attach export</DPill>
-              </div>
-            </RmNode>
-
-            <div className="roadmap-arrow"></div>
-
-            <RmNode
-              num="3" tone="warn" defaultOpen={true}
-              title="Downstream readiness"
-              sub="Jay packages variants from the locked main. Caption pass runs in parallel."
-              right={<Pill tone="warn">idle risk · 3h 20m</Pill>}
-            >
-              <div className="p">
-                Jay (variant editor) has 3h 20m of work today and no active brief beyond the
-                current queue. If main slips past 18:00, the lane goes idle.
-              </div>
-              <div className="h-sub">Risk if not resolved</div>
-              <ul style={{ margin: "4px 0 6px 0", padding: 0, listStyle: "none", fontSize: 11.5, color: "var(--fg-mute)" }}>
-                <li style={{ padding: "3px 0" }}>· Friday post window shifts +1 day</li>
-                <li style={{ padding: "3px 0" }}>· Jay's lane idles overnight</li>
-                <li style={{ padding: "3px 0" }}>· Caption pass left no-buffer</li>
-              </ul>
-              <div style={{
-                marginTop: 4,
-                padding: "9px 11px",
-                border: "1px dashed var(--c-amber-soft)",
-                borderRadius: 6,
-                fontSize: 11.5,
-                color: "var(--c-amber)",
-                background: "rgba(245,194,102,0.04)",
-                display: "flex", gap: 10, alignItems: "center",
-              }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--c-amber)" }} />
-                <span>
-                  <b style={{ color: "var(--c-amber)" }}>Idle risk:</b>{" "}
-                  <span style={{ color: "var(--fg)" }}>
-                    If main slips past 18:00, Jay's variant lane goes idle and Friday's post window slides.
-                  </span>
-                </span>
-              </div>
-            </RmNode>
-          </div>
-
-          {/* 3) Editor checklist + comments */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Card
-              title="Editor checklist"
-              right={<span className="count-tag cyan">{doneCount} / {checks.length}</span>}
-              footLeft="Editor tasks"
-            >
-              <div className="checklist">
-                {checks.map(c => <Check key={c.id} item={c} onToggle={() => toggleCheck("checks", c.id)} />)}
-              </div>
-            </Card>
-
-            <Card
+          {/* 2) Comments + feedback */}
+          <Card
               title="Comments + feedback"
               right={<span className="count-tag">{comments.length}</span>}
               footLeft="Conversation layer · persisted per reel"
@@ -500,6 +327,18 @@ function ReelDetail({ reel, onBack }) {
               )}
               {comments.map((c) => {
                 const mine = me && c.authorId && c.authorId === me.id;
+                if (c.system) {
+                  /* System-authored audit entry (e.g. a stage
+                     transition). Renders as a single dim line so
+                     it doesn't visually compete with human chat. */
+                  return (
+                    <div key={c.id} className="comment-system">
+                      <span className="dot">●</span>
+                      <span className="txt">{c.txt}</span>
+                      <span className="ts">{formatCommentTs(c.ts)}</span>
+                    </div>
+                  );
+                }
                 return (
                   <div className="comment" key={c.id}
                        style={{ position: "relative" }}>
@@ -540,13 +379,14 @@ function ReelDetail({ reel, onBack }) {
                   value={draftComment}
                   onChange={e => setDraftComment(e.target.value)}
                   onKeyDown={e => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    // Enter posts, Shift+Enter inserts a newline.
+                    if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
                       e.preventDefault();
                       postComment();
                     }
                   }}
                   placeholder={stored
-                    ? "Leave feedback or progress note… (⌘/Ctrl + Enter to post)"
+                    ? "Leave feedback or progress note… (Enter to post · Shift+Enter for new line)"
                     : "Open this reel via Pipeline to post feedback."}
                   disabled={!stored}
                   style={{
@@ -575,129 +415,10 @@ function ReelDetail({ reel, onBack }) {
                 </div>
               </div>
             </Card>
-          </div>
-
-          {/* 4) Task requests */}
-          <Card
-            title="Task requests"
-            right={<DPill primary onClick={() => setComposerOpen(o => !o)}>+ New request</DPill>}
-            footLeft="Lightweight task objects (assignee · type · status)"
-          >
-            {composerOpen && (
-              <div className="task-composer" style={{ marginBottom: 10 }}>
-                <span className="plus">+</span>
-                <span>assign to</span>
-                {[
-                  { k: "owner",   l: "Owner · Paul V" },
-                  { k: "variant", l: "Variant · Jay" },
-                  { k: "pv",      l: "Reviewer · Leroy C" },
-                ].map(o => (
-                  <span key={o.k} className="chip" onClick={() => setAudience(o.k)}
-                        style={{ borderColor: audience === o.k ? "var(--c-cyan)" : "" }}>
-                    {o.l}
-                  </span>
-                ))}
-                <span style={{ marginLeft: 6 }}>type</span>
-                {["Decision","Source upload","Variant pack","Caption review","Thumbnail choice"].map(t => (
-                  <span key={t} className="chip" onClick={() => setTaskType(t)}
-                        style={{ borderColor: taskType === t ? "var(--c-cyan)" : "" }}>
-                    Request {t.toLowerCase()}
-                  </span>
-                ))}
-                <span style={{ flexBasis: "100%" }}></span>
-                <input
-                  placeholder="Short instruction…"
-                  value={taskInstruction}
-                  onChange={e => setTaskInstruction(e.target.value)}
-                  style={{
-                    flex: 1, minWidth: 200, padding: "6px 9px",
-                    background: "var(--bg-2)",
-                    border: "1px dashed var(--line-hard)",
-                    borderRadius: 4, color: "var(--fg)",
-                    fontFamily: "var(--f-sans)", fontSize: 12,
-                  }}
-                />
-                <DPill primary onClick={() => {
-                  updateSlice("perReelTasks")([
-                    ...perReelTasks,
-                    {
-                      audience,
-                      type: taskType,
-                      assignee: audience === "owner" ? "Paul V" : audience === "variant" ? "Jay" : "Leroy C",
-                      instruction: taskInstruction.trim() || ("New " + taskType.toLowerCase() + " request."),
-                      status: "open",
-                    },
-                  ]);
-                  setTaskInstruction("");
-                  setComposerOpen(false);
-                }}>Create</DPill>
-              </div>
-            )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {perReelTasks.map((t, i) => <TaskObject key={i} task={t} />)}
-            </div>
-          </Card>
-
-          {/* 5) Ready-for-review state transition */}
-          <ReadyForReview
-            stage={readyForReview}
-            onStageChange={updateSlice("readyForReview")}
-          />
-
-          {/* 6) Handoff package completeness */}
-          <HandoffPackage
-            items={handoffPackage}
-            onItemsChange={updateSlice("handoffPackage")}
-          />
-
-          {/* 7) Allowed changes / no-touch */}
-          <AllowedChanges
-            allowed={allowed}
-            onAllowedChange={updateSlice("allowed")}
-            notouch={notouch}
-            onNotouchChange={updateSlice("notouch")}
-          />
-
-          {/* 8) Grouped attachments */}
-          <GroupedAttachments />
-
-          {/* 9) Variant readiness — renameable */}
-          <Card
-            title="Variant readiness"
-            right={
-              <span className="count-tag cyan">
-                {variantsActive} / {variants.length} · {variants.filter(v => v.type).length} named
-              </span>
-            }
-            footLeft="Click any letter to rename the variant style"
-          >
-            <div className="var-rows">
-              {variants.map((v, i) => (
-                <VariantRow
-                  key={v.letter}
-                  row={v}
-                  onChange={next => updateSlice("variants")(arr => arr.map((r, j) => j === i ? next : r))}
-                />
-              ))}
-            </div>
-            <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--fg-mute)", lineHeight: 1.5 }}>
-              Each row becomes a real variant brief: Jay reads the label, packages from the locked
-              main, and hands back a finished cut. Caption changes auto-route to Leroy for QA.
-            </div>
-          </Card>
         </div>
       </div>
     </div>
   );
-}
-
-function prettyHost(url) {
-  try {
-    const u = new URL(url);
-    return u.hostname.replace(/^www\./, "") + (u.pathname !== "/" ? "/…" : "");
-  } catch {
-    return url.slice(0, 24);
-  }
 }
 
 export { ReelDetail };

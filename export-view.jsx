@@ -1,154 +1,161 @@
 /* =========================================================
-   Export / Scheduling — spreadsheet-like prep surface for
-   reels that are ready to schedule. Shaped to look like a
-   real handoff before Planable-style import: editable
-   captions, media references, platform, scheduled date+time,
-   status, notes.
+   Export — posted reels list + Planable-format CSV download.
+
+   Reads live from the store. Shows every reel with stage =
+   "posted", listing the description and the scheduled post
+   date/time. "Download .csv" produces a two-column file in the
+   format Planable accepts:
+
+     Description,Scheduled
+     "caption text","2026-05-13 18:00"
+
+   Description is taken from the reel's `logline` (the post pitch
+   line), falling back to title if no logline is set. Scheduled
+   is the reel's `dueAt`, formatted as "YYYY-MM-DD HH:mm" in the
+   viewer's local timezone — Planable's CSV import accepts this.
    ========================================================= */
 
-import React, { useState } from "react";
-import { DPill, Pill } from "./components.jsx";
-import { EXPORT_ROWS } from "./shared-data.jsx";
+import React, { useMemo } from "react";
+import { DPill } from "./components.jsx";
+import { useWorkflow } from "./store.jsx";
+
+/* Local-time "YYYY-MM-DD HH:mm" for the Scheduled column. Returns
+   empty string when dueAt is unset so the row still exports but
+   the operator can see at a glance which times are missing. */
+function formatPlanable(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return yyyy + "-" + mm + "-" + dd + " " + hh + ":" + mi;
+}
+
+/* RFC 4180 CSV cell escape — wraps in quotes if the value contains
+   a comma, quote, or newline; doubles embedded quotes. */
+function csvCell(v) {
+  const s = v == null ? "" : String(v);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function buildCsv(rows) {
+  const header = ["Description", "Scheduled"].join(",");
+  const body = rows.map(r => [csvCell(r.description), csvCell(r.scheduled)].join(","));
+  return [header, ...body].join("\r\n") + "\r\n";
+}
+
+function downloadCsv(csv, filename) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Give the browser a tick to start the download before revoking.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
 
 function ExportView({ onOpen }) {
-  const [rows, setRows] = useState(EXPORT_ROWS);
-  const [editing, setEditing] = useState(null); // { id, field }
-  const [selected, setSelected] = useState({});
+  const { reels } = useWorkflow();
 
-  const update = (id, field, value) => {
-    setRows(rs => rs.map(r => r.id === id ? { ...r, [field]: value } : r));
+  /* Rows = posted, non-archived. Sorted by scheduled time ascending
+     so the CSV reads top-to-bottom in post order. Reels with no
+     dueAt sink to the bottom. */
+  const rows = useMemo(() => {
+    const posted = reels
+      .filter(r => r.stage === "posted" && !r.archivedAt)
+      .map(r => ({
+        id: r.id,
+        title: r.title || "",
+        description: (r.logline && r.logline.trim()) || r.title || "",
+        dueAt: r.dueAt || null,
+        scheduled: formatPlanable(r.dueAt),
+      }));
+    posted.sort((a, b) => {
+      if (!a.dueAt && !b.dueAt) return 0;
+      if (!a.dueAt) return 1;
+      if (!b.dueAt) return -1;
+      return a.dueAt.localeCompare(b.dueAt);
+    });
+    return posted;
+  }, [reels]);
+
+  const handleDownload = () => {
+    if (!rows.length) return;
+    const csv = buildCsv(rows);
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadCsv(csv, "posted-reels-" + stamp + ".csv");
   };
-
-  const counts = useMemo(() => ({
-    ready:  rows.filter(r => r.status === "ready").length,
-    needs:  rows.filter(r => r.status === "needs-caption").length,
-    block:  rows.filter(r => r.status === "blocked").length,
-  }), [rows]);
 
   return (
     <div>
       <div className="page-head">
         <div className="titles">
-          <h1>Export prep · scheduling sheet</h1>
+          <h1>Export · posted reels</h1>
           <div className="sub">
-            Spreadsheet-style prep for reels ready to schedule. Inspect, edit caption + media,
-            confirm platform and window — then export the lot as Planable-ready import.
+            Every reel in the Posted stage. Download as Planable-ready CSV
+            (Description, Scheduled).
           </div>
         </div>
         <div className="actions">
-          <DPill solid>Filter · this week</DPill>
-          <DPill solid>Per platform · Instagram</DPill>
-          <DPill primary>Export CSV ({rows.filter(r => r.status === "ready").length})</DPill>
+          <DPill primary onClick={handleDownload}
+                 style={{ opacity: rows.length ? 1 : 0.5,
+                          cursor: rows.length ? "pointer" : "not-allowed" }}>
+            Download .csv ({rows.length})
+          </DPill>
         </div>
-      </div>
-
-      {/* status strip */}
-      <div className="exp-strip">
-        <div className="exp-pill"><span className="ok">●</span> Ready · {counts.ready}</div>
-        <div className="exp-pill"><span className="warn">●</span> Needs caption · {counts.needs}</div>
-        <div className="exp-pill"><span className="block">●</span> Blocked · {counts.block}</div>
-        <div className="exp-pill mono dim">5 rows · Instagram · @studio.kathmandu</div>
-        <span style={{ flex: 1 }} />
-        <div className="mono dim">tab to advance · cmd↵ saves row</div>
       </div>
 
       <div className="exp-scroll">
         <table className="exp-table">
           <thead>
             <tr>
-              <th style={{ width: 28 }}></th>
               <th style={{ width: 90 }}>Reel ID</th>
-              <th style={{ width: 220 }}>Title</th>
-              <th>Post caption</th>
-              <th style={{ width: 170 }}>Media / export</th>
-              <th style={{ width: 180 }}>Platform · account</th>
-              <th style={{ width: 110 }}>Scheduled</th>
-              <th style={{ width: 110 }}>Status</th>
-              <th>Notes</th>
+              <th style={{ width: 240 }}>Title</th>
+              <th>Description</th>
+              <th style={{ width: 170 }}>Scheduled</th>
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan="4" style={{
+                  padding: "32px 18px",
+                  color: "var(--fg-dim)",
+                  fontFamily: "var(--f-mono)",
+                  fontSize: 12,
+                }}>
+                  No reels in the Posted stage yet. Move a reel to Posted on
+                  the Pipeline board to see it here.
+                </td>
+              </tr>
+            )}
             {rows.map(r => (
-              <ExpRow key={r.id} row={r}
-                      selected={selected[r.id]}
-                      onSelect={v => setSelected(s => ({ ...s, [r.id]: v }))}
-                      onChange={(f, v) => update(r.id, f, v)}
-                      onOpen={onOpen}
-                      editing={editing} setEditing={setEditing} />
+              <tr key={r.id} className="exp-row">
+                <td className="mono cyan"
+                    onClick={() => onOpen && onOpen({ id: r.id, title: r.title })}
+                    style={{ cursor: "pointer" }}>{r.id}</td>
+                <td className="serif-i" style={{ color: "#eef3fb" }}>{r.title}</td>
+                <td style={{ whiteSpace: "pre-wrap", color: "var(--fg-mute)" }}>
+                  {r.description || <span className="dim">— no logline set —</span>}
+                </td>
+                <td className="mono">
+                  {r.scheduled
+                    ? <span style={{ color: "var(--c-cyan)" }}>{r.scheduled}</span>
+                    : <span className="dim">— not scheduled —</span>}
+                </td>
+              </tr>
             ))}
-            {/* empty row to add */}
-            <tr className="exp-empty-row">
-              <td></td>
-              <td className="dim mono">+ add</td>
-              <td colSpan="7" className="dim">Drop a reel here from Ready bucket to schedule.</td>
-            </tr>
           </tbody>
         </table>
       </div>
-
-      <div style={{ padding: "14px 22px", borderTop: "1px dashed var(--line)",
-                    display: "flex", gap: 12, alignItems: "center" }}>
-        <span className="mono muted">handoff checklist</span>
-        <span className="exp-pill"><span className="ok">●</span> Captions complete</span>
-        <span className="exp-pill"><span className="warn">●</span> Hashtag set per platform</span>
-        <span className="exp-pill"><span className="ok">●</span> Media filenames match Planable</span>
-        <span style={{ flex: 1 }} />
-        <DPill solid>Download .csv</DPill>
-        <DPill primary>Send to Planable</DPill>
-      </div>
     </div>
-  );
-}
-
-function ExpRow({ row, selected, onSelect, onChange, onOpen, editing, setEditing }) {
-  const tone = row.status === "ready" ? "ok"
-             : row.status === "needs-caption" ? "warn"
-             : row.status === "blocked" ? "block" : "";
-
-  const edit = (field) => setEditing({ id: row.id, field });
-  const cancel = () => setEditing(null);
-
-  const isEditing = (field) => editing && editing.id === row.id && editing.field === field;
-
-  return (
-    <tr className={"exp-row " + tone}>
-      <td>
-        <input type="checkbox" className="exp-cb" checked={!!selected}
-               onChange={e => onSelect(e.target.checked)} />
-      </td>
-      <td className="mono cyan"
-          onClick={() => onOpen({ id: row.id, title: row.title })}
-          style={{ cursor: "pointer" }}>{row.id}</td>
-      <td className="serif-i" style={{ color: "#eef3fb" }}>{row.title}</td>
-      <td className="exp-cap" onClick={() => edit("caption")}>
-        {isEditing("caption")
-          ? <textarea className="exp-textarea" value={row.caption} autoFocus
-                      onChange={e => onChange("caption", e.target.value)}
-                      onBlur={cancel} rows="4" />
-          : (row.caption
-              ? <div style={{ whiteSpace: "pre-wrap" }}>{row.caption}</div>
-              : <span className="dim">— click to add caption —</span>)}
-      </td>
-      <td className="mono">
-        <div style={{ color: row.media === "—" ? "var(--c-red)" : "var(--c-cyan)" }}>{row.media}</div>
-        <div className="dim" style={{ fontSize: 10 }}>{row.mediaSize}</div>
-      </td>
-      <td className="mono muted">{row.platform}</td>
-      <td className="mono">
-        <div>{row.date}</div>
-        <div className="cyan">{row.time}</div>
-      </td>
-      <td>
-        <Pill tone={tone}>{row.status.replace("-", " ")}</Pill>
-      </td>
-      <td className="exp-note" onClick={() => edit("notes")}>
-        {isEditing("notes")
-          ? <input className="exp-input" value={row.notes} autoFocus
-                   onChange={e => onChange("notes", e.target.value)}
-                   onBlur={cancel} />
-          : <span className="muted">{row.notes || "—"}</span>}
-      </td>
-    </tr>
   );
 }
 

@@ -1,21 +1,52 @@
 /* =========================================================
    My Work — role-aware "what needs me now" dashboard.
 
-   Three modes drive different emphasis:
-     · skilled  → grouped lanes (Not Started / In Progress /
-                  Completed), execution signals, blocker reasons
-     · variant  → simpler execution-focused queue with allowed
-                  changes, variant slots, deadlines
-     · owner    → approvals waiting, aging, stale ideas, post
-                  windows, decisions only the owner can clear
+   Three render paths today:
+     · skilled  → 3-column DnD lanes (Not started / In progress
+                  / Completed) showing reels owned by Judy. Each
+                  card carries: clip count, logline preview,
+                  current-state link, due-date+time picker, and
+                  a "for revision" badge with the reviewer's note
+                  if the reel was just sent back.
+     · variant  → execution queue for Jay (unchanged for now).
+     · owner / reviewer → minimal review queue. One row per
+                  reel currently in `review` stage with an
+                  Accept / Send-back-with-note action. Used by
+                  both Paul and Leroy.
    ========================================================= */
 
 import React, { useState } from "react";
-import { Card, DPill, Pill } from "./components.jsx";
+import { DPill, Pill } from "./components.jsx";
 import { useWorkflow } from "./store.jsx";
 import { useAuth } from "./auth.jsx";
-import { useNow, formatAge, formatDue } from "./time.jsx";
-import { PEOPLE, STAGE_LABEL, STAGE_TONE } from "./shared-data.jsx";
+import { useNow, formatDue } from "./time.jsx";
+import { PEOPLE } from "./shared-data.jsx";
+
+/* Build the revision history array, folding the older single-field
+   shape into one entry so display code only handles one schema. */
+function getRevisionHistory(detail) {
+  const arr = Array.isArray(detail?.revisionHistory) ? detail.revisionHistory : [];
+  if (arr.length) return arr;
+  if (detail?.revisionNote) {
+    return [{
+      action: "sent_back",
+      ts:     detail.revisionAt || null,
+      by:     detail.revisionBy || null,
+      note:   detail.revisionNote,
+    }];
+  }
+  return [];
+}
+
+function formatHistoryTs(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const datePart = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return datePart + " · " + hh + ":" + mm;
+}
 
 /* Action-button gating per step 5:
    - Owner role = god-mode (always allowed).
@@ -24,37 +55,42 @@ function useCanAct(requiredRole) {
   const { person } = useAuth();
   if (!person) return false;
   if (person.role === "owner") return true;
+  if (Array.isArray(requiredRole)) return requiredRole.includes(person.role);
   return person.role === requiredRole;
 }
 
 function MyWork({ role, onOpen }) {
-  if (role === "owner")   return <OwnerWork onOpen={onOpen} />;
+  // Owner and Reviewer share the same review-queue dashboard.
+  if (role === "owner" || role === "reviewer") return <ReviewQueueWork onOpen={onOpen} />;
   if (role === "variant") return <VariantWork onOpen={onOpen} />;
   return <SkilledWork onOpen={onOpen} />;
 }
 
 /* ─────────────────────────────────────────────────────── */
-/* Skilled editor dashboard                                */
+/* Skilled editor dashboard — 3-column DnD                */
 /* ─────────────────────────────────────────────────────── */
 
+const SKILLED_COLS = [
+  { key: "not_started", title: "Not started" },
+  { key: "in_progress", title: "In progress" },
+  { key: "review",      title: "Review"      },
+  { key: "completed",   title: "Completed"   },
+];
+
 function SkilledWork({ onOpen }) {
-  const { reels, tasks } = useWorkflow();
+  const { reels, actions, attachedFootage } = useWorkflow();
   const me = "alex";
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
-  const groups = ["not_started", "in_progress", "completed"];
-  const titles = {
-    not_started: "Not started",
-    in_progress: "In progress",
-    completed:   "Completed",
-  };
-  const subs = {
-    not_started: "Ideas + selected reels waiting on you",
-    in_progress: "Main edits and pending owner picks",
-    completed:   "Handed off · in variant or posted",
-  };
 
-  // Tasks assigned to me
-  const myTasks = tasks.filter(t => t.to === me);
+  const [dragId, setDragId] = useState(null);
+  const [dropCol, setDropCol] = useState(null);
+
+  const handleDrop = (targetStage) => {
+    if (!dragId) return;
+    actions.moveStage(dragId, { stage: targetStage });
+    setDragId(null);
+    setDropCol(null);
+  };
 
   return (
     <div>
@@ -62,73 +98,56 @@ function SkilledWork({ onOpen }) {
         <div className="titles">
           <h1>My work — Judy A · skilled editor</h1>
           <div className="sub">
-            Operator workspace. Grouped by execution state. Each card carries blocker reason,
-            dependency status, and what the next move is — so you know who you're waiting on
-            and who's waiting on you.
-          </div>
-        </div>
-        <div className="actions">
-          <DPill tone="amber" active>● 2 blocked · waiting on owner</DPill>
-          <DPill>Today's plan</DPill>
-          <DPill solid>Toggle dependencies</DPill>
-        </div>
-      </div>
-
-      {/* Focus banner — most urgent thing for this person */}
-      <div style={{ padding: "12px 22px", borderBottom: "1px dashed var(--line)" }}>
-        <div className="focus-banner">
-          <div className="l">
-            <div className="key">Next move</div>
-            <div className="body">
-              <b style={{ color: "var(--fg)" }}>REEL-201 · Temple crowd</b> is waiting on
-              Paul's hook A/B pick. Variant lane idles in 3h 20m if not cleared.
-            </div>
-          </div>
-          <div className="actions">
-            <DPill primary onClick={() => onOpen({ id: "REEL-201", title: "Temple crowd sequence" })}>Open reel</DPill>
-            <DPill>Nudge owner</DPill>
+            Drag a card between columns to update its status.
           </div>
         </div>
       </div>
 
-      {/* Three grouped lanes */}
       <div className="mywork-grid">
-        {groups.map(g => {
-          const rows = mine.filter(r => r.grouping === g);
+        {SKILLED_COLS.map(col => {
+          const rows = mine.filter(r => r.stage === col.key);
+          const isTarget = dropCol === col.key;
           return (
-            <div className="mw-col" key={g}>
+            <div className="mw-col" key={col.key}
+                 onDragOver={e => { if (dragId) { e.preventDefault(); if (dropCol !== col.key) setDropCol(col.key); } }}
+                 onDragLeave={() => { if (dropCol === col.key) setDropCol(null); }}
+                 onDrop={e => { e.preventDefault(); handleDrop(col.key); }}
+                 style={{
+                   outline: isTarget ? "2px dashed var(--c-cyan)" : "",
+                   outlineOffset: isTarget ? "-4px" : "",
+                   transition: "outline 0.1s",
+                 }}>
               <div className="mw-col-head">
-                <div className="mw-h">{titles[g]}</div>
-                <div className="mw-sub">{subs[g]}</div>
+                <div className="mw-h">{col.title}</div>
                 <span className="count-tag">{rows.length}</span>
               </div>
               <div className="mw-list">
-                {rows.map(r => <WorkCard key={r.id} reel={r} onOpen={onOpen} />)}
-                {rows.length === 0 && <EmptyLane label="Nothing here right now." />}
+                {rows.map(r => (
+                  <div key={r.id}
+                       draggable
+                       onDragStart={e => { setDragId(r.id); e.dataTransfer.effectAllowed = "move"; }}
+                       onDragEnd={() => { setDragId(null); setDropCol(null); }}
+                       style={{ opacity: dragId === r.id ? 0.4 : 1 }}>
+                    <WorkCard
+                      reel={r}
+                      onOpen={onOpen}
+                      clipCount={attachedFootage.filter(f => f.reel_id === r.id).length}
+                      onDueChange={(iso) => actions.updateReel(r.id, { dueAt: iso })}
+                    />
+                  </div>
+                ))}
+                {rows.length === 0 && <EmptyLane label="Drop a reel here." />}
               </div>
             </div>
           );
         })}
-      </div>
-
-      {/* Inbound tasks row */}
-      <div style={{ padding: "16px 22px", borderTop: "1px dashed var(--line)" }}>
-        <Card
-          title="Inbound task requests · for you"
-          right={<span className="count-tag">{myTasks.length} open</span>}
-          footLeft="Direct asks from teammates">
-          <div className="task-list">
-            {myTasks.map(t => <TaskRow key={t.id} task={t} />)}
-            {myTasks.length === 0 && <div className="dim mono" style={{ padding: 12 }}>No inbound tasks.</div>}
-          </div>
-        </Card>
       </div>
     </div>
   );
 }
 
 /* ─────────────────────────────────────────────────────── */
-/* Variant editor dashboard — simpler, execution-focused   */
+/* Variant editor dashboard — unchanged                    */
 /* ─────────────────────────────────────────────────────── */
 
 function VariantWork({ onOpen }) {
@@ -136,225 +155,267 @@ function VariantWork({ onOpen }) {
   const me = "sam";
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
   const myTasks = tasks.filter(t => t.to === me);
+  const now = useNow();
 
   return (
     <div>
       <div className="page-head">
         <div className="titles">
           <h1>My work — Jay · variant editor</h1>
-          <div className="sub">
-            Execution queue. Each row is a locked main + 5 variant slots, with explicit
-            allowed changes and no-touch rules. Nothing here that doesn't act on you directly.
-          </div>
-        </div>
-        <div className="actions">
-          <DPill tone="amber" active>● 1 idle · awaiting brief</DPill>
-          <DPill solid>Show ready handoffs</DPill>
+          <div className="sub">Reels assigned to you.</div>
         </div>
       </div>
 
-      <div className="variant-queue">
-        {mine.map(r => <VariantSlot key={r.id} reel={r} onOpen={onOpen} />)}
-      </div>
-
-      <div style={{ padding: "16px 22px", borderTop: "1px dashed var(--line)" }}>
-        <Card title="Inbound task requests · for you"
-              right={<span className="count-tag">{myTasks.length} open</span>}
-              footLeft="Direct asks from teammates">
-          <div className="task-list">
-            {myTasks.length === 0
-              ? <div className="dim mono" style={{ padding: 12 }}>No inbound tasks right now.</div>
-              : myTasks.map(t => <TaskRow key={t.id} task={t} />)}
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function VariantSlot({ reel, onOpen }) {
-  const now = useNow();
-  const prog = reel.variantProgress || { done: 0, total: 5 };
-  const cells = Array.from({ length: prog.total }, (_, i) =>
-    i < prog.done ? "done" : (i === prog.done && !reel.blocker ? "active" : "")
-  );
-
-  return (
-    <div className={"vslot " + (reel.state || "ok")} onClick={() => onOpen({ id: reel.id, title: reel.title })}>
-      <div className="vslot-head">
-        <div>
-          <div className="mono dim">{reel.id}</div>
-          <div className="serif-i" style={{ fontSize: 18, color: "#eef3fb", marginTop: 2 }}>{reel.title}</div>
-        </div>
-        <Pill tone={reel.state === "block" ? "block" : reel.state === "warn" ? "warn" : "ok"}>
-          {reel.blocker ? "blocked" : (prog.done === prog.total ? "done" : "in progress")}
-        </Pill>
-      </div>
-
-      <div className="vslot-body">
-        <div className="vslot-block">
-          <div className="h-sub">Main reel link</div>
-          <a className="link" onClick={e => e.stopPropagation()}>↗ drive / locked-main-{reel.id.toLowerCase()}.mp4</a>
-        </div>
-        <div className="vslot-block">
-          <div className="h-sub">Allowed changes</div>
-          <div className="vslot-rules">
-            <span className="rule allow">caption text</span>
-            <span className="rule allow">audio hook</span>
-            <span className="rule allow">first 2s of clip</span>
-            <span className="rule noop">no music change</span>
-            <span className="rule noop">no edit length</span>
-          </div>
-        </div>
-        <div className="vslot-block">
-          <div className="h-sub">Deadline</div>
-          <div className="mono" style={{ color: "var(--c-amber)" }}>{formatDue(reel, now) || "—"}</div>
-        </div>
-      </div>
-
-      <div className="vslot-slots">
-        {cells.map((c, i) => (
-          <div key={i} className={"slot " + c}>
-            <div className="lt">{String.fromCharCode(65 + i)}</div>
-            <div className="st">{c === "done" ? "packaged" : c === "active" ? "active" : "queued"}</div>
+      <div className="variant-queue" style={{ padding: "16px 22px" }}>
+        {mine.length === 0 && (
+          <div className="dim mono" style={{ padding: 12 }}>No reels assigned to you yet.</div>
+        )}
+        {mine.map(r => (
+          <div key={r.id} className={"vslot " + (r.state || "ok")}
+               onClick={() => onOpen({ id: r.id, title: r.title })}
+               style={{ cursor: "pointer" }}>
+            <div className="vslot-head">
+              <div>
+                <div className="mono dim">{r.id}</div>
+                <div className="serif-i" style={{ fontSize: 18, color: "#eef3fb", marginTop: 2 }}>{r.title}</div>
+              </div>
+              <Pill tone={r.state === "block" ? "block" : r.state === "warn" ? "warn" : "ok"}>
+                {r.blocker ? "blocked" : "active"}
+              </Pill>
+            </div>
+            {r.blocker && (
+              <div className="vslot-blocker">
+                <span style={{ color: "var(--c-red)" }}>●</span> {r.blocker}
+              </div>
+            )}
+            <div className="vslot-block">
+              <div className="h-sub">Deadline</div>
+              <div className="mono" style={{ color: "var(--c-amber)" }}>{formatDue(r, now) || "—"}</div>
+            </div>
           </div>
         ))}
       </div>
-
-      {reel.blocker && (
-        <div className="vslot-blocker">
-          <span style={{ color: "var(--c-red)" }}>●</span> {reel.blocker}
-        </div>
-      )}
     </div>
   );
 }
 
 /* ─────────────────────────────────────────────────────── */
-/* Owner dashboard — approvals, aging, decisions           */
+/* Review queue dashboard — Paul + Leroy                   */
 /* ─────────────────────────────────────────────────────── */
 
-function OwnerWork({ onOpen }) {
-  const { reels, tasks, actions } = useWorkflow();
-  const canAct = useCanAct("owner");
-  const now = useNow();
-  const live = reels.filter(r => !r.archivedAt);
-  const approvals = live.filter(r => r.stage === "review");
-  const ready = live.filter(r => r.stage === "ready");
-  const ideas = live.filter(r => r.stage === "idea");
-  const decisions = tasks.filter(t => t.to === "paul");
+function ReviewQueueWork({ onOpen }) {
+  const { reels } = useWorkflow();
+  const { person } = useAuth();
+  const inReview = reels.filter(r => r.stage === "review" && !r.archivedAt);
+  const heading = person?.name || "Reviewer";
+  const subtitle = person?.role === "owner" ? "owner · creative director" : "reviewer";
 
   return (
     <div>
       <div className="page-head">
         <div className="titles">
-          <h1>My work — Paul V · owner / creative director</h1>
+          <h1>My work — {heading} · {subtitle}</h1>
           <div className="sub">
-            Approvals, decisions, and clearing blockers. Aging and downstream-idle risk surfaced
-            up top so you know which reel buys back the most lane time.
+            {inReview.length === 0
+              ? "Nothing waiting on you."
+              : `${inReview.length} reel${inReview.length === 1 ? "" : "s"} waiting on review.`}
           </div>
-        </div>
-        <div className="actions">
-          <DPill tone="red" active>● 2 reels over SLA</DPill>
-          <DPill solid>Open review queue</DPill>
         </div>
       </div>
 
-      {/* Top strip — approvals waiting */}
-      <div className="owner-strip">
-        <Card title="Approvals waiting on you"
-              right={<span className="count-tag" style={{ color: "var(--c-red)" }}>{approvals.length} open</span>}
-              footLeft="Each row holds up downstream work">
-          <div className="appr-list">
-            {approvals.map(r => (
-              <div key={r.id} className={"appr-row " + (r.state || "")}
-                   onClick={() => onOpen({ id: r.id, title: r.title })}>
-                <div>
-                  <div className="mono dim">{r.id}</div>
-                  <div className="serif-i" style={{ fontSize: 16, color: "#eef3fb", marginTop: 2 }}>{r.title}</div>
-                  <div className="mono muted" style={{ marginTop: 4 }}>
-                    waiting {formatAge(r, now)} · downstream: {r.downstream || "—"}
-                  </div>
-                </div>
-                <div className="appr-actions">
-                  <Pill tone={r.state === "block" ? "block" : "warn"}>{formatAge(r, now)}</Pill>
-                  {canAct ? (
-                    <React.Fragment>
-                      <DPill primary onClick={e => { e.stopPropagation(); actions.approveReview(r.id); }}>Approve</DPill>
-                      <DPill onClick={e => { e.stopPropagation(); actions.sendBack(r.id); }}>Send back</DPill>
-                    </React.Fragment>
-                  ) : (
-                    <span className="mono dim" style={{ fontSize: 10.5 }}>owner-only</span>
-                  )}
-                </div>
-              </div>
-            ))}
+      <div style={{ padding: "16px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {inReview.length === 0 && (
+          <div style={{
+            border: "1px dashed var(--line-hard)",
+            borderRadius: 6,
+            padding: "20px",
+            textAlign: "center",
+            color: "var(--fg-dim)",
+            fontSize: 13,
+          }}>
+            Review queue is clear.
           </div>
-        </Card>
+        )}
+        {inReview.map(r => (
+          <ReviewRow key={r.id} reel={r} onOpen={onOpen} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-        <Card title="Decisions only you can clear"
-              right={<span className="count-tag cyan">{decisions.length} open</span>}
-              footLeft="Owner-gated">
-          <div className="task-list">
-            {decisions.map(t => <TaskRow key={t.id} task={t} />)}
-          </div>
-        </Card>
+function ReviewRow({ reel, onOpen }) {
+  const { actions } = useWorkflow();
+  const { person } = useAuth();
+  const now = useNow();
+  const canAct = useCanAct(["owner", "reviewer"]);
+  const [note, setNote] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const accept = () => {
+    actions.approveReview(reel.id, { by: person?.id || null });
+    setNote("");
+  };
+  const sendBack = () => {
+    actions.sendBack(reel.id, { note, by: person?.id || null });
+    setNote("");
+  };
+
+  // Prior review-round history — only render if there's at least one
+  // "sent_back" entry (i.e. the reel has been here before).
+  const history = getRevisionHistory(reel.detail);
+  const priorSendBacks = history.filter(h => h.action === "sent_back");
+  const lastSendBack = priorSendBacks[priorSendBacks.length - 1];
+
+  const logPreview = (reel.logline || "").trim().slice(0, 140);
+
+  return (
+    <div style={{
+      border: "1px dashed var(--line-hard)",
+      borderRadius: 6,
+      padding: "14px 16px",
+      background: "var(--bg-1)",
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+    }}>
+      <div style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: 10,
+        cursor: "pointer",
+      }} onClick={() => onOpen({ id: reel.id, title: reel.title })}>
+        <span className="mono dim" style={{ fontSize: 11 }}>{reel.id}</span>
+        <span className="serif-i" style={{ fontSize: 17, color: "var(--fg)", flex: 1 }}>
+          {reel.title}
+        </span>
+        <span className="mono muted" style={{ fontSize: 11 }}>
+          waiting · {formatDue(reel, now) || "no due"}
+        </span>
       </div>
 
-      {/* Lower row */}
-      <div className="owner-grid">
-        <Card title="Ready to schedule / export"
-              right={<span className="count-tag cyan">{ready.length} ready</span>}
-              footLeft="Move to Export tab to prep import">
-          <div className="ready-list">
-            {ready.map(r => (
-              <div key={r.id} className="ready-row" onClick={() => onOpen({ id: r.id, title: r.title })}>
-                <div className="mono dim">{r.id}</div>
-                <div className="serif-i" style={{ flex: 1, fontSize: 14 }}>{r.title}</div>
-                <div className="mono muted">{formatDue(r, now)}</div>
-                <Pill tone="ok">scheduled</Pill>
-              </div>
-            ))}
-          </div>
-        </Card>
+      {logPreview && (
+        <div style={{
+          fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.45,
+        }}>
+          {logPreview}{(reel.logline || "").length > 140 ? "…" : ""}
+        </div>
+      )}
 
-        <Card title="Stale ideas · triage"
-              right={<span className="count-tag" style={{ color: "var(--c-amber)" }}>aging</span>}
-              footLeft="Kill, defer, or greenlight">
-          <div className="ready-list">
-            {ideas.map(r => (
-              <div key={r.id} className="ready-row" onClick={() => onOpen({ id: r.id, title: r.title })}>
-                <div className="mono dim">{r.id}</div>
-                <div className="serif-i" style={{ flex: 1, fontSize: 14 }}>{r.title}</div>
-                <div className="mono" style={{ color: r.state === "warn" ? "var(--c-amber)" : "var(--fg-mute)" }}>
-                  {formatAge(r, now)}
+      {reel.attachUrl && (
+        <a href={reel.attachUrl} target="_blank" rel="noopener noreferrer"
+           onClick={e => e.stopPropagation()}
+           style={{
+             fontSize: 11.5, color: "var(--c-cyan)",
+             fontFamily: "var(--f-mono)", textDecoration: "none",
+             alignSelf: "flex-start",
+           }}>
+          ↗ Current reel state
+        </a>
+      )}
+
+      {lastSendBack && (
+        <div style={{
+          border: "1px dashed var(--c-amber-soft)",
+          background: "rgba(245,194,102,0.04)",
+          borderRadius: 4,
+          padding: "8px 10px",
+          fontSize: 11.5,
+          lineHeight: 1.45,
+        }}>
+          <div style={{
+            display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap",
+            color: "var(--c-amber)",
+            fontFamily: "var(--f-mono)",
+            fontSize: 10,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            marginBottom: 4,
+          }}>
+            <span>Your last note</span>
+            {lastSendBack.by && (
+              <span style={{ color: "var(--fg-dim)" }}>
+                · {PEOPLE[lastSendBack.by]?.short || lastSendBack.by}
+              </span>
+            )}
+            {lastSendBack.ts && (
+              <span style={{ color: "var(--fg-dim)" }}>· {formatHistoryTs(lastSendBack.ts)}</span>
+            )}
+          </div>
+          <div style={{ color: "var(--fg)" }}>
+            {lastSendBack.note || <span style={{ color: "var(--fg-dim)" }}>(no note)</span>}
+          </div>
+          {priorSendBacks.length > 1 && (
+            <div style={{ marginTop: 6 }}>
+              <a href="#"
+                 onClick={e => { e.preventDefault(); setHistoryOpen(o => !o); }}
+                 style={{
+                   fontSize: 10.5,
+                   fontFamily: "var(--f-mono)",
+                   color: "var(--c-cyan)",
+                   textDecoration: "none",
+                 }}>
+                {historyOpen ? "hide" : "show"} {priorSendBacks.length - 1} earlier note{priorSendBacks.length - 1 === 1 ? "" : "s"}
+              </a>
+              {historyOpen && (
+                <div style={{
+                  marginTop: 6,
+                  display: "flex", flexDirection: "column", gap: 6,
+                  borderTop: "1px dashed var(--line-hard)",
+                  paddingTop: 6,
+                }}>
+                  {priorSendBacks.slice(0, -1).reverse().map((h, i) => (
+                    <div key={i}>
+                      <div style={{
+                        color: "var(--fg-dim)",
+                        fontFamily: "var(--f-mono)",
+                        fontSize: 10,
+                        letterSpacing: "0.06em",
+                      }}>
+                        {h.by ? (PEOPLE[h.by]?.short || h.by) : "anon"} · {formatHistoryTs(h.ts)}
+                      </div>
+                      <div style={{ color: "var(--fg-mute)", fontSize: 11.5 }}>
+                        {h.note || <span style={{ color: "var(--fg-dim)" }}>(no note)</span>}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                {canAct
-                  ? <DPill solid onClick={e => { e.stopPropagation(); actions.triageIdea(r.id, "greenlight"); }}>Greenlight</DPill>
-                  : <span className="mono dim" style={{ fontSize: 10.5 }}>owner-only</span>}
-              </div>
-            ))}
-          </div>
-        </Card>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
-        <Card title="Downstream idle risk"
-              right={<span className="count-tag" style={{ color: "var(--c-amber)" }}>3 lanes</span>}
-              footLeft="Who idles next if you don't clear">
-          <div className="risk-list">
-            <div className="risk">
-              <div className="risk-h">Sam · variant lane</div>
-              <div className="risk-b">idles in <b>3h 20m</b> unless REEL-201 hook is picked.</div>
-            </div>
-            <div className="risk">
-              <div className="risk-h">Maya · caption review</div>
-              <div className="risk-b">queued behind REEL-195 approval (3h waiting).</div>
-            </div>
-            <div className="risk">
-              <div className="risk-h">Friday post window</div>
-              <div className="risk-b">slips +1d if Patan alleys re-review not cleared today.</div>
-            </div>
-          </div>
-        </Card>
+      <textarea
+        value={note}
+        onChange={e => setNote(e.target.value)}
+        placeholder="Notes (optional — included if you send back)…"
+        disabled={!canAct}
+        style={{
+          background: "var(--bg-2)",
+          border: "1px dashed var(--line-hard)",
+          borderRadius: 4,
+          color: "var(--fg)",
+          fontFamily: "var(--f-sans)",
+          fontSize: 12,
+          padding: "8px 10px",
+          resize: "vertical",
+          minHeight: 48,
+          outline: "none",
+        }}
+      />
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        {canAct ? (
+          <React.Fragment>
+            <DPill onClick={sendBack}>Send back</DPill>
+            <DPill primary onClick={accept}>Accept</DPill>
+          </React.Fragment>
+        ) : (
+          <span className="mono dim" style={{ fontSize: 10.5 }}>
+            sign in as owner or reviewer to act
+          </span>
+        )}
       </div>
     </div>
   );
@@ -364,78 +425,158 @@ function OwnerWork({ onOpen }) {
 /* Shared sub-pieces                                       */
 /* ─────────────────────────────────────────────────────── */
 
-function WorkCard({ reel, onOpen }) {
-  const now = useNow();
-  const tone = reel.state === "block" ? "block" : reel.state === "warn" ? "warn" : "";
+/* Convert a Date / ISO string to the `YYYY-MM-DDTHH:MM` format
+   required by <input type="datetime-local">. */
+function toDatetimeLocalValue(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+       + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+
+function fromDatetimeLocalValue(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function WorkCard({ reel, onOpen, clipCount, onDueChange }) {
+  // Most recent "sent_back" entry — only renders the orange badge if
+  // it's the latest history event (i.e. no later approval).
+  const history = getRevisionHistory(reel.detail);
+  const last = history[history.length - 1];
+  const revision = last && last.action === "sent_back" ? last : null;
+  const revisionNote = revision?.note;
+  const revisionTs   = revision?.ts;
+  const revisionBy   = revision?.by ? (PEOPLE[revision.by]?.short || revision.by) : null;
+  const logPreview = (reel.logline || "").trim().slice(0, 100);
+
+  // Stop drag from triggering on the date input / link interactions.
+  const stop = (e) => e.stopPropagation();
+
   return (
-    <div className={"work-card " + tone} onClick={() => onOpen({ id: reel.id, title: reel.title })}>
+    <div className="work-card"
+         onClick={() => onOpen({ id: reel.id, title: reel.title })}
+         style={{ cursor: "pointer" }}>
       <div className="wc-head">
         <div>
           <div className="mono dim">{reel.id}</div>
-          <div className="serif-i" style={{ fontSize: 17, color: "#eef3fb", marginTop: 2 }}>{reel.title}</div>
+          <div className="serif-i" style={{ fontSize: 17, color: "#eef3fb", marginTop: 2 }}>
+            {reel.title}
+          </div>
         </div>
-        <Pill tone={tone || STAGE_TONE[reel.stage]}>{STAGE_LABEL[reel.stage]}</Pill>
       </div>
 
-      {reel.blocker && (
-        <div className="wc-blocker">
-          <span className="dot" />
-          <span><b>{reel.blocker}</b></span>
+      {revisionNote && (
+        <div style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 8,
+          marginTop: 8,
+          padding: "8px 10px",
+          background: "rgba(245,194,102,0.08)",
+          border: "1px dashed var(--c-amber-soft)",
+          borderRadius: 4,
+        }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: "50%",
+            background: "var(--c-amber)",
+            flexShrink: 0,
+            marginTop: 4,
+          }} />
+          <div style={{ fontSize: 11.5, lineHeight: 1.4, flex: 1, minWidth: 0 }}>
+            <div style={{
+              color: "var(--c-amber)",
+              fontFamily: "var(--f-mono)",
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              marginBottom: 2,
+              display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap",
+            }}>
+              <span>For revision</span>
+              {revisionBy && <span style={{ color: "var(--fg-dim)" }}>· {revisionBy}</span>}
+              {revisionTs && <span style={{ color: "var(--fg-dim)" }}>· {formatHistoryTs(revisionTs)}</span>}
+            </div>
+            <div style={{ color: "var(--fg)" }}>{revisionNote || <span style={{ color: "var(--fg-dim)" }}>(no note)</span>}</div>
+            {history.length > 1 && (
+              <div style={{
+                marginTop: 4, fontSize: 10,
+                fontFamily: "var(--f-mono)", color: "var(--fg-dim)",
+              }}>
+                {history.filter(h => h.action === "sent_back").length} prior round{history.filter(h => h.action === "sent_back").length === 1 ? "" : "s"} · open reel to view
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      <div className="wc-signals">
-        <Signal label="FB"   value={reel.fb > 0 ? reel.fb + " selects" : "—"}    ok={reel.fb > 0} />
-        <Signal label="REFS" value={reel.refs > 0 ? reel.refs + " refs" : "—"}    ok={reel.refs > 0} />
-        <Signal label="DUE"  value={formatDue(reel, now) || "—"}                  warn={reel.state === "warn"} block={reel.state === "block"} />
+      {logPreview && (
+        <div className="wc-next" style={{ marginTop: 8 }}>
+          {logPreview}{(reel.logline || "").length > 100 ? "…" : ""}
+        </div>
+      )}
+
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        marginTop: 10,
+        fontSize: 11,
+        color: "var(--fg-mute)",
+        fontFamily: "var(--f-mono)",
+        flexWrap: "wrap",
+      }}>
+        <span title="Clips attached">📎 {clipCount}</span>
+        {reel.attachUrl && (
+          <a href={reel.attachUrl} target="_blank" rel="noopener noreferrer"
+             onClick={stop}
+             style={{ color: "var(--c-cyan)", textDecoration: "none" }}>
+            ↗ Current state
+          </a>
+        )}
       </div>
 
-      {reel.next && (
-        <div className="wc-next">
-          <span className="mono muted">next ›</span> {reel.next}
-        </div>
-      )}
-      {reel.downstream && (
-        <div className="wc-down">
-          <span className="mono muted">downstream ›</span> {reel.downstream}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Signal({ label, value, ok, warn, block }) {
-  const cls = "sig " + (block ? "block" : warn ? "warn" : ok ? "ok" : "");
-  return (
-    <div className={cls}>
-      <div className="l">{label}</div>
-      <div className="v">{value}</div>
+      <div style={{
+        marginTop: 8,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 11,
+        color: "var(--fg-dim)",
+        fontFamily: "var(--f-mono)",
+      }}>
+        <span>Due:</span>
+        <input
+          type="datetime-local"
+          value={toDatetimeLocalValue(reel.dueAt)}
+          onClick={stop}
+          onMouseDown={stop}
+          onChange={e => {
+            stop(e);
+            onDueChange(fromDatetimeLocalValue(e.target.value));
+          }}
+          style={{
+            background: "var(--bg-2)",
+            border: "1px dashed var(--line-hard)",
+            borderRadius: 3,
+            color: "var(--fg)",
+            fontFamily: "var(--f-mono)",
+            fontSize: 11,
+            padding: "3px 6px",
+            outline: "none",
+          }}
+        />
+      </div>
     </div>
   );
 }
 
 function EmptyLane({ label }) {
   return <div className="mw-empty">{label}</div>;
-}
-
-function TaskRow({ task }) {
-  const now = useNow();
-  const dueText = formatDue(task, now) || task.due || "";
-  return (
-    <div className="task-row">
-      <div className="tr-left">
-        <span className="mono dim">{task.id}</span>
-        <span className="tag type">{task.type}</span>
-        <span className="mono muted">from {PEOPLE[task.from]?.short || task.from}</span>
-        <span className="mono dim">· {task.reel}</span>
-      </div>
-      <div className="tr-instr">{task.instruction}</div>
-      <div className="tr-right">
-        <span className="mono" style={{ color: "var(--c-amber)" }}>{dueText}</span>
-        <Pill tone={task.state?.includes("SLA") ? "warn" : "cyan"}>{task.state}</Pill>
-      </div>
-    </div>
-  );
 }
 
 export { MyWork };

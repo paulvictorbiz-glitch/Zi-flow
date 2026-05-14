@@ -1,18 +1,14 @@
 /* =========================================================
-   Canonical operational dataset.
+   Static identity + workflow constants.
 
-   Step 1 of the build-out collapsed the two prior parallel
-   datasets (`REELS` in pipeline.jsx + `REELS_FULL` here) into a
-   single source of truth named `REELS`. Every surface — pipeline
-   board, list, calendar, my-work, export — now reads from this
-   array. Pipeline-only visual fields (`note`, `foot`, `tone`,
-   `links`, `status`, `lane`) live on the same records as the
-   operational fields (`owner`, `stage`, `state`, `age`, ...).
+   Holds people, roles, the canonical 5-stage pipeline labels
+   and the stage→responsible-role mapping that drives pipeline
+   auto-handoff. Operational data (reels, review lane cards,
+   tasks, attached footage) is read live from Supabase via the
+   workflow store — this file is no longer a seed source.
 
-   `REVIEW_LANE_CARDS` is intentionally small and separate — those
-   are Maya's reviewer-pass "shadow" cards that exist only as
-   projections on the pipeline board. They are not standalone
-   reels, so list/my-work/calendar must NOT include them.
+   CAL_WEEK / CAL_ITEMS remain as calendar scaffolding consumed
+   by calendar-view.jsx until that view is moved onto `reels.dueAt`.
    ========================================================= */
 
 /* ---------- People + roles ---------- */
@@ -27,274 +23,76 @@ const ROLES = {
   owner:    { label: "Owner / Creative Director", short: "Owner",    person: "paul" },
   skilled:  { label: "Skilled Editor",            short: "Skilled",  person: "alex" },
   variant:  { label: "Variant Editor",            short: "Variant",  person: "sam"  },
+  reviewer: { label: "Reviewer",                  short: "Reviewer", person: "maya" },
 };
 
-/* ---------- Canonical reel dataset ----------
-   Each row carries operational signal AND the visual extras the
-   pipeline board needs. Fields:
+/* Reels, reviewer-lane shadow cards, and tasks are persisted in
+   Supabase and read live by the workflow store. The static fixture
+   arrays that used to live here have been removed. */
 
-   Core operational:
-     id, title, stage, owner, state, age, due,
-     fb, refs, blocker, blockerRole, next, downstream,
-     grouping, variantProgress
+/* ---------- Stage labels ----------
+   Canonical 5-stage pipeline:
+     not_started · in_progress · review · completed · posted
 
-   Pipeline-visual (optional):
-     note      — short caption rendered inside the board card
-     foot      — bottom-strip label on the board card
-     tone      — pill colour fallback when state isn't set
-     links     — clickable refs inside the board card
-     status    — overrides `age` for the board card pill, when
-                 the board needs a different phrasing (e.g.
-                 "post 2h" instead of the canonical "scheduled")
-     lane      — board lane override; defaults to `owner`
-*/
-const REELS = [
-  /* ---- IDEA / SELECTED ---- */
-  { id: "IDEA-088", title: "Temple bell close-up",
-    stage: "idea",     owner: "alex", state: "ok",
-    age: "3d",         due: null,
-    fb: 4, refs: 1,
-    blocker: null,
-    next: "Pull selects and write logline",
-    downstream: null,
-    grouping: "not_started",
-    note: "4 selects already pulled from FootageBrain.",
-    foot: "Discovery", tone: "cyan" },
+   Legacy values (idea / selected / main / variants / ready) still
+   appear in seeded data and old DB rows. `STAGES` ordered list,
+   `normalizeStage()` collapses legacy → canonical on read. */
+const STAGES = ["not_started", "in_progress", "review", "completed", "posted"];
 
-  { id: "IDEA-091", title: "River ghat crowd",
-    stage: "idea",     owner: "alex", state: "warn",
-    age: "1d",         due: null,
-    fb: 0, refs: 2,
-    blocker: "Needs FootageBrain pull",
-    next: "Run semantic search · ghat crowd",
-    downstream: null,
-    grouping: "not_started",
-    foot: "Triage queue", tone: "cyan" },
-
-  { id: "IDEA-079", title: "Market vendor smile",
-    stage: "idea",     owner: "paul", state: "warn",
-    age: "11d",        due: null,
-    fb: 0, refs: 0,
-    blocker: "Stale — owner triage",
-    next: "Triage: kill, defer, or greenlight",
-    downstream: null,
-    grouping: "not_started",
-    foot: "Stale — triage", tone: "warn" },
-
-  { id: "REEL-204", title: "Kathmandu chaos",
-    stage: "selected", owner: "alex", state: "ok",
-    age: "queued 4h",  due: "Thu 17:00",
-    fb: 12, refs: 3,
-    blocker: null,
-    next: "Start main edit",
-    downstream: "Jay variant slot · Fri 09:00",
-    grouping: "not_started",
-    note: "12 Labs pull attached · ready for main edit.",
-    foot: "0/5 variants", tone: "cyan" },
-
-  /* ---- MAIN EDIT ---- */
-  { id: "REEL-201", title: "Temple crowd sequence",
-    stage: "main",     owner: "alex", state: "warn",
-    age: "6h 28m",     due: "today 14:00",
-    fb: 8, refs: 4,
-    blocker: "Waiting on owner hook decision A/B",
-    blockerRole: "owner",
-    next: "Ping Paul for hook pick",
-    downstream: "Variant lane idle risk · 3h 20m",
-    grouping: "in_progress",
-    note: "Blocked by owner hook decision. 8 selects attached.",
-    foot: "Needs decision", tone: "warn" },
-
-  { id: "REEL-198", title: "Boudha kora walk",
-    stage: "main",     owner: "alex", state: "block",
-    age: "19h over",   due: "yest 17:00",
-    fb: 6, refs: 2,
-    blocker: "Hook A/B unresolved · main overrun",
-    blockerRole: "owner",
-    next: "Escalate hook call",
-    downstream: "Friday post window slips +1d",
-    grouping: "in_progress",
-    note: "Hook A/B unresolved. Music choice locked.",
-    foot: "Main edit overrun", tone: "block" },
-
-  { id: "REEL-206", title: "Street food smoke",
-    stage: "main",     owner: "alex", state: "ok",
-    age: "on track",   due: "today 22:00",
-    fb: 9, refs: 5,
-    blocker: null,
-    next: "Lock music bed",
-    downstream: null,
-    grouping: "in_progress",
-    foot: "On schedule", tone: "cyan",
-    status: "22h left" },
-
-  /* ---- REVIEW ---- */
-  { id: "REEL-195", title: "Sunrise prayer flags",
-    stage: "review",   owner: "paul", state: "warn",
-    age: "3h 10m wait", due: "today 18:00",
-    fb: 5, refs: 3,
-    blocker: "Awaiting owner approval + handoff notes",
-    blockerRole: "owner",
-    next: "Approve or send back",
-    downstream: "Caption pass queued for Leroy",
-    grouping: "in_progress",
-    note: "Export v3 attached. Needs approval + handoff notes.",
-    links: ["frame.io / review", "drive / source"],
-    foot: "Review queue", tone: "warn" },
-
-  { id: "REEL-192", title: "Old Patan alleys",
-    stage: "review",   owner: "paul", state: "block",
-    age: "28h wait",   due: "yest 14:00",
-    fb: 7, refs: 4,
-    blocker: "Review SLA breached · downstream blocked",
-    blockerRole: "owner",
-    next: "Sign off — variant lane idle",
-    downstream: "Jay idle now · Friday slot at risk",
-    grouping: "in_progress",
-    note: "Downstream blocked. Variant lane idle risk.",
-    links: ["frame.io / review", "ig / draft"],
-    foot: "SLA breached", tone: "block" },
-
-  /* ---- VARIANTS ---- */
-  { id: "REEL-180", title: "Himalaya flyover · 5-var pack",
-    stage: "variants", owner: "sam",  state: "ok",
-    age: "22h left",   due: "Fri 12:00",
-    fb: 0, refs: 6,
-    blocker: null,
-    next: "Package variants C, D, E",
-    downstream: "Ready bucket · Fri 14:00",
-    grouping: "in_progress",
-    variantProgress: { done: 2, total: 5 },
-    note: "2/5 done. Main + brief attached.",
-    links: ["drive / source set", "captions doc"],
-    foot: "Packaging", tone: "cyan" },
-
-  { id: "REEL-175", title: "Pashupati monks · variants",
-    stage: "variants", owner: "sam",  state: "warn",
-    age: "idle 3h",    due: "Sat 18:00",
-    fb: 0, refs: 2,
-    blocker: "Awaiting brief from Judy",
-    blockerRole: "skilled",
-    next: "Ping Judy for variant brief",
-    downstream: null,
-    grouping: "in_progress",
-    variantProgress: { done: 0, total: 5 },
-    note: "Awaiting brief from Judy.",
-    foot: "Waiting on brief", tone: "warn" },
-
-  /* ---- READY ---- */
-  { id: "REEL-188", title: "Lalitpur dusk",
-    stage: "ready",    owner: "paul", state: "ok",
-    age: "scheduled",  due: "today 18:00",
-    fb: 0, refs: 2,
-    blocker: null,
-    next: "Confirm caption",
-    downstream: null,
-    grouping: "in_progress",
-    foot: "Scheduled 18:00", tone: "ok",
-    status: "post 2h" },
-
-  { id: "REEL-178", title: "Annapurna teaser",
-    stage: "ready",    owner: "paul", state: "ok",
-    age: "scheduled",  due: "tomorrow 09:00",
-    fb: 0, refs: 3,
-    blocker: null,
-    next: "Hold for post window",
-    downstream: null,
-    grouping: "in_progress",
-    foot: "Held for window", tone: "cyan",
-    status: "tmrw 9am" },
-
-  { id: "REEL-170", title: "Boudha drone — 5-var pack",
-    stage: "ready",    owner: "sam",  state: "ok",
-    age: "scheduled",  due: "today 22:00",
-    fb: 0, refs: 5,
-    blocker: null,
-    next: "Confirm export bundle",
-    downstream: null,
-    grouping: "completed",
-    variantProgress: { done: 5, total: 5 },
-    note: "All 5 variants packaged. Captions reviewed.",
-    foot: "Scheduled 22:00", tone: "ok",
-    status: "post 6h" },
-
-  /* ---- POSTED ---- */
-  { id: "REEL-166", title: "Pashupati monks at dawn",
-    stage: "posted",   owner: "paul", state: "ok",
-    age: "12d ago",    due: null,
-    fb: 0, refs: 0,
-    blocker: null,
-    next: "Analytics review",
-    downstream: null,
-    grouping: "completed" },
-
-  { id: "REEL-161", title: "Patan square crowd",
-    stage: "posted",   owner: "paul", state: "ok",
-    age: "16d ago",    due: null,
-    fb: 0, refs: 0,
-    blocker: null,
-    next: "Analytics review",
-    downstream: null,
-    grouping: "completed" },
-];
-
-/* ---------- Pipeline-only reviewer-lane shadow cards ----------
-   These are Maya's caption-pass projections of two paul-owned
-   reels. They appear ONLY on the pipeline board (lane: "review").
-   They are NOT canonical reels — list/my-work/calendar exclude
-   them. `parentId` points back at the real reel.
-*/
-const REVIEW_LANE_CARDS = [
-  { id: "REEL-195-RV", parentId: "REEL-195",
-    title: "Sunrise prayer flags · caption pass",
-    stage: "review", lane: "review", owner: "maya", state: "ok",
-    note: "Sub-review for captions. Routes back to Paul on close.",
-    foot: "Reviewing", tone: "cyan", status: "1h 10m" },
-
-  { id: "REEL-188-RV", parentId: "REEL-188",
-    title: "Lalitpur dusk · final caption",
-    stage: "ready",  lane: "review", owner: "maya", state: "ok",
-    foot: "Closed 10:42", tone: "ok", status: "cleared" },
-];
-
-/* ---------- Tasks (lightweight requests across reels) ---------- */
-const TASKS_FULL = [
-  { id: "T-301", from: "alex", to: "paul",
-    type: "Decision",      reel: "REEL-201",
-    instruction: "Pick hook A vs B for temple crowd sequence",
-    due: "today 14:00", state: "open · 3h SLA" },
-  { id: "T-302", from: "alex", to: "sam",
-    type: "Variant pack",  reel: "REEL-201",
-    instruction: "Package 5 variants once hook is locked",
-    due: "Fri 12:00",  state: "queued" },
-  { id: "T-303", from: "paul", to: "maya",
-    type: "Caption review",reel: "REEL-195",
-    instruction: "Verify caption style on prayer flags cut",
-    due: "today 18:00",state: "open" },
-  { id: "T-304", from: "alex", to: "paul",
-    type: "Source upload", reel: "REEL-198",
-    instruction: "Upload remaining drone source from Boudha shoot",
-    due: "today",      state: "open" },
-  { id: "T-305", from: "sam",  to: "alex",
-    type: "Brief",         reel: "REEL-175",
-    instruction: "Need allowed-changes for Pashupati variants",
-    due: "today",      state: "open" },
-  { id: "T-306", from: "paul", to: "alex",
-    type: "Thumbnail",     reel: "REEL-188",
-    instruction: "Pick thumbnail frame for Lalitpur dusk",
-    due: "today 17:30",state: "open" },
-];
-
-/* ---------- Stage labels ---------- */
 const STAGE_LABEL = {
-  idea: "Idea pool",  selected: "Selected", main: "Main edit",
-  review: "Review",   variants: "Variants", ready: "Ready",   posted: "Posted",
+  not_started: "Not started",
+  in_progress: "In progress",
+  review:      "Review",
+  completed:   "Completed",
+  posted:      "Posted",
 };
 
 const STAGE_TONE = {
-  idea: "cyan", selected: "cyan", main: "warn",
-  review: "block", variants: "cyan", ready: "ok", posted: "ok",
+  not_started: "cyan",
+  in_progress: "warn",
+  review:      "block",
+  completed:   "ok",
+  posted:      "ok",
 };
+
+const LEGACY_STAGE_MAP = {
+  idea:     "not_started",
+  selected: "not_started",
+  main:     "in_progress",
+  variants: "in_progress",
+  ready:    "completed",
+};
+
+function normalizeStage(stage) {
+  if (!stage) return stage;
+  return LEGACY_STAGE_MAP[stage] || stage;
+}
+
+/* ---------- Stage → responsible role / person ----------
+   When a reel transitions into a stage, the canonical owner for
+   that stage becomes responsible. The pipeline auto-reassigns
+   `owner` on stage change unless the user explicitly dropped the
+   card into a different person's lane.
+
+   Mapping:
+     not_started → owner   (triage / kickoff)
+     in_progress → skilled (cutting the main)
+     review      → reviewer (caption + final pass)
+     completed   → variant (variant packaging + scheduling prep)
+     posted      → owner   (analytics review)
+*/
+const STAGE_ROLE = {
+  not_started: "owner",
+  in_progress: "skilled",
+  review:      "reviewer",
+  completed:   "variant",
+  posted:      "owner",
+};
+
+function stageOwnerPersonId(stage) {
+  const role = STAGE_ROLE[stage];
+  return role ? ROLES[role]?.person : null;
+}
 
 /* ---------- Calendar seed (week of May 13–19, 2026) ---------- */
 const CAL_WEEK = [
@@ -324,43 +122,9 @@ const CAL_ITEMS = [
   { dow: 5, t: "18:00", kind: "variant",  reel: "REEL-175", title: "Variants due · Pashupati",  owner: "sam",   tone: "warn"  },
 ];
 
-/* ---------- Export-ready rows (Planable-shaped) ---------- */
-const EXPORT_ROWS = [
-  { id: "REEL-188", title: "Lalitpur dusk",
-    caption: "When the sun drops behind Patan's temples, the city breathes out for a minute.\n\n#kathmandu #patan #goldenhour",
-    media: "exports/reel-188-final-1080x1920.mp4", mediaSize: "42 MB",
-    platform: "Instagram · @studio.kathmandu",
-    date: "2026-05-13", time: "18:00",
-    status: "ready", notes: "First post of the day · winner hook." },
-  { id: "REEL-170", title: "Boudha drone · 5-var pack",
-    caption: "Sunrise over Boudha. Five takes, one stupa.\n\n#boudha #drone #nepal",
-    media: "exports/reel-170-var-A.mp4", mediaSize: "38 MB",
-    platform: "Instagram · @studio.kathmandu",
-    date: "2026-05-13", time: "22:00",
-    status: "ready", notes: "Variant A locked · B/C/D/E in folder for retest." },
-  { id: "REEL-178", title: "Annapurna teaser",
-    caption: "Trail teaser for next month's series. Full reel drops Friday.\n\n#annapurna #trekking",
-    media: "exports/reel-178-teaser.mp4", mediaSize: "31 MB",
-    platform: "Instagram · @studio.kathmandu",
-    date: "2026-05-14", time: "09:00",
-    status: "needs-caption", notes: "Caption draft needs Maya's pass before export." },
-  { id: "REEL-204", title: "Kathmandu chaos",
-    caption: "",
-    media: "—", mediaSize: "—",
-    platform: "Instagram · @studio.kathmandu",
-    date: "2026-05-16", time: "11:00",
-    status: "blocked", notes: "Awaiting main edit handoff. Caption + media pending." },
-  { id: "REEL-180", title: "Himalaya flyover · winner",
-    caption: "The Himalayas don't pose. They just sit there being themselves.\n\n#himalayas #nepal #flyover",
-    media: "exports/reel-180-var-A.mp4", mediaSize: "44 MB",
-    platform: "Instagram · @studio.kathmandu",
-    date: "2026-05-16", time: "18:00",
-    status: "ready", notes: "Winner variant A · save as repeatable hook template." },
-];
-
 export {
   PEOPLE, ROLES,
-  REELS, REVIEW_LANE_CARDS, TASKS_FULL,
-  STAGE_LABEL, STAGE_TONE,
-  CAL_WEEK, CAL_ITEMS, EXPORT_ROWS,
+  STAGES, STAGE_LABEL, STAGE_TONE, normalizeStage,
+  STAGE_ROLE, stageOwnerPersonId,
+  CAL_WEEK, CAL_ITEMS,
 };

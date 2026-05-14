@@ -6,6 +6,7 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useNow, formatAge } from "./time.jsx";
 import { useWorkflow } from "./store.jsx";
 import { useAuth } from "./auth.jsx";
+import { useNotifications } from "./notifications.jsx";
 
 /* ---------- Status pill ---------- */
 function Pill({ tone, dashed, children }) {
@@ -82,6 +83,8 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
   /* Per-card action menu (archive / delete) — owner only for delete. */
   const { actions } = useWorkflow();
   const { person } = useAuth();
+  const { unreadByReel } = useNotifications();
+  const unreadCount = unreadByReel[reel.id] || 0;
   const isOwner = person?.role === "owner";
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -109,7 +112,15 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
     <div className={cls} onClick={openReel}>
       <div className="head">
         <div>
-          <div className="id">{reel.id}</div>
+          <div className="id">
+            {reel.id}
+            {unreadCount > 0 && (
+              <span className="unread-dot"
+                    title={unreadCount + " unread comment" + (unreadCount === 1 ? "" : "s")}>
+                {unreadCount}
+              </span>
+            )}
+          </div>
           <div className="title">{reel.title}</div>
         </div>
         {pillText && <Pill tone={pillTone}>{pillText}</Pill>}
