@@ -12,6 +12,35 @@ Workflow per change:
 
 ---
 
+## 2026-05-15 — Refactor step 3: extract modals from fab.jsx
+
+**Before:** `src/components/fab.jsx` was 345 lines mixing:
+- `CreateFab` (the floating button, the only externally-used symbol)
+- `TaskModal` (~60 lines)
+- `ReelModal` (~150 lines, including its own `nextReelId` helper)
+- `Modal` / `Field` / `SegRow` / `SelectInput` (shared form primitives)
+
+External imports of the file:
+```
+src/app.jsx: import { CreateFab } from "./components/fab.jsx"
+```
+Only `CreateFab` was actually used outside — the other exports were leakage.
+
+**After:**
+
+```
+src/components/fab.jsx                  (50 lines — just CreateFab)
+src/components/modals/Modal.jsx         (Modal + Field + SegRow + SelectInput)
+src/components/modals/TaskModal.jsx
+src/components/modals/ReelModal.jsx     (includes nextReelId helper)
+```
+
+`fab.jsx` now imports the two flow modals from `./modals/`. Verified by
+build (`npm run build`): 95 modules transformed (was 92 → +3 new files),
+CSS byte-identical, JS bundle 461.01 kB (same as before).
+
+---
+
 ## 2026-05-15 — Refactor step 2: folder structure (flat → src/pages, components, store, lib)
 
 **Goal:** end the 25-flat-files-at-project-root situation. Pure mechanical move; no behavior change.
