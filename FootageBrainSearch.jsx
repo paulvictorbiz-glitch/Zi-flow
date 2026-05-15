@@ -14,10 +14,13 @@ import {
 } from "./footage-brain-client.js";
 
 const SEARCH_MODES = [
-  { key: "semantic", label: "Semantic", hint: "meaning + visual concepts" },
-  { key: "keyword",  label: "Keyword",  hint: "exact transcript terms" },
-  { key: "hybrid",   label: "Hybrid",   hint: "semantic + keyword" },
-  { key: "filename", label: "Filename", hint: "match by file name" },
+  { key: "semantic",   label: "Semantic",   hint: "meaning + visual concepts" },
+  { key: "keyword",    label: "Keyword",    hint: "exact transcript terms" },
+  { key: "hybrid",     label: "Hybrid",     hint: "semantic + keyword" },
+  { key: "visual",     label: "Visual",     hint: "CLIP frame embeddings (what's on screen)" },
+  { key: "caption",    label: "Caption",    hint: "VLM-generated frame captions" },
+  { key: "multimodal", label: "Multimodal", hint: "fused: transcript + CLIP + captions" },
+  { key: "filename",   label: "Filename",   hint: "match by file name" },
 ];
 
 export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = [] }) {
@@ -216,6 +219,12 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
                   ? "e.g., '20241223', 'IMG_0512', 'drone'"
                   : mode === "keyword"
                   ? "Exact word in transcript…"
+                  : mode === "visual"
+                  ? "Describe the shot, e.g., 'red car at night'"
+                  : mode === "caption"
+                  ? "Describe a scene, e.g., 'person holding a coffee cup'"
+                  : mode === "multimodal"
+                  ? "Anything — words spoken, things shown, scene description…"
                   : "e.g., 'sunrise drone shot', 'people talking indoors'"
               }
               style={{
@@ -297,8 +306,11 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
               onAdd={() => handleAddResult(result)}
               onPreview={() => {
                 if (!result.video_file_id) return;
+                // Footage Brain serves both API and UI from :8765 in prod
+                // (start-prod.bat). 5173 was the old Vite dev port and 404s
+                // when the user is running prod.
                 window.open(
-                  "http://localhost:5173/files/" + result.video_file_id,
+                  "http://localhost:8765/files/" + result.video_file_id,
                   "_blank",
                   "noopener,noreferrer"
                 );

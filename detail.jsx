@@ -182,9 +182,31 @@ function ReelDetail({ reel, onBack }) {
     }
   };
 
-  /* Reference links saved at create-time (audio + inspiration). */
+  /* Reference links (audio + inspiration). Always editable post-create:
+     clicking opens the link if set, or prompts to add one when empty.
+     Shift+click (or empty link) → edit / add. */
   const audioUrl = stored?.audio || "";
   const inspoUrl = stored?.inspo || "";
+
+  const editRefLink = (field, currentValue, label) => {
+    const next = window.prompt(
+      `${label} link for this reel:`,
+      currentValue
+    );
+    if (next === null) return; // cancel
+    const trimmed = next.trim();
+    if (trimmed === currentValue) return;
+    actions.updateReel(current.id, { [field]: trimmed });
+  };
+
+  // Click = open if set, prompt if not. Shift+click = always prompt (edit).
+  const handleRefClick = (e, field, currentValue, label) => {
+    if (e.shiftKey || !currentValue) {
+      editRefLink(field, currentValue, label);
+      return;
+    }
+    window.open(currentValue, "_blank", "noopener,noreferrer");
+  };
 
   return (
     <div>
@@ -200,22 +222,34 @@ function ReelDetail({ reel, onBack }) {
               letterSpacing: "0.04em",
             }}>{current.id}</span>
           </h1>
-          {(audioUrl || inspoUrl) && (
-            <div className="sub" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              {audioUrl && (
-                <a href={audioUrl} target="_blank" rel="noopener noreferrer"
-                   style={{ color: "var(--c-cyan, var(--accent))", textDecoration: "none" }}>
-                  ♪ Music ↗
-                </a>
-              )}
-              {inspoUrl && (
-                <a href={inspoUrl} target="_blank" rel="noopener noreferrer"
-                   style={{ color: "var(--c-cyan, var(--accent))", textDecoration: "none" }}>
-                  ✦ Inspiration ↗
-                </a>
-              )}
-            </div>
-          )}
+          <div className="sub" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <span
+              onClick={(e) => handleRefClick(e, "audio", audioUrl, "Music")}
+              title={audioUrl
+                ? `${audioUrl}\n(click to open · shift+click to edit)`
+                : "Click to add a music link"}
+              style={{
+                cursor: "pointer",
+                userSelect: "none",
+                color: audioUrl ? "var(--c-amber)" : "var(--fg-mute)",
+                textDecoration: "none",
+              }}>
+              {audioUrl ? "♪ Music ↗" : "+ Music"}
+            </span>
+            <span
+              onClick={(e) => handleRefClick(e, "inspo", inspoUrl, "Inspiration")}
+              title={inspoUrl
+                ? `${inspoUrl}\n(click to open · shift+click to edit)`
+                : "Click to add an inspiration link"}
+              style={{
+                cursor: "pointer",
+                userSelect: "none",
+                color: inspoUrl ? "var(--c-amber)" : "var(--fg-mute)",
+                textDecoration: "none",
+              }}>
+              {inspoUrl ? "✦ Inspiration ↗" : "+ Inspiration"}
+            </span>
+          </div>
         </div>
         <div className="actions" style={{ alignItems: "center", gap: 8 }}>
           {reelStateUrl ? (
