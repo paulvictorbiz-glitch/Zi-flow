@@ -5,8 +5,8 @@
    ========================================================= */
 
 import React, { useState } from "react";
-import { DPill, Pill } from "./components.jsx";
-import { ROLES, CAL_WEEK, CAL_ITEMS, PEOPLE } from "./shared-data.jsx";
+import { DPill, Pill } from "../components/components.jsx";
+import { ROLES, CAL_WEEK, CAL_ITEMS, PEOPLE } from "../lib/shared-data.jsx";
 
 function CalendarView({ role, onOpen }) {
   const [mode, setMode] = useState("week"); // week | month

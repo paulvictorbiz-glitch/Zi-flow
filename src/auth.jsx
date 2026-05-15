@@ -18,7 +18,7 @@
    ========================================================= */
 
 import React from "react";
-import { supabase } from "./supabase-client.js";
+import { supabase } from "./lib/supabase-client.js";
 
 const AuthContext = React.createContext(null);
 

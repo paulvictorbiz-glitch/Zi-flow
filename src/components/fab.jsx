@@ -11,10 +11,10 @@
 
 import React, { useState, useEffect } from "react";
 import { DPill } from "./components.jsx";
-import { useWorkflow } from "./store.jsx";
-import { PEOPLE } from "./shared-data.jsx";
+import { useWorkflow } from "../store/store.jsx";
+import { PEOPLE } from "../lib/shared-data.jsx";
 import { FootageBrainSearch } from "./FootageBrainSearch.jsx";
-import { formatSearchResultForAttachment } from "./footage-brain-client.js";
+import { formatSearchResultForAttachment } from "../lib/footage-brain-client.js";
 
 function CreateFab() {
   const [open, setOpen] = useState(false);

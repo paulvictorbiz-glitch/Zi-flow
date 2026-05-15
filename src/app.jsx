@@ -1,22 +1,22 @@
 /* Main shell with tabs, role-aware perspective, and global Create FAB. */
 
 import React, { useState, useEffect, useMemo } from "react";
-import { DPill } from "./components.jsx";
-import { PEOPLE, ROLES } from "./shared-data.jsx";
-import { WorkflowProvider, useWorkflow } from "./store.jsx";
-import { MyWork } from "./my-work.jsx";
-import { Pipeline } from "./pipeline.jsx";
-import { ListView } from "./list-view.jsx";
-import { CalendarView } from "./calendar-view.jsx";
-import { ReelDetail } from "./detail.jsx";
-import { ExportView } from "./export-view.jsx";
-import { FootageLibrary } from "./footage-library.jsx";
-import { Analytics } from "./analytics.jsx";
-import { CreateFab } from "./fab.jsx";
+import { DPill } from "./components/components.jsx";
+import { PEOPLE, ROLES } from "./lib/shared-data.jsx";
+import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
+import { MyWork } from "./pages/my-work.jsx";
+import { Pipeline } from "./pages/pipeline.jsx";
+import { ListView } from "./pages/list-view.jsx";
+import { CalendarView } from "./pages/calendar-view.jsx";
+import { ReelDetail } from "./pages/detail.jsx";
+import { ExportView } from "./pages/export-view.jsx";
+import { FootageLibrary } from "./pages/footage-library.jsx";
+import { Analytics } from "./pages/analytics.jsx";
+import { CreateFab } from "./components/fab.jsx";
 import { AuthProvider, AuthGate, IdentityGate, useAuth } from "./auth.jsx";
-import { TimeProvider } from "./time.jsx";
-import { ArchivedView } from "./archived-view.jsx";
-import { NotificationsProvider, useNotifications } from "./notifications.jsx";
+import { TimeProvider } from "./lib/time.jsx";
+import { ArchivedView } from "./pages/archived-view.jsx";
+import { NotificationsProvider, useNotifications } from "./components/notifications.jsx";
 
 /* Map the four person.role values onto the four role-switcher keys. */
 function defaultRoleKey(person) {

@@ -4,7 +4,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { Pill } from "./components.jsx";
-import { VARIANT_TYPES } from "./detail-data.jsx";
+import { VARIANT_TYPES } from "../pages/detail-data.jsx";
 
 function VariantRow({ row, onChange }) {
   const [open, setOpen] = useState(false);

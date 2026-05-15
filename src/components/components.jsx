@@ -3,9 +3,9 @@
    =========================================================== */
 
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { useNow, formatAge } from "./time.jsx";
-import { useWorkflow } from "./store.jsx";
-import { useAuth } from "./auth.jsx";
+import { useNow, formatAge } from "../lib/time.jsx";
+import { useWorkflow } from "../store/store.jsx";
+import { useAuth } from "../auth.jsx";
 import { useNotifications } from "./notifications.jsx";
 
 /* ---------- Status pill ---------- */

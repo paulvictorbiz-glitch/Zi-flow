@@ -8,12 +8,12 @@
    ========================================================= */
 
 import React, { useState, useEffect } from "react";
-import { Card, DPill } from "./components.jsx";
-import { useWorkflow } from "./store.jsx";
-import { useAuth } from "./auth.jsx";
-import { useNotifications } from "./notifications.jsx";
-import { FootageBrainSearch } from "./FootageBrainSearch.jsx";
-import { AttachedFootageList } from "./AttachedFootageList.jsx";
+import { Card, DPill } from "../components/components.jsx";
+import { useWorkflow } from "../store/store.jsx";
+import { useAuth } from "../auth.jsx";
+import { useNotifications } from "../components/notifications.jsx";
+import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
+import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
 
 /* Blueprint fields start empty for every reel — operators fill them in. */
 const DEFAULT_LOGLINE = "";

@@ -16,11 +16,11 @@
    ========================================================= */
 
 import React, { useState } from "react";
-import { DPill, Pill } from "./components.jsx";
-import { useWorkflow } from "./store.jsx";
-import { useAuth } from "./auth.jsx";
-import { useNow, formatDue } from "./time.jsx";
-import { PEOPLE } from "./shared-data.jsx";
+import { DPill, Pill } from "../components/components.jsx";
+import { useWorkflow } from "../store/store.jsx";
+import { useAuth } from "../auth.jsx";
+import { useNow, formatDue } from "../lib/time.jsx";
+import { PEOPLE } from "../lib/shared-data.jsx";
 
 /* Build the revision history array, folding the older single-field
    shape into one entry so display code only handles one schema. */

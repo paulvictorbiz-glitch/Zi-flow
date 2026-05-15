@@ -3,8 +3,8 @@
    ========================================================= */
 
 import React, { useState, useMemo } from "react";
-import { DPill, ReelCard } from "./components.jsx";
-import { useWorkflow } from "./store.jsx";
+import { DPill, ReelCard } from "../components/components.jsx";
+import { useWorkflow } from "../store/store.jsx";
 
 const PIPELINE_STAGES = [
   { key: "not_started", label: "NOT STARTED" },

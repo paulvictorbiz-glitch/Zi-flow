@@ -19,8 +19,8 @@
    ========================================================= */
 
 import React from "react";
-import { PEOPLE, ROLES, normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "./shared-data.jsx";
-import { supabase } from "./supabase-client.js";
+import { PEOPLE, ROLES, normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "../lib/shared-data.jsx";
+import { supabase } from "../lib/supabase-client.js";
 
 /* ---------- camelCase ↔ snake_case mappers ---------- */
 function reelFromDb(row) {

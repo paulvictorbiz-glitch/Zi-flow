@@ -16,8 +16,8 @@
    ========================================================= */
 
 import React, { useMemo } from "react";
-import { DPill } from "./components.jsx";
-import { useWorkflow } from "./store.jsx";
+import { DPill } from "../components/components.jsx";
+import { useWorkflow } from "../store/store.jsx";
 
 /* Local-time "YYYY-MM-DD HH:mm" for the Scheduled column. Returns
    empty string when dueAt is unset so the row still exports but

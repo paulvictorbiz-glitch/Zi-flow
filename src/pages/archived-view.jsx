@@ -6,11 +6,11 @@
    ========================================================= */
 
 import React from "react";
-import { DPill, Pill } from "./components.jsx";
-import { useWorkflow } from "./store.jsx";
-import { useAuth } from "./auth.jsx";
-import { useNow, formatAge, formatDue } from "./time.jsx";
-import { PEOPLE, STAGE_LABEL, STAGE_TONE } from "./shared-data.jsx";
+import { DPill, Pill } from "../components/components.jsx";
+import { useWorkflow } from "../store/store.jsx";
+import { useAuth } from "../auth.jsx";
+import { useNow, formatAge, formatDue } from "../lib/time.jsx";
+import { PEOPLE, STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
 
 function ArchivedView({ onOpen }) {
   const { reels, actions } = useWorkflow();

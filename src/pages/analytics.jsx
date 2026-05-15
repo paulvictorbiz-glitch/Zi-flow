@@ -4,7 +4,7 @@
    ========================================================= */
 
 import React, { useState } from "react";
-import { DPill, Pill, Selector } from "./components.jsx";
+import { DPill, Pill, Selector } from "../components/components.jsx";
 
 const POSTED_REELS = [
   { id: "REEL-180", title: "Himalaya flyover",       postedAgo: "7d ago",  variants: 5 },

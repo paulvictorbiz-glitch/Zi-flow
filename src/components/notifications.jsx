@@ -17,8 +17,8 @@
    ========================================================= */
 
 import React from "react";
-import { useAuth } from "./auth.jsx";
-import { useWorkflow } from "./store.jsx";
+import { useAuth } from "../auth.jsx";
+import { useWorkflow } from "../store/store.jsx";
 
 const STORAGE_KEY = "workflow.comments.lastRead.v1";
 

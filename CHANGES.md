@@ -12,7 +12,44 @@ Workflow per change:
 
 ---
 
-## 2026-05-15 — Fix FB preview port + post-create music/inspiration link editing
+## 2026-05-15 — Refactor step 2: folder structure (flat → src/pages, components, store, lib)
+
+**Goal:** end the 25-flat-files-at-project-root situation. Pure mechanical move; no behavior change.
+
+**New layout:**
+
+```
+src/
+  main.jsx              (was: ./main.jsx)
+  app.jsx               (was: ./app.jsx)
+  auth.jsx              (was: ./auth.jsx)
+  pages/
+    pipeline.jsx, my-work.jsx, detail.jsx, detail-data.jsx,
+    footage-library.jsx, export-view.jsx, analytics.jsx,
+    list-view.jsx, calendar-view.jsx, archived-view.jsx
+  components/
+    fab.jsx, components.jsx, notifications.jsx, variant-row.jsx,
+    rm-node.jsx, handoff.jsx, AttachedFootageList.jsx,
+    FootageBrainSearch.jsx
+  store/
+    store.jsx
+  lib/
+    supabase-client.js, footage-brain-client.js,
+    shared-data.jsx, time.jsx
+```
+
+**Files unchanged in place:** `index.html` (Vite entry), `package.json`,
+`vite.config.js`, `seed/`, `supabase/`, `node_modules/`, `dist/`,
+`SMOKE.md`, `CHANGES.md`, `start-all.bat`.
+
+**Index entry:** `index.html` script src updated from `/main.jsx` to
+`/src/main.jsx`.
+
+**Import path rewrites:** every relative import inside the moved files was
+rewritten to match the new locations (e.g. `./store.jsx` →
+`../store/store.jsx` when called from a page, etc.). Done in bulk via a
+Python script after `git mv` to preserve history.
+
 
 **A. Preview button error.**
 

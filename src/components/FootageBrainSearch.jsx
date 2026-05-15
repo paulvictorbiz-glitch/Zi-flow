@@ -11,7 +11,7 @@ import {
   searchByFilename,
   checkFootageBrainHealth,
   formatSearchResultForAttachment,
-} from "./footage-brain-client.js";
+} from "../lib/footage-brain-client.js";
 
 const SEARCH_MODES = [
   { key: "semantic",   label: "Semantic",   hint: "meaning + visual concepts" },

@@ -15,8 +15,8 @@
    ========================================================= */
 
 import React, { useMemo, useState } from "react";
-import { DPill } from "./components.jsx";
-import { useWorkflow } from "./store.jsx";
+import { DPill } from "../components/components.jsx";
+import { useWorkflow } from "../store/store.jsx";
 
 /* Group all attached_footage_items rows by clip identity. Each
    resulting record carries the clip's metadata (taken from the
