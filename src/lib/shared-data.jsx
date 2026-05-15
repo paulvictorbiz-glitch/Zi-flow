@@ -94,6 +94,18 @@ function stageOwnerPersonId(stage) {
   return role ? ROLES[role]?.person : null;
 }
 
+/* ---------- Pipeline-board lanes ----------
+   Rows on the kanban board. Three person lanes plus a special
+   "review" lane that's a workflow slot rather than a person —
+   reels sitting in the review stage live there regardless of
+   who owns them. */
+const PIPELINE_LANES = [
+  { id: "alex",   name: PEOPLE.alex.name, role: "Skilled editor" },
+  { id: "paul",   name: PEOPLE.paul.name, role: "Owner / Creative Director" },
+  { id: "sam",    name: PEOPLE.sam.name,  role: "Variant editor" },
+  { id: "review", name: PEOPLE.maya.name, role: "Reviewer" },
+];
+
 /* ---------- Calendar seed (week of May 13–19, 2026) ---------- */
 const CAL_WEEK = [
   { date: "Mon May 13", label: "Mon", n: 13 },
@@ -126,5 +138,6 @@ export {
   PEOPLE, ROLES,
   STAGES, STAGE_LABEL, STAGE_TONE, normalizeStage,
   STAGE_ROLE, stageOwnerPersonId,
+  PIPELINE_LANES,
   CAL_WEEK, CAL_ITEMS,
 };

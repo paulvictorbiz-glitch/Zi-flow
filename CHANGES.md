@@ -12,6 +12,29 @@ Workflow per change:
 
 ---
 
+## 2026-05-15 — Refactor step 4: hoist pipeline-board constants into shared-data
+
+**Duplications found:** only `pipeline.jsx` was carrying local constants
+that shadowed shared-data (other pages already import from there).
+
+- `PIPELINE_STAGES` was a hand-maintained array of `{key, label}` —
+  shadowed `STAGES` (already in shared-data) and `STAGE_LABEL` (also
+  there, with title-case labels vs the board's upper-case style).
+  Now derived inline from those two: `STAGES.map(k => ({key: k,
+  label: STAGE_LABEL[k].toUpperCase()}))`. One label table, one
+  ordering source.
+
+- `LANES` was 4 hardcoded lanes with names + roles. Moved to
+  `shared-data.jsx` as `PIPELINE_LANES`, with names sourced from
+  `PEOPLE` so a rename in one place propagates everywhere. The
+  "review" lane id is preserved (it's a workflow slot, not a person
+  id — Leroy's PEOPLE id is "maya").
+
+Verified by build: 95 modules unchanged, CSS byte-identical, JS bundle
+~70 bytes smaller from the dedup.
+
+---
+
 ## 2026-05-15 — Refactor step 3: extract modals from fab.jsx
 
 **Before:** `src/components/fab.jsx` was 345 lines mixing:

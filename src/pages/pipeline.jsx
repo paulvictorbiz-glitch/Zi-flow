@@ -5,21 +5,12 @@
 import React, { useState, useMemo } from "react";
 import { DPill, ReelCard } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
+import { STAGES, STAGE_LABEL, PIPELINE_LANES } from "../lib/shared-data.jsx";
 
-const PIPELINE_STAGES = [
-  { key: "not_started", label: "NOT STARTED" },
-  { key: "in_progress", label: "IN PROGRESS" },
-  { key: "review",      label: "REVIEW"      },
-  { key: "completed",   label: "COMPLETED"   },
-  { key: "posted",      label: "POSTED"      },
-];
-
-const LANES = [
-  { id: "alex", name: "Judy Adawag",  role: "Skilled editor" },
-  { id: "paul", name: "Paul Victor",  role: "Owner / Creative Director" },
-  { id: "sam",  name: "Jay",          role: "Variant editor" },
-  { id: "review", name: "Leroy Crosby", role: "Reviewer" },
-];
+/* Board columns derived from the canonical STAGES list. Labels are
+   upper-cased here because the board column heads use that style;
+   list-view / archived-view consume STAGE_LABEL as-is (title case). */
+const PIPELINE_STAGES = STAGES.map((key) => ({ key, label: STAGE_LABEL[key].toUpperCase() }));
 
 function Pipeline({ onOpen }) {
   const { reels, reviewLaneCards, actions } = useWorkflow();
@@ -124,7 +115,7 @@ function Pipeline({ onOpen }) {
         })}
 
         {/* Lanes */}
-        {LANES.map(lane => {
+        {PIPELINE_LANES.map(lane => {
           const laneCount = items.filter(r => r.lane === lane.id).length;
           return (
           <React.Fragment key={lane.id}>
