@@ -58,10 +58,10 @@ function AttachedFootageItem({ index, item, onRemove }) {
   };
 
   const openPreview = () => {
-    // Open in Footage Brain preview (if frontend is at localhost:5173)
+    // Open in Footage Brain preview (production port is 8765)
     // We construct a link to the Footage Brain file detail page
     window.open(
-      `http://localhost:5173/files/${item.footage_file_id}`,
+      `http://localhost:8765/files/${item.footage_file_id}`,
       "_blank"
     );
   };
@@ -92,7 +92,7 @@ function AttachedFootageItem({ index, item, onRemove }) {
       >
         {item.thumbnail_url && (
           <img
-            src={`/thumbnails/${item.thumbnail_url}`}
+            src={`/thumbnails/${item.thumbnail_url.split(/[\\/]/).pop()}`}
             alt={item.filename}
             style={{
               width: "100%",

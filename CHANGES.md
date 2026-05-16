@@ -12,6 +12,70 @@ Workflow per change:
 
 ---
 
+## 2026-05-16 — Add Locations capability (My Maps embed + structured import layer)
+
+**New files (no rollback log needed):**
+- `src/lib/locations-data.jsx` — structured map-data layer:
+  `LocationsProvider` / `useLocations()` (mirrors `useWorkflow()`),
+  localStorage-backed (`ziflow.locations.v1`), KML/GeoJSON/CSV
+  importers, `MY_MAPS` registry (mid from the pasted embed),
+  `linkedReelIds` / `linkedNoteIds` forward hooks.
+- `src/pages/locations.jsx` — page with two tabs: **Map** (the
+  Google My Maps iframe embed) and **Structured** (importable
+  Location table). Reuses existing chrome classes; no new global
+  CSS.
+
+**Edited (pre-existing): `src/app.jsx`** — wired the new page into
+the shell. OLD snippets being replaced:
+
+1. Imports — after the `ArchivedView` import line:
+```jsx
+import { ArchivedView } from "./pages/archived-view.jsx";
+import { NotificationsProvider, useNotifications } from "./components/notifications.jsx";
+```
+
+2. Crumb label ternary (lines ~96-100):
+```jsx
+{view === "pipeline"  ? "Pipeline · " + pipelineMode :
+ view === "mywork"    ? "My work" :
+ view === "detail"    ? "Reel detail" :
+ view === "footage"   ? "Footage library" :
+ view === "export"    ? "Export prep" : "Analytics"}
+```
+
+3. Tabstrip — the Analytics tab button was the last numbered tab:
+```jsx
+        <button className={"tab " + (view === "analytics" ? "is-active" : "")} onClick={() => setView("analytics")}>
+          <span className="n">6 ·</span> Analytics
+        </button>
+```
+
+4. Body conditionals — the Analytics line was last:
+```jsx
+      {view === "analytics" && <Analytics />}
+```
+
+5. Provider tree:
+```jsx
+            <WorkflowProvider>
+              <NotificationsProvider>
+                <AppShell />
+              </NotificationsProvider>
+            </WorkflowProvider>
+```
+
+**Motivation:** add a Locations capability in two layers — an
+immediate-use My Maps embed and a structured, importable
+place-data layer designed to later connect to reels/planning/notes
+via the `linkedReelIds`/`linkedNoteIds` fields and the stable
+`useLocations()` API. Local-first so it ships without a Supabase
+schema change; the provider shape is a drop-in for a future
+store/DB move.
+
+**Verified:** `npm run build` (see report).
+
+---
+
 ## 2026-05-15 — Refactor step 4: hoist pipeline-board constants into shared-data
 
 **Duplications found:** only `pipeline.jsx` was carrying local constants

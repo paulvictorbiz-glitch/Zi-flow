@@ -16,6 +16,8 @@ import { CreateFab } from "./components/fab.jsx";
 import { AuthProvider, AuthGate, IdentityGate, useAuth } from "./auth.jsx";
 import { TimeProvider } from "./lib/time.jsx";
 import { ArchivedView } from "./pages/archived-view.jsx";
+import { Locations } from "./pages/locations.jsx";
+import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider, useNotifications } from "./components/notifications.jsx";
 
 /* Map the four person.role values onto the four role-switcher keys. */
@@ -97,6 +99,7 @@ function AppShell() {
              view === "mywork"    ? "My work" :
              view === "detail"    ? "Reel detail" :
              view === "footage"   ? "Footage library" :
+             view === "locations" ? "Locations" :
              view === "export"    ? "Export prep" : "Analytics"}
           </span>
           <span className="sep">/</span>
@@ -192,6 +195,9 @@ function AppShell() {
         <button className={"tab " + (view === "analytics" ? "is-active" : "")} onClick={() => setView("analytics")}>
           <span className="n">6 ·</span> Analytics
         </button>
+        <button className={"tab " + (view === "locations" ? "is-active" : "")} onClick={() => setView("locations")}>
+          <span className="n">7 ·</span> Locations
+        </button>
 
         {/* Pipeline sub-mode chips — only when on Pipeline */}
         {view === "pipeline" && (
@@ -218,6 +224,7 @@ function AppShell() {
       {view === "footage"   && <FootageLibrary onOpen={openReel} />}
       {view === "export"    && <ExportView onOpen={openReel} />}
       {view === "analytics" && <Analytics />}
+      {view === "locations" && <Locations />}
 
       {/* Global create FAB */}
       <CreateFab />
@@ -232,9 +239,11 @@ function App() {
         <AuthGate>
           <IdentityGate>
             <WorkflowProvider>
-              <NotificationsProvider>
-                <AppShell />
-              </NotificationsProvider>
+              <LocationsProvider>
+                <NotificationsProvider>
+                  <AppShell />
+                </NotificationsProvider>
+              </LocationsProvider>
             </WorkflowProvider>
           </IdentityGate>
         </AuthGate>

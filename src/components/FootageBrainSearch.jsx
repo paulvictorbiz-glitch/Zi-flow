@@ -379,7 +379,7 @@ function FootageResultCard({ result, onAdd, onPreview, added }) {
       >
         {result.thumbnail_path && (
           <img
-            src={`/thumbnails/${result.thumbnail_path}`}
+            src={`/thumbnails/${result.thumbnail_path.split(/[\\/]/).pop()}`}
             alt={result.filename}
             style={{
               width: "100%",
