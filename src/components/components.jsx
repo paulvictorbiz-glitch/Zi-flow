@@ -60,8 +60,10 @@ function Card({ title, right, footLeft, children, defaultOpen = true, tone, soli
 /* ---------- Reel card (board) ---------- */
 function ReelCard({ reel, onOpen, state, isSelected }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'
+  const [collapsed, setCollapsed] = useState(false);
   const cls = [
     "reel",
+    collapsed ? "collapsed" : "",
     state === "block" ? "is-blocked" : "",
     state === "warn" ? "is-warn" : "",
     state === "selected" ? "is-selected" : "",
@@ -136,8 +138,8 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
           </div>
         )}
       </div>
-      {reel.note && <div className="note">{reel.note}</div>}
-      {reel.links && reel.links.length > 0 && (
+      {!collapsed && reel.note && <div className="note">{reel.note}</div>}
+      {!collapsed && reel.links && reel.links.length > 0 && (
         <div className="links" onClick={e => e.stopPropagation()}>
           {reel.links.map((l, i) => (
             <a key={i} className="link" href="#"
@@ -149,8 +151,8 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
         <span>{reel.foot || ""}</span>
         <span
           className="collapse"
-          onClick={e => { e.stopPropagation(); /* placeholder for per-card collapse */ }}
-        >Collapse</span>
+          onClick={e => { e.stopPropagation(); setCollapsed(c => !c); }}
+        >{collapsed ? "Expand" : "Collapse"}</span>
       </div>
     </div>
   );

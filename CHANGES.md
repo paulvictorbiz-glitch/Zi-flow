@@ -12,6 +12,51 @@ Workflow per change:
 
 ---
 
+## 2026-05-21 — Fix: search modal closes on text-select drag; pipeline card collapse
+
+Two bug fixes.
+
+**A. Footage Brain search modal "kicks you out" when clearing the query.**
+`src/components/FootageBrainSearch.jsx` — the backdrop closed the modal on
+any `click` that bubbled to it. Drag-selecting the search text (to clear/
+replace it) often ends the drag past the input's edge; the mouseup lands
+on the backdrop, the synthesized `click` targets the backdrop, and the
+modal closed mid-search.
+
+OLD — overlay div closed on raw click:
+```jsx
+        zIndex: 9999,
+      }}
+      onClick={onClose}
+    >
+```
+NEW — track whether the press *started* on the backdrop; only close when
+the whole press+release happened on the backdrop itself. Added a
+`backdropDown` ref (after the `addedThisSession` state) and replaced
+`onClick={onClose}` with `onMouseDown` + a guarded `onClick`.
+
+**B. Pipeline card "Collapse" did nothing.**
+`src/components/components.jsx` — `ReelCard`'s foot had a Collapse span
+that was a no-op placeholder.
+
+OLD:
+```jsx
+        <span
+          className="collapse"
+          onClick={e => { e.stopPropagation(); /* placeholder for per-card collapse */ }}
+        >Collapse</span>
+```
+NEW: `ReelCard` gets a `collapsed` state. The span toggles it and reads
+`Collapse`/`Expand`; the note and links rows render only when not
+collapsed; `collapsed` is added to the card class list. OLD body rows:
+```jsx
+      {reel.note && <div className="note">{reel.note}</div>}
+      {reel.links && reel.links.length > 0 && (
+```
+now guarded with `!collapsed &&`.
+
+---
+
 ## 2026-05-21 — Search URL resolution: build-time → runtime (Vercel dev-mode build)
 
 The earlier same-day fix branched on `import.meta.env.DEV`. Vercel builds

@@ -37,6 +37,12 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
   // already-attached items as "addable".
   const [addedThisSession, setAddedThisSession] = useState(() => new Set(attachedIds));
 
+  // Tracks whether a mousedown began on the backdrop itself. The modal then
+  // only closes when the whole press+release happened on the backdrop — so a
+  // text-selection drag inside the modal that ends on the backdrop won't
+  // close it (which used to "kick you out" while clearing the search box).
+  const backdropDown = React.useRef(false);
+
   // Check Footage Brain health on mount
   React.useEffect(() => {
     checkFootageBrainHealth()
@@ -103,7 +109,10 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
         justifyContent: "center",
         zIndex: 9999,
       }}
-      onClick={onClose}
+      onMouseDown={(e) => { backdropDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => {
+        if (backdropDown.current && e.target === e.currentTarget) onClose();
+      }}
     >
       <div
         style={{
