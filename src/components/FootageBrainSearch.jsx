@@ -11,6 +11,8 @@ import {
   searchByFilename,
   checkFootageBrainHealth,
   formatSearchResultForAttachment,
+  footageBrainThumbnailUrl,
+  footageBrainFileUrl,
 } from "../lib/footage-brain-client.js";
 
 const SEARCH_MODES = [
@@ -64,7 +66,7 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
       console.error("Search error:", err);
       setError(
         err.message?.includes("fetch")
-          ? "Footage Brain is offline. Please check it's running on localhost:8765."
+          ? "Footage Brain is offline or unreachable. Please try again in a moment."
           : `Search failed: ${err.message || String(err)}`
       );
       setResults([]);
@@ -169,7 +171,7 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
                 fontSize: 12,
               }}
             >
-              ⚠ Footage Brain appears offline (http://localhost:8765). Check that the backend is running.
+              ⚠ Footage Brain appears offline. Check your connection or that the service is running.
             </div>
           )}
           <div style={{
@@ -306,11 +308,11 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
               onAdd={() => handleAddResult(result)}
               onPreview={() => {
                 if (!result.video_file_id) return;
-                // Footage Brain serves both API and UI from :8765 in prod
-                // (start-prod.bat). 5173 was the old Vite dev port and 404s
-                // when the user is running prod.
+                // Opens the clip's FootageBrain detail page in a new tab.
+                // Resolves to localhost:8765 in dev and the API subdomain in
+                // production (see footage-brain-client.js).
                 window.open(
-                  "http://localhost:8765/files/" + result.video_file_id,
+                  footageBrainFileUrl(result.video_file_id),
                   "_blank",
                   "noopener,noreferrer"
                 );
@@ -379,7 +381,7 @@ function FootageResultCard({ result, onAdd, onPreview, added }) {
       >
         {result.thumbnail_path && (
           <img
-            src={`/thumbnails/${result.thumbnail_path.split(/[\\/]/).pop()}`}
+            src={footageBrainThumbnailUrl(result.thumbnail_path)}
             alt={result.filename}
             style={{
               width: "100%",
@@ -477,6 +479,33 @@ function FootageResultCard({ result, onAdd, onPreview, added }) {
           >
             📺 Preview
           </button>
+          {/* Source on Drive — deep-links to the original on Google
+              Drive so the editor can pull the full-res file when
+              needed. Only shown for clips that carry a drive_url
+              (originals sourced from Google Drive). */}
+          {result.drive_url && (
+            <a
+              href={result.drive_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open the original source file on Google Drive"
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                color: "var(--c-green, var(--accent))",
+                border: "1px solid var(--c-green, var(--accent))",
+                borderRadius: "3px",
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 500,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              ⬇ Source on Drive
+            </a>
+          )}
         </div>
       </div>
     </div>

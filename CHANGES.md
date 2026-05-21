@@ -12,6 +12,67 @@ Workflow per change:
 
 ---
 
+## 2026-05-21 — Production URLs: ziflow on footagebrain.com calls api.footagebrain.com
+
+Ziflow is being deployed to `footagebrain.com` (Vercel) with the
+FootageBrain backend on `api.footagebrain.com` (Hetzner). The search
+client used dev-only URLs, so search / thumbnails / preview would all
+break in the production build.
+
+- `src/lib/footage-brain-client.js` — the API base + health URLs were
+  fixed dev-proxy strings. OLD:
+  ```js
+  const FOOTAGE_BRAIN_BASE = "/fb/api";
+  const FOOTAGE_BRAIN_HEALTH = "/fb/health";
+  ```
+  NEW: branch on `import.meta.env.DEV` — dev keeps the Vite-proxied
+  `/fb/*` paths; production builds target `https://api.footagebrain.com`
+  (overridable via the `VITE_FB_API_ORIGIN` build env var). Added two
+  exported helpers — `footageBrainThumbnailUrl()` and
+  `footageBrainFileUrl()` — so the thumbnail `<img>` and the preview
+  link resolve correctly in both dev and production.
+
+- `src/components/FootageBrainSearch.jsx`:
+  - Thumbnail — OLD: ``src={`/thumbnails/${result.thumbnail_path.split(/[\\/]/).pop()}`}``;
+    NEW: `src={footageBrainThumbnailUrl(result.thumbnail_path)}`.
+  - Preview — OLD: `window.open("http://localhost:8765/files/" + result.video_file_id, …)`;
+    NEW: `window.open(footageBrainFileUrl(result.video_file_id), …)`.
+  - Offline-warning text — OLD referenced `localhost:8765`; NEW is
+    environment-neutral (a deployed user never sees localhost).
+
+- `.gitignore` — added FootageBrain runtime artifacts (`data/`,
+  `footage_brain.db*`, `machine_id.json`) that had landed loose in the
+  ziflow folder, so they are never committed.
+
+Pairs with footage-brain-test CHANGES.md (same date): backend CORS now
+allows `footagebrain.com`, nginx proxies `/health`, and Caddy switched
+to a Let's Encrypt cert for `api.footagebrain.com`.
+
+Requires: Vercel redeploy of ziflow; FootageBrain redeploy on Hetzner.
+
+---
+
+## 2026-05-18 — "Source on Drive" link on Footage Brain search results
+
+User wants the Google Drive source link visible when searching a clip in
+Ziflow. Footage Brain now returns `drive_url` on every search result
+(see footage-brain-test CHANGES.md same date). Surfaced it here:
+
+- `src/lib/footage-brain-client.js` — `searchByFilename` re-maps file
+  rows into the result shape and was dropping `drive_url`. OLD map went
+  `…is_vertical: f.is_vertical, best_score: 1,`; NEW adds
+  `drive_url: f.drive_url,` (semantic/keyword/hybrid pass FB's response
+  through untouched, so they already carry it once FB is restarted).
+- `src/components/FootageBrainSearch.jsx` — `FootageResultCard` now
+  renders a green "⬇ Source on Drive" `<a>` (new tab) next to the
+  Preview button, shown only when `result.drive_url` is set. OLD: button
+  row ended after the `📺 Preview` button.
+
+Requires: FB backend restarted with the search `drive_url` change, then
+rebuild/restart Ziflow's frontend.
+
+---
+
 ## 2026-05-16 — Add Locations capability (My Maps embed + structured import layer)
 
 **New files (no rollback log needed):**

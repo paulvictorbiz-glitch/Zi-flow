@@ -5,11 +5,22 @@
  * Runs on localhost:8765 in dev mode.
  */
 
-// Same-origin path proxied by Vite (see vite.config.js → server.proxy["/fb"]).
-// In dev this becomes http://localhost:8000/fb/api → forwarded to
-// http://localhost:8765/api. Avoids CORS preflight on cross-origin localhost.
-const FOOTAGE_BRAIN_BASE = "/fb/api";
-const FOOTAGE_BRAIN_HEALTH = "/fb/health";
+// Dev: requests go through the Vite proxy (vite.config.js) — /fb/* and
+// /thumbnails/* are forwarded to the FootageBrain backend on localhost:8765,
+// so the browser sees same-origin requests. Production: the ziflow app on
+// footagebrain.com calls the FootageBrain API subdomain directly (the backend
+// enables CORS for footagebrain.com). Override the prod origin with the
+// VITE_FB_API_ORIGIN build env var if the API ever moves.
+const FB_API_ORIGIN = import.meta.env.DEV
+  ? ""
+  : import.meta.env.VITE_FB_API_ORIGIN || "https://api.footagebrain.com";
+
+const FOOTAGE_BRAIN_BASE = import.meta.env.DEV
+  ? "/fb/api"
+  : `${FB_API_ORIGIN}/api`;
+const FOOTAGE_BRAIN_HEALTH = import.meta.env.DEV
+  ? "/fb/health"
+  : `${FB_API_ORIGIN}/health`;
 
 /**
  * Search Footage Brain semantic index.
@@ -136,6 +147,7 @@ export async function searchByFilename(query, options = {}) {
         width: f.width,
         height: f.height,
         is_vertical: f.is_vertical,
+        drive_url: f.drive_url,
         best_score: 1,
         matched_chunks: [],
         frame_matches: [],
@@ -161,6 +173,36 @@ export async function checkFootageBrainHealth() {
   } catch (error) {
     return false;
   }
+}
+
+/**
+ * Absolute URL for a result thumbnail. Dev resolves to the Vite-proxied
+ * /thumbnails path; production points at the FootageBrain API subdomain.
+ * The backend records thumbnail_path with a directory prefix (and possibly
+ * Windows backslashes), so only the basename is kept.
+ *
+ * @param {string} thumbnailPath - thumbnail_path from a search result
+ * @returns {string} URL usable as an <img src>, or "" if no thumbnail
+ */
+export function footageBrainThumbnailUrl(thumbnailPath) {
+  if (!thumbnailPath) return "";
+  const name = String(thumbnailPath).split(/[\\/]/).pop();
+  return `${FB_API_ORIGIN}/thumbnails/${name}`;
+}
+
+/**
+ * URL of the FootageBrain file-detail page, opened in a new tab by the
+ * "Preview" button. Dev hits the backend on :8765 directly (the SPA route
+ * isn't proxied by Vite); production uses the API subdomain.
+ *
+ * @param {string} fileId - Footage Brain video_file.id
+ * @returns {string}
+ */
+export function footageBrainFileUrl(fileId) {
+  const origin = import.meta.env.DEV
+    ? "http://localhost:8765"
+    : FB_API_ORIGIN;
+  return `${origin}/files/${fileId}`;
 }
 
 /**
