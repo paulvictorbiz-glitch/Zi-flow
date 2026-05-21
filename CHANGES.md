@@ -12,6 +12,33 @@ Workflow per change:
 
 ---
 
+## 2026-05-21 — Search URL resolution: build-time → runtime (Vercel dev-mode build)
+
+The earlier same-day fix branched on `import.meta.env.DEV`. Vercel builds
+this project in development mode (the deployed bundle ships
+`react.development` and JSX dev metadata), so `import.meta.env.DEV`
+compiled to `true` and the production site resolved search to the
+dev-only `/fb/api` Vite-proxy path → search broke on footagebrain.com.
+
+- `src/lib/footage-brain-client.js` — replaced the `import.meta.env.DEV`
+  branches with a runtime hostname check. OLD:
+  ```js
+  const FB_API_ORIGIN = import.meta.env.DEV
+    ? ""
+    : import.meta.env.VITE_FB_API_ORIGIN || "https://api.footagebrain.com";
+  ```
+  NEW: `IS_LOCAL_DEV` is computed from `window.location.hostname`
+  (localhost / 127.0.0.1 / ::1) at module load. The deployed site is
+  never localhost, so it always targets `https://api.footagebrain.com`,
+  regardless of how the bundle was built. `footageBrainFileUrl` uses the
+  same check; dropped the unused `VITE_FB_API_ORIGIN` override.
+
+Note: Vercel building in dev mode also bloats the bundle (~1.5x,
+`react.development`). Search now works regardless; that build-mode issue
+is worth fixing separately.
+
+---
+
 ## 2026-05-21 — Production URLs: ziflow on footagebrain.com calls api.footagebrain.com
 
 Ziflow is being deployed to `footagebrain.com` (Vercel) with the

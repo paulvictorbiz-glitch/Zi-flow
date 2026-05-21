@@ -5,22 +5,21 @@
  * Runs on localhost:8765 in dev mode.
  */
 
-// Dev: requests go through the Vite proxy (vite.config.js) — /fb/* and
-// /thumbnails/* are forwarded to the FootageBrain backend on localhost:8765,
-// so the browser sees same-origin requests. Production: the ziflow app on
-// footagebrain.com calls the FootageBrain API subdomain directly (the backend
-// enables CORS for footagebrain.com). Override the prod origin with the
-// VITE_FB_API_ORIGIN build env var if the API ever moves.
-const FB_API_ORIGIN = import.meta.env.DEV
-  ? ""
-  : import.meta.env.VITE_FB_API_ORIGIN || "https://api.footagebrain.com";
+// Resolve the FootageBrain origin at RUNTIME from the page hostname, not at
+// build time. (Vercel builds this project in development mode, so
+// import.meta.env.DEV is unreliable here — a hostname check is not.)
+// On localhost the Vite dev proxy (vite.config.js) forwards /fb/* and
+// /thumbnails/* to the backend on :8765, so requests stay same-origin.
+// Anywhere else — the deployed ziflow on footagebrain.com — calls the
+// FootageBrain API subdomain directly; the backend enables CORS for it.
+const IS_LOCAL_DEV =
+  typeof window !== "undefined" &&
+  /^(localhost|127\.0\.0\.1|::1)$/.test(window.location.hostname);
 
-const FOOTAGE_BRAIN_BASE = import.meta.env.DEV
-  ? "/fb/api"
-  : `${FB_API_ORIGIN}/api`;
-const FOOTAGE_BRAIN_HEALTH = import.meta.env.DEV
-  ? "/fb/health"
-  : `${FB_API_ORIGIN}/health`;
+const FB_API_ORIGIN = IS_LOCAL_DEV ? "" : "https://api.footagebrain.com";
+
+const FOOTAGE_BRAIN_BASE = IS_LOCAL_DEV ? "/fb/api" : `${FB_API_ORIGIN}/api`;
+const FOOTAGE_BRAIN_HEALTH = IS_LOCAL_DEV ? "/fb/health" : `${FB_API_ORIGIN}/health`;
 
 /**
  * Search Footage Brain semantic index.
@@ -199,9 +198,7 @@ export function footageBrainThumbnailUrl(thumbnailPath) {
  * @returns {string}
  */
 export function footageBrainFileUrl(fileId) {
-  const origin = import.meta.env.DEV
-    ? "http://localhost:8765"
-    : FB_API_ORIGIN;
+  const origin = IS_LOCAL_DEV ? "http://localhost:8765" : FB_API_ORIGIN;
   return `${origin}/files/${fileId}`;
 }
 
