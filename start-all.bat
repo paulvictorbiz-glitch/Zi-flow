@@ -46,7 +46,7 @@ if not exist "%CD_DIR%\launch.bat" (
 
 REM ── Step 1: Launch Content Desk ────────────────────────────────────────────
 echo [1/3] Starting Content Desk (port 3000) ...
-start "Content Desk" cmd /k "cd /d "%CD_DIR%" && launch.bat"
+start "Content Desk" cmd /k "cd /d "%CD_DIR%" && node server.js"
 
 REM ── Step 2: Launch Footage Brain prod in its own window ────────────────────
 echo [2/3] Starting Footage Brain (port 8765) ...
@@ -63,9 +63,13 @@ echo (You can close THIS window any time — the three server windows keep runni
 echo.
 
 REM ── Content Desk (:3000) ──────────────────────────────────────────────────
-call :waitport 3000 60 "Content Desk"
+call :waitport 3000 30 "Content Desk"
 if not errorlevel 1 (
     start "" "http://localhost:3000"
+) else (
+    echo.
+    echo [WARN] Content Desk did not start on port 3000.
+    echo        Check the "Content Desk" window for errors.
 )
 
 REM ── Ziflow dev server (:8000) ─────────────────────────────────────────────
