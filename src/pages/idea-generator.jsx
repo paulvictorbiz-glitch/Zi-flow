@@ -1,15 +1,15 @@
 /* =========================================================
    Idea Generator — type an idea, get title + description +
-   real footage clips with timestamps. History persists in
-   localStorage so past queries are always accessible.
+   real footage clips with timestamps. History synced via
+   Supabase (generated_drafts table) — works across all devices.
    ========================================================= */
 
 import React, { useState, useRef, useEffect } from "react";
 import { DPill } from "../components/components.jsx";
 import { footageBrainThumbnailUrl } from "../lib/footage-brain-client.js";
 import { useWorkflow } from "../store/store.jsx";
+import { supabase } from "../lib/supabase-client.js";
 
-const HISTORY_KEY = "gen_history_v1";
 const MAX_HISTORY = 20;
 
 const EXAMPLE_PROMPTS = [
@@ -20,17 +20,37 @@ const EXAMPLE_PROMPTS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Supabase history helpers
 // ---------------------------------------------------------------------------
 
-function loadHistory() {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); }
-  catch { return []; }
+async function loadHistoryFromDB() {
+  const { data, error } = await supabase
+    .from("generated_drafts")
+    .select("id, prompt, draft, created_at")
+    .order("created_at", { ascending: false })
+    .limit(MAX_HISTORY);
+  if (error) return [];
+  return data || [];
 }
-function saveHistory(entry) {
-  const prev = loadHistory();
-  const next = [entry, ...prev.filter(h => h.prompt !== entry.prompt)].slice(0, MAX_HISTORY);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+
+async function saveHistoryToDB(prompt, draft, reelId = null) {
+  // Upsert by prompt — same idea regenerated replaces the old entry
+  const { data: existing } = await supabase
+    .from("generated_drafts")
+    .select("id")
+    .eq("prompt", prompt)
+    .limit(1);
+  if (existing?.length) {
+    await supabase.from("generated_drafts")
+      .update({ draft, reel_id: reelId, created_at: new Date().toISOString() })
+      .eq("id", existing[0].id);
+  } else {
+    await supabase.from("generated_drafts").insert({ prompt, draft, reel_id: reelId });
+  }
+}
+
+async function deleteHistoryFromDB(id) {
+  await supabase.from("generated_drafts").delete().eq("id", id);
 }
 
 function nextReelId(reels) {
@@ -85,11 +105,9 @@ function HistoryItem({ entry, onSelect, onDelete }) {
       </div>
       <div className="gen-hist-meta mono dim">
         {entry.draft?.title ? entry.draft.title.slice(0, 40) : ""}
-        <span style={{ marginLeft: 6 }}>
-          · {(entry.draft?.clips || []).length} clips
-        </span>
+        <span style={{ marginLeft: 6 }}>· {(entry.draft?.clips || []).length} clips</span>
       </div>
-      <button className="gen-hist-del" onClick={() => onDelete(entry.prompt)} title="Remove from history">×</button>
+      <button className="gen-hist-del" onClick={() => onDelete(entry.id)} title="Remove from history">×</button>
     </div>
   );
 }
@@ -104,9 +122,16 @@ export function IdeaGenerator() {
   const [error, setError]       = useState(null);
   const [result, setResult]     = useState(null);
   const [created, setCreated]   = useState(null);
-  const [history, setHistory]   = useState(loadHistory);
+  const [history, setHistory]   = useState([]);
+  const [histLoading, setHistLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const textareaRef             = useRef(null);
+
+  // Load history from Supabase on mount
+  useEffect(() => {
+    setHistLoading(true);
+    loadHistoryFromDB().then(rows => { setHistory(rows); setHistLoading(false); });
+  }, []);
 
   const { actions, reels } = useWorkflow();
 
@@ -133,10 +158,10 @@ export function IdeaGenerator() {
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (data.error === "no_footage") throw new Error("No matching footage found. Try a different prompt.");
       setResult(data);
-      // Save to history
-      const entry = { prompt: prompt.trim(), draft: data.draft, ts: Date.now() };
-      saveHistory(entry);
-      setHistory(loadHistory());
+      // Save to Supabase history (fire-and-forget)
+      saveHistoryToDB(prompt.trim(), data.draft).then(() =>
+        loadHistoryFromDB().then(setHistory)
+      );
     } catch (e) {
       setError(e.message || "Generation failed");
     } finally {
@@ -152,10 +177,10 @@ export function IdeaGenerator() {
     setShowHistory(false);
   };
 
-  const deleteFromHistory = (promptText) => {
-    const next = loadHistory().filter(h => h.prompt !== promptText);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-    setHistory(next);
+  const deleteFromHistory = (id) => {
+    deleteHistoryFromDB(id).then(() =>
+      loadHistoryFromDB().then(setHistory)
+    );
   };
 
   const copyDriveLinks = () => {
@@ -253,11 +278,13 @@ export function IdeaGenerator() {
       {showHistory && (
         <div className="gen-hist-panel">
           <div className="mono dim" style={{ fontSize: 10, marginBottom: 8 }}>
-            PAST QUERIES — click to restore · saved on this browser only
+            PAST QUERIES — synced across all your devices
           </div>
-          {history.length === 0 ? (
+          {histLoading ? (
+            <div className="mono dim" style={{ fontSize: 11, padding: "8px 0" }}>Loading…</div>
+          ) : history.length === 0 ? (
             <div className="mono dim" style={{ fontSize: 11, padding: "8px 0" }}>
-              No history on this browser yet. History is saved per device.
+              No history yet. Generate your first idea.
             </div>
           ) : history.map((entry, i) => (
             <HistoryItem
