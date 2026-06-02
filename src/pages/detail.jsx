@@ -222,32 +222,52 @@ function ReelDetail({ reel, onBack }) {
               letterSpacing: "0.04em",
             }}>{current.id}</span>
           </h1>
-          <div className="sub" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <span
-              onClick={(e) => handleRefClick(e, "audio", audioUrl, "Music")}
-              title={audioUrl
-                ? `${audioUrl}\n(click to open · shift+click to edit)`
-                : "Click to add a music link"}
-              style={{
-                cursor: "pointer",
-                userSelect: "none",
-                color: audioUrl ? "var(--c-amber)" : "var(--fg-mute)",
-                textDecoration: "none",
-              }}>
-              {audioUrl ? "♪ Music ↗" : "+ Music"}
+          <div className="sub reflinks" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span
+                onClick={(e) => handleRefClick(e, "audio", audioUrl, "Music")}
+                title={audioUrl ? `${audioUrl}\n(click to open)` : "Click to add a music link"}
+                style={{
+                  cursor: "pointer",
+                  userSelect: "none",
+                  color: audioUrl ? "var(--c-amber)" : "var(--fg-mute)",
+                  textDecoration: "none",
+                }}>
+                {audioUrl ? "♪ Music ↗" : "+ Music"}
+              </span>
+              {audioUrl && (
+                <button
+                  className="reflink-edit"
+                  onClick={() => editRefLink("audio", audioUrl, "Music")}
+                  title="Change this music link"
+                  aria-label="Change music link"
+                  style={{ cursor: "pointer", color: "var(--fg-mute)", fontSize: 12, lineHeight: 1, padding: "2px 4px" }}>
+                  ✎
+                </button>
+              )}
             </span>
-            <span
-              onClick={(e) => handleRefClick(e, "inspo", inspoUrl, "Inspiration")}
-              title={inspoUrl
-                ? `${inspoUrl}\n(click to open · shift+click to edit)`
-                : "Click to add an inspiration link"}
-              style={{
-                cursor: "pointer",
-                userSelect: "none",
-                color: inspoUrl ? "var(--c-amber)" : "var(--fg-mute)",
-                textDecoration: "none",
-              }}>
-              {inspoUrl ? "✦ Inspiration ↗" : "+ Inspiration"}
+            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span
+                onClick={(e) => handleRefClick(e, "inspo", inspoUrl, "Inspiration")}
+                title={inspoUrl ? `${inspoUrl}\n(click to open)` : "Click to add an inspiration link"}
+                style={{
+                  cursor: "pointer",
+                  userSelect: "none",
+                  color: inspoUrl ? "var(--c-amber)" : "var(--fg-mute)",
+                  textDecoration: "none",
+                }}>
+                {inspoUrl ? "✦ Inspiration ↗" : "+ Inspiration"}
+              </span>
+              {inspoUrl && (
+                <button
+                  className="reflink-edit"
+                  onClick={() => editRefLink("inspo", inspoUrl, "Inspiration")}
+                  title="Change this inspiration link"
+                  aria-label="Change inspiration link"
+                  style={{ cursor: "pointer", color: "var(--fg-mute)", fontSize: 12, lineHeight: 1, padding: "2px 4px" }}>
+                  ✎
+                </button>
+              )}
             </span>
           </div>
         </div>

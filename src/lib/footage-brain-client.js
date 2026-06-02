@@ -159,6 +159,44 @@ export async function searchByFilename(query, options = {}) {
 }
 
 /**
+ * Coverage tree — per-scan-root → per-country-folder view with file counts,
+ * per-stage completion, and the Google Drive folder each country's clips live
+ * in. Powers the Coverage tab. Same endpoint the local FootageBrain UI uses.
+ *
+ * @returns {Promise<{
+ *   stages: string[],
+ *   disabled_stages: string[],
+ *   roots: Array<{
+ *     root_id: string, label: string, path: string, is_online: boolean,
+ *     file_count: number,
+ *     stage_counts: Record<string, number>,
+ *     skipped_counts: Record<string, number>,
+ *     folders: Array<{
+ *       rel_path: string, file_count: number,
+ *       drive_folder_url: string | null, drive_linked_count: number,
+ *       stage_counts: Record<string, number>,
+ *       skipped_counts: Record<string, number>,
+ *     }>
+ *   }>
+ * }>}
+ */
+export async function getFootageBrainCoverageTree() {
+  try {
+    const response = await fetch(`${FOOTAGE_BRAIN_BASE}/dashboard/coverage-tree`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      throw new Error(`Coverage tree fetch failed: ${response.statusText}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Footage Brain coverage tree error:", error);
+    throw error;
+  }
+}
+
+/**
  * Health check for Footage Brain API.
  *
  * @returns {Promise<boolean>}

@@ -22,6 +22,12 @@ export default defineConfig({
         target: "http://localhost:8765",
         changeOrigin: true,
       },
+      // Vercel serverless functions — proxied so /api/* works with `vercel dev`
+      // running on port 3001 alongside `npm run dev` on port 8000.
+      "/api": {
+        target: "http://localhost:3001",
+        changeOrigin: true,
+      },
     },
   },
 });

@@ -12,6 +12,192 @@ Workflow per change:
 
 ---
 
+## 2026-06-02 — LLM Idea Generator (Phase 1 + 2): Vercel function + UI
+
+New feature: AI-generated content ideas (reel / longform) backed by real
+FootageBrain footage. Adds a 9th tab "Generate" to the app.
+
+**New files (no old content to log):**
+- `api/generate.js` — Vercel serverless function: FootageBrain search →
+  transcript fetch → Anthropic Claude (Sonnet 4.6) → structured JSON draft
+- `src/pages/idea-generator.jsx` — prompt UI, streaming draft display,
+  shot list with thumbnails, download list, SEO brief panel
+
+**`package.json` — added dependency:**
+- OLD deps: `@supabase/supabase-js`, `react`, `react-dom` only
+- NEW: added `@anthropic-ai/sdk`
+
+**`vite.config.js` — added dev proxy for /api:**
+- OLD: proxy only for `/fb` and `/thumbnails`
+- NEW: added `/api` → `http://localhost:3001` for `vercel dev` local testing
+
+**`src/app.jsx` — added tab 9 and body render:**
+- OLD tab 8 was the last tab; body ended at `{view === "coverage" && <Coverage />}`
+- NEW: added `<button ... view === "generate">9 · Generate</button>` and
+  `{view === "generate" && <IdeaGenerator />}` import + render
+
+**`src/styles.css` — added idea generator styles:**
+- Additive `.gen-*` class block appended after existing rules.
+
+Requires `ANTHROPIC_API_KEY` env var set in Vercel project settings.
+Local dev: use `vercel dev` (port 3001) instead of `npm run dev`.
+
+## 2026-06-02 — Fix Coverage tab row overlap on mobile
+
+Coverage rows squashed/overlapped on phones and the country name vanished.
+`CoverageRow` was one flex row with four fixed-width columns (80+110+90+92 ≈
+420px) + a `flex:1, minWidth:0` name; on a 390px screen the fixed columns
+overflowed and the name collapsed to 0 width.
+- `src/pages/coverage.jsx` — replaced inline-styled spans with classes
+  (`.cov-row`/`.cov-name`/`.cov-meta`/… and `.cov-root-head`/`.cov-root-meta`).
+  OLD: each cell had inline `style={{ width: 80, textAlign:'right', … }}`.
+- `src/styles.css` — added desktop rules + a `@media (max-width:860px)` block
+  that stacks the row (country on its own line, metrics wrap below).
+
+## 2026-06-02 — Mobile-friendly UI + editable reference links
+
+**Mobile (was desktop-only):**
+- `index.html` — viewport meta was `content="width=1400"` (hard-pinned the
+  desktop layout on every device → phones rendered a zoomed-out 1400px page).
+  NEW: `width=device-width, initial-scale=1, viewport-fit=cover`.
+- `src/styles.css` — appended a responsive `@media (max-width: 860px)` /
+  `(max-width: 480px)` layer (additive; nothing replaced). Topbar compacts +
+  wraps, breadcrumb hidden, tabstrip becomes horizontally scrollable, page-head
+  stacks, detail-grid/hook-grid collapse to one column, .board/.spine scroll
+  horizontally, modals (.m-shell) go near-fullscreen, paddings reduced.
+
+**Editable reference links (`src/pages/detail.jsx`):**
+Music + Inspiration links were only editable via shift+click — impossible on a
+phone (no shift key), so once set they could only be opened, never changed.
+- OLD: `<span onClick={handleRefClick ...}>♪ Music ↗</span>` (shift+click=edit).
+- NEW: when a link is set, render the open-link plus a visible "✎" edit button
+  (always prompts) — touch-friendly. Empty state ("+ Music") unchanged.
+
+Verified: `npm run build` clean; Playwright mobile audit shows device-width
+honored (clientWidth 390, no horizontal overflow); deployed via `vercel --prod`.
+
+## 2026-06-02 — New "Coverage" tab (FootageBrain coverage tree + Drive folders)
+
+Adds an 8th tab showing FootageBrain's per-country folder coverage tree, sourced
+from the public `GET /api/dashboard/coverage-tree` endpoint. Each folder row
+opens its Google Drive folder in a new tab (drive_folder_url). Lets the user
+browse footage by folder and jump straight to Drive.
+
+**New files (no rollback needed):**
+- `src/pages/coverage.jsx` — the Coverage page.
+
+**`src/lib/footage-brain-client.js`** — added `getFootageBrainCoverageTree()`.
+INSERT-only; nothing replaced.
+
+**`src/app.jsx`** — wired the tab in. Three INSERT-only edits:
+- import `Coverage` from `./pages/coverage.jsx`
+- new crumb label + tab button (`view === "coverage"`, "8 · Coverage")
+- body render `{view === "coverage" && <Coverage />}`
+
+Requires `vercel --prod` to deploy (git push alone does not deploy ziflow).
+
+## 2026-05-22 — List View: per-reel "To pipeline" + Archive / Delete actions
+
+User asked for two things in List View: a way to send a completed reel
+back into the pipeline, and an archive/delete control on each row.
+
+`src/pages/list-view.jsx`
+- Imported `useAuth` to gate hard delete to the owner role (matches
+  `archived-view.jsx`); `useWorkflow()` now also pulls `actions`.
+- Added an "Actions" column (header + per-row cell). The cell calls
+  `e.stopPropagation()` so its buttons don't also fire the row's
+  open-detail handler. Each row gets:
+  - "↩ To pipeline" — shown only for reels in the `completed` or
+    `posted` stage. Calls `actions.moveStage(id, { stage: "in_progress" })`,
+    which re-activates the reel and auto-hands it to the skilled editor.
+  - "Archive" — `actions.archiveReel(id)` (soft, restorable from the
+    Archived view).
+  - "Delete" — owner role only, behind a `confirm()`; `actions.deleteReel(id)`.
+
+OLD thead ended:
+```jsx
+              <th>Next action</th>
+            </tr>
+```
+OLD row ended:
+```jsx
+                <td style={{ color: "var(--fg)" }}>{r.next || <span className="dim">—</span>}</td>
+              </tr>
+```
+
+Verified: `npm run build`. Requires: Vercel redeploy of ziflow.
+
+---
+
+## 2026-05-22 — Fix: attached-footage thumbnails + preview links broken on footagebrain.com
+
+Reel cards showed no thumbnails for attached footage once the card was
+reopened on the deployed site. `AttachedFootageList.jsx` (and the Footage
+Library page) built the thumbnail `src` as a same-origin `/thumbnails/...`
+path. That works in local dev — Vite proxies `/thumbnails` to `:8765` —
+but on footagebrain.com it resolves to `https://footagebrain.com/thumbnails/...`,
+a 404, and the `<img>` `onError` handler then hides the image. Preview
+buttons in the same two components hardcoded `localhost` URLs.
+
+Same bug class the 2026-05-21 entry fixed for `FootageBrainSearch.jsx`;
+these two components were missed.
+
+`src/components/AttachedFootageList.jsx` — imported `footageBrainThumbnailUrl`
+and `footageBrainFileUrl` from the FB client.
+- Thumbnail. OLD:
+  ```jsx
+  src={`/thumbnails/${item.thumbnail_url.split(/[\\/]/).pop()}`}
+  ```
+  NEW: `src={footageBrainThumbnailUrl(item.thumbnail_url)}`.
+- Preview. OLD:
+  ```jsx
+  window.open(
+    `http://localhost:8765/files/${item.footage_file_id}`,
+    "_blank"
+  );
+  ```
+  NEW: `window.open(footageBrainFileUrl(item.footage_file_id), "_blank")`.
+
+`src/pages/footage-library.jsx` — imported the same two helpers.
+- Thumbnail. OLD: `src={"/thumbnails/" + c.thumbnail_url}`
+  NEW: `src={footageBrainThumbnailUrl(c.thumbnail_url)}`.
+- Preview. OLD:
+  `window.open("http://localhost:5173/files/" + clip.footage_file_id, "_blank")`
+  NEW: `window.open(footageBrainFileUrl(clip.footage_file_id), "_blank")`.
+
+Verified: `npm run build`. Requires: Vercel redeploy of ziflow.
+
+---
+
+## 2026-05-22 — Fix: start-all.bat opened browser before Footage Brain was up
+
+`start-all.bat` waited a fixed 5s + 4s, then opened both browser tabs.
+But `start-prod.bat` rebuilds the Footage Brain frontend (`tsc` +
+`vite build`) *before* starting uvicorn — that takes 1-2 minutes — so the
+`localhost:8765` tab always opened to "can't connect."
+
+OLD — fixed timeouts, blind browser opens:
+```bat
+REM Give Footage Brain a head start so its port is up before Ziflow proxies to it
+timeout /t 5 /nobreak >nul
+
+REM ── Step 2: Launch Ziflow dev server in its own window ─────────────────────
+echo [2/2] Starting Ziflow (npm run dev) ...
+start "Ziflow (dev)" cmd /k "cd /d "%ZIFLOW_DIR%" && npm run dev"
+
+REM Open browser tabs for both
+timeout /t 4 /nobreak >nul
+start "" "http://localhost:8765"
+start "" "http://localhost:8000"
+```
+NEW: a `:waitport` subroutine polls each port with a TCP connect and
+opens `localhost:8765` only once the server actually answers (up to a
+5-minute budget for the slow build), with a clear warning on timeout.
+ZiFlow's tab is left to Vite's own `server.open` so it is not opened
+twice. Local launcher only — not part of the deployed site.
+
+---
+
 ## 2026-05-21 — Fix: search modal closes on text-select drag; pipeline card collapse
 
 Two bug fixes.

@@ -17,6 +17,8 @@ import { AuthProvider, AuthGate, IdentityGate, useAuth } from "./auth.jsx";
 import { TimeProvider } from "./lib/time.jsx";
 import { ArchivedView } from "./pages/archived-view.jsx";
 import { Locations } from "./pages/locations.jsx";
+import { Coverage } from "./pages/coverage.jsx";
+import { IdeaGenerator } from "./pages/idea-generator.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider, useNotifications } from "./components/notifications.jsx";
 
@@ -99,6 +101,7 @@ function AppShell() {
              view === "mywork"    ? "My work" :
              view === "detail"    ? "Reel detail" :
              view === "footage"   ? "Footage library" :
+             view === "coverage"  ? "Coverage" :
              view === "locations" ? "Locations" :
              view === "export"    ? "Export prep" : "Analytics"}
           </span>
@@ -198,6 +201,12 @@ function AppShell() {
         <button className={"tab " + (view === "locations" ? "is-active" : "")} onClick={() => setView("locations")}>
           <span className="n">7 ·</span> Locations
         </button>
+        <button className={"tab " + (view === "coverage" ? "is-active" : "")} onClick={() => setView("coverage")}>
+          <span className="n">8 ·</span> Coverage
+        </button>
+        <button className={"tab " + (view === "generate" ? "is-active" : "")} onClick={() => setView("generate")}>
+          <span className="n">9 ·</span> Generate
+        </button>
 
         {/* Pipeline sub-mode chips — only when on Pipeline */}
         {view === "pipeline" && (
@@ -225,6 +234,8 @@ function AppShell() {
       {view === "export"    && <ExportView onOpen={openReel} />}
       {view === "analytics" && <Analytics />}
       {view === "locations" && <Locations />}
+      {view === "coverage"  && <Coverage />}
+      {view === "generate"  && <IdeaGenerator />}
 
       {/* Global create FAB */}
       <CreateFab />
