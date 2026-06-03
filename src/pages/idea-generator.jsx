@@ -61,6 +61,31 @@ function nextReelId(reels) {
   return "REEL-" + String(next).padStart(3, "0");
 }
 
+/* Render the AI draft into the plain-text shot plan that the Reel detail
+   "Script / shot plan" tab shows. Includes hook, beat flow, and clip list. */
+function buildShotPlan(draft) {
+  const lines = [];
+  if (draft.hook) {
+    lines.push(`HOOK (0-3s):`, draft.hook, "");
+  }
+  if (Array.isArray(draft.flow) && draft.flow.length) {
+    lines.push("FLOW:");
+    draft.flow.forEach(b => {
+      lines.push(`  [${b.timecode || "?"}] ${b.beat || ""} — ${b.direction || ""}`);
+    });
+    lines.push("");
+  }
+  if (Array.isArray(draft.clips) && draft.clips.length) {
+    lines.push("SHOTS:");
+    draft.clips.forEach((c, i) => {
+      const tc = (c.timecode_in && c.timecode_out) ? `${c.timecode_in}–${c.timecode_out}` : "";
+      lines.push(`  ${String(i + 1).padStart(2, "0")}. ${c.filename}  ${tc}`);
+      if (c.note) lines.push(`      ${c.note}`);
+    });
+  }
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Clip row
 // ---------------------------------------------------------------------------
@@ -89,6 +114,60 @@ function ClipRow({ clip, index }) {
           : <span className="mono dim" style={{ fontSize: 10 }}>no link</span>
         }
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SEO package — caption, description, hashtags (all click-to-copy)
+// ---------------------------------------------------------------------------
+
+function SeoPackage({ seo }) {
+  const [copied, setCopied] = useState(null);
+  const copy = (text, key) => {
+    navigator.clipboard?.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 1600);
+  };
+  const hashtags = (seo.hashtags || []).map(h => h.startsWith("#") ? h : "#" + h);
+
+  return (
+    <div className="gen-seo">
+      <div className="gen-section-label mono">PUBLISH PACK</div>
+
+      {seo.youtube_title && (
+        <div className="gen-seo-block" onClick={() => copy(seo.youtube_title, "yt")}>
+          <span className="gen-seo-tag mono">TITLE</span>
+          <span className="gen-seo-val">{seo.youtube_title}</span>
+          <span className="gen-copy-hint">{copied === "yt" ? "copied" : "copy"}</span>
+        </div>
+      )}
+
+      {seo.ig_caption && (
+        <div className="gen-seo-block" onClick={() => copy(seo.ig_caption, "cap")}>
+          <span className="gen-seo-tag mono">IG CAPTION</span>
+          <span className="gen-seo-val" style={{ whiteSpace: "pre-wrap" }}>{seo.ig_caption}</span>
+          <span className="gen-copy-hint">{copied === "cap" ? "copied" : "copy"}</span>
+        </div>
+      )}
+
+      {seo.description && (
+        <div className="gen-seo-block" onClick={() => copy(seo.description, "desc")}>
+          <span className="gen-seo-tag mono">DESCRIPTION</span>
+          <span className="gen-seo-val">{seo.description}</span>
+          <span className="gen-copy-hint">{copied === "desc" ? "copied" : "copy"}</span>
+        </div>
+      )}
+
+      {hashtags.length > 0 && (
+        <div className="gen-seo-block" onClick={() => copy(hashtags.join(" "), "tags")}>
+          <span className="gen-seo-tag mono">HASHTAGS</span>
+          <span className="gen-tags">
+            {hashtags.map((h, i) => <span key={i} className="gen-tag mono">{h}</span>)}
+          </span>
+          <span className="gen-copy-hint">{copied === "tags" ? "copied" : "copy all"}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -195,9 +274,14 @@ export function IdeaGenerator() {
   const createReelFromDraft = () => {
     if (!draft) return;
     const newId = nextReelId(reels);
+
+    // Build a readable shot-plan / blueprint for the reel's `script` field
+    // (this is what the Reel detail "Script / shot plan" tab renders).
+    const shotPlan = buildShotPlan(draft);
+
     const reel = {
       id: newId,
-      title: draft.title || "Generated reel",
+      title: draft.title || `Reel: ${(prompt || "").slice(0, 50)}`,
       stage: "not_started",
       owner: "paul",
       lane: "paul",
@@ -212,19 +296,19 @@ export function IdeaGenerator() {
       downstream: null,
       grouping: "not_started",
       logline: draft.description || "",
+      script: shotPlan,
       vo: null, audio: null, inspo: null, plan: null,
+      // Keep the full AI package on the reel so nothing is lost.
+      detail: { aiDraft: draft },
     };
 
-    actions.createReel(reel);
-
-    // Attach clips — store timecodes visibly in matched_chunks text
-    (draft.clips || []).forEach((clip, i) => {
+    // Build footage rows
+    const footageItems = (draft.clips || []).map((clip, i) => {
       const tc = (clip.timecode_in && clip.timecode_out)
         ? `${clip.timecode_in}–${clip.timecode_out}`
         : null;
       const noteText = [tc, clip.note].filter(Boolean).join(" · ");
-
-      actions.addAttachedFootage({
+      return {
         id: `${newId}-clip-${i}-${Date.now()}`,
         reel_id: newId,
         footage_file_id: clip.clip_id || clip.filename,
@@ -237,17 +321,20 @@ export function IdeaGenerator() {
         height: null,
         is_vertical: clip.is_vertical || false,
         best_score: 1,
-        // Store timecode + note as the chunk text so the reel card shows it
         matched_chunks: noteText
-          ? [{
-              text: noteText,
-              start_time: parseFloat((clip.timecode_in || "0").replace(":", ".")) || 0,
-              end_time: parseFloat((clip.timecode_out || "0").replace(":", ".")) || 0,
-              score: 1,
-            }]
+          ? [{ text: noteText, start_time: 0, end_time: 0, score: 1 }]
           : [],
-      });
+      };
     });
+
+    // Single action that persists the reel FIRST, then the footage rows —
+    // fixes the FK race that silently dropped every attachment before.
+    actions.createReelWithFootage(reel, footageItems);
+
+    // Link this generation's history row to the reel (best effort)
+    if (result?.draft) {
+      saveHistoryToDB(prompt.trim(), draft, newId).catch(() => {});
+    }
 
     setCreated({ id: newId, reel });
     // Don't auto-navigate — let React flush all attachment dispatches first.
@@ -354,6 +441,30 @@ export function IdeaGenerator() {
             {draft.description && <div className="gen-draft-desc">{draft.description}</div>}
           </div>
 
+          {/* Hook */}
+          {draft.hook && (
+            <div className="gen-hook-card">
+              <div className="gen-hook-label mono">HOOK · first 3 seconds</div>
+              <div className="gen-hook-text">"{draft.hook}"</div>
+            </div>
+          )}
+
+          {/* Flow blueprint */}
+          {Array.isArray(draft.flow) && draft.flow.length > 0 && (
+            <div className="gen-section">
+              <div className="gen-section-label mono">BLUEPRINT</div>
+              <div className="gen-flow">
+                {draft.flow.map((b, i) => (
+                  <div key={i} className="gen-flow-beat">
+                    <span className="gen-flow-tc mono">{b.timecode}</span>
+                    <span className="gen-flow-name mono">{b.beat}</span>
+                    <span className="gen-flow-dir">{b.direction}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="gen-clips-header">
             <span className="mono dim" style={{ fontSize: 10 }}>
               FOOTAGE · {(draft.clips || []).length} clips
@@ -369,6 +480,9 @@ export function IdeaGenerator() {
             ))}
             {draft._raw && <pre className="gen-raw">{draft._raw}</pre>}
           </div>
+
+          {/* SEO package */}
+          {draft.seo && <SeoPackage seo={draft.seo} />}
 
           <div style={{ paddingTop: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {!created ? (

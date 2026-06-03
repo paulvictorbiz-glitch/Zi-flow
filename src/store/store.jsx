@@ -670,6 +670,28 @@ function WorkflowProvider({ children }) {
         { type: "REMOVE_ATTACHED_FOOTAGE", id },
         () => persistRemoveAttachedFootage(id)),
 
+      /* Create a reel AND its attached footage atomically-ish.
+         The footage rows have a reel_id FK to reels.id, so the reel
+         MUST be inserted into Supabase before the footage rows — the
+         old approach fired both via wrap() concurrently, so footage
+         inserts raced ahead of the reel and failed the FK silently.
+         Here we dispatch optimistically, then persist sequentially. */
+      createReelWithFootage: (reel, footageItems = []) => {
+        dispatch({ type: "CREATE_REEL", reel });
+        footageItems.forEach(item => dispatch({ type: "ADD_ATTACHED_FOOTAGE", item }));
+        (async () => {
+          try {
+            await persistCreateReel(reel);
+            for (const item of footageItems) {
+              await persistAddAttachedFootage(item);
+            }
+          } catch (e) {
+            console.error("createReelWithFootage persist failed:", e);
+            dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          }
+        })();
+      },
+
       // Approve/SendBack/Triage compose existing primitives — they
       // produce a known target shape and a single UPDATE_REEL
       // persist is sufficient.

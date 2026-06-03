@@ -24,9 +24,21 @@ const MAX_CHUNKS_PER_CLIP = 4; // transcript chunks sent to LLM per clip
 // ---------------------------------------------------------------------------
 // System prompt — viral content + SEO + hooks specialist
 // ---------------------------------------------------------------------------
-const SYSTEM_PROMPT = `You are a video editor selecting real footage clips for a social media reel.
-Pick clips that best match the idea. Suggest tight timecodes based on the transcript.
-Write a punchy title and one-sentence description.
+const SYSTEM_PROMPT = `You are a viral short-form content strategist AND video editor for a travel creator.
+You receive an idea and a list of real footage clips (with transcript excerpts).
+
+Your job — produce a complete, ready-to-shoot reel package:
+- HOOK: a scroll-stopping first line / first 3 seconds. Pattern interrupt, curiosity gap,
+  or bold claim. Never generic. This is the single most important field.
+- FLOW: a beat-by-beat blueprint (Hook → Build → Payoff → CTA) mapping the reel's structure
+  with rough timecodes and what happens in each beat.
+- CLIPS: pick the best real clips for each beat. Cite EXACT filenames + tight timecodes from
+  the transcript. Never invent footage.
+- SEO: a full YouTube/IG title, a complete Instagram caption (with line breaks, emojis, and a
+  CTA), a 2-3 sentence SEO description with keywords front-loaded, and 15-20 hashtags
+  (mix of broad reach + niche travel tags).
+
+Be specific and usable — an editor should be able to cut this without asking questions.
 Output valid JSON only — no markdown, no text outside the JSON. Start with "{".`;
 
 // ---------------------------------------------------------------------------
@@ -99,8 +111,15 @@ function fmtTime(secs) {
 // ---------------------------------------------------------------------------
 function outputSchema(_type) {
   return `{
-  "title": "punchy reel title, under 60 chars",
+  "title": "punchy reel title, under 70 chars",
   "description": "one sentence — what this reel is and why it works",
+  "hook": "the exact opening line / on-screen text for the first 3 seconds",
+  "flow": [
+    { "beat": "Hook", "timecode": "0-3s", "direction": "what happens + why it stops the scroll" },
+    { "beat": "Build", "timecode": "3-15s", "direction": "..." },
+    { "beat": "Payoff", "timecode": "15-40s", "direction": "..." },
+    { "beat": "CTA", "timecode": "40-50s", "direction": "..." }
+  ],
   "clips": [
     {
       "clip_id": "video_file_id from provided clips",
@@ -108,9 +127,15 @@ function outputSchema(_type) {
       "timecode_in": "MM:SS",
       "timecode_out": "MM:SS",
       "drive_url": "from clip data, or null",
-      "note": "one-line editor note, e.g. 'open on this — crowd surge'"
+      "note": "one-line editor note tying this clip to a beat"
     }
-  ]
+  ],
+  "seo": {
+    "youtube_title": "SEO title under 70 chars with a curiosity gap",
+    "ig_caption": "full Instagram caption with line breaks, emojis, and a CTA at the end",
+    "description": "2-3 sentence SEO description, main keyword in the first sentence",
+    "hashtags": ["#travel", "#... 15 to 20 total, mix broad + niche"]
+  }
 }`;
 }
 
@@ -175,20 +200,33 @@ ${outputSchema(type)}`;
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 800,
+      max_tokens: 2000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }],
     });
 
-    // 5. Parse JSON from response
+    // 5. Parse JSON from response — robustly. The model occasionally wraps
+    //    output in ```json fences or adds a stray prefix; strip those first.
     const rawText = message.content?.[0]?.text || "";
     let draft;
     try {
-      const jsonStart = rawText.indexOf("{");
-      const jsonEnd = rawText.lastIndexOf("}") + 1;
-      draft = JSON.parse(rawText.slice(jsonStart, jsonEnd));
+      let txt = rawText.trim();
+      // Strip markdown code fences if present
+      txt = txt.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+      const jsonStart = txt.indexOf("{");
+      const jsonEnd = txt.lastIndexOf("}") + 1;
+      if (jsonStart === -1 || jsonEnd <= jsonStart) throw new Error("no JSON object found");
+      draft = JSON.parse(txt.slice(jsonStart, jsonEnd));
     } catch (parseErr) {
-      draft = { _raw: rawText, _parse_error: parseErr.message };
+      // Last resort: return a minimal valid shape so the UI never shows a
+      // "Generated reel" fallback with empty everything.
+      draft = {
+        title: `Reel: ${prompt.slice(0, 50)}`,
+        description: "(AI response could not be parsed — try Regenerate)",
+        clips: [],
+        _raw: rawText,
+        _parse_error: parseErr.message,
+      };
     }
 
     // 6. Inject drive_url + drive_folder_url from real search results —

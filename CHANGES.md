@@ -12,6 +12,34 @@ Workflow per change:
 
 ---
 
+## 2026-06-03 — Fix Generate: footage FK race + expand AI output
+
+**Bug: AI-generated reels had no attached footage, "Generated reel" title, empty fields.**
+Root cause (confirmed via live DB: 0 attached_footage rows for REEL-276..282):
+`wrap()` fires its persistFn without awaiting, so `createReel` + each
+`addAttachedFootage` hit Supabase concurrently. Footage rows have a
+`reel_id` FK → reels.id, so they raced ahead of the reel insert and failed
+the FK silently (error logged, optimistic state kept, never persisted).
+
+- `src/store/store.jsx` — new `createReelWithFootage(reel, footageItems)`
+  action: dispatches optimistically, then persists the reel FIRST (await),
+  THEN the footage rows sequentially. OLD: idea-generator called
+  `actions.createReel` + N× `actions.addAttachedFootage` (all concurrent).
+- `src/pages/idea-generator.jsx` — `createReelFromDraft` now uses the new
+  action, populates `script` (shot plan via new `buildShotPlan`), `logline`
+  (description), and stashes the full AI draft in `detail.aiDraft`. Title
+  falls back to the prompt, never the generic "Generated reel".
+
+**Expanded the $0.02 generation to a full publish pack:**
+- `api/generate.js` — system prompt + output schema now also return:
+  `hook`, `flow` (beat-by-beat blueprint), and `seo` { youtube_title,
+  ig_caption, description, hashtags[] }. `max_tokens` 800 → 2000. Robust
+  JSON parse (strips ``` fences; on failure returns a usable minimal shape
+  instead of `_raw` only).
+- `src/pages/idea-generator.jsx` + `styles.css` — render hook card, flow
+  blueprint, and a click-to-copy SEO pack (title, IG caption, description,
+  hashtags).
+
 ## 2026-06-02 — LLM Idea Generator (Phase 1 + 2): Vercel function + UI
 
 New feature: AI-generated content ideas (reel / longform) backed by real
