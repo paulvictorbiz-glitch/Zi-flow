@@ -569,13 +569,21 @@ export default async function handler(req, res) {
     const pickLine = requestedClips
       ? `Pick exactly ${requestedClips} clips (or as many as exist if fewer are available), each a DIFFERENT clip. Only use clips from the list above.`
       : `Pick the best clips for this reel. Only use clips from the list above.`;
+    // Country-scoped + an explicit count: the pool is ALL from that country, but
+    // most clips have no transcript (search is transcription-only). Tell the
+    // model to still use them so the user actually gets their location footage,
+    // topical clips first — otherwise it discards every silent clip and returns
+    // just the one it could read a transcript for.
+    const countryNote = (scopeCountry && requestedClips)
+      ? `\nAll clips above are real footage from ${scopeCountry.replace(/\b\w/g, c => c.toUpperCase())}. Many have no transcript but are still usable footage from that location — include them to reach the ${requestedClips} requested clips, putting any whose transcript matches the idea first. Do not return fewer than ${requestedClips} unless the list is shorter.`
+      : "";
     const userMessage = `Reel idea: "${prompt.trim()}"
 
 Available footage (${clips.length} clips):
 
 ${clipContext}
 
-${pickLine}
+${pickLine}${countryNote}
 Return a single JSON object matching this schema exactly — nothing else:
 
 ${outputSchema(type, mode)}`;
