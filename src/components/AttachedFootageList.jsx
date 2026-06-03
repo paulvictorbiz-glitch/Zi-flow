@@ -58,12 +58,14 @@ function AttachedFootageItem({ index, item, onRemove }) {
   };
 
   const openPreview = () => {
-    // Open in Footage Brain preview (production port is 8765)
-    // We construct a link to the Footage Brain file detail page
-    window.open(
-      `http://localhost:8765/files/${item.footage_file_id}`,
-      "_blank"
-    );
+    // Prefer the Drive link — it's the reliably-viewable asset and works in
+    // production. Fall back to the local Footage Brain file page for dev only
+    // (the old hardcoded localhost:8765 was broken on footagebrain.com).
+    if (item.drive_url) {
+      window.open(item.drive_url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    window.open(`http://localhost:8765/files/${item.footage_file_id}`, "_blank");
   };
 
   return (
@@ -185,6 +187,26 @@ function AttachedFootageItem({ index, item, onRemove }) {
             flexWrap: "wrap",
           }}
         >
+          {item.drive_url && (
+            <a
+              href={item.drive_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                border: "1px solid var(--c-cyan, #22d3ee)",
+                color: "var(--c-cyan, #22d3ee)",
+                borderRadius: "3px",
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 500,
+                textDecoration: "none",
+              }}
+            >
+              ↗ Drive
+            </a>
+          )}
           <button
             onClick={openPreview}
             style={{

@@ -6,15 +6,27 @@
  * reaches the browser.
  *
  * Request body:
- *   { prompt: string, type: "reel"|"longform"|"youtube", reel_id?: string }
+ *   {
+ *     prompt: string,
+ *     type?: "reel"|"longform"|"youtube",
+ *     reel_id?: string,
+ *     provider?: "anthropic"|"openrouter",   // default "anthropic"
+ *     prepare_only?: boolean,                // Puter client path — return prompt, no LLM
+ *   }
  *
  * Response:
- *   200 JSON  — structured draft (see DRAFT_SCHEMA below)
+ *   200 JSON  — { draft, meta } structured draft (see outputSchema below),
+ *               OR { clips, system, userMessage, meta } when prepare_only:true
  *   400       — missing prompt
- *   500       — upstream error
+ *   500       — upstream error / missing provider key
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+
+// Free OpenRouter models can be slow (search + LLM + a few clips). Give the
+// serverless function more headroom than the default so it doesn't 504 in
+// production. 60s is the Hobby-plan ceiling; Pro can go higher.
+export const config = { maxDuration: 60 };
 
 const FB_API = "https://api.footagebrain.com/api";
 const MAX_SEARCH_CLIPS = 8;    // reduced from 15 — fewer clips = less context = faster
@@ -33,12 +45,24 @@ Your job — produce a complete, ready-to-shoot reel package:
 - FLOW: a beat-by-beat blueprint (Hook → Build → Payoff → CTA) mapping the reel's structure
   with rough timecodes and what happens in each beat.
 - CLIPS: pick the best real clips for each beat. Cite EXACT filenames + tight timecodes from
-  the transcript. Never invent footage.
+  the transcript. Never invent footage. Never use the same clip more than once — every pick
+  must be a different video.
 - SEO: a full YouTube/IG title, a complete Instagram caption (with line breaks, emojis, and a
   CTA), a 2-3 sentence SEO description with keywords front-loaded, and 15-20 hashtags
   (mix of broad reach + niche travel tags).
 
 Be specific and usable — an editor should be able to cut this without asking questions.
+Output valid JSON only — no markdown, no text outside the JSON. Start with "{".`;
+
+// Quick / "Eco" mode — title + clip picks only. Far fewer output tokens:
+// cheaper on the paid path, stretches Puter quota, less truncation risk on the
+// free reasoning models. No hook / flow / SEO.
+const QUICK_SYSTEM_PROMPT = `You are a fast video editor for a travel creator.
+You receive an idea and a list of real footage clips (with transcript excerpts).
+Pick the best real clips for the idea and give one short, punchy title.
+Cite EXACT filenames + tight timecodes. Never invent footage.
+Never repeat a clip — every pick must be a different video.
+Do not write a hook, blueprint, or SEO — just the title and the clip picks.
 Output valid JSON only — no markdown, no text outside the JSON. Start with "{".`;
 
 // ---------------------------------------------------------------------------
@@ -109,7 +133,22 @@ function fmtTime(secs) {
 // ---------------------------------------------------------------------------
 // JSON schema description sent to the LLM
 // ---------------------------------------------------------------------------
-function outputSchema(_type) {
+function outputSchema(_type, mode = "full") {
+  if (mode === "quick") {
+    return `{
+  "title": "punchy reel title, under 70 chars",
+  "clips": [
+    {
+      "clip_id": "video_file_id from provided clips",
+      "filename": "exact filename",
+      "timecode_in": "MM:SS",
+      "timecode_out": "MM:SS",
+      "drive_url": "from clip data, or null",
+      "note": "one-line editor note"
+    }
+  ]
+}`;
+  }
   return `{
   "title": "punchy reel title, under 70 chars",
   "description": "one sentence — what this reel is and why it works",
@@ -140,6 +179,163 @@ function outputSchema(_type) {
 }
 
 // ---------------------------------------------------------------------------
+// Parse the model's text into a draft object (robust to ``` fences etc.)
+// ---------------------------------------------------------------------------
+function parseDraft(rawText, prompt) {
+  try {
+    let txt = (rawText || "").trim();
+    txt = txt.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+    const jsonStart = txt.indexOf("{");
+    const jsonEnd = txt.lastIndexOf("}") + 1;
+    if (jsonStart === -1 || jsonEnd <= jsonStart) throw new Error("no JSON object found");
+    return JSON.parse(txt.slice(jsonStart, jsonEnd));
+  } catch (parseErr) {
+    return {
+      title: `Reel: ${prompt.slice(0, 50)}`,
+      description: "(AI response could not be parsed — try Regenerate or another model)",
+      clips: [],
+      _raw: rawText,
+      _parse_error: parseErr.message,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Drop duplicate clip picks — the model sometimes repeats the same video to
+// hit a requested count. Keep first occurrence, keyed by clip_id then filename.
+// ---------------------------------------------------------------------------
+function dedupeClips(clips) {
+  if (!Array.isArray(clips)) return clips;
+  const seen = new Set();
+  return clips.filter(c => {
+    const key = (c && (c.clip_id || c.filename)) || null;
+    if (!key) return true;            // no identity — keep it
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Inject real drive_url / thumbnails from the search results by clip_id.
+// ---------------------------------------------------------------------------
+function injectClipData(draft, clips) {
+  if (!draft || !Array.isArray(draft.clips)) return draft;
+  const byId = Object.fromEntries(clips.map(c => [c.video_file_id, c]));
+  draft.clips = dedupeClips(draft.clips).map(clip => {
+    const src = byId[clip.clip_id] || {};
+    return {
+      ...clip,
+      drive_url: src.drive_url || clip.drive_url || null,
+      drive_folder_url: src.drive_folder_url || clip.drive_folder_url || null,
+      thumbnail_path: src.thumbnail_path || null,
+      duration_seconds: src.duration_seconds || null,
+      is_vertical: src.is_vertical ?? clip.is_vertical ?? false,
+    };
+  });
+  return draft;
+}
+
+// ---------------------------------------------------------------------------
+// OpenRouter free tier — OpenAI-compatible chat completions.
+//
+// OpenRouter's free model slugs change over time (a hardcoded one will
+// eventually 404 with "No endpoints found"). So we try a list of current
+// free models in order, falling through on 404/429/503/empty-response to the
+// next one. Keep the list fresh against https://openrouter.ai/api/v1/models
+// (filter id endsWith ":free"). DeepSeek's free model was retired — these are
+// the strongest reliably-available free instruct models as of 2026-06.
+// ---------------------------------------------------------------------------
+const OPENROUTER_FREE_MODELS = [
+  "meta-llama/llama-3.3-70b-instruct:free", // non-reasoning, fast, great JSON — preferred when its free pool isn't saturated
+  "z-ai/glm-4.5-air:free",                  // reliable fallback (reasoning — needs the larger max_tokens below)
+  "qwen/qwen3-next-80b-a3b-instruct:free",
+  "openai/gpt-oss-120b:free",
+  "moonshotai/kimi-k2.6:free",              // extra backups for saturated days
+  "nvidia/nemotron-3-super-120b-a12b:free",
+];
+
+// Remembered across warm invocations: the last model that actually answered.
+// Free pools get saturated unpredictably, and every 429/503 fall-through still
+// counts against the daily quota — so trying the known-good model FIRST cuts
+// wasted attempts. Resets to null on a cold start (then we just use list order).
+let lastWorkingModel = null;
+
+// Order to try: last-working model first (if any), then the rest in list order,
+// de-duplicated.
+function modelTryOrder() {
+  if (lastWorkingModel && OPENROUTER_FREE_MODELS.includes(lastWorkingModel)) {
+    return [lastWorkingModel, ...OPENROUTER_FREE_MODELS.filter(m => m !== lastWorkingModel)];
+  }
+  return OPENROUTER_FREE_MODELS;
+}
+
+async function callOpenRouter(key, system, userMessage, maxTokens = 6000) {
+  let lastErr = null;
+  for (const model of modelTryOrder()) {
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://footagebrain.com",
+          "X-Title": "FootageBrain Reel Generator",
+        },
+        body: JSON.stringify({
+          model,
+          // Several free models are reasoning models (glm, gpt-oss, qwen3).
+          // For a structured "pick clips + title" task the thinking is overkill
+          // and made them slow + token-hungry (it's what returned empty content
+          // and risked production timeouts). Disable it where supported; models
+          // that don't support the flag ignore it.
+          reasoning: { enabled: false },
+          max_tokens: maxTokens,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: userMessage },
+          ],
+        }),
+      });
+
+      // Model unavailable / rate-limited / overloaded → try the next one.
+      if (res.status === 404 || res.status === 429 || res.status === 503) {
+        const t = await res.text();
+        lastErr = new Error(`OpenRouter ${res.status} for ${model}: ${t.slice(0, 160)}`);
+        console.warn(lastErr.message, "— trying next free model");
+        continue;
+      }
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`OpenRouter ${res.status}: ${t.slice(0, 200)}`);
+      }
+
+      const data = await res.json();
+      const text = data.choices?.[0]?.message?.content || "";
+      if (!text.trim()) {
+        lastErr = new Error(`OpenRouter returned empty content from ${model}`);
+        console.warn(lastErr.message, "— trying next free model");
+        continue;
+      }
+      lastWorkingModel = model;   // remember for the next request (warm container)
+      return {
+        text,
+        usage: {
+          input_tokens: data.usage?.prompt_tokens,
+          output_tokens: data.usage?.completion_tokens,
+        },
+        model,
+      };
+    } catch (e) {
+      // Network-level failure for this model — record and try the next.
+      lastErr = e;
+      console.warn(`OpenRouter call failed for ${model}: ${e.message} — trying next free model`);
+    }
+  }
+  throw lastErr || new Error("All OpenRouter free models failed");
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 export default async function handler(req, res) {
@@ -154,21 +350,42 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { prompt, type = "reel", reel_id } = req.body || {};
+  const {
+    prompt,
+    type = "reel",
+    reel_id,
+    provider = "anthropic",
+    prepare_only = false,
+    mode = "full",   // "full" = hook+flow+clips+SEO; "quick" = title + clips only
+    clip_count,      // optional: ask the model for exactly this many clips (1–10)
+  } = req.body || {};
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
     res.status(400).json({ error: "prompt is required" });
     return;
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on this server" });
-    return;
-  }
+  // Optional exact clip count (clamped 1–10). null => let the model decide.
+  const requestedClips = clip_count != null
+    ? Math.max(1, Math.min(10, parseInt(clip_count, 10) || 0))
+    : null;
+
+  // Quick/Eco mode uses a leaner prompt + slim schema + a smaller token budget.
+  // More clips need a little more output headroom in quick mode.
+  const system = mode === "quick" ? QUICK_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const anthropicMaxTokens = mode === "quick" ? 800 + (requestedClips || 0) * 60 : 2000;
+  const openrouterMaxTokens = mode === "quick" ? 2500 + (requestedClips || 0) * 80 : 6000;
+
+  // NOTE: no top-level API-key gate here. `prepare_only` (Puter client path)
+  // and `openrouter` don't need ANTHROPIC_API_KEY — each provider checks its
+  // own key below, just before it's used.
 
   try {
-    // 1. Search FootageBrain
-    const clips = await searchFootage(prompt.trim());
+    // 1. Search FootageBrain. When the caller asks for N clips, fetch a few
+    //    extra so the model has real choices (capped at 15).
+    const searchN = requestedClips
+      ? Math.min(15, Math.max(MAX_SEARCH_CLIPS, requestedClips + 2))
+      : MAX_SEARCH_CLIPS;
+    const clips = await searchFootage(prompt.trim(), searchN);
     if (!clips.length) {
       res.status(200).json({ error: "no_footage", message: "No matching footage found in FootageBrain for this prompt." });
       return;
@@ -181,70 +398,75 @@ export default async function handler(req, res) {
     topClips.forEach((c, i) => { transcriptMap[c.video_file_id] = transcripts[i]; });
 
     // Include remaining clips (no transcripts) for context
-    const allContextClips = clips; // all 15
+    const allContextClips = clips; // all returned clips
     const clipContext = buildClipContext(allContextClips, transcriptMap);
 
     // 3. Build user message
+    const pickLine = requestedClips
+      ? `Pick exactly ${requestedClips} clips (or as many as exist if fewer are available), each a DIFFERENT clip. Only use clips from the list above.`
+      : `Pick the best clips for this reel. Only use clips from the list above.`;
     const userMessage = `Reel idea: "${prompt.trim()}"
 
 Available footage (${clips.length} clips):
 
 ${clipContext}
 
-Pick the best clips for this reel. Only use clips from the list above.
+${pickLine}
 Return a single JSON object matching this schema exactly — nothing else:
 
-${outputSchema(type)}`;
+${outputSchema(type, mode)}`;
 
-    // 4. Call Anthropic
-    const client = new Anthropic({ apiKey });
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userMessage }],
-    });
-
-    // 5. Parse JSON from response — robustly. The model occasionally wraps
-    //    output in ```json fences or adds a stray prefix; strip those first.
-    const rawText = message.content?.[0]?.text || "";
-    let draft;
-    try {
-      let txt = rawText.trim();
-      // Strip markdown code fences if present
-      txt = txt.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-      const jsonStart = txt.indexOf("{");
-      const jsonEnd = txt.lastIndexOf("}") + 1;
-      if (jsonStart === -1 || jsonEnd <= jsonStart) throw new Error("no JSON object found");
-      draft = JSON.parse(txt.slice(jsonStart, jsonEnd));
-    } catch (parseErr) {
-      // Last resort: return a minimal valid shape so the UI never shows a
-      // "Generated reel" fallback with empty everything.
-      draft = {
-        title: `Reel: ${prompt.slice(0, 50)}`,
-        description: "(AI response could not be parsed — try Regenerate)",
-        clips: [],
-        _raw: rawText,
-        _parse_error: parseErr.message,
-      };
-    }
-
-    // 6. Inject drive_url + drive_folder_url from real search results —
-    //    don't trust the LLM to reliably copy URLs out of the context.
-    if (draft && Array.isArray(draft.clips)) {
-      const byId = Object.fromEntries(clips.map(c => [c.video_file_id, c]));
-      draft.clips = draft.clips.map(clip => {
-        const src = byId[clip.clip_id] || {};
-        return {
-          ...clip,
-          drive_url: src.drive_url || clip.drive_url || null,
-          drive_folder_url: src.drive_folder_url || clip.drive_folder_url || null,
-          thumbnail_path: src.thumbnail_path || null,
-          duration_seconds: src.duration_seconds || null,
-          is_vertical: src.is_vertical ?? clip.is_vertical ?? false,
-        };
+    // 3b. prepare_only — the Puter (client-side Claude) path. Return the
+    //     prompt + clips so the browser can call puter.ai.chat() itself, then
+    //     parse + inject drive_urls client-side. No LLM call here.
+    if (prepare_only) {
+      res.status(200).json({
+        clips,
+        system,
+        userMessage,
+        prompt,
+        meta: {
+          clips_searched: clips.length,
+          clips_with_transcripts: topClips.length,
+          mode,
+        },
       });
+      return;
     }
+
+    // 4. Call the chosen LLM provider
+    let rawText = "";
+    let usage = {};
+    let providerModel = null;
+    if (provider === "openrouter") {
+      const key = process.env.OPENROUTER_API_KEY;
+      if (!key) { res.status(500).json({ error: "OPENROUTER_API_KEY not configured on this server" }); return; }
+      const or = await callOpenRouter(key, system, userMessage, openrouterMaxTokens);
+      rawText = or.text;
+      usage = or.usage;
+      providerModel = or.model;
+    } else { // anthropic (default)
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) { res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on this server" }); return; }
+      const client = new Anthropic({ apiKey });
+      const message = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: anthropicMaxTokens,
+        system,
+        messages: [{ role: "user", content: userMessage }],
+      });
+      rawText = message.content?.[0]?.text || "";
+      usage = {
+        input_tokens: message.usage?.input_tokens,
+        output_tokens: message.usage?.output_tokens,
+      };
+      providerModel = "claude-sonnet-4-6";
+    }
+
+    // 5 + 6. Parse the model's JSON robustly, then inject the real drive_url /
+    //        drive_folder_url from the search results (don't trust the LLM to
+    //        copy URLs verbatim out of the context).
+    const draft = injectClipData(parseDraft(rawText, prompt), clips);
 
     res.status(200).json({
       draft,
@@ -252,8 +474,10 @@ ${outputSchema(type)}`;
       meta: {
         clips_searched: clips.length,
         clips_with_transcripts: topClips.length,
-        input_tokens: message.usage?.input_tokens,
-        output_tokens: message.usage?.output_tokens,
+        ...usage,
+        provider,
+        model: providerModel,
+        mode,
       },
     });
 

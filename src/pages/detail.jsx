@@ -154,7 +154,30 @@ function ReelDetail({ reel, onBack }) {
 
   /* Get attached footage for this reel from store */
   const { attachedFootage } = useWorkflow();
-  const reelAttachedFootage = attachedFootage.filter(f => f.reel_id === current.id);
+  const reelAttachedFootageRaw = attachedFootage.filter(f => f.reel_id === current.id);
+
+  /* The attached_footage_items table has no drive_url column, but reels
+     created from an AI draft persist the full draft (with per-clip drive_url)
+     in detail.aiDraft. Enrich the rows from there so the card can link to
+     Drive. Match on footage_file_id (== clip.clip_id) with filename fallback. */
+  const reelAttachedFootage = React.useMemo(() => {
+    const aiClips = stored?.detail?.aiDraft?.clips || [];
+    if (!aiClips.length) return reelAttachedFootageRaw;
+    const driveByKey = {};
+    aiClips.forEach(c => {
+      const info = { drive_url: c.drive_url || null, drive_folder_url: c.drive_folder_url || null };
+      if (c.clip_id) driveByKey[c.clip_id] = info;
+      if (c.filename) driveByKey[c.filename] = info;
+    });
+    return reelAttachedFootageRaw.map(f => {
+      const hit = driveByKey[f.footage_file_id] || driveByKey[f.filename] || {};
+      return {
+        ...f,
+        drive_url: f.drive_url || hit.drive_url || null,
+        drive_folder_url: f.drive_folder_url || hit.drive_folder_url || null,
+      };
+    });
+  }, [reelAttachedFootageRaw, stored?.detail]);
 
   const handleAttachFootage = (footage) => {
     actions.addAttachedFootage(footage);

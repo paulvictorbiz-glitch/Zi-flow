@@ -2403,7 +2403,41 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   transition: color .15s, border-color .15s;
 }
 .gen-example-chip:hover { color: var(--fg); border-color: var(--c-cyan-soft); }
-.gen-actions { display: flex; align-items: center; gap: 10px; }
+.gen-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Model picker — dashed pill matching .gen-type-btn */
+.gen-model-pick { display: inline-flex; align-items: center; gap: 6px; }
+.gen-model-select {
+  padding: 6px 12px;
+  border: 1px dashed var(--dash);
+  border-radius: 14px;
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  background: var(--bg-2);
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.gen-model-select:hover { border-color: var(--c-cyan-soft); color: var(--fg); }
+.gen-model-select:focus { outline: none; border-style: solid; border-color: var(--c-cyan); color: var(--c-cyan); }
+.gen-model-select:disabled { opacity: 0.5; cursor: default; }
+
+/* Full pack / Quick depth toggle — segmented dashed pill */
+.gen-mode-toggle { display: inline-flex; border: 1px dashed var(--dash); border-radius: 14px; overflow: hidden; }
+.gen-mode-btn {
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.gen-mode-btn + .gen-mode-btn { border-left: 1px dashed var(--dash); }
+.gen-mode-btn:hover:not(:disabled) { color: var(--fg); }
+.gen-mode-btn.is-active { background: var(--c-cyan-soft); color: var(--c-cyan); }
+.gen-mode-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Error + loading */
 .gen-error { padding: 12px 22px; }

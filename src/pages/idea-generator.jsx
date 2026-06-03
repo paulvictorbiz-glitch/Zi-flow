@@ -19,6 +19,47 @@ const EXAMPLE_PROMPTS = [
   "Busy city intersection — time of day contrast",
 ];
 
+// Model picker (desktop). `anthropic` + `openrouter` run server-side via
+// /api/generate; `puter` runs Claude client-side in the browser (free, no key).
+const MODEL_OPTIONS = [
+  { k: "anthropic",  l: "Claude (paid · best)" },
+  { k: "puter",      l: "Claude (Puter · free)" },
+  { k: "openrouter", l: "Llama 3.3 70B (OpenRouter · free)" },
+];
+
+// ---------------------------------------------------------------------------
+// Daily usage counter (per-device). OpenRouter's free tier doesn't expose
+// "queries remaining", so we count actual generations ourselves in
+// localStorage, keyed by date. Gives a rough read on free-tier consumption
+// (the OpenRouter ~50/day cap is shared across the key, so treat this as a
+// floor, not an exact remaining count).
+// ---------------------------------------------------------------------------
+function todayKey() {
+  return "gen_count_" + new Date().toISOString().slice(0, 10);
+}
+function readDailyCount() {
+  try { return parseInt(localStorage.getItem(todayKey()) || "0", 10) || 0; }
+  catch { return 0; }
+}
+function bumpDailyCount() {
+  try {
+    const n = readDailyCount() + 1;
+    localStorage.setItem(todayKey(), String(n));
+    return n;
+  } catch { return readDailyCount(); }
+}
+
+// Short, readable model label for the usage pill.
+function shortModelName(meta) {
+  if (!meta) return "";
+  if (meta.provider === "puter") return "Puter Claude";
+  if (meta.model) {
+    // "meta-llama/llama-3.3-70b-instruct:free" -> "llama-3.3-70b-instruct"
+    return meta.model.split("/").pop().replace(/:free$/, "");
+  }
+  return meta.provider || "";
+}
+
 // ---------------------------------------------------------------------------
 // Supabase history helpers
 // ---------------------------------------------------------------------------
@@ -84,6 +125,61 @@ function buildShotPlan(draft) {
     });
   }
   return lines.join("\n");
+}
+
+/* ---------------------------------------------------------------------------
+   Client-side mirrors of the server's parseDraft + injectClipData. Used only
+   by the Puter path, where the LLM runs in the browser so the server helpers
+   (in api/generate.js) never execute. Keep these in sync with that file.
+   --------------------------------------------------------------------------- */
+function parseDraftClient(rawText, prompt) {
+  try {
+    let txt = (rawText || "").trim();
+    txt = txt.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+    const jsonStart = txt.indexOf("{");
+    const jsonEnd = txt.lastIndexOf("}") + 1;
+    if (jsonStart === -1 || jsonEnd <= jsonStart) throw new Error("no JSON object found");
+    return JSON.parse(txt.slice(jsonStart, jsonEnd));
+  } catch (parseErr) {
+    return {
+      title: `Reel: ${prompt.slice(0, 50)}`,
+      description: "(AI response could not be parsed — try Regenerate or another model)",
+      clips: [],
+      _raw: rawText,
+      _parse_error: parseErr.message,
+    };
+  }
+}
+
+// Drop duplicate clip picks (the model sometimes repeats a video to hit a
+// requested count). Keep first occurrence, keyed by clip_id then filename.
+function dedupeClipsClient(clips) {
+  if (!Array.isArray(clips)) return clips;
+  const seen = new Set();
+  return clips.filter(c => {
+    const key = (c && (c.clip_id || c.filename)) || null;
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function injectClipDataClient(draft, clips) {
+  if (!draft || !Array.isArray(draft.clips)) return draft;
+  const byId = Object.fromEntries((clips || []).map(c => [c.video_file_id, c]));
+  draft.clips = dedupeClipsClient(draft.clips).map(clip => {
+    const src = byId[clip.clip_id] || {};
+    return {
+      ...clip,
+      drive_url: src.drive_url || clip.drive_url || null,
+      drive_folder_url: src.drive_folder_url || clip.drive_folder_url || null,
+      thumbnail_path: src.thumbnail_path || null,
+      duration_seconds: src.duration_seconds || null,
+      is_vertical: src.is_vertical ?? clip.is_vertical ?? false,
+    };
+  });
+  return draft;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +293,9 @@ function HistoryItem({ entry, onSelect, onDelete }) {
 
 export function IdeaGenerator() {
   const [prompt, setPrompt]     = useState("");
+  const [model, setModel]       = useState("anthropic");
+  const [genMode, setGenMode]   = useState("full");  // "full" pack or "quick" (title + clips)
+  const [clipCount, setClipCount] = useState(5);     // quick mode: how many clips (1–10)
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
   const [result, setResult]     = useState(null);
@@ -204,7 +303,11 @@ export function IdeaGenerator() {
   const [history, setHistory]   = useState([]);
   const [histLoading, setHistLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [dailyCount, setDailyCount]   = useState(0);
   const textareaRef             = useRef(null);
+
+  // Initialize today's generation count from localStorage on mount.
+  useEffect(() => { setDailyCount(readDailyCount()); }, []);
 
   // Load history from Supabase on mount
   useEffect(() => {
@@ -226,19 +329,60 @@ export function IdeaGenerator() {
     setError(null);
     setResult(null);
     setCreated(null);
+    const q = prompt.trim();
+    const endpoint = isLocal ? "http://localhost:3001/api/generate" : "/api/generate";
+    const headers = { "Content-Type": "application/json" };
     try {
-      const endpoint = isLocal ? "http://localhost:3001/api/generate" : "/api/generate";
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), type: "reel" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      if (data.error === "no_footage") throw new Error("No matching footage found. Try a different prompt.");
+      let data;
+      if (model === "puter") {
+        // Puter runs Claude client-side in the browser (free, no key). The
+        // server only does the footage search + prompt build (prepare_only),
+        // then we call puter.ai.chat() here and parse/inject locally.
+        if (!window.puter?.ai?.chat) {
+          throw new Error("Puter.js didn't load. Reload the page (it needs the Puter script in <head>) and try again.");
+        }
+        const prepRes = await fetch(endpoint, {
+          method: "POST", headers,
+          body: JSON.stringify({
+            prompt: q, type: "reel", prepare_only: true, mode: genMode,
+            ...(genMode === "quick" ? { clip_count: clipCount } : {}),
+          }),
+        });
+        const prep = await prepRes.json();
+        if (!prepRes.ok) throw new Error(prep.error || `HTTP ${prepRes.status}`);
+        if (prep.error === "no_footage") throw new Error("No matching footage found. Try a different prompt.");
+
+        const resp = await window.puter.ai.chat(
+          [
+            { role: "system", content: prep.system },
+            { role: "user", content: prep.userMessage },
+          ],
+          { model: "claude-sonnet-4" }   // Puter alias; falls back internally if unavailable
+        );
+        const rawText = typeof resp === "string"
+          ? resp
+          : (resp?.message?.content?.[0]?.text ?? resp?.text ?? String(resp));
+
+        const draft = injectClipDataClient(parseDraftClient(rawText, q), prep.clips);
+        data = { draft, meta: { ...prep.meta, provider: "puter" } };
+      } else {
+        // anthropic / openrouter — server does search + LLM + parse + inject.
+        const res = await fetch(endpoint, {
+          method: "POST", headers,
+          body: JSON.stringify({
+            prompt: q, type: "reel", provider: model, mode: genMode,
+            ...(genMode === "quick" ? { clip_count: clipCount } : {}),
+          }),
+        });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        if (data.error === "no_footage") throw new Error("No matching footage found. Try a different prompt.");
+      }
+
       setResult(data);
+      setDailyCount(bumpDailyCount());
       // Save to Supabase history (fire-and-forget)
-      saveHistoryToDB(prompt.trim(), data.draft).then(() =>
+      saveHistoryToDB(q, data.draft).then(() =>
         loadHistoryFromDB().then(setHistory)
       );
     } catch (e) {
@@ -250,7 +394,11 @@ export function IdeaGenerator() {
 
   const loadFromHistory = (entry) => {
     setPrompt(entry.prompt);
-    setResult({ draft: entry.draft, meta: {} });
+    // Dedup clips for drafts saved before the dedup fix landed.
+    const d = entry.draft
+      ? { ...entry.draft, clips: dedupeClipsClient(entry.draft.clips || []) }
+      : entry.draft;
+    setResult({ draft: d, meta: {} });
     setCreated(null);
     setError(null);
     setShowHistory(false);
@@ -302,8 +450,9 @@ export function IdeaGenerator() {
       detail: { aiDraft: draft },
     };
 
-    // Build footage rows
-    const footageItems = (draft.clips || []).map((clip, i) => {
+    // Build footage rows — dedup defensively so a reel never gets the same
+    // video attached twice (covers drafts that predate the dedup fix).
+    const footageItems = dedupeClipsClient(draft.clips || []).map((clip, i) => {
       const tc = (clip.timecode_in && clip.timecode_out)
         ? `${clip.timecode_in}–${clip.timecode_out}`
         : null;
@@ -353,8 +502,18 @@ export function IdeaGenerator() {
             <>
               <DPill>{meta.clips_searched || 0} clips searched</DPill>
               <DPill>{(draft?.clips || []).length} selected</DPill>
+              {(shortModelName(meta) || meta.output_tokens != null) && (
+                <DPill title="Model used · output tokens this generation">
+                  {shortModelName(meta)}
+                  {meta.output_tokens != null ? ` · ${meta.output_tokens} tok` : ""}
+                  {meta.mode === "quick" ? " · quick" : ""}
+                </DPill>
+              )}
             </>
           )}
+          <DPill title="Generations run on this device today (rough free-tier usage)">
+            {dailyCount} today
+          </DPill>
           <DPill onClick={() => setShowHistory(v => !v)}>
             {showHistory ? "Hide history" : `History (${history.length})`}
           </DPill>
@@ -413,6 +572,51 @@ export function IdeaGenerator() {
             style={{ opacity: (!prompt.trim() || loading) ? 0.45 : 1 }}>
             {loading ? "Finding footage…" : "✦ Generate"}
           </DPill>
+          <label className="gen-model-pick">
+            <span className="mono dim" style={{ fontSize: 10 }}>model</span>
+            <select
+              className="gen-model-select"
+              value={model}
+              onChange={e => setModel(e.target.value)}
+              disabled={loading}
+            >
+              {MODEL_OPTIONS.map(m => (
+                <option key={m.k} value={m.k}>{m.l}</option>
+              ))}
+            </select>
+          </label>
+          <div className="gen-mode-toggle" role="group" aria-label="Generation depth">
+            <button
+              type="button"
+              className={`gen-mode-btn${genMode === "full" ? " is-active" : ""}`}
+              onClick={() => setGenMode("full")}
+              disabled={loading}
+              title="Full pack — hook, blueprint, clips, and SEO"
+            >Full pack</button>
+            <button
+              type="button"
+              className={`gen-mode-btn${genMode === "quick" ? " is-active" : ""}`}
+              onClick={() => setGenMode("quick")}
+              disabled={loading}
+              title="Quick — just a title and the clips. Faster, fewer tokens."
+            >Quick</button>
+          </div>
+          {genMode === "quick" && (
+            <label className="gen-model-pick">
+              <span className="mono dim" style={{ fontSize: 10 }}>clips</span>
+              <select
+                className="gen-model-select"
+                value={clipCount}
+                onChange={e => setClipCount(parseInt(e.target.value, 10))}
+                disabled={loading}
+                title="How many clips to select (up to 10)"
+              >
+                {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+          )}
           {(prompt || result) && !loading && (
             <DPill onClick={() => { setPrompt(""); setResult(null); setError(null); setCreated(null); }}>Clear</DPill>
           )}
