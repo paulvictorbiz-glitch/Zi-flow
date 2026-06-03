@@ -108,12 +108,29 @@ function clipInCountry(absPath, country) {
   return segs.some(seg => seg === country || seg.includes(country));
 }
 
-// Pull a country's files straight from the folder listing (not search), so we
-// can surface clips that have NO topical transcript — the ones transcription-
-// only search can't find. Mapped into the search-result shape. One request.
-async function fetchCountryFiles(country, want = MAX_CONTEXT_CLIPS) {
+// Recent file listing, cached in the warm container. The /api/files call is
+// heavy (500 records) and identical regardless of country, so caching it makes
+// the per-country top-up below nearly free after the first request.
+let _filesCache = { at: 0, rows: [] };
+async function getRecentFiles() {
+  if (_filesCache.rows.length && Date.now() - _filesCache.at < 5 * 60 * 1000) {
+    return _filesCache.rows;
+  }
   try {
     const rows = await fetch(`${FB_API}/files?limit=500&sort_by=created_at_desc`).then(r => r.json());
+    if (Array.isArray(rows) && rows.length) _filesCache = { at: Date.now(), rows };
+  } catch {
+    /* keep stale list on failure */
+  }
+  return _filesCache.rows;
+}
+
+// Pull a country's files straight from the folder listing (not search), so we
+// can surface clips that have NO topical transcript — the ones transcription-
+// only search can't find. Mapped into the search-result shape.
+async function fetchCountryFiles(country, want = MAX_CONTEXT_CLIPS) {
+  try {
+    const rows = await getRecentFiles();
     const out = [];
     for (const f of rows || []) {
       if (out.length >= want) break;
@@ -505,39 +522,35 @@ export default async function handler(req, res) {
       ? Math.min(15, Math.max(MAX_SEARCH_CLIPS, requestedClips + 2))
       : MAX_SEARCH_CLIPS;
     const searchQuery = scopeCountry ? (stripCountry(prompt, scopeCountry) || prompt.trim()) : prompt.trim();
-    const searchN = scopeCountry ? 80 : baseN;
 
-    let clips = await searchFootage(searchQuery, searchN);
+    let clips;
+    let countryMatched = false;
+    if (scopeCountry) {
+      // Topic search + folder listing both hit the FootageBrain API; run them
+      // in PARALLEL so country scoping stays well under the function timeout.
+      const [searchClips, folderClips] = await Promise.all([
+        searchFootage(searchQuery, 50),
+        fetchCountryFiles(scopeCountry, MAX_CONTEXT_CLIPS),
+      ]);
+      // Topic-matched clips for this country first, then folder clips (which
+      // surface silent/no-transcript footage that search alone can't), deduped.
+      const scoped = searchClips.filter(c => clipInCountry(c.abs_path, scopeCountry));
+      const seen = new Set();
+      clips = [];
+      for (const c of [...scoped, ...folderClips]) {
+        if (clips.length >= MAX_CONTEXT_CLIPS) break;
+        if (c.video_file_id && !seen.has(c.video_file_id)) { seen.add(c.video_file_id); clips.push(c); }
+      }
+      countryMatched = clips.length > 0;
+      // Nothing at all for that country → fall back to an unscoped topic search.
+      if (!clips.length) clips = await searchFootage(prompt.trim(), baseN);
+    } else {
+      clips = await searchFootage(searchQuery, baseN);
+    }
+
     if (!clips.length) {
       res.status(200).json({ error: "no_footage", message: "No matching footage found in FootageBrain for this prompt." });
       return;
-    }
-
-    // Filter to the country's folder, keeping topic-ranked clips first.
-    let countryMatched = false;
-    if (scopeCountry) {
-      const scoped = clips.filter(c => clipInCountry(c.abs_path, scopeCountry));
-      clips = scoped;               // may be empty — topped up next
-      countryMatched = scoped.length > 0;
-
-      // Top up from the folder listing so the user gets MORE of that country's
-      // footage than transcription-only search alone surfaces. Topic-matched
-      // clips (above) stay first; folder clips (best_score 0) fill the rest.
-      if (clips.length < MAX_CONTEXT_CLIPS) {
-        const seen = new Set(clips.map(c => c.video_file_id));
-        const extra = await fetchCountryFiles(scopeCountry, MAX_CONTEXT_CLIPS);
-        for (const e of extra) {
-          if (clips.length >= MAX_CONTEXT_CLIPS) break;
-          if (!seen.has(e.video_file_id)) { clips.push(e); seen.add(e.video_file_id); }
-        }
-        if (clips.length) countryMatched = true;
-      }
-
-      // Nothing at all for that country → fall back to unscoped topic results.
-      if (!clips.length) {
-        clips = await searchFootage(prompt.trim(), baseN);
-        countryMatched = false;
-      }
     }
     // Cap the pool sent to the LLM (a wide country search can return many).
     clips = clips.slice(0, scopeCountry ? MAX_CONTEXT_CLIPS : clips.length);
