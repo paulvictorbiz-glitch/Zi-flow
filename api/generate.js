@@ -32,6 +32,110 @@ const FB_API = "https://api.footagebrain.com/api";
 const MAX_SEARCH_CLIPS = 8;    // reduced from 15 — fewer clips = less context = faster
 const TRANSCRIPT_CLIPS = 3;    // reduced from 6 — top 3 with transcripts is enough
 const MAX_CHUNKS_PER_CLIP = 4; // transcript chunks sent to LLM per clip
+const MAX_CONTEXT_CLIPS = 14;  // cap clips sent to the LLM (country scoping can return many)
+
+// ---------------------------------------------------------------------------
+// Location / country scoping
+//
+// FootageBrain search is transcription-only and ignores the file path, but the
+// library is organised into per-country folders (e.g. "...\1) Mobile\1) Taiwan\").
+// So a "Taiwan food" query returns only clips that SAID "Taiwan". To pull a
+// country's footage we search the TOPIC and filter results by the folder in
+// abs_path. The country list is derived from the coverage tree (cached).
+// ---------------------------------------------------------------------------
+const FB_COVERAGE_URL = `${FB_API}/dashboard/coverage-tree`;
+
+// Folder-name tokens that are storage/device labels, not places.
+const NON_PLACE_TOKENS = new Set([
+  "mobile", "drone", "gopro", "go pro", "osmo", "osmo pocket 3", "pocket",
+  "compilation", "complilation", "travel", "pictures", "backup", "sd", "card",
+  "capcut", "dcim", "lost", "files", "yellow", "black", "root", "raw",
+  "footage", "clips", "misc", "test", "new", "old", "untitled",
+]);
+
+// Strip a leading "1) ", "4.5) ", "8. " ordinal prefix and lowercase.
+function normCountry(s) {
+  return String(s || "")
+    .replace(/^\s*\d+(?:\.\d+)?\s*[\)\.]\s*/, "")
+    .trim()
+    .toLowerCase();
+}
+
+let _countryCache = { at: 0, list: [] };
+async function getCountryList() {
+  if (_countryCache.list.length && Date.now() - _countryCache.at < 10 * 60 * 1000) {
+    return _countryCache.list;
+  }
+  try {
+    const ct = await fetch(FB_COVERAGE_URL).then(r => r.json());
+    const set = new Set();
+    for (const root of ct.roots || []) {
+      for (const f of root.folders || []) {
+        const c = normCountry(f.rel_path);
+        if (c && c.length >= 3 && !NON_PLACE_TOKENS.has(c)) set.add(c);
+      }
+    }
+    _countryCache = { at: Date.now(), list: [...set].sort((a, b) => b.length - a.length) };
+  } catch {
+    /* keep stale list on failure */
+  }
+  return _countryCache.list;
+}
+
+// Find a known location name inside the prompt (longest match wins).
+function detectCountry(prompt, list) {
+  const p = " " + String(prompt || "").toLowerCase() + " ";
+  for (const c of list) {            // list is pre-sorted longest-first
+    if (c.length < 4) continue;
+    const re = new RegExp(`\\b${c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+    if (re.test(p)) return c;
+  }
+  return null;
+}
+
+// Remove the country phrase from the topic query so semantic ranking is about
+// the TOPIC, not the location (which the folder filter already handles).
+function stripCountry(prompt, country) {
+  if (!country) return prompt;
+  const re = new RegExp(`\\b(?:in|from|at|around)?\\s*${country.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "ig");
+  return String(prompt).replace(re, " ").replace(/\s{2,}/g, " ").trim();
+}
+
+// Does a clip's abs_path live under the given country's folder?
+function clipInCountry(absPath, country) {
+  if (!absPath || !country) return false;
+  const segs = String(absPath).split(/[\\/]+/).map(normCountry);
+  return segs.some(seg => seg === country || seg.includes(country));
+}
+
+// Pull a country's files straight from the folder listing (not search), so we
+// can surface clips that have NO topical transcript — the ones transcription-
+// only search can't find. Mapped into the search-result shape. One request.
+async function fetchCountryFiles(country, want = MAX_CONTEXT_CLIPS) {
+  try {
+    const rows = await fetch(`${FB_API}/files?limit=500&sort_by=created_at_desc`).then(r => r.json());
+    const out = [];
+    for (const f of rows || []) {
+      if (out.length >= want) break;
+      if (!clipInCountry(f.abs_path, country)) continue;
+      out.push({
+        video_file_id: f.id,
+        filename: f.filename,
+        abs_path: f.abs_path,
+        duration_seconds: f.duration_seconds,
+        thumbnail_path: f.thumbnail_path,
+        is_vertical: f.is_vertical,
+        drive_url: f.drive_url || null,
+        drive_folder_url: f.drive_folder_url || null,
+        best_score: 0,        // ranks below transcript-matched clips
+        matched_chunks: [],
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
 
 // ---------------------------------------------------------------------------
 // System prompt — viral content + SEO + hooks specialist
@@ -358,6 +462,7 @@ export default async function handler(req, res) {
     prepare_only = false,
     mode = "full",   // "full" = hook+flow+clips+SEO; "quick" = title + clips only
     clip_count,      // optional: ask the model for exactly this many clips (1–10)
+    country,         // optional: scope retrieval to this country's folder ("" / "any" = off)
   } = req.body || {};
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
     res.status(400).json({ error: "prompt is required" });
@@ -380,16 +485,62 @@ export default async function handler(req, res) {
   // own key below, just before it's used.
 
   try {
+    // 0. Resolve the country to scope by: explicit param wins; otherwise try to
+    //    auto-detect one from the prompt against the known folder list.
+    const explicitCountry = (typeof country === "string" && country.trim() && country.trim().toLowerCase() !== "any")
+      ? normCountry(country)
+      : null;
+    let scopeCountry = explicitCountry;
+    let countryAutoDetected = false;
+    if (!scopeCountry) {
+      const detected = detectCountry(prompt, await getCountryList());
+      if (detected) { scopeCountry = detected; countryAutoDetected = true; }
+    }
+
     // 1. Search FootageBrain. When the caller asks for N clips, fetch a few
-    //    extra so the model has real choices (capped at 15).
-    const searchN = requestedClips
+    //    extra so the model has real choices (capped at 15). When scoping by
+    //    country we search the TOPIC only (folder filter handles location) and
+    //    pull a much wider pool so enough survive the filter.
+    const baseN = requestedClips
       ? Math.min(15, Math.max(MAX_SEARCH_CLIPS, requestedClips + 2))
       : MAX_SEARCH_CLIPS;
-    const clips = await searchFootage(prompt.trim(), searchN);
+    const searchQuery = scopeCountry ? (stripCountry(prompt, scopeCountry) || prompt.trim()) : prompt.trim();
+    const searchN = scopeCountry ? 80 : baseN;
+
+    let clips = await searchFootage(searchQuery, searchN);
     if (!clips.length) {
       res.status(200).json({ error: "no_footage", message: "No matching footage found in FootageBrain for this prompt." });
       return;
     }
+
+    // Filter to the country's folder, keeping topic-ranked clips first.
+    let countryMatched = false;
+    if (scopeCountry) {
+      const scoped = clips.filter(c => clipInCountry(c.abs_path, scopeCountry));
+      clips = scoped;               // may be empty — topped up next
+      countryMatched = scoped.length > 0;
+
+      // Top up from the folder listing so the user gets MORE of that country's
+      // footage than transcription-only search alone surfaces. Topic-matched
+      // clips (above) stay first; folder clips (best_score 0) fill the rest.
+      if (clips.length < MAX_CONTEXT_CLIPS) {
+        const seen = new Set(clips.map(c => c.video_file_id));
+        const extra = await fetchCountryFiles(scopeCountry, MAX_CONTEXT_CLIPS);
+        for (const e of extra) {
+          if (clips.length >= MAX_CONTEXT_CLIPS) break;
+          if (!seen.has(e.video_file_id)) { clips.push(e); seen.add(e.video_file_id); }
+        }
+        if (clips.length) countryMatched = true;
+      }
+
+      // Nothing at all for that country → fall back to unscoped topic results.
+      if (!clips.length) {
+        clips = await searchFootage(prompt.trim(), baseN);
+        countryMatched = false;
+      }
+    }
+    // Cap the pool sent to the LLM (a wide country search can return many).
+    clips = clips.slice(0, scopeCountry ? MAX_CONTEXT_CLIPS : clips.length);
 
     // 2. Fetch transcripts for top N clips in parallel
     const topClips = clips.slice(0, TRANSCRIPT_CLIPS);
@@ -429,6 +580,9 @@ ${outputSchema(type, mode)}`;
           clips_searched: clips.length,
           clips_with_transcripts: topClips.length,
           mode,
+          country: scopeCountry || null,
+          country_auto: countryAutoDetected,
+          country_matched: countryMatched,
         },
       });
       return;
@@ -478,6 +632,9 @@ ${outputSchema(type, mode)}`;
         provider,
         model: providerModel,
         mode,
+        country: scopeCountry || null,
+        country_auto: countryAutoDetected,
+        country_matched: countryMatched,
       },
     });
 

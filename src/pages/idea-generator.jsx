@@ -6,7 +6,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { DPill } from "../components/components.jsx";
-import { footageBrainThumbnailUrl } from "../lib/footage-brain-client.js";
+import { footageBrainThumbnailUrl, getFootageBrainCoverageTree } from "../lib/footage-brain-client.js";
 import { useWorkflow } from "../store/store.jsx";
 import { supabase } from "../lib/supabase-client.js";
 
@@ -47,6 +47,34 @@ function bumpDailyCount() {
     localStorage.setItem(todayKey(), String(n));
     return n;
   } catch { return readDailyCount(); }
+}
+
+// ---------------------------------------------------------------------------
+// Country list for the location dropdown — derived from FootageBrain's coverage
+// tree folder names. Strips the "1) " ordinal prefix and drops device/storage
+// folders so only real places remain. (The server normalizes again on its end.)
+// ---------------------------------------------------------------------------
+const COUNTRY_STOPWORDS = /\b(mobile|drone|gopro|go pro|osmo|pocket|compilation|complilation|travel|pictures|backup|sd|card|capcut|dcim|lost|files|raw|footage|clips|misc|test)\b/i;
+
+function cleanCountryName(relPath) {
+  const c = String(relPath || "")
+    .replace(/^\s*\d+(?:\.\d+)?\s*[\)\.]\s*/, "")  // strip "1) ", "4.5) ", "8. "
+    .trim();
+  if (!c || c.length < 3) return null;
+  if (COUNTRY_STOPWORDS.test(c)) return null;       // device/storage folder, not a place
+  if (/[_]| to | - /i.test(c) || c.split(/\s+/).length > 2) return null; // combo/trip folders
+  return c.replace(/\b\w/g, ch => ch.toUpperCase());  // Title Case
+}
+
+function deriveCountries(coverageTree) {
+  const set = new Set();
+  (coverageTree?.roots || []).forEach(r =>
+    (r.folders || []).forEach(f => {
+      const c = cleanCountryName(f.rel_path);
+      if (c) set.add(c);
+    })
+  );
+  return [...set].sort();
 }
 
 // Short, readable model label for the usage pill.
@@ -296,6 +324,8 @@ export function IdeaGenerator() {
   const [model, setModel]       = useState("anthropic");
   const [genMode, setGenMode]   = useState("full");  // "full" pack or "quick" (title + clips)
   const [clipCount, setClipCount] = useState(5);     // quick mode: how many clips (1–10)
+  const [country, setCountry]   = useState("");      // "" = Any; else scope retrieval to this country
+  const [countries, setCountries] = useState([]);    // dropdown options from coverage tree
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
   const [result, setResult]     = useState(null);
@@ -308,6 +338,13 @@ export function IdeaGenerator() {
 
   // Initialize today's generation count from localStorage on mount.
   useEffect(() => { setDailyCount(readDailyCount()); }, []);
+
+  // Load the country list (for the location dropdown) from the coverage tree.
+  useEffect(() => {
+    getFootageBrainCoverageTree()
+      .then(ct => setCountries(deriveCountries(ct)))
+      .catch(() => { /* dropdown just shows "Any" if FootageBrain is unreachable */ });
+  }, []);
 
   // Load history from Supabase on mount
   useEffect(() => {
@@ -346,6 +383,7 @@ export function IdeaGenerator() {
           body: JSON.stringify({
             prompt: q, type: "reel", prepare_only: true, mode: genMode,
             ...(genMode === "quick" ? { clip_count: clipCount } : {}),
+            ...(country ? { country } : {}),
           }),
         });
         const prep = await prepRes.json();
@@ -372,6 +410,7 @@ export function IdeaGenerator() {
           body: JSON.stringify({
             prompt: q, type: "reel", provider: model, mode: genMode,
             ...(genMode === "quick" ? { clip_count: clipCount } : {}),
+            ...(country ? { country } : {}),
           }),
         });
         data = await res.json();
@@ -500,6 +539,11 @@ export function IdeaGenerator() {
         <div className="actions">
           {meta && (
             <>
+              {meta.country && (
+                <DPill title={meta.country_auto ? "Auto-detected from your prompt" : "Scoped by the country dropdown"}>
+                  📍 {meta.country.replace(/\b\w/g, c => c.toUpperCase())}{meta.country_auto ? " (auto)" : ""}
+                </DPill>
+              )}
               <DPill>{meta.clips_searched || 0} clips searched</DPill>
               <DPill>{(draft?.clips || []).length} selected</DPill>
               {(shortModelName(meta) || meta.output_tokens != null) && (
@@ -582,6 +626,21 @@ export function IdeaGenerator() {
             >
               {MODEL_OPTIONS.map(m => (
                 <option key={m.k} value={m.k}>{m.l}</option>
+              ))}
+            </select>
+          </label>
+          <label className="gen-model-pick">
+            <span className="mono dim" style={{ fontSize: 10 }}>country</span>
+            <select
+              className="gen-model-select"
+              value={country}
+              onChange={e => setCountry(e.target.value)}
+              disabled={loading}
+              title="Scope footage to one country's folder. 'Any' lets the AI auto-detect from your prompt."
+            >
+              <option value="">Any (auto)</option>
+              {countries.map(c => (
+                <option key={c} value={c}>{c}</option>
               ))}
             </select>
           </label>
