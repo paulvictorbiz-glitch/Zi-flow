@@ -175,13 +175,15 @@ function ReelDetail({ reel, onBack }) {
   const { attachedFootage } = useWorkflow();
   const reelAttachedFootageRaw = attachedFootage.filter(f => f.reel_id === current.id);
 
-  /* The attached_footage_items table has no drive_url column, but reels
-     created from an AI draft persist the full draft (with per-clip drive_url)
-     in detail.aiDraft. Enrich the rows from there so the card can link to
-     Drive. Match on footage_file_id (== clip.clip_id) with filename fallback. */
+  /* The attached_footage_items table has no drive_url column, so the clip's
+     Drive link lives in the reel's `detail` jsonb: AI reels keep it in
+     detail.aiDraft.clips; manually-attached clips are recorded in
+     detail.footageDrive (keyed by footage_file_id) on attach. Enrich the rows
+     from both so the card can link to Drive. */
   const reelAttachedFootage = React.useMemo(() => {
-    const aiClips = stored?.detail?.aiDraft?.clips || [];
-    if (!aiClips.length) return reelAttachedFootageRaw;
+    const det = detail || {};
+    const aiClips = det.aiDraft?.clips || stored?.detail?.aiDraft?.clips || [];
+    const footageDrive = det.footageDrive || stored?.detail?.footageDrive || {};
     const driveByKey = {};
     aiClips.forEach(c => {
       const info = { drive_url: c.drive_url || null, drive_folder_url: c.drive_folder_url || null };
@@ -189,19 +191,33 @@ function ReelDetail({ reel, onBack }) {
       if (c.filename) driveByKey[c.filename] = info;
     });
     return reelAttachedFootageRaw.map(f => {
-      const hit = driveByKey[f.footage_file_id] || driveByKey[f.filename] || {};
+      const hit = footageDrive[f.footage_file_id] || driveByKey[f.footage_file_id] || driveByKey[f.filename] || {};
       return {
         ...f,
         drive_url: f.drive_url || hit.drive_url || null,
         drive_folder_url: f.drive_folder_url || hit.drive_folder_url || null,
       };
     });
-  }, [reelAttachedFootageRaw, stored?.detail]);
+  }, [reelAttachedFootageRaw, detail, stored?.detail]);
 
   const handleAttachFootage = (footage) => {
     actions.addAttachedFootage(footage);
+    // Record the clip's Drive link in the reel's detail (the footage table has
+    // no drive column) so the card can show "↗ Google Drive". Saved via the
+    // debounced detail persist.
+    if (footage.footage_file_id && (footage.drive_url || footage.drive_folder_url)) {
+      setDetail(d => ({
+        ...d,
+        footageDrive: {
+          ...(d.footageDrive || {}),
+          [footage.footage_file_id]: {
+            drive_url: footage.drive_url || null,
+            drive_folder_url: footage.drive_folder_url || null,
+          },
+        },
+      }));
+    }
     // Modal stays open so the user can keep adding multiple clips.
-    // Close via the × button or by clicking the backdrop.
   };
 
   const handleRemoveFootage = (footageId) => {

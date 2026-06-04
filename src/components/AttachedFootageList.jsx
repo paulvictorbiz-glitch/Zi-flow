@@ -107,51 +107,29 @@ function AttachedFootageItem({ index, item, onRemove }) {
 
       {/* Content */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: "8px",
-            marginBottom: "4px",
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              color: "var(--fg-mute)",
-              fontWeight: 500,
-            }}
-          >
-            #{index}
-          </span>
-          <span
-            style={{
-              fontSize: 13,
-              fontWeight: 500,
-              color: "var(--fg)",
-              wordBreak: "break-word",
-            }}
-          >
-            {item.filename}
-          </span>
-          {folder && (
-            <span style={{
-              fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--c-cyan, #22d3ee)",
-              border: "1px solid var(--c-cyan-soft, var(--border))", borderRadius: 8,
-              padding: "1px 7px", whiteSpace: "nowrap",
-            }}>
-              📁 {folder}
+        <div style={{ marginBottom: "6px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
+            <span style={{ fontSize: 11, color: "var(--fg-mute)", fontWeight: 500, flexShrink: 0 }}>
+              #{index}
             </span>
-          )}
-          <span
-            style={{
-              fontSize: 11,
-              color: "var(--fg-mute)",
-              whiteSpace: "nowrap",
-            }}
-          >
-            ({durationText})
-          </span>
+            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)", overflowWrap: "anywhere", minWidth: 0 }}>
+              {item.filename}
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", flexWrap: "wrap" }}>
+            {folder && (
+              <span style={{
+                fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--c-cyan, #22d3ee)",
+                border: "1px solid var(--c-cyan-soft, var(--border))", borderRadius: 8,
+                padding: "1px 7px", whiteSpace: "nowrap",
+              }}>
+                📁 {folder}
+              </span>
+            )}
+            <span style={{ fontSize: 11, color: "var(--fg-mute)", whiteSpace: "nowrap" }}>
+              ({durationText})
+            </span>
+          </div>
         </div>
 
         {item.best_score && (

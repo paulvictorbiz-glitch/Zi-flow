@@ -55,6 +55,17 @@ export function ReelModal({ onClose }) {
 
   const submit = () => {
     const newId = nextReelId(reels);
+    // Record each queued clip's Drive link in the reel's detail (the footage
+    // table has no drive column) so the card can show "↗ Google Drive".
+    const footageDrive = {};
+    pending.forEach((p) => {
+      if (p.footage_file_id && (p.drive_url || p.drive_folder_url)) {
+        footageDrive[p.footage_file_id] = {
+          drive_url: p.drive_url || null,
+          drive_folder_url: p.drive_folder_url || null,
+        };
+      }
+    });
     const r = {
       id: newId,
       title: title || "Untitled reel",
@@ -70,6 +81,7 @@ export function ReelModal({ onClose }) {
       // the AI-generate flow read. (It used to write `plan`, which the detail
       // never displayed, so the shot plan looked lost after Create.)
       logline, vo, audio, inspo, script: plan,
+      ...(Object.keys(footageDrive).length ? { detail: { footageDrive } } : {}),
     };
     actions.createReel(r);
     // Persist queued footage attachments now that we have the reel id.
