@@ -43,6 +43,11 @@ CONFIG = {
     "ANON_KEY": "sb_publishable_dwqdtQk9W7xNHgHn2kJbkA_2DNMz6uK",
     "POLL_SECONDS": 60,              # 1 heartbeat / minute => 1-minute time resolution
     "CAPCUT_PROCESS": "CapCut.exe",
+    # CapCut's window title is just "CapCut" (no project name), so the open
+    # project is read from disk: each project is a folder here, and the most
+    # recently-modified one is the project being edited.
+    "DRAFT_DIR": r"%LOCALAPPDATA%\CapCut\User Data\Projects\com.lveditor.draft",
+    "PROJECT_RECENT_MIN": 6,         # only report a project whose draft changed this recently
 }
 
 
@@ -94,21 +99,32 @@ def foreground_pid_and_title():
         return None, ""
 
 
-def clean_project(title):
-    """Pull the project name out of a CapCut window title
-    ("CapCut - My Project" / "My Project - CapCut")."""
-    if not title:
+def active_project(cfg):
+    """The CapCut project currently being edited = the project folder whose
+    draft was modified most recently (CapCut autosaves while you edit). Returns
+    the folder name (= project name), or None if nothing changed recently."""
+    draft_dir = os.path.expandvars(cfg.get("DRAFT_DIR", ""))
+    if not draft_dir or not os.path.isdir(draft_dir):
         return None
-    t = title
-    for sep in (" - ", " — ", " | "):
-        if sep in t:
-            parts = [s.strip() for s in t.split(sep) if s.strip() and s.strip().lower() != "capcut"]
-            if parts:
-                t = " - ".join(parts)
-    t = t.strip()
-    if not t or t.lower() == "capcut":
+    newest_name, newest_m = None, 0.0
+    try:
+        for entry in os.scandir(draft_dir):
+            # Real projects are folders that contain draft_meta_info.json. This
+            # skips system folders like ".recycle_bin" and dotfolders.
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            meta = os.path.join(entry.path, "draft_meta_info.json")
+            try:
+                m = os.path.getmtime(meta)   # raises if missing -> not a project
+            except OSError:
+                continue
+            if m > newest_m:
+                newest_m, newest_name = m, entry.name
+    except OSError:
         return None
-    return t[:200]
+    if newest_name and (time.time() - newest_m) <= cfg.get("PROJECT_RECENT_MIN", 6) * 60:
+        return newest_name[:200]
+    return None
 
 
 def send_heartbeat(cfg, running, focused, project_title):
@@ -156,9 +172,11 @@ def main():
             # row count to real CapCut-usage minutes (well under Supabase's
             # 1000-row read cap) instead of logging idle machine time 24/7.
             if running:
-                fg_pid, fg_title = foreground_pid_and_title()
+                fg_pid, _ = foreground_pid_and_title()
                 focused = fg_pid in pids
-                project_title = clean_project(fg_title) if focused else None
+                # Read the open project from disk (works whether or not CapCut is
+                # the foreground window — captures the project being edited).
+                project_title = active_project(cfg)
                 send_heartbeat(cfg, True, focused, project_title)
         except Exception as e:
             _log(f"loop error: {e}")

@@ -75,14 +75,19 @@ function buildSessions(rows) {
   let cur = null;
   for (const r of sorted) {
     const t = new Date(r.ts).getTime();
-    if (cur && t - cur.lastT <= SESSION_GAP_MIN * 60000) {
+    const proj = r.project_title || null;
+    const gap = cur ? t - cur.lastT : Infinity;
+    // New session when there's a time gap OR the editor switched to a different
+    // project (so each project's work shows as its own time-log entry).
+    const projChanged = cur && proj && cur.project && proj !== cur.project;
+    if (cur && gap <= SESSION_GAP_MIN * 60000 && !projChanged) {
       cur.lastT = t; cur.end = r.ts; cur.count++;
       if (r.focused) cur.active++;
-      if (r.project_title) cur.projects[r.project_title] = (cur.projects[r.project_title] || 0) + 1;
+      if (proj) { cur.projects[proj] = (cur.projects[proj] || 0) + 1; if (!cur.project) cur.project = proj; }
     } else {
       if (cur) out.push(cur);
-      cur = { start: r.ts, end: r.ts, lastT: t, count: 1, active: r.focused ? 1 : 0, projects: {} };
-      if (r.project_title) cur.projects[r.project_title] = 1;
+      cur = { start: r.ts, end: r.ts, lastT: t, count: 1, active: r.focused ? 1 : 0, projects: {}, project: proj };
+      if (proj) cur.projects[proj] = 1;
     }
   }
   if (cur) out.push(cur);
