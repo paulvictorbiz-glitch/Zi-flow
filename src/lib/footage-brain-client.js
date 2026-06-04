@@ -74,9 +74,10 @@ export async function searchFootageBrain(query, options = {}) {
  */
 export async function getFootageFileMetadata(fileId) {
   try {
+    // No Content-Type header on GET — it would force a CORS preflight (OPTIONS)
+    // that some networks/proxies block, silently breaking this cross-origin call.
     const response = await fetch(`${FOOTAGE_BRAIN_BASE}/files/${fileId}`, {
       method: "GET",
-      headers: { "Content-Type": "application/json" },
     });
 
     if (!response.ok) {
@@ -101,7 +102,6 @@ export async function getFootageTranscript(fileId) {
   try {
     const response = await fetch(`${FOOTAGE_BRAIN_BASE}/files/${fileId}/transcript`, {
       method: "GET",
-      headers: { "Content-Type": "application/json" },
     });
 
     if (!response.ok) {
@@ -207,9 +207,10 @@ export async function searchByFolder(absFolder, options = {}) {
  */
 export async function getFootageBrainCoverageTree() {
   try {
+    // No Content-Type on GET — avoids a CORS preflight some networks block,
+    // which would make the Coverage panel fail to load cross-origin.
     const response = await fetch(`${FOOTAGE_BRAIN_BASE}/dashboard/coverage-tree`, {
       method: "GET",
-      headers: { "Content-Type": "application/json" },
     });
     if (!response.ok) {
       throw new Error(`Coverage tree fetch failed: ${response.statusText}`);
