@@ -13,6 +13,7 @@ import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { useNotifications } from "../components/notifications.jsx";
 import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
+import { getFootageFileMetadata } from "../lib/footage-brain-client.js";
 import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
 
 /* Blueprint fields start empty for every reel — operators fill them in. */
@@ -175,11 +176,30 @@ function ReelDetail({ reel, onBack }) {
   const { attachedFootage } = useWorkflow();
   const reelAttachedFootageRaw = attachedFootage.filter(f => f.reel_id === current.id);
 
-  /* The attached_footage_items table has no drive_url column, so the clip's
-     Drive link lives in the reel's `detail` jsonb: AI reels keep it in
-     detail.aiDraft.clips; manually-attached clips are recorded in
-     detail.footageDrive (keyed by footage_file_id) on attach. Enrich the rows
-     from both so the card can link to Drive. */
+  /* The attached_footage_items table has no drive_url column. The clip's Drive
+     link is recovered from (in order): the reel's detail (AI draft / footageDrive
+     map) and, universally, a live lookup by footage_file_id against FootageBrain
+     — so even clips attached before drive-link support get a link with no
+     re-attach. `driveById` caches those lookups for this session. */
+  const [driveById, setDriveById] = useState({});
+  useEffect(() => {
+    const missing = [...new Set(reelAttachedFootageRaw.map(f => f.footage_file_id).filter(Boolean))]
+      .filter(id => !(id in driveById));
+    if (!missing.length) return;
+    let alive = true;
+    (async () => {
+      const updates = {};
+      await Promise.all(missing.map(async id => {
+        try {
+          const file = await getFootageFileMetadata(id);
+          updates[id] = { drive_url: file?.drive_url || null, drive_folder_url: file?.drive_folder_url || null };
+        } catch { updates[id] = { drive_url: null, drive_folder_url: null }; }
+      }));
+      if (alive) setDriveById(prev => ({ ...prev, ...updates }));
+    })();
+    return () => { alive = false; };
+  }, [reelAttachedFootageRaw]);
+
   const reelAttachedFootage = React.useMemo(() => {
     const det = detail || {};
     const aiClips = det.aiDraft?.clips || stored?.detail?.aiDraft?.clips || [];
@@ -191,14 +211,15 @@ function ReelDetail({ reel, onBack }) {
       if (c.filename) driveByKey[c.filename] = info;
     });
     return reelAttachedFootageRaw.map(f => {
+      const fetched = driveById[f.footage_file_id] || {};
       const hit = footageDrive[f.footage_file_id] || driveByKey[f.footage_file_id] || driveByKey[f.filename] || {};
       return {
         ...f,
-        drive_url: f.drive_url || hit.drive_url || null,
-        drive_folder_url: f.drive_folder_url || hit.drive_folder_url || null,
+        drive_url: f.drive_url || hit.drive_url || fetched.drive_url || null,
+        drive_folder_url: f.drive_folder_url || hit.drive_folder_url || fetched.drive_folder_url || null,
       };
     });
-  }, [reelAttachedFootageRaw, detail, stored?.detail]);
+  }, [reelAttachedFootageRaw, detail, stored?.detail, driveById]);
 
   const handleAttachFootage = (footage) => {
     actions.addAttachedFootage(footage);
