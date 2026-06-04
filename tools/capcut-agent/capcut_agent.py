@@ -41,13 +41,14 @@ CONFIG = {
     "WORKER": "sam",                 # editor id this machine belongs to (Jay = "sam")
     "SUPABASE_URL": "https://kjruhbaahqkuajseoojn.supabase.co",
     "ANON_KEY": "sb_publishable_dwqdtQk9W7xNHgHn2kJbkA_2DNMz6uK",
-    "POLL_SECONDS": 60,              # 1 heartbeat / minute => 1-minute time resolution
+    "POLL_SECONDS": 15,              # sample every 15s for near-real-time tracking
     "CAPCUT_PROCESS": "CapCut.exe",
     # CapCut's window title is just "CapCut" (no project name), so the open
     # project is read from disk: each project is a folder here, and the most
     # recently-modified one is the project being edited.
     "DRAFT_DIR": r"%LOCALAPPDATA%\CapCut\User Data\Projects\com.lveditor.draft",
-    "PROJECT_RECENT_MIN": 6,         # only report a project whose draft changed this recently
+    "PROJECT_RECENT_MIN": 20,        # report the open project if its draft changed within 20 min
+                                     # (bridges autosave gaps so the project stays visible in pauses)
 }
 
 

@@ -1,4 +1,4 @@
 {
   "WORKER": "sam",
-  "POLL_SECONDS": 60
+  "POLL_SECONDS": 15
 }
