@@ -6,6 +6,7 @@
  */
 
 import React from "react";
+import { footageBrainThumbnailUrl } from "../lib/footage-brain-client.js";
 
 export function AttachedFootageList({ items, onRemove }) {
   if (!items || items.length === 0) {
@@ -94,7 +95,7 @@ function AttachedFootageItem({ index, item, onRemove }) {
       >
         {item.thumbnail_url && (
           <img
-            src={`/thumbnails/${item.thumbnail_url.split(/[\\/]/).pop()}`}
+            src={footageBrainThumbnailUrl(item.thumbnail_url)}
             alt={item.filename}
             style={{
               width: "100%",

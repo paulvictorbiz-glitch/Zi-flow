@@ -5,10 +5,12 @@
  * Opens as a modal overlay; users search, preview results, and add to reel.
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   searchFootageBrain,
   searchByFilename,
+  searchByFolder,
+  getFootageBrainCoverageTree,
   checkFootageBrainHealth,
   formatSearchResultForAttachment,
   footageBrainThumbnailUrl,
@@ -22,8 +24,16 @@ const SEARCH_MODES = [
   { key: "visual",     label: "Visual",     hint: "CLIP frame embeddings (what's on screen)" },
   { key: "caption",    label: "Caption",    hint: "VLM-generated frame captions" },
   { key: "multimodal", label: "Multimodal", hint: "fused: transcript + CLIP + captions" },
-  { key: "filename",   label: "Filename",   hint: "match by file name" },
+  { key: "filename",   label: "Filename",   hint: "match by file name — type to search" },
+  { key: "folders",    label: "Folders",    hint: "browse clips by folder" },
 ];
+
+// Build the absolute-path prefix for a coverage-tree folder (root + rel_path),
+// using whichever path separator the root path uses.
+function folderAbsPath(rootPath, relPath) {
+  const sep = rootPath.includes("\\") ? "\\" : "/";
+  return rootPath.replace(/[\\/]+$/, "") + sep + relPath;
+}
 
 export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = [] }) {
   const [query, setQuery] = useState("");
@@ -36,6 +46,11 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
   // Seeded with anything already attached to this reel so re-opens don't show
   // already-attached items as "addable".
   const [addedThisSession, setAddedThisSession] = useState(() => new Set(attachedIds));
+  // Folder-browse mode
+  const [folders, setFolders] = useState([]);
+  const [foldersLoading, setFoldersLoading] = useState(false);
+  const [selectedFolder, setSelectedFolder] = useState("");
+  const debounceRef = useRef(null);
 
   // Tracks whether a mousedown began on the backdrop itself. The modal then
   // only closes when the whole press+release happened on the backdrop — so a
@@ -49,6 +64,62 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
       .then(isOnline => setFootageBrainOnline(isOnline))
       .catch(() => setFootageBrainOnline(false));
   }, []);
+
+  // Load the folder list (coverage tree) the first time Folders mode is opened.
+  useEffect(() => {
+    if (mode !== "folders" || folders.length || foldersLoading) return;
+    setFoldersLoading(true);
+    getFootageBrainCoverageTree()
+      .then(tree => {
+        const opts = [];
+        (tree.roots || []).forEach(root => {
+          (root.folders || []).forEach(f => {
+            if (!f.rel_path) return;
+            opts.push({
+              absFolder: folderAbsPath(root.path, f.rel_path),
+              label: f.rel_path, count: f.file_count, root: root.label,
+            });
+          });
+        });
+        setFolders(opts);
+      })
+      .catch(() => setError("Couldn't load folders from Footage Brain."))
+      .finally(() => setFoldersLoading(false));
+  }, [mode]);
+
+  // Filename mode: search as you type (debounced) so results pop up.
+  useEffect(() => {
+    if (mode !== "filename") return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = query.trim();
+    if (!q) { setResults([]); return; }
+    debounceRef.current = setTimeout(() => { runFilenameSearch(q); }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, mode]);
+
+  const runFilenameSearch = async (q) => {
+    setLoading(true); setError(null);
+    try {
+      const res = await searchByFilename(q, { n_results: 200 });
+      setResults(res.results || []);
+      if (!res.results?.length) setError("No files match that name.");
+    } catch (e) {
+      setError("Search failed: " + (e.message || String(e))); setResults([]);
+    } finally { setLoading(false); }
+  };
+
+  const handleFolderSelect = async (absFolder) => {
+    setSelectedFolder(absFolder);
+    if (!absFolder) { setResults([]); setError(null); return; }
+    setLoading(true); setError(null);
+    try {
+      const res = await searchByFolder(absFolder, { max: 2000 });
+      setResults(res.results || []);
+      if (!res.results?.length) setError("No clips in this folder.");
+    } catch (e) {
+      setError("Folder load failed: " + (e.message || String(e))); setResults([]);
+    } finally { setLoading(false); }
+  };
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -220,54 +291,77 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
               {SEARCH_MODES.find(m => m.key === mode)?.hint}
             </div>
           </div>
-          <form onSubmit={handleSearch} style={{ display: "flex", gap: "8px" }}>
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={
-                mode === "filename"
-                  ? "e.g., '20241223', 'IMG_0512', 'drone'"
-                  : mode === "keyword"
-                  ? "Exact word in transcript…"
-                  : mode === "visual"
-                  ? "Describe the shot, e.g., 'red car at night'"
-                  : mode === "caption"
-                  ? "Describe a scene, e.g., 'person holding a coffee cup'"
-                  : mode === "multimodal"
-                  ? "Anything — words spoken, things shown, scene description…"
-                  : "e.g., 'sunrise drone shot', 'people talking indoors'"
-              }
+          {mode === "folders" ? (
+            <select
+              value={selectedFolder}
+              onChange={(e) => handleFolderSelect(e.target.value)}
+              disabled={!footageBrainOnline || foldersLoading}
               style={{
-                flex: 1,
-                padding: "10px 12px",
-                border: "1px solid var(--border)",
-                borderRadius: "4px",
-                backgroundColor: "var(--bg-input)",
-                color: "var(--fg)",
-                fontSize: 14,
-                fontFamily: "inherit",
-              }}
-              disabled={!footageBrainOnline}
-            />
-            <button
-              type="submit"
-              disabled={loading || !footageBrainOnline}
-              style={{
-                padding: "10px 20px",
-                backgroundColor: loading ? "var(--fg-mute)" : "var(--accent)",
-                color: "var(--bg)",
-                border: "none",
-                borderRadius: "4px",
-                cursor: loading ? "default" : "pointer",
-                fontSize: 14,
-                fontWeight: 500,
-                opacity: loading || !footageBrainOnline ? 0.5 : 1,
+                width: "100%", padding: "10px 12px",
+                border: "1px solid var(--border)", borderRadius: "4px",
+                backgroundColor: "var(--bg-input)", color: "var(--fg)",
+                fontSize: 14, fontFamily: "inherit",
               }}
             >
-              {loading ? "Searching…" : "Search"}
-            </button>
-          </form>
+              <option value="">
+                {foldersLoading ? "Loading folders…" : "Select a folder to browse…"}
+              </option>
+              {folders.map((f, i) => (
+                <option key={i} value={f.absFolder}>
+                  {f.label} ({f.count}) — {f.root}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <form onSubmit={handleSearch} style={{ display: "flex", gap: "8px" }}>
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={
+                  mode === "filename"
+                    ? "Type a file name — e.g. 'DJI_0931', '20241223'"
+                    : mode === "keyword"
+                    ? "Exact word in transcript…"
+                    : mode === "visual"
+                    ? "Describe the shot, e.g., 'red car at night'"
+                    : mode === "caption"
+                    ? "Describe a scene, e.g., 'person holding a coffee cup'"
+                    : mode === "multimodal"
+                    ? "Anything — words spoken, things shown, scene description…"
+                    : "e.g., 'sunrise drone shot', 'people talking indoors'"
+                }
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "4px",
+                  backgroundColor: "var(--bg-input)",
+                  color: "var(--fg)",
+                  fontSize: 14,
+                  fontFamily: "inherit",
+                }}
+                disabled={!footageBrainOnline}
+              />
+              <button
+                type="submit"
+                disabled={loading || !footageBrainOnline}
+                style={{
+                  padding: "10px 20px",
+                  backgroundColor: loading ? "var(--fg-mute)" : "var(--accent)",
+                  color: "var(--bg)",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: loading ? "default" : "pointer",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  opacity: loading || !footageBrainOnline ? 0.5 : 1,
+                }}
+              >
+                {loading ? "Searching…" : "Search"}
+              </button>
+            </form>
+          )}
         </div>
 
         {/* Results List */}

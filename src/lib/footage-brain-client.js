@@ -116,46 +116,71 @@ export async function getFootageTranscript(fileId) {
   }
 }
 
+// Map a /api/files row into the search-result shape the UI renders, so the
+// filename + folder browsers reuse the same FootageResultCard.
+function fileRowToResult(f) {
+  return {
+    video_file_id: f.id,
+    filename: f.filename,
+    abs_path: f.abs_path,
+    extension: f.extension,
+    duration_seconds: f.duration_seconds,
+    thumbnail_path: f.thumbnail_path,
+    width: f.width,
+    height: f.height,
+    is_vertical: f.is_vertical,
+    drive_url: f.drive_url,
+    best_score: 1,
+    matched_chunks: [],
+    frame_matches: [],
+  };
+}
+
 /**
- * Filename search — Footage Brain's /api/search modes (semantic/keyword/hybrid)
- * all search transcripts and frame embeddings, NOT filenames. So for "find file
- * named X" we fetch a page from /api/files and filter client-side.
+ * Filename search — the /api/search modes search transcripts/embeddings, not
+ * filenames. The backend's /api/files now takes a `filename` substring filter,
+ * so this matches ANY file (not just recent ones).
  *
  * @param {string} query - Filename substring to match (case-insensitive)
  * @param {object} options - { n_results?: number }
- * @returns {Promise<{ query: string, mode: "filename", total: number, results: SearchResult[] }>}
  */
 export async function searchByFilename(query, options = {}) {
-  const limit = Math.min(options.n_results || 100, 500);
-  const url = `${FOOTAGE_BRAIN_BASE}/files?limit=${limit}&sort_by=created_at_desc`;
+  const limit = Math.min(options.n_results || 200, 500);
+  const q = (query || "").trim();
+  const url = `${FOOTAGE_BRAIN_BASE}/files?limit=${limit}&sort_by=name`
+    + (q ? `&filename=${encodeURIComponent(q)}` : "");
   try {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`File list failed: ${response.statusText}`);
     const files = await response.json();
-    const q = query.trim().toLowerCase();
-    // Map the file rows into the search-result shape so the UI doesn't branch.
-    const results = (files || [])
-      .filter(f => !q || (f.filename || "").toLowerCase().includes(q))
-      .map(f => ({
-        video_file_id: f.id,
-        filename: f.filename,
-        abs_path: f.abs_path,
-        extension: f.extension,
-        duration_seconds: f.duration_seconds,
-        thumbnail_path: f.thumbnail_path,
-        width: f.width,
-        height: f.height,
-        is_vertical: f.is_vertical,
-        drive_url: f.drive_url,
-        best_score: 1,
-        matched_chunks: [],
-        frame_matches: [],
-      }));
+    const results = (files || []).map(fileRowToResult);
     return { query, mode: "filename", total: results.length, results };
   } catch (error) {
     console.error("Footage Brain filename search error:", error);
     throw error;
   }
+}
+
+/**
+ * Folder browse — list every clip under a folder (abs_path prefix), sorted by
+ * name, paginated past the 500-row page size. Powers the "Folders" mode.
+ *
+ * @param {string} absFolder - the folder's absolute-path prefix (root + rel_path)
+ */
+export async function searchByFolder(absFolder, options = {}) {
+  const cap = options.max || 2000;
+  const all = [];
+  for (let offset = 0; offset < cap; offset += 500) {
+    const url = `${FOOTAGE_BRAIN_BASE}/files?limit=500&offset=${offset}`
+      + `&sort_by=name&abs_folder=${encodeURIComponent(absFolder)}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Folder list failed: ${response.statusText}`);
+    const page = await response.json();
+    all.push(...(page || []));
+    if (!page || page.length < 500) break;
+  }
+  const results = all.map(fileRowToResult);
+  return { query: absFolder, mode: "folder", total: results.length, results };
 }
 
 /**
