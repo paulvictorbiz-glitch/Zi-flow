@@ -512,6 +512,8 @@ export function IdeaGenerator() {
         matched_chunks: noteText
           ? [{ text: noteText, start_time: 0, end_time: 0, score: 1 }]
           : [],
+        drive_url: clip.drive_url || null,
+        drive_folder_url: clip.drive_folder_url || null,
       };
     });
 

@@ -460,7 +460,14 @@ async function persistDeleteTask(id) {
 }
 
 async function persistAddAttachedFootage(item) {
-  const { error } = await supabase.from("attached_footage_items").insert(item);
+  let { error } = await supabase.from("attached_footage_items").insert(item);
+  // drive_url / drive_folder_url columns may not be migrated yet — if PostgREST
+  // rejects them, retry without so attaching still works (the Drive link just
+  // won't persist until the columns are added).
+  if (error && /drive_url|drive_folder_url|PGRST204|column/i.test(error.message || "")) {
+    const { drive_url, drive_folder_url, ...rest } = item;
+    ({ error } = await supabase.from("attached_footage_items").insert(rest));
+  }
   if (error) throw error;
 }
 

@@ -6,7 +6,7 @@
  */
 
 import React from "react";
-import { footageBrainThumbnailUrl } from "../lib/footage-brain-client.js";
+import { footageBrainThumbnailUrl, footageFolderLabel } from "../lib/footage-brain-client.js";
 
 export function AttachedFootageList({ items, onRemove }) {
   if (!items || items.length === 0) {
@@ -51,19 +51,15 @@ function AttachedFootageItem({ index, item, onRemove }) {
   const durationText = item.duration_seconds
     ? `${item.duration_seconds.toFixed(1)}s`
     : "?";
-
-  const copyPath = () => {
-    navigator.clipboard.writeText(item.source_path).then(() => {
-      alert("Path copied to clipboard!");
-    });
-  };
+  const folder = footageFolderLabel(item.source_path);
+  // Per-file Drive link, falling back to the clip's Drive folder.
+  const driveLink = item.drive_url || item.drive_folder_url || null;
 
   const openPreview = () => {
     // Prefer the Drive link — it's the reliably-viewable asset and works in
-    // production. Fall back to the local Footage Brain file page for dev only
-    // (the old hardcoded localhost:8765 was broken on footagebrain.com).
-    if (item.drive_url) {
-      window.open(item.drive_url, "_blank", "noopener,noreferrer");
+    // production. Fall back to the local Footage Brain file page for dev only.
+    if (driveLink) {
+      window.open(driveLink, "_blank", "noopener,noreferrer");
       return;
     }
     window.open(`http://localhost:8765/files/${item.footage_file_id}`, "_blank");
@@ -138,6 +134,15 @@ function AttachedFootageItem({ index, item, onRemove }) {
           >
             {item.filename}
           </span>
+          {folder && (
+            <span style={{
+              fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--c-cyan, #22d3ee)",
+              border: "1px solid var(--c-cyan-soft, var(--border))", borderRadius: 8,
+              padding: "1px 7px", whiteSpace: "nowrap",
+            }}>
+              📁 {folder}
+            </span>
+          )}
           <span
             style={{
               fontSize: 11,
@@ -188,11 +193,12 @@ function AttachedFootageItem({ index, item, onRemove }) {
             flexWrap: "wrap",
           }}
         >
-          {item.drive_url && (
+          {driveLink ? (
             <a
-              href={item.drive_url}
+              href={driveLink}
               target="_blank"
               rel="noopener noreferrer"
+              title={item.drive_url ? "Open this clip on Google Drive" : "Open this clip's folder on Google Drive"}
               style={{
                 padding: "6px 12px",
                 backgroundColor: "transparent",
@@ -205,8 +211,12 @@ function AttachedFootageItem({ index, item, onRemove }) {
                 textDecoration: "none",
               }}
             >
-              ↗ Drive
+              ↗ Google Drive
             </a>
+          ) : (
+            <span style={{ fontSize: 10.5, color: "var(--fg-mute)", alignSelf: "center" }}>
+              no Drive link
+            </span>
           )}
           <button
             onClick={openPreview}
@@ -222,21 +232,6 @@ function AttachedFootageItem({ index, item, onRemove }) {
             }}
           >
             📺 Preview
-          </button>
-          <button
-            onClick={copyPath}
-            style={{
-              padding: "6px 12px",
-              backgroundColor: "transparent",
-              border: "1px solid var(--border)",
-              color: "var(--fg-mute)",
-              borderRadius: "3px",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 500,
-            }}
-          >
-            📋 Copy Path
           </button>
           <button
             onClick={onRemove}

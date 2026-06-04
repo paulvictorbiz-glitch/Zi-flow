@@ -266,6 +266,28 @@ export function footageBrainFileUrl(fileId) {
 }
 
 /**
+ * Short folder/country label for a clip, from its absolute path — the
+ * country/trip folder it lives in (e.g. "Norway", "Taiwan", "DCIM - lost norway
+ * files"), with the leading ordinal stripped and generic media subfolders
+ * (101MEDIA, DCIM, …) skipped. Returns null if nothing meaningful is found.
+ *
+ * @param {string} absPath - a clip's abs_path (or source_path)
+ * @returns {string|null}
+ */
+export function footageFolderLabel(absPath) {
+  if (!absPath) return null;
+  const parts = String(absPath).split(/[\\/]+/).filter(Boolean);
+  if (parts.length < 2) return null;
+  const GENERIC = /^(\d+\s*media|dcim|media|clips|videos?|footage|\d+)$/i;
+  for (let i = parts.length - 2; i >= 1; i--) {        // walk up from the parent
+    const seg = parts[i];
+    if (GENERIC.test(seg)) continue;                   // skip 101MEDIA / DCIM / etc.
+    return seg.replace(/^\s*\d+(?:\.\d+)?\s*[\)\.]\s*/, "").trim() || seg;  // strip "13) "
+  }
+  return null;
+}
+
+/**
  * Format Footage Brain search result for storage in Supabase.
  * Extracts minimal data needed for references.
  * 
@@ -285,5 +307,8 @@ export function formatSearchResultForAttachment(result) {
     is_vertical: result.is_vertical,
     best_score: result.best_score,
     matched_chunks: result.matched_chunks?.slice(0, 5) || [],
+    // Carried so the reel card can link straight to the clip on Google Drive.
+    drive_url: result.drive_url || null,
+    drive_folder_url: result.drive_folder_url || null,
   };
 }

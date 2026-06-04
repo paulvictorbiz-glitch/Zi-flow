@@ -15,6 +15,7 @@ import {
   formatSearchResultForAttachment,
   footageBrainThumbnailUrl,
   footageBrainFileUrl,
+  footageFolderLabel,
 } from "../lib/footage-brain-client.js";
 
 const SEARCH_MODES = [
@@ -457,6 +458,7 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
 function FootageResultCard({ result, onAdd, onPreview, added }) {
   const score = Math.round(result.best_score * 100);
   const topChunk = result.matched_chunks?.[0];
+  const folder = footageFolderLabel(result.abs_path);
 
   return (
     <div
@@ -500,16 +502,19 @@ function FootageResultCard({ result, onAdd, onPreview, added }) {
 
       {/* Content */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 500,
-            color: "var(--fg)",
-            marginBottom: "4px",
-            wordBreak: "break-word",
-          }}
-        >
-          {result.filename}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: "4px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)", wordBreak: "break-word" }}>
+            {result.filename}
+          </span>
+          {folder && (
+            <span style={{
+              fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--c-cyan, var(--accent))",
+              border: "1px solid var(--c-cyan-soft, var(--border))", borderRadius: 8,
+              padding: "1px 7px", whiteSpace: "nowrap",
+            }}>
+              📁 {folder}
+            </span>
+          )}
         </div>
 
         <div
