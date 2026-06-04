@@ -19,8 +19,14 @@ import { ArchivedView } from "./pages/archived-view.jsx";
 import { Locations } from "./pages/locations.jsx";
 import { Coverage } from "./pages/coverage.jsx";
 import { IdeaGenerator } from "./pages/idea-generator.jsx";
+import { Activity } from "./pages/activity.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider, useNotifications } from "./components/notifications.jsx";
+
+/* Private monitoring surfaces (e.g. the CapCut Activity tab) render ONLY when
+   the dashboard is served from localhost — never on the public footagebrain.com. */
+const IS_LOCALHOST = typeof window !== "undefined" &&
+  /^(localhost|127\.0\.0\.1|::1)$/.test(window.location.hostname);
 
 /* Map the four person.role values onto the four role-switcher keys. */
 function defaultRoleKey(person) {
@@ -207,6 +213,12 @@ function AppShell() {
         <button className={"tab " + (view === "generate" ? "is-active" : "")} onClick={() => setView("generate")}>
           <span className="n">9 ·</span> Generate
         </button>
+        {IS_LOCALHOST && (
+          <button className={"tab " + (view === "activity" ? "is-active" : "")} onClick={() => setView("activity")}
+                  title="Private — only visible on your local machine">
+            <span className="n">10 ·</span> Activity 🔒
+          </button>
+        )}
 
         {/* Pipeline sub-mode chips — only when on Pipeline */}
         {view === "pipeline" && (
@@ -236,6 +248,7 @@ function AppShell() {
       {view === "locations" && <Locations />}
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
+      {view === "activity"  && IS_LOCALHOST && <Activity workerId="sam" />}
 
       {/* Global create FAB */}
       <CreateFab />

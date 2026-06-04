@@ -1,0 +1,7 @@
+# Build artifacts (the .exe is built locally via build.bat, not committed)
+dist/
+build_tmp/
+build/
+*.spec
+__pycache__/
+capcut_agent.log

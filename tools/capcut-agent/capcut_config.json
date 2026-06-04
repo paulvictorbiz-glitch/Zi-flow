@@ -1,0 +1,4 @@
+{
+  "WORKER": "sam",
+  "POLL_SECONDS": 60
+}
