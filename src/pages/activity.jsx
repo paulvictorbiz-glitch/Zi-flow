@@ -150,6 +150,8 @@ export function Activity({ workerId = "sam" }) {
   useEffect(() => { loadDayRows(workerId, selectedDay).then(setDayRows); }, [workerId, selectedDay]);
 
   const status = useMemo(() => liveStatus(recent), [recent]);
+  const curProject = (recent[0] && (Date.now() - new Date(recent[0].ts).getTime()) <= ONLINE_WINDOW_MS)
+    ? recent[0].project_title : null;
   const isToday = selectedDay.getTime() === startOfDayLocal(0).getTime();
   const maxDay = Math.max(1, ...daily.map(d => d.minutes));
 
@@ -164,7 +166,7 @@ export function Activity({ workerId = "sam" }) {
           </div>
         </div>
         <div className="actions">
-          <DPill>{status.dot} {status.label}</DPill>
+          <DPill>{status.dot} {status.label}{curProject ? ` · ${curProject}` : ""}</DPill>
           <DPill onClick={refresh}>↻ Refresh</DPill>
         </div>
       </div>
