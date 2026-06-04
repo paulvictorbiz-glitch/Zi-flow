@@ -66,7 +66,10 @@ export function ReelModal({ onClose }) {
       next: stage === "not_started" ? "Pull selects + write logline" : "Start main edit",
       downstream: null,
       grouping: "not_started",
-      logline, vo, audio, inspo, plan,
+      // Save the shot plan to `script` — the canonical field the detail view and
+      // the AI-generate flow read. (It used to write `plan`, which the detail
+      // never displayed, so the shot plan looked lost after Create.)
+      logline, vo, audio, inspo, script: plan,
     };
     actions.createReel(r);
     // Persist queued footage attachments now that we have the reel id.

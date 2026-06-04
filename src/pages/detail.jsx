@@ -7,7 +7,7 @@
    Everything else was non-functioning scaffolding and got removed.
    ========================================================= */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card, DPill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
@@ -66,17 +66,36 @@ function ReelDetail({ reel, onBack }) {
 
   const [blueprintTab, setBlueprintTab] = useState("script");
   const [logline, setLogline]     = useState(stored?.logline ?? DEFAULT_LOGLINE);
-  const [script, setScript]       = useState(stored?.script ?? DEFAULT_SCRIPT);
+  // Shot plan reads `script`, falling back to the legacy `plan` column so reels
+  // created by the modal (which used to save to `plan`) still show their text.
+  const [script, setScript]       = useState(stored?.script ?? stored?.plan ?? DEFAULT_SCRIPT);
   const [vo, setVo]               = useState(stored?.vo ?? DEFAULT_VO);
+  const [titleVal, setTitleVal]   = useState(stored?.title ?? current.title ?? "");
+  const [editingTitle, setEditingTitle] = useState(false);
 
-  /* When the user navigates to a different reel, re-seed the
-     Blueprint fields from that reel's stored values. Edits in
-     flight on the prior reel are already persisted on blur. */
+  /* Seed the editable fields from `stored` ONCE per reel id, the first time
+     that record is available. A ref guards against re-seeding on every `stored`
+     change (realtime echoes would otherwise clobber in-flight edits), while
+     still fixing the bug where a freshly-created reel opened before its row was
+     in the local store and the fields initialised blank forever. */
+  const seededIdRef = useRef(null);
   useEffect(() => {
-    setLogline(stored?.logline ?? DEFAULT_LOGLINE);
-    setScript(stored?.script ?? DEFAULT_SCRIPT);
-    setVo(stored?.vo ?? DEFAULT_VO);
-  }, [current.id]);  // intentionally NOT depending on `stored` — that would clobber typing on realtime echo
+    if (seededIdRef.current === current.id) return;
+    if (stored) {
+      setLogline(stored.logline ?? DEFAULT_LOGLINE);
+      setScript(stored.script ?? stored.plan ?? DEFAULT_SCRIPT);
+      setVo(stored.vo ?? DEFAULT_VO);
+      setTitleVal(stored.title ?? current.title ?? "");
+      seededIdRef.current = current.id;       // seeded — stop here until id changes
+    } else {
+      // Record not in the store yet: clear to defaults (don't show the prior
+      // reel's values); the next run seeds once `stored` arrives.
+      setLogline(DEFAULT_LOGLINE);
+      setScript(DEFAULT_SCRIPT);
+      setVo(DEFAULT_VO);
+      setTitleVal(current.title ?? "");
+    }
+  }, [current.id, stored]);
 
   /* Save-on-blur helper: only writes if the value actually
      changed, so passive tab-outs are free. */
@@ -236,7 +255,36 @@ function ReelDetail({ reel, onBack }) {
       <div className="page-head">
         <div className="titles">
           <h1 style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-            <span>{current.title || "Untitled reel"}</span>
+            {editingTitle ? (
+              <input
+                autoFocus
+                value={titleVal}
+                onChange={e => setTitleVal(e.target.value)}
+                onBlur={() => {
+                  setEditingTitle(false);
+                  const v = titleVal.trim();
+                  if (v) saveIfChanged("title", v);
+                  else setTitleVal(stored?.title ?? current.title ?? "");
+                }}
+                onKeyDown={e => {
+                  if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                  if (e.key === "Escape") { setTitleVal(stored?.title ?? current.title ?? ""); setEditingTitle(false); }
+                }}
+                style={{
+                  font: "inherit", color: "var(--fg)", background: "var(--bg-2)",
+                  border: "1px solid var(--c-cyan-soft)", borderRadius: 4,
+                  padding: "2px 8px", minWidth: 280, outline: "none",
+                }}
+              />
+            ) : (
+              <span
+                onClick={() => { setTitleVal(stored?.title ?? current.title ?? ""); setEditingTitle(true); }}
+                title="Click to edit title"
+                style={{ cursor: "text" }}
+              >
+                {(stored?.title ?? current.title) || "Untitled reel"}
+              </span>
+            )}
             <span style={{
               fontFamily: "var(--f-mono)",
               fontSize: 13,
