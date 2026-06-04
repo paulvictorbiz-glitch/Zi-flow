@@ -26,6 +26,16 @@ import psutil
 import win32gui
 import win32process
 
+# Use the OS trust store (Windows SChannel) for TLS so the agent works behind
+# antivirus / corporate HTTPS interception (e.g. Avast) that injects its own
+# root CA. Python's bundled CA list would otherwise reject those certs. On a
+# machine without interception this just uses the normal public roots.
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
 # --- Config (override per-machine via capcut_config.json next to this file) ---
 CONFIG = {
     "WORKER": "sam",                 # editor id this machine belongs to (Jay = "sam")

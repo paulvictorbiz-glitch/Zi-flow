@@ -3,7 +3,7 @@ REM Build capcut_agent.exe (run on a Windows machine with Python installed).
 REM The --trusted-host flags avoid a TLS-interception (e.g. Avast) failure some
 REM machines hit when pip verifies PyPI's certificate.
 echo Installing build deps...
-python -m pip install --quiet --trusted-host pypi.org --trusted-host files.pythonhosted.org pywin32 psutil pyinstaller
+python -m pip install --quiet --trusted-host pypi.org --trusted-host files.pythonhosted.org pywin32 psutil truststore pyinstaller
 echo Building capcut_agent.exe...
 python -m PyInstaller --onefile --noconsole --name capcut_agent capcut_agent.py
 echo.
