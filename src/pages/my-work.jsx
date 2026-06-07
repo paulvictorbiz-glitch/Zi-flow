@@ -15,12 +15,12 @@
                   both Paul and Leroy.
    ========================================================= */
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { DPill, Pill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
-import { useNow, formatDue } from "../lib/time.jsx";
+import { useNow, formatDue, formatDuration } from "../lib/time.jsx";
 import { ROLES } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
 
@@ -112,10 +112,8 @@ function downloadAgentFiles(personId) {
 function MyWork({ role, personId, onOpen }) {
   const { person } = useAuth();
   const me = whoseWork(role, person, personId);
-  // Owner and Reviewer share the same review-queue dashboard.
   if (role === "owner" || role === "reviewer") return <ReviewQueueWork me={me} onOpen={onOpen} />;
-  if (role === "variant") return <VariantWork me={me} onOpen={onOpen} />;
-  return <SkilledWork me={me} onOpen={onOpen} />;
+  return <SkilledWork me={me} onOpen={onOpen} role={role} />;
 }
 
 /* ─────────────────────────────────────────────────────── */
@@ -129,11 +127,12 @@ const SKILLED_COLS = [
   { key: "completed",   title: "Completed"   },
 ];
 
-function SkilledWork({ me, onOpen }) {
+function SkilledWork({ me, onOpen, role }) {
   const { reels, actions, attachedFootage } = useWorkflow();
   const { peopleById } = useRoster();
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
-  const whoLabel = peopleById[me]?.short || "Skilled editor";
+  const whoLabel = peopleById[me]?.short || "Editor";
+  const roleLabel = ROLES[role]?.short?.toLowerCase() || role || "editor";
 
   const [dragId, setDragId] = useState(null);
   const [dropCol, setDropCol] = useState(null);
@@ -149,7 +148,7 @@ function SkilledWork({ me, onOpen }) {
     <div>
       <div className="page-head">
         <div className="titles">
-          <h1>My work — {whoLabel} · skilled editor</h1>
+          <h1>My work — {whoLabel} · {roleLabel}</h1>
           <div className="sub">
             Drag a card between columns to update its status.
           </div>
@@ -275,6 +274,20 @@ function ReviewQueueWork({ me, onOpen }) {
   const viewedPerson = (me && peopleById[me]) || person;
   const heading = viewedPerson?.name || "Reviewer";
 
+  // Group cards by the editor who owns (submitted) them
+  const groups = useMemo(() => {
+    const map = {};
+    inReview.forEach(r => {
+      const key = r.owner || "__unknown";
+      (map[key] = map[key] || []).push(r);
+    });
+    return Object.entries(map).map(([ownerId, cards]) => ({
+      ownerId,
+      submitter: peopleById[ownerId] || null,
+      cards,
+    }));
+  }, [inReview, peopleById]);
+
   return (
     <div>
       <div className="page-head">
@@ -283,7 +296,7 @@ function ReviewQueueWork({ me, onOpen }) {
           <div className="sub">
             {inReview.length === 0
               ? "Nothing waiting on you."
-              : `${inReview.length} reel${inReview.length === 1 ? "" : "s"} waiting on review.`}
+              : `${inReview.length} reel${inReview.length === 1 ? "" : "s"} from ${groups.length} editor${groups.length === 1 ? "" : "s"} waiting on review.`}
           </div>
         </div>
         <div className="actions">
@@ -295,7 +308,7 @@ function ReviewQueueWork({ me, onOpen }) {
         </div>
       </div>
 
-      <div style={{ padding: "16px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ padding: "16px 22px", display: "flex", flexDirection: "column", gap: 28 }}>
         {inReview.length === 0 && (
           <div style={{
             border: "1px dashed var(--line-hard)",
@@ -308,8 +321,39 @@ function ReviewQueueWork({ me, onOpen }) {
             Review queue is clear.
           </div>
         )}
-        {inReview.map(r => (
-          <ReviewRow key={r.id} reel={r} onOpen={onOpen} />
+        {groups.map(({ ownerId, submitter, cards }) => (
+          <div key={ownerId}>
+            {/* Submitter section header */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              marginBottom: 10, paddingBottom: 8,
+              borderBottom: "1px dashed var(--line-hard)",
+            }}>
+              {submitter && (
+                <span className={"avatar-chip " + (submitter.role || "")} style={{ fontSize: 13 }}>
+                  {submitter.avatar}
+                </span>
+              )}
+              <span style={{ fontSize: 12, color: "var(--fg)", fontFamily: "var(--f-mono)" }}>
+                {submitter?.short || submitter?.name || ownerId}
+              </span>
+              {submitter?.role && (
+                <span className="mono dim" style={{ fontSize: 10 }}>· {submitter.role}</span>
+              )}
+              <span style={{
+                marginLeft: 2, fontSize: 10.5, color: "var(--c-cyan)",
+                fontFamily: "var(--f-mono)",
+                background: "rgba(107,214,224,0.08)",
+                border: "1px dashed rgba(107,214,224,0.3)",
+                padding: "1px 8px", borderRadius: 10,
+              }}>
+                {cards.length} reel{cards.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {cards.map(r => <ReviewRow key={r.id} reel={r} onOpen={onOpen} />)}
+            </div>
+          </div>
         ))}
       </div>
     </div>
@@ -363,9 +407,16 @@ function ReviewRow({ reel, onOpen }) {
         <span className="serif-i" style={{ fontSize: 17, color: "var(--fg)", flex: 1 }}>
           {reel.title}
         </span>
-        <span className="mono muted" style={{ fontSize: 11 }}>
-          waiting · {formatDue(reel, now) || "no due"}
-        </span>
+        <div style={{ textAlign: "right", lineHeight: 1.5 }}>
+          {reel.stageEnteredAt && (
+            <div className="mono dim" style={{ fontSize: 10 }}>
+              in review · {formatDuration(now - new Date(reel.stageEnteredAt))}
+            </div>
+          )}
+          <div className="mono dim" style={{ fontSize: 10 }}>
+            due · {formatDue(reel, now) || "—"}
+          </div>
+        </div>
       </div>
 
       {logPreview && (
