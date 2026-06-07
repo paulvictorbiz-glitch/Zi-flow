@@ -140,33 +140,20 @@ function workflowReducer(state, action) {
           next.prevOwner = r.owner;
         }
 
-        /* Lane vs. stage-role precedence for the owner field:
-           - If the user dragged into a different person's row, the
-             lane drop is an explicit reassign — honour it.
-           - Otherwise (same lane, just a column change), fall back
-             to the stage-canonical owner so the handoff is
-             automatic: in_progress→skilled, review→reviewer,
-             completed→variant, etc. See STAGE_ROLE in shared-data. */
-        const explicitLaneReassign =
-          action.lane !== undefined &&
-          action.lane !== "review" &&
-          isKnownPerson(action.lane) &&
-          action.lane !== r.owner;
-
+        /* Owner/lane only changes when the user explicitly drops into a
+           different person's row. Dragging within the same row (just
+           moving between stage columns) keeps the card with its current
+           owner — no automatic handoff by stage role.
+           Exception: dropping onto the shared "review" lane assigns to
+           the canonical reviewer. */
         if (action.lane !== undefined) next.lane = action.lane;
 
-        if (explicitLaneReassign) {
+        if (action.lane !== undefined && action.lane !== "review" &&
+            isKnownPerson(action.lane) && action.lane !== r.owner) {
           next.owner = action.lane;
-        } else if (stageChanged) {
-          const stagePerson = stageOwnerPersonId(action.stage);
-          if (stagePerson && stagePerson !== r.owner) {
-            next.owner = stagePerson;
-            // Keep lane in lockstep with owner so the card lands in
-            // the right row visually after the auto-reassign.
-            if (action.lane === undefined || action.lane === r.owner) {
-              next.lane = stagePerson;
-            }
-          }
+        } else if (action.lane === "review") {
+          const stagePerson = stageOwnerPersonId("review");
+          if (stagePerson) next.owner = stagePerson;
         }
 
         /* On a real stage change, append the prebuilt system
@@ -371,26 +358,14 @@ async function persistMoveStage(state, id, { lane, stage, systemComment }) {
   const stageChanged = reel.stage !== stage;
   const patch = { stage };
 
-  /* Mirror the reducer's lane-vs-stage-role precedence so the DB
-     row matches the optimistic local update. */
-  const explicitLaneReassign =
-    !isCard &&
-    lane !== undefined &&
-    lane !== "review" &&
-    isKnownPerson(lane) &&
-    lane !== reel.owner;
-
   if (lane !== undefined) patch.lane = lane;
 
-  if (explicitLaneReassign) {
-    patch.owner = lane;
-  } else if (!isCard && stageChanged) {
-    const stagePerson = stageOwnerPersonId(stage);
-    if (stagePerson && stagePerson !== reel.owner) {
-      patch.owner = stagePerson;
-      if (lane === undefined || lane === reel.owner) {
-        patch.lane = stagePerson;
-      }
+  if (!isCard) {
+    if (lane !== undefined && lane !== "review" && isKnownPerson(lane) && lane !== reel.owner) {
+      patch.owner = lane;
+    } else if (lane === "review") {
+      const stagePerson = stageOwnerPersonId("review");
+      if (stagePerson) patch.owner = stagePerson;
     }
   }
 
@@ -628,10 +603,11 @@ function WorkflowProvider({ children }) {
         const isCard = !!reel?.parentId;
         let systemComment = null;
         if (reel && !isCard && reel.stage !== stage) {
-          const explicit = lane !== undefined && lane !== "review" &&
-                           isKnownPerson(lane) && lane !== reel.owner;
+          const explicit = lane !== undefined && lane !== "review" && isKnownPerson(lane) && lane !== reel.owner;
+          const reviewLane = lane === "review";
           const targetOwner = explicit ? lane :
-            (stageOwnerPersonId(stage) || reel.owner);
+            reviewLane ? (stageOwnerPersonId("review") || reel.owner) :
+            reel.owner;
           const txt = "Stage: " + (reel.stage || "—") + " → " + stage +
             (targetOwner ? " · assigned to " + personName(targetOwner) : "");
           systemComment = buildSystemComment(txt);

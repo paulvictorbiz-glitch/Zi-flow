@@ -21,8 +21,7 @@
    ========================================================= */
 
 /* Top-level tabs, in the order they appear in the tab strip. `key`
-   matches the `view` string in app.jsx. The Activity tab is omitted on
-   purpose — it is localhost-only by separate design and not role-gated. */
+   matches the `view` string in app.jsx. */
 export const VIEW_CAPS = [
   { key: "mywork",    label: "My work" },
   { key: "pipeline",  label: "Pipeline" },
@@ -33,6 +32,7 @@ export const VIEW_CAPS = [
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate (AI · paid)" },
+  { key: "activity",  label: "Activity (CapCut tracker)" },
 ];
 
 /* Actions wired in Phase 1. Every key here maps to a real, gated
@@ -63,6 +63,7 @@ export const EDITABLE_ROLES = [
 export function defaultPermsForRole(roleKey) {
   const views = {};
   for (const v of VIEW_CAPS) views[v.key] = true;
+  views.activity = false; // private monitoring tab — owner enables per-person
 
   const actions = {};
   for (const a of ACTION_CAPS) actions[a.key] = true;

@@ -26,11 +26,6 @@ import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import { RolesAdmin } from "./pages/roles-admin.jsx";
 
-/* Private monitoring surfaces (e.g. the CapCut Activity tab) render ONLY when
-   the dashboard is served from localhost — never on the public footagebrain.com. */
-const IS_LOCALHOST = typeof window !== "undefined" &&
-  /^(localhost|127\.0\.0\.1|::1)$/.test(window.location.hostname);
-
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
@@ -50,6 +45,7 @@ const TABS = [
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate" },
+  { key: "activity",  label: "Activity" },
 ];
 
 function AppShell() {
@@ -105,7 +101,7 @@ function AppShell() {
      a blank screen. "settings" (owner gear) and "activity" are not
      role-gated tabs, so they're left alone. */
   useEffect(() => {
-    if (view === "settings" || view === "activity") return;
+    if (view === "settings") return;
     if (!canView(view)) {
       const firstAllowed = VIEW_ORDER.find(v => canView(v));
       if (firstAllowed) setView(firstAllowed);
@@ -260,13 +256,6 @@ function AppShell() {
             )}
           </button>
         ))}
-        {IS_LOCALHOST && (
-          <button className={"tab " + (view === "activity" ? "is-active" : "")} onClick={() => setView("activity")}
-                  title="Private — only visible on your local machine">
-            <span className="n">{visibleTabs.length + 1} ·</span> Activity 🔒
-          </button>
-        )}
-
         {/* Pipeline sub-mode chips — only when on Pipeline */}
         {view === "pipeline" && (
           <React.Fragment>
@@ -295,7 +284,7 @@ function AppShell() {
       {view === "locations" && <Locations />}
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
-      {view === "activity"  && IS_LOCALHOST && <Activity />}
+      {view === "activity"  && <Activity />}
       {view === "settings"  && isOwner && <RolesAdmin onBack={() => setView("pipeline")} />}
 
       {/* Global create FAB */}
