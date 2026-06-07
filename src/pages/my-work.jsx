@@ -117,6 +117,124 @@ function MyWork({ role, personId, onOpen }) {
 }
 
 /* ─────────────────────────────────────────────────────── */
+/* Tasks & Comms — daily task list per person             */
+/* ─────────────────────────────────────────────────────── */
+
+function DailyTasksSection({ personId, viewerPersonId, isOwner }) {
+  const { dailyTasks, createDailyTask, completeDailyTask, deleteDailyTask } = useWorkflow();
+  const [newTaskText, setNewTaskText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Show today's tasks + any incomplete from previous days
+  const myTasks = dailyTasks
+    .filter(t => t.assignedTo === personId)
+    .filter(t => !t.completed || t.taskDate === today) // show incomplete always, completed only today
+    .sort((a, b) => {
+      if (a.completed !== b.completed) return a.completed ? 1 : -1; // incomplete first
+      return (a.created_at || "").localeCompare(b.created_at || "");
+    });
+
+  const handleAdd = async () => {
+    const text = newTaskText.trim();
+    if (!text || submitting) return;
+    setSubmitting(true);
+    await createDailyTask({
+      assignedTo: personId,
+      createdBy: viewerPersonId,
+      taskText: text,
+      taskDate: today,
+    });
+    setNewTaskText("");
+    setSubmitting(false);
+  };
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        marginBottom: 10, borderBottom: "1px solid var(--line-hard)", paddingBottom: 8,
+      }}>
+        <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Tasks &amp; Comms
+        </span>
+        <span style={{ fontSize: 11, color: "var(--fg-dim)", fontFamily: "var(--f-mono)" }}>
+          {myTasks.filter(t => !t.completed).length} open
+        </span>
+      </div>
+
+      <ul style={{ listStyle: "none", padding: 0, margin: "0 0 12px" }}>
+        {myTasks.length === 0 && (
+          <li style={{ color: "var(--fg-dim)", fontSize: 12, fontFamily: "var(--f-mono)", padding: "6px 0" }}>
+            No tasks for today.
+          </li>
+        )}
+        {myTasks.map(task => (
+          <li key={task.id} style={{
+            display: "flex", alignItems: "flex-start", gap: 10, padding: "5px 0",
+            borderBottom: "1px solid var(--line-soft, var(--line-hard))",
+          }}>
+            <input
+              type="checkbox"
+              checked={!!task.completed}
+              onChange={e => completeDailyTask(task.id, e.target.checked)}
+              style={{ marginTop: 2, cursor: "pointer", accentColor: "var(--c-ok, #22c55e)", flexShrink: 0 }}
+            />
+            <span style={{
+              flex: 1,
+              fontSize: 13,
+              color: task.completed ? "var(--fg-dim)" : "var(--fg)",
+              textDecoration: task.completed ? "line-through" : "none",
+              fontFamily: "var(--f-sans, var(--f-mono))",
+            }}>
+              {task.taskText}
+            </span>
+            {isOwner && (
+              <button
+                onClick={() => deleteDailyTask(task.id)}
+                style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 14, padding: "0 2px", lineHeight: 1 }}
+                title="Delete task"
+              >×</button>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {isOwner && (
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="text"
+            value={newTaskText}
+            onChange={e => setNewTaskText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleAdd(); }}
+            placeholder="Add a task for today…"
+            style={{
+              flex: 1,
+              background: "var(--bg-2)",
+              border: "1px dashed var(--line-hard)",
+              borderRadius: 4,
+              color: "var(--fg)",
+              fontFamily: "var(--f-mono)",
+              fontSize: 12,
+              padding: "7px 10px",
+            }}
+          />
+          <button
+            className="btn-primary"
+            onClick={handleAdd}
+            disabled={!newTaskText.trim() || submitting}
+            style={{ flexShrink: 0 }}
+          >
+            Add
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── */
 /* Skilled editor dashboard — 3-column DnD                */
 /* ─────────────────────────────────────────────────────── */
 
@@ -129,10 +247,13 @@ const SKILLED_COLS = [
 
 function SkilledWork({ me, onOpen, role }) {
   const { reels, actions, attachedFootage } = useWorkflow();
+  const { person } = useAuth();
   const { peopleById } = useRoster();
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
   const whoLabel = peopleById[me]?.short || "Editor";
   const roleLabel = ROLES[role]?.short?.toLowerCase() || role || "editor";
+  const isOwner = person?.role === "owner";
+  const viewerPersonId = person?.id || "paul";
 
   const [dragId, setDragId] = useState(null);
   const [dropCol, setDropCol] = useState(null);
@@ -199,6 +320,14 @@ function SkilledWork({ me, onOpen, role }) {
           );
         })}
       </div>
+
+      <div style={{ padding: "0 22px 22px" }}>
+        <DailyTasksSection
+          personId={me}
+          viewerPersonId={viewerPersonId}
+          isOwner={isOwner}
+        />
+      </div>
     </div>
   );
 }
@@ -209,11 +338,14 @@ function SkilledWork({ me, onOpen, role }) {
 
 function VariantWork({ me, onOpen }) {
   const { reels, tasks } = useWorkflow();
+  const { person } = useAuth();
   const { peopleById } = useRoster();
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
   const myTasks = tasks.filter(t => t.to === me);
   const now = useNow();
   const whoLabel = peopleById[me]?.short || "Variant editor";
+  const isOwner = person?.role === "owner";
+  const viewerPersonId = person?.id || "paul";
 
   return (
     <div>
@@ -258,6 +390,14 @@ function VariantWork({ me, onOpen }) {
           </div>
         ))}
       </div>
+
+      <div style={{ padding: "0 22px 22px" }}>
+        <DailyTasksSection
+          personId={me}
+          viewerPersonId={viewerPersonId}
+          isOwner={isOwner}
+        />
+      </div>
     </div>
   );
 }
@@ -273,6 +413,8 @@ function ReviewQueueWork({ me, onOpen }) {
   const inReview = reels.filter(r => r.stage === "review" && !r.archivedAt);
   const viewedPerson = (me && peopleById[me]) || person;
   const heading = viewedPerson?.name || "Reviewer";
+  const isOwner = person?.role === "owner";
+  const viewerPersonId = person?.id || "paul";
 
   // Group cards by the editor who owns (submitted) them
   const groups = useMemo(() => {
@@ -355,6 +497,14 @@ function ReviewQueueWork({ me, onOpen }) {
             </div>
           </div>
         ))}
+
+        {me && (
+          <DailyTasksSection
+            personId={me}
+            viewerPersonId={viewerPersonId}
+            isOwner={isOwner}
+          />
+        )}
       </div>
     </div>
   );

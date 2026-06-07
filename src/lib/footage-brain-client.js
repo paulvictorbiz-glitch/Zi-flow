@@ -130,6 +130,7 @@ function fileRowToResult(f) {
     abs_path: f.abs_path,
     extension: f.extension,
     duration_seconds: f.duration_seconds,
+    frame_rate: f.frame_rate ?? null,
     thumbnail_path: f.thumbnail_path,
     width: f.width,
     height: f.height,
@@ -297,9 +298,39 @@ export function footageFolderLabel(absPath) {
 }
 
 /**
+ * Convert a Google Drive *file* link into a direct-download URL.
+ *
+ * Drive file links come in a few shapes:
+ *   https://drive.google.com/file/d/<ID>/view?usp=sharing
+ *   https://drive.google.com/open?id=<ID>
+ *   https://drive.google.com/uc?export=download&id=<ID>   (already direct)
+ * …all of which carry a 25+ char file ID. We pull that ID out and return the
+ * `uc?export=download` form, which the browser fetches as a file download.
+ *
+ * FOLDER links (…/folders/<ID>) are NOT single files and can't be downloaded
+ * directly — this returns null for them (and anything without a file ID), so
+ * the caller can fall back to opening the folder in a new tab.
+ *
+ * @param {string} driveUrl - a Google Drive share URL
+ * @returns {string|null} a direct-download URL, or null if it's not a file link
+ */
+export function driveDownloadUrl(driveUrl) {
+  if (!driveUrl) return null;
+  const url = String(driveUrl);
+  // A /folders/ link is a directory, never a downloadable single file.
+  if (/\/folders\//.test(url)) return null;
+  // Match the file ID from /file/d/<ID>, ?id=<ID>, or &id=<ID>.
+  const m =
+    url.match(/\/file\/d\/([a-zA-Z0-9_-]{10,})/) ||
+    url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+  if (!m) return null;
+  return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+}
+
+/**
  * Format Footage Brain search result for storage in Supabase.
  * Extracts minimal data needed for references.
- * 
+ *
  * @param {SearchResult} result - Raw search result from Footage Brain
  * @returns {object} Formatted for attached_footage_items table
  */
@@ -310,6 +341,7 @@ export function formatSearchResultForAttachment(result) {
     source_path: result.abs_path,
     extension: result.extension,
     duration_seconds: result.duration_seconds,
+    frame_rate: result.frame_rate ?? null,
     thumbnail_url: result.thumbnail_path,
     width: result.width,
     height: result.height,

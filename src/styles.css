@@ -38,6 +38,12 @@
   --c-blue-soft: #2f4a8a;
   --c-violet:    #a99bff;
   --c-grey:      #8a98ad;
+  --c-orange:    #f97316;
+  --c-pink:      #ec4899;
+  /* semantic aliases used by pills and status dots */
+  --c-ok:        var(--c-green);
+  --c-warn:      var(--c-amber);
+  --c-block:     var(--c-red);
 
   /* fonts */
   --f-script:   "Caveat", "Permanent Marker", cursive;

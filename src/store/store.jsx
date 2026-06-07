@@ -28,6 +28,7 @@ function reelFromDb(row) {
   if (!row) return row;
   const { blocker_role, prev_owner, variant_progress, fb_query,
           attach_url, due_at, stage_entered_at, archived_at,
+          display_number, status_color, scheduled_post_date,
           created_at, updated_at, stage, ...rest } = row;
   return {
     ...rest,
@@ -40,13 +41,16 @@ function reelFromDb(row) {
     dueAt: due_at ?? undefined,
     stageEnteredAt: stage_entered_at ?? undefined,
     archivedAt: archived_at ?? undefined,
+    displayNumber: display_number ?? undefined,
+    statusColor: status_color ?? undefined,
+    scheduledPostDate: scheduled_post_date ?? undefined,
   };
 }
 function reelToDb(reel) {
   // Only includes fields that exist in public.reels — anything
   // foreign (e.g. ephemeral _idx) is dropped.
   const { blockerRole, prevOwner, variantProgress, fbQuery, attachUrl,
-          dueAt, stageEnteredAt,
+          dueAt, stageEnteredAt, displayNumber, statusColor, scheduledPostDate,
           lane, owner, stage, state, age, due, fb, refs,
           blocker, next, downstream, grouping, note, foot,
           tone, links, status, logline, script, vo, audio, inspo, plan,
@@ -60,7 +64,10 @@ function reelToDb(reel) {
     fb_query: fbQuery ?? null,
     attach_url: attachUrl ?? null,
     due_at: dueAt ?? null,
-    stage_entered_at: stageEnteredAt ?? null };
+    stage_entered_at: stageEnteredAt ?? null,
+    display_number: displayNumber ?? null,
+    status_color: statusColor ?? null,
+    scheduled_post_date: scheduledPostDate ?? null };
   return out;
 }
 function cardFromDb(row) {
@@ -85,6 +92,19 @@ function taskToDb(task) {
     from_person: from ?? null, to_person: to ?? null,
     reel_id: reel ?? null,
     due_at: dueAt ?? null };
+}
+function dailyTaskFromDb(row) {
+  if (!row) return row;
+  const { assigned_to, created_by, task_text, task_date, completed_at,
+          created_at, updated_at, ...rest } = row;
+  return {
+    ...rest,
+    assignedTo: assigned_to ?? undefined,
+    createdBy: created_by ?? undefined,
+    taskText: task_text ?? undefined,
+    taskDate: task_date ?? undefined,
+    completedAt: completed_at ?? undefined,
+  };
 }
 
 /* Build the next revisionHistory array. Folds the older single-field
@@ -136,6 +156,7 @@ function workflowReducer(state, action) {
         const stageChanged = action.stage !== r.stage;
         const next = { ...r, stage: action.stage };
         if (stageChanged) next.stageEnteredAt = stamp;
+        if (action.scheduledPostDate !== undefined) next.scheduledPostDate = action.scheduledPostDate;
         if (action.stage === "review" && r.stage !== "review") {
           next.prevOwner = r.owner;
         }
@@ -176,7 +197,14 @@ function workflowReducer(state, action) {
     }
 
     case "UPDATE_REEL": {
-      const apply = (r) => r.id === action.id ? { ...r, ...action.patch } : r;
+      // Board derives a card's column as `lane || owner`. If the card was ever
+      // dragged on the board it got an explicit `lane` saved; without syncing
+      // `lane` here, that stale value would pin the card even after an owner
+      // change made from list view.
+      const effectivePatch = "owner" in action.patch
+        ? { ...action.patch, lane: action.patch.owner }
+        : action.patch;
+      const apply = (r) => r.id === action.id ? { ...r, ...effectivePatch } : r;
       return {
         ...state,
         reels: state.reels.map(apply),
@@ -269,6 +297,22 @@ function workflowReducer(state, action) {
     case "DELETE_ATTACHED_FOOTAGE_BY_ID":
       return { ...state, attachedFootage: state.attachedFootage.filter(f => f.id !== action.id) };
 
+    case "SET_DAILY_TASKS":
+      return { ...state, dailyTasks: action.items };
+
+    case "UPSERT_DAILY_TASK": {
+      const exists = state.dailyTasks.some(t => t.id === action.item.id);
+      return {
+        ...state,
+        dailyTasks: exists
+          ? state.dailyTasks.map(t => t.id === action.item.id ? { ...t, ...action.item } : t)
+          : [action.item, ...state.dailyTasks],
+      };
+    }
+
+    case "DELETE_DAILY_TASK":
+      return { ...state, dailyTasks: state.dailyTasks.filter(t => t.id !== action.id) };
+
     case "APPROVE_REVIEW": {
       const stamp = action.stageEnteredAt || new Date().toISOString();
       return {
@@ -350,7 +394,7 @@ function workflowReducer(state, action) {
    and surface via SET_ERROR; no automatic rollback for the
    prototype. */
 
-async function persistMoveStage(state, id, { lane, stage, systemComment }) {
+async function persistMoveStage(state, id, { lane, stage, systemComment, scheduledPostDate }) {
   const isCard = state.reviewLaneCards.some(c => c.id === id);
   const table = isCard ? "review_lane_cards" : "reels";
   const reel = (isCard ? state.reviewLaneCards : state.reels).find(r => r.id === id);
@@ -359,6 +403,7 @@ async function persistMoveStage(state, id, { lane, stage, systemComment }) {
   const patch = { stage };
 
   if (lane !== undefined) patch.lane = lane;
+  if (!isCard && scheduledPostDate !== undefined) patch.scheduled_post_date = scheduledPostDate ?? null;
 
   if (!isCard) {
     if (lane !== undefined && lane !== "review" && isKnownPerson(lane) && lane !== reel.owner) {
@@ -401,6 +446,9 @@ async function persistUpdateReel(state, id, patch) {
   if ("stageEnteredAt" in patch) { dbPatch.stage_entered_at = patch.stageEnteredAt; delete dbPatch.stageEnteredAt; }
   if ("archivedAt" in patch)  { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
   if ("parentId" in patch)    { dbPatch.parent_id = patch.parentId; delete dbPatch.parentId; }
+  // Keep `lane` in sync when owner changes — board derives column as lane || owner,
+  // so a stale lane from a prior board drag would otherwise override the new owner.
+  if ("owner" in patch && !("lane" in patch)) { dbPatch.lane = patch.owner; }
   let { error } = await supabase.from(table).update(dbPatch).eq("id", id);
   // board_order may not be migrated yet — if PostgREST rejects it, drop it and
   // retry (the reorder still shows locally; it just won't persist until the
@@ -446,11 +494,11 @@ async function persistDeleteTask(id) {
 
 async function persistAddAttachedFootage(item) {
   let { error } = await supabase.from("attached_footage_items").insert(item);
-  // drive_url / drive_folder_url columns may not be migrated yet — if PostgREST
-  // rejects them, retry without so attaching still works (the Drive link just
-  // won't persist until the columns are added).
-  if (error && /drive_url|drive_folder_url|PGRST204|column/i.test(error.message || "")) {
-    const { drive_url, drive_folder_url, ...rest } = item;
+  // Graceful fallback: if a new column (drive_url, drive_folder_url, frame_rate)
+  // hasn't been migrated yet, retry without the offending field so attaching
+  // still works. Run the migrations to persist those fields going forward.
+  if (error && /drive_url|drive_folder_url|frame_rate|PGRST204|column/i.test(error.message || "")) {
+    const { drive_url, drive_folder_url, frame_rate, ...rest } = item;
     ({ error } = await supabase.from("attached_footage_items").insert(rest));
   }
   if (error) throw error;
@@ -469,6 +517,7 @@ const INITIAL_STATE = {
   reviewLaneCards: [],
   tasks: [],
   attachedFootage: [],
+  dailyTasks: [],
   loaded: false,
   error: null,
 };
@@ -489,11 +538,12 @@ function WorkflowProvider({ children }) {
     let cancelled = false;
     (async () => {
       try {
-        const [reelsRes, cardsRes, tasksRes, footageRes] = await Promise.all([
+        const [reelsRes, cardsRes, tasksRes, footageRes, dailyTasksRes] = await Promise.all([
           supabase.from("reels").select("*"),
           supabase.from("review_lane_cards").select("*"),
           supabase.from("tasks").select("*"),
           supabase.from("attached_footage_items").select("*"),
+          supabase.from("daily_tasks").select("*").order("task_date", { ascending: false }).order("created_at", { ascending: true }),
         ]);
         if (reelsRes.error) throw reelsRes.error;
         if (cardsRes.error) throw cardsRes.error;
@@ -505,6 +555,7 @@ function WorkflowProvider({ children }) {
           reviewLaneCards: (cardsRes.data || []).map(cardFromDb),
           tasks: (tasksRes.data || []).map(taskFromDb),
           attachedFootage: footageRes.data || [],
+          dailyTasks: (dailyTasksRes.data || []).map(dailyTaskFromDb),
         }});
       } catch (e) {
         if (cancelled) return;
@@ -565,6 +616,15 @@ function WorkflowProvider({ children }) {
               dispatch({ type: "UPSERT_ATTACHED_FOOTAGE", item: payload.new });
             }
           })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "daily_tasks" },
+          (payload) => {
+            if (payload.eventType === "DELETE") {
+              dispatch({ type: "DELETE_DAILY_TASK", id: payload.old?.id });
+            } else if (payload.new) {
+              dispatch({ type: "UPSERT_DAILY_TASK", item: dailyTaskFromDb(payload.new) });
+            }
+          })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [state.loaded]);
@@ -589,11 +649,12 @@ function WorkflowProvider({ children }) {
     reviewLaneCards: state.reviewLaneCards,
     tasks: state.tasks,
     attachedFootage: state.attachedFootage,
+    dailyTasks: state.dailyTasks,
     loaded: state.loaded,
     error: state.error,
     dispatch,
     actions: {
-      moveStage: (id, { lane, stage }) => {
+      moveStage: (id, { lane, stage, scheduledPostDate }) => {
         /* Pre-build the audit-trail comment once so the optimistic
            reducer state and the persisted DB row use the same
            id/ts (no flicker on realtime echo). */
@@ -613,8 +674,8 @@ function WorkflowProvider({ children }) {
           systemComment = buildSystemComment(txt);
         }
         wrap(
-          { type: "MOVE_STAGE", id, lane, stage, systemComment },
-          (s) => persistMoveStage(s, id, { lane, stage, systemComment }));
+          { type: "MOVE_STAGE", id, lane, stage, scheduledPostDate, systemComment },
+          (s) => persistMoveStage(s, id, { lane, stage, scheduledPostDate, systemComment }));
       },
 
       updateReel: (id, patch) => wrap(
@@ -754,6 +815,51 @@ function WorkflowProvider({ children }) {
             next: "Revisit next cycle",
           }).catch(e => console.error(e));
         }
+      },
+
+      createDailyTask: async ({ assignedTo, createdBy, taskText, taskDate }) => {
+        const row = {
+          id: crypto.randomUUID(),
+          assigned_to: assignedTo,
+          created_by: createdBy,
+          task_text: taskText,
+          task_date: taskDate || new Date().toISOString().slice(0, 10),
+          completed: false,
+        };
+        dispatch({ type: "UPSERT_DAILY_TASK", item: {
+          ...row,
+          assignedTo: row.assigned_to,
+          createdBy: row.created_by,
+          taskText: row.task_text,
+          taskDate: row.task_date,
+        }});
+        await supabase.from("daily_tasks").insert(row).then(({ error }) => {
+          if (error) {
+            console.error("createDailyTask persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
+
+      completeDailyTask: async (id, completed) => {
+        const patch = { completed, completed_at: completed ? new Date().toISOString() : null };
+        dispatch({ type: "UPSERT_DAILY_TASK", item: { id, completed, completedAt: patch.completed_at } });
+        await supabase.from("daily_tasks").update(patch).eq("id", id).then(({ error }) => {
+          if (error) {
+            console.error("completeDailyTask persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
+
+      deleteDailyTask: async (id) => {
+        dispatch({ type: "DELETE_DAILY_TASK", id });
+        await supabase.from("daily_tasks").delete().eq("id", id).then(({ error }) => {
+          if (error) {
+            console.error("deleteDailyTask persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
       },
     },
   }), [state, wrap]);

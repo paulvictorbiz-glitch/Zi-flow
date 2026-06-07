@@ -2,11 +2,12 @@
    Pipeline Board — owner lanes (rows) × workflow stage (cols)
    ========================================================= */
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { DPill, ReelCard } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
+import { usePermissions } from "../lib/permissions.jsx";
 
 /* Board columns derived from the canonical STAGES list. Labels are
    upper-cased here because the board column heads use that style;
@@ -21,7 +22,10 @@ const LANE_ROLE_ORDER = { skilled: 0, owner: 1, variant: 2 };
 function Pipeline({ onOpen }) {
   const { reels, reviewLaneCards, actions } = useWorkflow();
   const { peopleList } = useRoster();
+  const { can } = usePermissions();
   const [filter, setFilter] = useState("all");
+  const [scheduleModal, setScheduleModal] = useState(null);
+  const [scheduleDate, setScheduleDate] = useState("");
 
   /* Board rows, built live from the team roster: one lane per
      non-reviewer member (so a newly-added editor gets their own row),
@@ -39,6 +43,7 @@ function Pipeline({ onOpen }) {
   const [dragging, setDragging] = useState(null); // reel record being dragged
   const [dropTarget, setDropTarget] = useState(null); // "lane::stage"
   const [dropOnCard, setDropOnCard] = useState(null); // { id, before } — reorder target
+  const [blockedStage, setBlockedStage] = useState(null); // stage key flashing red after a blocked drop
   /* Multi-select: cards added via Cmd/Ctrl/Shift+click. Dragging
      any one of the selected cards moves the whole group; click
      (no modifier) opens the detail view as before and clears
@@ -70,8 +75,37 @@ function Pipeline({ onOpen }) {
     return m;
   }, [items, filter]);
 
+  /* Flash the Completed column header red for 700 ms to signal a blocked drop. */
+  const flashBlocked = useCallback((stage) => {
+    setBlockedStage(stage);
+    setTimeout(() => setBlockedStage(null), 700);
+  }, []);
+
   const handleDrop = (lane, stage) => {
     if (!dragging) return;
+
+    /* Block non-owners from dropping into the Completed column. */
+    if (stage === "completed" && !can("moveToCompleted")) {
+      flashBlocked("completed");
+      setDragging(null);
+      setDropTarget(null);
+      return;
+    }
+
+    /* Intercept drops into "posted" — show the schedule date modal
+       before committing the move. Group drags to "posted" are also
+       caught; we clear the selection and treat it as a single move
+       so the modal flow stays simple. */
+    if (stage === "posted") {
+      const groupMove = selectedIds.size > 1 && selectedIds.has(dragging.id);
+      if (groupMove) setSelectedIds(new Set());
+      setScheduleModal({ reelId: dragging.id, lane, fromStage: dragging.stage });
+      setScheduleDate("");
+      setDragging(null);
+      setDropTarget(null);
+      return;
+    }
+
     /* If the dragged card is part of the selection, move all
        selected cards together; otherwise move just the dragged
        card. After a group move we clear selection. */
@@ -94,6 +128,15 @@ function Pipeline({ onOpen }) {
   const handleCardDrop = (target, before) => {
     setDropOnCard(null);
     if (!dragging || dragging.id === target.id) { setDragging(null); setDropTarget(null); return; }
+
+    /* Same completed-column gate — covers drops onto cards, not just empty cells. */
+    if (target.stage === "completed" && !can("moveToCompleted")) {
+      flashBlocked("completed");
+      setDragging(null);
+      setDropTarget(null);
+      return;
+    }
+
     if (selectedIds.size > 1 && selectedIds.has(dragging.id)) {
       handleDrop(target.lane, target.stage);   // group move — no reorder
       return;
@@ -155,10 +198,21 @@ function Pipeline({ onOpen }) {
         </div>
         {PIPELINE_STAGES.map(s => {
           const count = items.filter(r => r.stage === s.key).length;
+          const isBlocked = blockedStage === s.key;
           return (
-            <div className="col-head" key={s.key}>
-              <div className="lbl">{s.label}</div>
-              <div className="meta">{count} reel{count === 1 ? "" : "s"}</div>
+            <div
+              className="col-head"
+              key={s.key}
+              style={isBlocked ? {
+                outline: "2px solid var(--c-red)",
+                background: "var(--c-red-soft)",
+                transition: "background 0.1s, outline 0.1s",
+              } : undefined}
+            >
+              <div className="lbl" style={isBlocked ? { color: "var(--c-red)" } : undefined}>
+                {isBlocked ? "✕ " : ""}{s.label}
+              </div>
+              <div className="meta">{isBlocked ? "not allowed" : count + " reel" + (count === 1 ? "" : "s")}</div>
             </div>
           );
         })}
@@ -186,6 +240,8 @@ function Pipeline({ onOpen }) {
                   key={stage.key}
                   onDragOver={e => {
                     if (!dragging) return;
+                    /* Don't highlight Completed as a valid drop target when blocked. */
+                    if (stage.key === "completed" && !can("moveToCompleted")) return;
                     e.preventDefault();
                     if (dropTarget !== targetKey) setDropTarget(targetKey);
                   }}
@@ -213,6 +269,8 @@ function Pipeline({ onOpen }) {
                         onDragEnd={() => { setDragging(null); setDropTarget(null); setDropOnCard(null); }}
                         onDragOver={e => {
                           if (!dragging || dragging.id === r.id) return;
+                          /* Block the drop cursor on cards inside a protected column. */
+                          if (r.stage === "completed" && !can("moveToCompleted")) return;
                           e.preventDefault(); e.stopPropagation();
                           if (dropTarget) setDropTarget(null);
                           const rect = e.currentTarget.getBoundingClientRect();
@@ -258,6 +316,49 @@ function Pipeline({ onOpen }) {
           <span className="ms-label">selected · drag any to move the group</span>
           <a href="#" className="ms-clear"
              onClick={e => { e.preventDefault(); clearSelection(); }}>clear</a>
+        </div>
+      )}
+
+      {/* Schedule date modal — shown when a card is dropped into "posted" */}
+      {scheduleModal && (
+        <div className="m-backdrop" onClick={() => setScheduleModal(null)}>
+          <div className="m-shell" onClick={e => e.stopPropagation()} style={{ maxWidth: 340 }}>
+            <div className="m-head">
+              <div>
+                <div className="m-eyebrow">Move to Posted</div>
+                <div className="m-title">Schedule post date</div>
+                <div className="m-sub">
+                  Set the date this reel is scheduled to be posted. You can leave it blank.
+                </div>
+              </div>
+              <button className="m-x" onClick={() => setScheduleModal(null)}>✕</button>
+            </div>
+            <div className="m-body">
+              <div className="m-field">
+                <div className="m-label">Post date</div>
+                <input
+                  type="date"
+                  value={scheduleDate}
+                  onChange={e => setScheduleDate(e.target.value)}
+                  className="m-input"
+                />
+              </div>
+            </div>
+            <div className="m-foot">
+              <span />
+              <div style={{ display: "flex", gap: 8 }}>
+                <DPill onClick={() => setScheduleModal(null)}>Cancel</DPill>
+                <DPill primary onClick={() => {
+                  actions.moveStage(scheduleModal.reelId, {
+                    lane: scheduleModal.lane,
+                    stage: "posted",
+                    scheduledPostDate: scheduleDate || null,
+                  });
+                  setScheduleModal(null);
+                }}>Move to Posted</DPill>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

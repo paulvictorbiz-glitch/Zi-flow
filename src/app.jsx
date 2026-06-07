@@ -1,6 +1,6 @@
 /* Main shell with tabs, role-aware perspective, and global Create FAB. */
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { DPill } from "./components/components.jsx";
 import { ROLES } from "./lib/shared-data.jsx";
 import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
@@ -20,6 +20,8 @@ import { Locations } from "./pages/locations.jsx";
 import { Coverage } from "./pages/coverage.jsx";
 import { IdeaGenerator } from "./pages/idea-generator.jsx";
 import { Activity } from "./pages/activity.jsx";
+import { Resources } from "./pages/resources.jsx";
+import { VideoEditor } from "./pages/editor.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider, useNotifications } from "./components/notifications.jsx";
 import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
@@ -29,7 +31,7 @@ import { RolesAdmin } from "./pages/roles-admin.jsx";
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "coverage", "locations", "analytics", "export", "generate"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "coverage", "locations", "analytics", "export", "generate"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -40,12 +42,14 @@ const TABS = [
   { key: "pipeline",  label: "Pipeline" },
   { key: "detail",    label: "Reel detail" },
   { key: "footage",   label: "Footage" },
+  { key: "editor",    label: "Editor" },
   { key: "export",    label: "Export" },
   { key: "analytics", label: "Analytics" },
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate" },
   { key: "activity",  label: "Activity" },
+  { key: "resources", label: "Resources" },
 ];
 
 function AppShell() {
@@ -59,6 +63,8 @@ function AppShell() {
   const [selectedReel, setSelectedReel] = useState(null);
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const searchRef                       = useRef(null);
 
   /* "Needs you" badge — count of non-archived reels currently
      assigned to the signed-in person that still need work (any
@@ -72,6 +78,17 @@ function AppShell() {
       r.stage !== "posted"
     ).length;
   }, [reels, me]);
+
+  /* Global search — filter reels by title or display_number */
+  const searchResults = useMemo(() => {
+    const q = globalSearch.trim().toLowerCase();
+    if (!q) return [];
+    return reels
+      .filter(r => !r.archivedAt &&
+        ((r.title || "").toLowerCase().includes(q) ||
+         String(r.display_number || r.id || "").toLowerCase().includes(q)))
+      .slice(0, 8);
+  }, [globalSearch, reels]);
 
   // Re-sync the perspective default if `me` arrives after first render
   useEffect(() => { if (me) setRole(me.id); }, [me?.id]);
@@ -228,7 +245,68 @@ function AppShell() {
         </div>
 
         <div className="topbar-actions">
-          <DPill>Search reels / blockers</DPill>
+          {/* Global reel search */}
+          <div style={{ position: "relative" }} ref={searchRef}>
+            <input
+              type="text"
+              value={globalSearch}
+              onChange={e => setGlobalSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === "Escape") setGlobalSearch(""); }}
+              placeholder="Search reels…"
+              style={{
+                background: "var(--bg-2)",
+                border: "1px solid var(--line-hard)",
+                borderRadius: 4,
+                color: "var(--fg)",
+                fontFamily: "var(--f-mono)",
+                fontSize: 12,
+                padding: "5px 10px",
+                width: 180,
+                outline: "none",
+              }}
+            />
+            {searchResults.length > 0 && (
+              <ul style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                left: 0,
+                right: 0,
+                margin: 0,
+                padding: "4px 0",
+                listStyle: "none",
+                background: "#1a2335",
+                border: "1px solid #2a3754",
+                borderRadius: 4,
+                zIndex: 9999,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
+              }}>
+                {searchResults.map(reel => (
+                  <li key={reel.id}
+                      onClick={() => { setGlobalSearch(""); openReel(reel); }}
+                      style={{
+                        padding: "7px 12px",
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontFamily: "var(--f-mono)",
+                        color: "#d8e2ee",
+                        borderBottom: "1px solid #1f2a3d",
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "baseline",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#243048"}
+                      onMouseLeave={e => e.currentTarget.style.background = ""}>
+                    <span style={{ color: "var(--fg-dim)", flexShrink: 0 }}>
+                      {reel.display_number ? "#" + reel.display_number : reel.id}
+                    </span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {reel.title || "(untitled)"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           {/* Comments bell — total unread human comments across
               every non-archived reel for the signed-in user.
               Clicking opens the My work tab so you can drill in. */}
@@ -279,12 +357,14 @@ function AppShell() {
       {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
       {view === "detail"    && <ReelDetail reel={selectedReel} onBack={() => setView("pipeline")} />}
       {view === "footage"   && <FootageLibrary onOpen={openReel} />}
+      {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
       {view === "export"    && <ExportView onOpen={openReel} />}
       {view === "analytics" && <Analytics />}
       {view === "locations" && <Locations />}
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
       {view === "activity"  && <Activity />}
+      {view === "resources" && <Resources />}
       {view === "settings"  && isOwner && <RolesAdmin onBack={() => setView("pipeline")} />}
 
       {/* Global create FAB */}

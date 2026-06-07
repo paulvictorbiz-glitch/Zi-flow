@@ -14,7 +14,7 @@ import { useAuth } from "../auth.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
 import { useNotifications } from "../components/notifications.jsx";
 import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
-import { getFootageFileMetadata } from "../lib/footage-brain-client.js";
+import { getFootageFileMetadata, driveDownloadUrl } from "../lib/footage-brain-client.js";
 import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
 
 /* Blueprint fields start empty for every reel — operators fill them in. */
@@ -56,6 +56,38 @@ function formatCommentTs(iso) {
   return datePart + " · " + hh + ":" + mm;
 }
 
+/* Read-only blueprint field — shown to roles whose per-field edit permission
+   is off (editLogline / editScript / editVoiceover). Renders the saved text as
+   a clearly non-editable but readable block: muted fill, dashed border,
+   pre-wrapped text, default cursor — no save-on-blur handler is attached, so
+   these roles can read but never change the value. Empty values show a dim
+   "Nothing written yet." placeholder. */
+function ReadOnlyField({ value, mono }) {
+  const empty = !String(value || "").trim();
+  return (
+    <div
+      aria-readonly="true"
+      style={{
+        background: "var(--bg-2)",
+        border: "1px dashed var(--line-hard)",
+        borderRadius: 4,
+        color: empty ? "var(--fg-dim)" : "var(--fg)",
+        fontFamily: mono ? "var(--f-mono)" : "var(--f-sans)",
+        fontSize: 12.5,
+        lineHeight: 1.5,
+        padding: "9px 11px",
+        minHeight: 110,
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        cursor: "default",
+        userSelect: "text",
+      }}
+    >
+      {empty ? "Nothing written yet." : value}
+    </div>
+  );
+}
+
 function ReelDetail({ reel, onBack }) {
   /* reel is passed from Pipeline when a card is clicked. Default to REEL-201. */
   const current = reel || { id: "REEL-201", title: "Temple crowd sequence" };
@@ -67,6 +99,13 @@ function ReelDetail({ reel, onBack }) {
   const { can } = usePermissions();
   const canAttach = can("attachFootage");
   const canColor = can("changeCardColor");
+  /* Owner-configurable per-field edit gates. Editors get these flipped off in
+     the permissions catalog, so the logline / beat plan / voiceover render as
+     read-only blocks and the footage ✕ Remove button is hidden for them. */
+  const canEditLogline   = can("editLogline");
+  const canEditScript    = can("editScript");
+  const canEditVoiceover = can("editVoiceover");
+  const canRemoveFootage = can("removeFootage");
   const stored = reels.find(r => r.id === current.id);
 
   const [blueprintTab, setBlueprintTab] = useState("script");
@@ -121,6 +160,18 @@ function ReelDetail({ reel, onBack }) {
      would clobber in-flight edits. */
   useEffect(() => {
     setDetail(stored?.detail || defaultDetail());
+  }, [current.id]);
+
+  /* Always open a reel scrolled to the top. Opening a reel reuses the same
+     ReelDetail instance (only the `reel` prop changes), so without this the
+     page keeps the previous reel's scroll position — landing the user
+     mid-page on the new reel. The whole window/body scrolls here (the `.app`
+     shell is min-height:100vh and grows with content; the topbar is sticky),
+     so resetting window scroll is what matters. `.app` is reset too as a
+     belt-and-braces no-op in case a future layout makes it the scroller. */
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.querySelector(".app")?.scrollTo?.(0, 0);
   }, [current.id]);
 
   /* Mark this reel's comments as read on open and when the
@@ -225,6 +276,55 @@ function ReelDetail({ reel, onBack }) {
     });
   }, [reelAttachedFootageRaw, detail, stored?.detail, driveById]);
 
+  /* Beat-plan scene title per footage card.
+     ────────────────────────────────────────
+     The reel's AI draft (detail.aiDraft) links each clip to a beat. The
+     authoritative scene text is the clip's OWN one-line note — the generator
+     prompt defines clips[].note as "one-line editor note tying this clip to a
+     beat" (e.g. "walking through manila"), which is exactly the per-scene
+     label the user wants on each card. The flow[] array's `beat` is only a
+     generic structural label ("Hook" / "Build" / "Payoff" / "CTA") and its
+     `timecode` is a reel-timeline range ("0-15s") that doesn't line up with a
+     clip's in/out source timecodes — so flow is a weak last resort, used only
+     when a clip carries no note of its own.
+
+     Match each attached `item` to its draft clip by footage_file_id↔clip_id
+     or by filename. If no clip / no title is found, the item simply gets no
+     tag (we never invent a title). Absent aiDraft → empty map → no change. */
+  const beatTitleByItemId = React.useMemo(() => {
+    const det = detail || {};
+    const aiDraft = det.aiDraft || stored?.detail?.aiDraft || null;
+    const clips = aiDraft?.clips || [];
+    if (!clips.length) return {};
+
+    // Index clips by both keys we can match an attached item against.
+    const clipByKey = {};
+    clips.forEach(c => {
+      if (c.clip_id) clipByKey[c.clip_id] = c;
+      if (c.filename) clipByKey[c.filename] = c;
+    });
+
+    // Generic flow labels carry no scene meaning on their own — only fall back
+    // to a flow beat when it's NOT one of these structural names.
+    const STRUCTURAL = /^(hook|build|payoff|cta|intro|outro|setup)$/i;
+    const flow = Array.isArray(aiDraft?.flow) ? aiDraft.flow : [];
+
+    const map = {};
+    reelAttachedFootage.forEach((item, idx) => {
+      const clip = clipByKey[item.footage_file_id] || clipByKey[item.filename];
+      if (!clip) return;
+      // 1) the clip's own scene/beat/note text (the real per-scene label)
+      let title = clip.note || clip.scene || clip.beat || "";
+      // 2) last resort: the same-position flow beat, but only if descriptive
+      if (!title && flow[idx] && flow[idx].beat && !STRUCTURAL.test(flow[idx].beat.trim())) {
+        title = flow[idx].beat;
+      }
+      title = String(title || "").trim();
+      if (title) map[item.id] = title;
+    });
+    return map;
+  }, [reelAttachedFootage, detail, stored?.detail]);
+
   const handleAttachFootage = (footage) => {
     actions.addAttachedFootage(footage);
     // Record the clip's Drive link in the reel's detail (the footage table has
@@ -247,6 +347,71 @@ function ReelDetail({ reel, onBack }) {
 
   const handleRemoveFootage = (footageId) => {
     actions.removeAttachedFootage(footageId);
+  };
+
+  /* ── "Download all" — bulk-pull every attached clip's Drive video ──────────
+     Reuses the Drive links already resolved onto each item in
+     `reelAttachedFootage` (detail.footageDrive / aiDraft.clips / live FB
+     lookup), so no link resolution is duplicated here.
+
+     · A direct FILE link → converted to a uc?export=download URL and pulled by
+       clicking a throwaway <a download>. Browsers drop a burst of synchronous
+       downloads, so picks are staggered ~300ms apart.
+     · A FOLDER-only link (no single file) → opened in a new tab instead.
+     · No Drive links at all → a short inline notice, nothing downloaded. */
+  const [downloadStatus, setDownloadStatus] = useState(null);   // inline toast text
+  const [downloading, setDownloading]       = useState(false);  // disables the button
+  const downloadTimersRef = useRef([]);
+  // Clear any pending staggered-download timers on unmount / reel switch.
+  useEffect(() => () => downloadTimersRef.current.forEach(clearTimeout), [current.id]);
+
+  const handleDownloadAll = () => {
+    if (downloading) return;
+    downloadTimersRef.current.forEach(clearTimeout);
+    downloadTimersRef.current = [];
+
+    const files = [];    // { url: direct-download, name }
+    const folders = [];  // folder links we can only open, not download
+    reelAttachedFootage.forEach(item => {
+      const link = item.drive_url || item.drive_folder_url || null;
+      if (!link) return;
+      const dl = driveDownloadUrl(link);
+      if (dl) files.push({ url: dl, name: item.filename || "" });
+      else if (/\/folders\//.test(link)) folders.push(link);
+    });
+
+    if (!files.length && !folders.length) {
+      setDownloadStatus("No downloadable Drive links");
+      return;
+    }
+
+    setDownloading(true);
+    // Trigger each file download via a temporary anchor, staggered so the
+    // browser doesn't coalesce/drop them.
+    files.forEach((f, i) => {
+      const t = setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = f.url;
+        a.download = f.name || "";        // hint a filename (cross-origin may ignore)
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }, i * 300);
+      downloadTimersRef.current.push(t);
+    });
+    // Folder-only links can't be downloaded — open each so the user can grab
+    // the clip manually.
+    folders.forEach(url => window.open(url, "_blank", "noopener,noreferrer"));
+
+    const parts = [];
+    if (files.length)   parts.push(`Starting ${files.length} download${files.length === 1 ? "" : "s"} — check your browser for prompts`);
+    if (folders.length) parts.push(`opened ${folders.length} Drive folder${folders.length === 1 ? "" : "s"} (no direct file link)`);
+    setDownloadStatus(parts.join(" · "));
+
+    // Re-enable the button once the last staggered click has fired.
+    const done = setTimeout(() => setDownloading(false), files.length * 300 + 400);
+    downloadTimersRef.current.push(done);
   };
 
   /* "Current reel state" — a URL pointing to the latest cut/preview/Frame.io
@@ -385,7 +550,7 @@ function ReelDetail({ reel, onBack }) {
             {canColor && (
             <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <span className="mono dim" style={{ fontSize: 10, userSelect: "none" }}>card colour</span>
-              {["cyan", "violet", "green", "amber", "red"].map(c => {
+              {["cyan", "violet", "green", "amber", "red", "blue", "orange", "pink"].map(c => {
                 const active = (stored?.tone || "cyan") === c;
                 return (
                   <span
@@ -440,9 +605,69 @@ function ReelDetail({ reel, onBack }) {
             right={<span className="count-tag cyan">{reelAttachedFootage.length}</span>}
             footLeft="Footage items linked to this reel"
           >
+            {/* Download-all — bulk-pull every attached clip's Drive video. */}
+            {reelAttachedFootage.length > 0 && (
+              <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  onClick={handleDownloadAll}
+                  disabled={downloading}
+                  title="Download every attached clip's Google Drive video"
+                  style={{
+                    padding: "6px 12px",
+                    backgroundColor: "transparent",
+                    border: "1px solid var(--c-cyan, #22d3ee)",
+                    color: "var(--c-cyan, #22d3ee)",
+                    borderRadius: 3,
+                    cursor: downloading ? "default" : "pointer",
+                    fontSize: 11,
+                    fontWeight: 500,
+                    opacity: downloading ? 0.5 : 1,
+                  }}
+                >
+                  {downloading ? "Preparing…" : "⬇ Download all"}
+                </button>
+                {downloadStatus && (
+                  <span style={{ fontSize: 10.5, color: "var(--fg-mute)", fontFamily: "var(--f-mono)" }}>
+                    {downloadStatus}
+                  </span>
+                )}
+              </div>
+            )}
+            {(() => {
+              const rates = [...new Set(
+                reelAttachedFootage
+                  .map(f => f.frame_rate)
+                  .filter(r => r != null && r > 0)
+                  .map(r => Math.round(r))
+              )];
+              return rates.length > 1 ? (
+                <div style={{
+                  background: "var(--c-amber-soft)",
+                  border: "1px solid var(--c-amber)",
+                  borderRadius: 5,
+                  padding: "8px 12px",
+                  marginBottom: 10,
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
+                }}>
+                  <span style={{ fontSize: 16, lineHeight: 1 }}>⚠</span>
+                  <div>
+                    <div style={{ color: "var(--c-amber)", fontSize: 12, fontWeight: 600, fontFamily: "var(--f-mono)" }}>
+                      Mixed frame rates detected
+                    </div>
+                    <div style={{ color: "var(--fg)", fontSize: 11, marginTop: 3 }}>
+                      This reel has clips at {rates.join(" fps, ")} fps. CapCut may need manual fps alignment before import.
+                    </div>
+                  </div>
+                </div>
+              ) : null;
+            })()}
             <AttachedFootageList
               items={reelAttachedFootage}
               onRemove={handleRemoveFootage}
+              canRemove={canRemoveFootage}
+              beatTitleByItemId={beatTitleByItemId}
             />
             {canAttach && (
               <div style={{ marginTop: 10 }}>
@@ -476,32 +701,52 @@ function ReelDetail({ reel, onBack }) {
               </div>
               <div>
                 {blueprintTab === "logline" && (
-                  <textarea
-                    value={logline}
-                    onChange={e => setLogline(e.target.value)}
-                    onBlur={() => saveIfChanged("logline", logline)}
-                    placeholder="One sentence: what is this reel?"
-                  />
+                  canEditLogline ? (
+                    <textarea
+                      value={logline}
+                      onChange={e => setLogline(e.target.value)}
+                      onBlur={() => saveIfChanged("logline", logline)}
+                      placeholder="One sentence: what is this reel?"
+                    />
+                  ) : (
+                    <ReadOnlyField value={logline} />
+                  )
                 )}
                 {blueprintTab === "script" && (
-                  <textarea
-                    className="script"
-                    value={script}
-                    onChange={e => setScript(e.target.value)}
-                    onBlur={() => saveIfChanged("script", script)}
-                    placeholder="Beat-by-beat plan, shot list, captions…"
-                  />
+                  canEditScript ? (
+                    <textarea
+                      className="script"
+                      value={script}
+                      onChange={e => setScript(e.target.value)}
+                      onBlur={() => saveIfChanged("script", script)}
+                      placeholder="Beat-by-beat plan, shot list, captions…"
+                    />
+                  ) : (
+                    <ReadOnlyField value={script} mono />
+                  )
                 )}
                 {blueprintTab === "vo" && (
-                  <textarea
-                    value={vo}
-                    onChange={e => setVo(e.target.value)}
-                    onBlur={() => saveIfChanged("vo", vo)}
-                    placeholder="Voiceover text + delivery notes"
-                  />
+                  canEditVoiceover ? (
+                    <textarea
+                      value={vo}
+                      onChange={e => setVo(e.target.value)}
+                      onBlur={() => saveIfChanged("vo", vo)}
+                      placeholder="Voiceover text + delivery notes"
+                    />
+                  ) : (
+                    <ReadOnlyField value={vo} />
+                  )
                 )}
                 <div style={{ marginTop: 8, fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)" }}>
-                  {stored ? "saves on blur · synced across devices" : "not persisted · open this reel via Pipeline to enable saves"}
+                  {(() => {
+                    const editable = blueprintTab === "logline" ? canEditLogline
+                                   : blueprintTab === "vo"      ? canEditVoiceover
+                                   :                              canEditScript;
+                    if (!editable) return "read-only · ask Paul for edit access";
+                    return stored
+                      ? "saves on blur · synced across devices"
+                      : "not persisted · open this reel via Pipeline to enable saves";
+                  })()}
                 </div>
               </div>
             </div>

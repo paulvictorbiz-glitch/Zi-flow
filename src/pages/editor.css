@@ -1,0 +1,169 @@
+/* =========================================================
+   Editor tab — in-app video editor (OpenCut embed) styles.
+   Kept in its own file so we never touch the shared styles.css.
+   Uses the app's theme CSS variables (--fg, --bg-alt, --border,
+   --accent, --c-cyan, etc.) so it matches the dark UI.
+   ========================================================= */
+
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 112px);          /* fill below topbar + tabstrip */
+  min-height: 520px;
+  padding: 0 22px 18px;
+  gap: 12px;
+}
+
+/* Two-column body: left rail (reel + footage + tracker), right (embed) */
+.editor-body {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;                          /* let children scroll, not the page */
+}
+
+.editor-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.editor-stage {
+  position: relative;
+  min-height: 0;
+  border: 1px solid var(--line-hard, var(--border));
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-2, var(--bg-alt));
+}
+
+.editor-stage iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: #0b0e14;
+}
+
+/* Card used inside the rail (lighter than the global .card) */
+.editor-card {
+  border: 1px solid var(--line-hard, var(--border));
+  border-radius: 8px;
+  background: var(--bg-2, var(--bg-alt));
+  padding: 12px 14px;
+}
+
+.editor-card-h {
+  font-family: var(--f-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.editor-input,
+.editor-select,
+.editor-textarea {
+  width: 100%;
+  background: var(--bg, #0b0e14);
+  border: 1px solid var(--line-hard, var(--border));
+  border-radius: 5px;
+  color: var(--fg);
+  font-family: var(--f-mono, monospace);
+  font-size: 12px;
+  padding: 7px 9px;
+  outline: none;
+  box-sizing: border-box;
+}
+.editor-textarea {
+  font-family: var(--f-sans, sans-serif);
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+.editor-btn {
+  border: 1px solid var(--line-hard, var(--border));
+  background: transparent;
+  color: var(--fg);
+  border-radius: 5px;
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  padding: 6px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.editor-btn:hover { border-color: var(--c-cyan, #22d3ee); color: var(--c-cyan, #22d3ee); }
+.editor-btn.primary {
+  border-color: var(--c-cyan, #22d3ee);
+  color: var(--c-cyan, #22d3ee);
+  background: rgba(34, 211, 238, 0.08);
+}
+.editor-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Attached-footage clip row in the rail */
+.editor-clip {
+  border: 1px solid var(--line, var(--border));
+  border-radius: 6px;
+  background: var(--bg-alt, var(--bg-2));
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.editor-clip-name {
+  font-size: 12px;
+  color: var(--fg);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.editor-clip-meta {
+  font-size: 10.5px;
+  font-family: var(--f-mono, monospace);
+  color: var(--fg-mute);
+}
+.editor-clip-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Fallback overlay shown when the iframe can't load (framing blocked) */
+.editor-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 32px;
+  background: var(--bg-2, var(--bg-alt));
+  color: var(--fg);
+}
+.editor-overlay h3 { margin: 0; font-size: 15px; }
+.editor-overlay p {
+  margin: 0;
+  max-width: 460px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-mute);
+}
+
+.editor-pill {
+  font-family: var(--f-mono, monospace);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line-hard, var(--border));
+  color: var(--fg-mute);
+}
+.editor-pill.ok    { color: var(--c-green, #4ade80); border-color: var(--c-green, #4ade80); }
+.editor-pill.amber { color: var(--c-amber, #f59e0b); border-color: var(--c-amber, #f59e0b); }
+.editor-pill.cyan  { color: var(--c-cyan, #22d3ee); border-color: var(--c-cyan, #22d3ee); }

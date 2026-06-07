@@ -59,9 +59,9 @@ function Card({ title, right, footLeft, children, defaultOpen = true, tone, soli
 }
 
 /* ---------- Reel card (board) ---------- */
-// The 5 card colours the user can pick (must match CARD_COLORS in detail.jsx
+// The 8 card colours the user can pick (must match CARD_COLORS in detail.jsx
 // and the --c-* tokens in styles.css). Default is cyan.
-const CARD_COLORS = ["cyan", "violet", "green", "amber", "red"];
+const CARD_COLORS = ["cyan", "violet", "green", "amber", "red", "blue", "orange", "pink"];
 
 function ReelCard({ reel, onOpen, state, isSelected }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'

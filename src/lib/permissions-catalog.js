@@ -27,12 +27,14 @@ export const VIEW_CAPS = [
   { key: "pipeline",  label: "Pipeline" },
   { key: "detail",    label: "Reel detail" },
   { key: "footage",   label: "Footage library" },
+  { key: "editor",    label: "Video editor (OpenCut)" },
   { key: "export",    label: "Export" },
   { key: "analytics", label: "Analytics" },
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate (AI · paid)" },
   { key: "activity",  label: "Activity (CapCut tracker)" },
+  { key: "resources", label: "Resources (link sheet)" },
 ];
 
 /* Actions wired in Phase 1. Every key here maps to a real, gated
@@ -44,6 +46,13 @@ export const ACTION_CAPS = [
   { key: "approveReview",   label: "Approve / send back",     hint: "Review-queue Accept & Send-back" },
   { key: "attachFootage",   label: "Attach footage",          hint: "Search & add clips on a reel" },
   { key: "changeCardColor", label: "Change card color",       hint: "The 5-swatch colour picker on a reel" },
+  { key: "editLogline",     label: "Edit logline",            hint: "The logline field on a reel's detail page" },
+  { key: "editScript",      label: "Edit beat plan",          hint: "The beat-by-beat plan / shot list textarea" },
+  { key: "editVoiceover",   label: "Edit voiceover",          hint: "The voiceover script field on a reel" },
+  { key: "removeFootage",   label: "Remove attached footage", hint: "The ✕ button that detaches a clip from a reel" },
+  { key: "moveToCompleted", label: "Move cards to Completed",  hint: "Drag/drop or dropdown to move a card into the Completed stage" },
+  { key: "editReelId",      label: "Edit Reel ID (display number)", hint: "Inline-edit the display number of a reel in list view" },
+  { key: "bulkMoveReels",   label: "Bulk move / assign reels", hint: "Select multiple reels and move/assign them at once in list view" },
 ];
 
 /* Roles the owner can configure. `owner` is excluded — always full. */
@@ -69,6 +78,22 @@ export function defaultPermsForRole(roleKey) {
   for (const a of ACTION_CAPS) actions[a.key] = true;
   actions.deleteReel = false;
   actions.approveReview = roleKey === "reviewer";
+  actions.moveToCompleted = false; // owner enables per-person if needed
+  actions.editReelId = false;      // owner only
+  actions.bulkMoveReels = false;   // owner only by default
+
+  /* Editors (skilled + variant) are READ-ONLY on creative fields and card
+     styling by default — they execute the edit; the owner shapes the brief.
+     These are new keys (editLogline/editScript/editVoiceover/removeFootage)
+     plus the existing changeCardColor, all flipped off for editor roles.
+     The owner can re-enable any of them per-role or per-person in the admin. */
+  if (roleKey === "skilled" || roleKey === "variant") {
+    actions.changeCardColor = false;
+    actions.editLogline     = false;
+    actions.editScript      = false;
+    actions.editVoiceover   = false;
+    actions.removeFootage   = false;
+  }
 
   return { views, actions };
 }

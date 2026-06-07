@@ -117,6 +117,9 @@ function CapRow({ cap, kind }) {
   );
 }
 
+/* Keys of actions considered "destructive" — a separator is rendered after the last one. */
+const DESTRUCTIVE_ACTION_KEYS = new Set(["deleteReel", "archiveReel"]);
+
 function Section({ title, caps, kind }) {
   return (
     <div style={{ marginTop: 18 }}>
@@ -126,7 +129,29 @@ function Section({ title, caps, kind }) {
       </div>
       <div style={{ border: "1px dashed var(--line-hard)", borderRadius: 8, padding: "4px 12px",
                     background: "var(--bg-1)" }}>
-        {caps.map(c => <CapRow key={c.key} cap={c} kind={kind} />)}
+        {caps.map((c, i) => {
+          /* After the last destructive action, insert a labelled divider before workflow actions. */
+          const isLastDestructive = kind === "actions"
+            && DESTRUCTIVE_ACTION_KEYS.has(c.key)
+            && (i + 1 >= caps.length || !DESTRUCTIVE_ACTION_KEYS.has(caps[i + 1].key));
+          return (
+            <React.Fragment key={c.key}>
+              <CapRow cap={c} kind={kind} />
+              {isLastDestructive && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  margin: "6px 0 2px",
+                }}>
+                  <div style={{ flex: 1, height: 0, borderTop: "1px dashed var(--line-hard)" }} />
+                  <span className="mono dim" style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", whiteSpace: "nowrap" }}>
+                    workflow actions
+                  </span>
+                  <div style={{ flex: 1, height: 0, borderTop: "1px dashed var(--line-hard)" }} />
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
       </div>
     </div>
   );
