@@ -5,18 +5,40 @@
 import React, { useState, useMemo } from "react";
 import { DPill, ReelCard } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
-import { STAGES, STAGE_LABEL, PIPELINE_LANES } from "../lib/shared-data.jsx";
+import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
+import { useRoster } from "../lib/roster.jsx";
 
 /* Board columns derived from the canonical STAGES list. Labels are
    upper-cased here because the board column heads use that style;
    list-view / archived-view consume STAGE_LABEL as-is (title case). */
 const PIPELINE_STAGES = STAGES.map((key) => ({ key, label: STAGE_LABEL[key].toUpperCase() }));
 
+/* Lane row order — skilled editor first, then owner, then variant,
+   then anyone else. Reviewers don't get a personal lane; they share
+   the special "review" workflow lane appended last. */
+const LANE_ROLE_ORDER = { skilled: 0, owner: 1, variant: 2 };
+
 function Pipeline({ onOpen }) {
   const { reels, reviewLaneCards, actions } = useWorkflow();
+  const { peopleList } = useRoster();
   const [filter, setFilter] = useState("all");
+
+  /* Board rows, built live from the team roster: one lane per
+     non-reviewer member (so a newly-added editor gets their own row),
+     plus the shared "review" lane named after the reviewer. */
+  const lanes = useMemo(() => {
+    const personLanes = peopleList
+      .filter(p => p.role !== "reviewer")
+      .slice()
+      .sort((a, b) => (LANE_ROLE_ORDER[a.role] ?? 9) - (LANE_ROLE_ORDER[b.role] ?? 9))
+      .map(p => ({ id: p.id, name: p.name }));
+    const reviewer = peopleList.find(p => p.role === "reviewer");
+    personLanes.push({ id: "review", name: reviewer?.name || "Reviewer" });
+    return personLanes;
+  }, [peopleList]);
   const [dragging, setDragging] = useState(null); // reel record being dragged
   const [dropTarget, setDropTarget] = useState(null); // "lane::stage"
+  const [dropOnCard, setDropOnCard] = useState(null); // { id, before } — reorder target
   /* Multi-select: cards added via Cmd/Ctrl/Shift+click. Dragging
      any one of the selected cards moves the whole group; click
      (no modifier) opens the detail view as before and clears
@@ -41,6 +63,10 @@ function Pipeline({ onOpen }) {
       const k = r.lane + "::" + r.stage;
       (m[k] = m[k] || []).push(r);
     });
+    // Apply the user's manual order. Cards without a board_order keep their
+    // existing relative order and sit after the ordered ones.
+    Object.values(m).forEach(list =>
+      list.sort((a, b) => (a.board_order ?? Infinity) - (b.board_order ?? Infinity)));
     return m;
   }, [items, filter]);
 
@@ -60,6 +86,29 @@ function Pipeline({ onOpen }) {
     }
     setDragging(null);
     setDropTarget(null);
+  };
+
+  /* Drop a card ONTO another card → reorder within (or move into) that card's
+     cell, persisting the new order via board_order. Group drags fall back to a
+     plain cell move. */
+  const handleCardDrop = (target, before) => {
+    setDropOnCard(null);
+    if (!dragging || dragging.id === target.id) { setDragging(null); setDropTarget(null); return; }
+    if (selectedIds.size > 1 && selectedIds.has(dragging.id)) {
+      handleDrop(target.lane, target.stage);   // group move — no reorder
+      return;
+    }
+    const dragged = dragging;
+    const cellKey = target.lane + "::" + target.stage;
+    const sameCell = dragged.lane === target.lane && dragged.stage === target.stage;
+    const list = (cells[cellKey] || []).filter(r => r.id !== dragged.id);
+    let ti = list.findIndex(r => r.id === target.id);
+    if (ti < 0) ti = list.length;
+    list.splice(before ? ti : ti + 1, 0, dragged);
+    if (!sameCell) actions.moveStage(dragged.id, { lane: target.lane, stage: target.stage });
+    // Reindex the cell so the order persists (only write the ones that changed).
+    list.forEach((r, i) => { if (r.board_order !== i) actions.updateReel(r.id, { board_order: i }); });
+    setDragging(null); setDropTarget(null);
   };
 
   /* Card click: with modifier → toggle in selection (no detail);
@@ -115,12 +164,11 @@ function Pipeline({ onOpen }) {
         })}
 
         {/* Lanes */}
-        {PIPELINE_LANES.map(lane => {
+        {lanes.map(lane => {
           const laneCount = items.filter(r => r.lane === lane.id).length;
           return (
           <React.Fragment key={lane.id}>
             <div className="lane-head">
-              <div className="role">{lane.role}</div>
               <div className="name">{lane.name}</div>
               <div className="stats">{laneCount} reel{laneCount === 1 ? "" : "s"}</div>
             </div>
@@ -162,10 +210,27 @@ function Pipeline({ onOpen }) {
                           setDragging(r);
                           e.dataTransfer.effectAllowed = "move";
                         }}
-                        onDragEnd={() => { setDragging(null); setDropTarget(null); }}
+                        onDragEnd={() => { setDragging(null); setDropTarget(null); setDropOnCard(null); }}
+                        onDragOver={e => {
+                          if (!dragging || dragging.id === r.id) return;
+                          e.preventDefault(); e.stopPropagation();
+                          if (dropTarget) setDropTarget(null);
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const before = (e.clientY - rect.top) < rect.height / 2;
+                          if (!dropOnCard || dropOnCard.id !== r.id || dropOnCard.before !== before) {
+                            setDropOnCard({ id: r.id, before });
+                          }
+                        }}
+                        onDrop={e => {
+                          e.preventDefault(); e.stopPropagation();
+                          handleCardDrop(r, dropOnCard?.id === r.id ? dropOnCard.before : true);
+                        }}
                         className={isThisDrag ? "is-drag-wrap" : ""}
                         style={{
                           opacity: isThisDrag || isInGroupDrag ? 0.4 : 1,
+                          borderTop: dropOnCard?.id === r.id && dropOnCard.before ? "2px solid var(--c-cyan)" : "2px solid transparent",
+                          borderBottom: dropOnCard?.id === r.id && !dropOnCard.before ? "2px solid var(--c-cyan)" : "2px solid transparent",
+                          borderRadius: 4,
                         }}
                       >
                         <ReelCard

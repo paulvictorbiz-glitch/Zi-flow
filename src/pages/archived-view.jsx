@@ -10,11 +10,13 @@ import { DPill, Pill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { useNow, formatAge, formatDue } from "../lib/time.jsx";
-import { PEOPLE, STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
+import { STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
+import { useRoster } from "../lib/roster.jsx";
 
 function ArchivedView({ onOpen }) {
   const { reels, actions } = useWorkflow();
   const { person } = useAuth();
+  const { peopleById } = useRoster();
   const now = useNow();
   const archived = reels
     .filter(r => r.archivedAt)
@@ -61,10 +63,10 @@ function ArchivedView({ onOpen }) {
                 </td>
                 <td><Pill tone={STAGE_TONE[r.stage]}>{STAGE_LABEL[r.stage]}</Pill></td>
                 <td>
-                  <span className={"avatar-chip " + (PEOPLE[r.owner]?.role || "")}>
-                    {PEOPLE[r.owner]?.avatar}
+                  <span className={"avatar-chip " + (peopleById[r.owner]?.role || "")}>
+                    {peopleById[r.owner]?.avatar}
                   </span>
-                  <span style={{ marginLeft: 8, color: "var(--fg-mute)" }}>{PEOPLE[r.owner]?.short}</span>
+                  <span style={{ marginLeft: 8, color: "var(--fg-mute)" }}>{peopleById[r.owner]?.short}</span>
                 </td>
                 <td className="mono">{formatDue(r, now) || <span className="dim">—</span>}</td>
                 <td className="mono dim">

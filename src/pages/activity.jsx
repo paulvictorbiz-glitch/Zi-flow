@@ -12,7 +12,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DPill } from "../components/components.jsx";
-import { PEOPLE } from "../lib/shared-data.jsx";
+import { useRoster } from "../lib/roster.jsx";
+import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
 
 const NOMINAL_POLL_SEC = 15;          // agent sample rate — used only for the 7-day bar estimate
@@ -64,18 +65,51 @@ async function loadDayRows(worker, dayStart) {
   }
   return all;
 }
-async function loadDailyMinutes(worker, days = 7) {
+async function loadDailyMinutes(worker, days = 7, baseDate) {
   const reqs = [];
   for (let i = days - 1; i >= 0; i--) {
-    const start = startOfDayLocal(-i);
+    const start = startOfDayLocal(-i, baseDate);
     reqs.push(
       supabase.from("capcut_activity").select("*", { count: "exact", head: true })
         .eq("worker", worker).eq("running", true)
-        .gte("ts", start.toISOString()).lt("ts", startOfDayLocal(-i + 1).toISOString())
+        .gte("ts", start.toISOString()).lt("ts", startOfDayLocal(-i + 1, baseDate).toISOString())
         .then(({ count }) => ({ start, minutes: (count || 0) * NOMINAL_POLL_SEC / 60 }))
     );
   }
   return Promise.all(reqs);
+}
+
+function downloadAgentFiles(personId) {
+  const cfg = { WORKER: personId, POLL_SECONDS: 15 };
+  const cfgBlob = new Blob([JSON.stringify(cfg, null, 2)], { type: "application/json" });
+  const cfgUrl = URL.createObjectURL(cfgBlob);
+  const a1 = document.createElement("a");
+  a1.href = cfgUrl; a1.download = "capcut_config.json"; a1.click();
+  URL.revokeObjectURL(cfgUrl);
+
+  setTimeout(() => {
+    const bat = [
+      "@echo off",
+      "REM Adds capcut_agent.exe (in this folder) to Windows Startup so it",
+      "REM runs automatically at every logon. Run once per machine.",
+      "setlocal",
+      `set WORKER=${personId}`,
+      "set EXE=%~dp0capcut_agent.exe",
+      "set STARTUP=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+      "set LNK=%STARTUP%\\CapCutActivityAgent.lnk",
+      "if not exist \"%EXE%\" ( echo ERROR: capcut_agent.exe not found. & pause & exit /b 1 )",
+      "powershell -NoProfile -Command \"$sh=New-Object -ComObject WScript.Shell;$lnk=$sh.CreateShortcut('%LNK%');$lnk.TargetPath='%EXE%';$lnk.WorkingDirectory='%~dp0';$lnk.WindowStyle=7;$lnk.Save()\"",
+      "echo Startup shortcut created. Starting agent now...",
+      "start \"\" \"%EXE%\"",
+      "echo Done. Agent is running and will auto-start at every logon.",
+      "pause",
+    ].join("\r\n");
+    const batBlob = new Blob([bat], { type: "text/plain" });
+    const batUrl = URL.createObjectURL(batBlob);
+    const a2 = document.createElement("a");
+    a2.href = batUrl; a2.download = "capcut_install.bat"; a2.click();
+    URL.revokeObjectURL(batUrl);
+  }, 300);
 }
 
 // ---- derivation: everything from timestamp gaps --------------------------
@@ -132,35 +166,62 @@ function liveStatus(recent) {
 }
 
 // =========================================================================
-export function Activity({ workerId = "sam" }) {
-  const name = PEOPLE[workerId]?.name || workerId;
+const navBtnStyle = {
+  background: "none", border: "1px dashed var(--line-hard)", borderRadius: 3,
+  color: "var(--fg-mute)", fontFamily: "var(--f-mono)", fontSize: 10, padding: "3px 8px", cursor: "pointer",
+};
+
+export function Activity({ workerId = "paul" }) {
+  const { peopleList, peopleById } = useRoster();
+  const { person: signedIn } = useAuth();
+  // Who can be tracked — every team member runs the agent on their own PC
+  // with their person id as the WORKER id.
+  const WORKER_OPTIONS = useMemo(
+    () => peopleList.map(p => ({ k: p.id, name: p.name })),
+    [peopleList]
+  );
+  const [worker, setWorker] = useState(workerId);   // whose CapCut usage to view
+  const name = peopleById[worker]?.name || worker;
   const [recent, setRecent] = useState([]);
   const [daily, setDaily]   = useState([]);
+  const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDay, setSelectedDay] = useState(() => startOfDayLocal(0));
   const [dayRows, setDayRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState(null);
   const [tableMissing, setTableMissing] = useState(false);
+  const [installOpen, setInstallOpen] = useState(false);
   const selRef = useRef(selectedDay);
   selRef.current = selectedDay;
 
+  const weekBase = useMemo(() => {
+    const d = startOfDayLocal(0);
+    d.setDate(d.getDate() + weekOffset * 7);
+    return d;
+  }, [weekOffset]);
+
   const refresh = async () => {
     const [r, d, dr] = await Promise.all([
-      loadRecent(workerId), loadDailyMinutes(workerId, 7), loadDayRows(workerId, selRef.current),
+      loadRecent(worker), loadDailyMinutes(worker, 7, weekBase), loadDayRows(worker, selRef.current),
     ]);
     setRecent(r); setDaily(d); setDayRows(dr); setLoading(false); setUpdatedAt(new Date());
   };
 
   useEffect(() => {
-    let alive = true; setLoading(true);
+    let alive = true; setLoading(true); setRecent([]); setDaily([]); setDayRows([]);
     supabase.from("capcut_activity").select("id", { head: true, count: "exact" }).limit(1)
       .then(({ error }) => { if (alive && error && /capcut_activity/.test(error.message)) setTableMissing(true); });
     refresh();
     const iv = setInterval(() => { if (alive) refresh(); }, REFRESH_MS);
     return () => { alive = false; clearInterval(iv); };
-  }, [workerId]);
+  }, [worker, weekBase]);
 
-  useEffect(() => { loadDayRows(workerId, selectedDay).then(setDayRows); }, [workerId, selectedDay]);
+  useEffect(() => {
+    const last = startOfDayLocal(0, weekBase);
+    setSelectedDay(last);
+  }, [weekOffset]);
+
+  useEffect(() => { loadDayRows(worker, selectedDay).then(setDayRows); }, [worker, selectedDay]);
 
   const status = useMemo(() => liveStatus(recent), [recent]);
   const curProject = (recent[0] && Date.now() - new Date(recent[0].ts).getTime() <= ONLINE_WINDOW_MS)
@@ -174,11 +235,27 @@ export function Activity({ workerId = "sam" }) {
         <div className="titles">
           <h1>Activity 🔒</h1>
           <div className="sub">
-            Private CapCut monitor for <strong>{name}</strong> — visible only on your local machine.
-            Logs 24/7 from {name}'s PC even when this dashboard is closed.
+            Private CapCut monitor — visible only on your local machine.
+            Logs 24/7 from <strong>{name}</strong>'s PC even when this dashboard is closed.
           </div>
         </div>
         <div className="actions">
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span className="mono dim" style={{ fontSize: 10 }}>tracking</span>
+            <select
+              value={worker}
+              onChange={e => setWorker(e.target.value)}
+              style={{
+                padding: "5px 10px", border: "1px dashed var(--line-hard, var(--border))",
+                borderRadius: 14, background: "var(--bg-2)", color: "var(--fg)",
+                fontFamily: "var(--f-mono)", fontSize: 11.5, cursor: "pointer",
+              }}
+            >
+              {WORKER_OPTIONS.map(w => (
+                <option key={w.k} value={w.k}>{w.name}{w.k === signedIn?.id ? " (me)" : ""}</option>
+              ))}
+            </select>
+          </label>
           <DPill>{status.dot} {status.label}{curProject ? ` · ${curProject}` : ""}</DPill>
           <DPill onClick={refresh}>↻ Refresh</DPill>
           {updatedAt && <span className="mono dim" style={{ fontSize: 10, alignSelf: "center" }}>
@@ -197,10 +274,53 @@ export function Activity({ workerId = "sam" }) {
           </div>
         )}
 
+        {/* Install tracker card */}
+        <div className="card" style={{ padding: "12px 18px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div className="mono dim" style={{ fontSize: 10, letterSpacing: ".06em" }}>CAPCUT TRACKER · SETUP</div>
+            <button onClick={() => setInstallOpen(o => !o)} style={{ background: "none", border: "none", color: "var(--fg-mute)", fontFamily: "var(--f-mono)", fontSize: 10, cursor: "pointer" }}>
+              {installOpen ? "▲ hide" : "▼ show"}
+            </button>
+          </div>
+          {installOpen && (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.6 }}>
+                The tracker is a small Windows background app that reports CapCut usage every 15 s.
+                Each team member runs it on their own PC.
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--fg)", lineHeight: 1.7 }}>
+                <b>Setup:</b> 1) Download the agent .exe and place it somewhere permanent.
+                2) Download the config for the right person and put it in the same folder.
+                3) Double-click the .exe — it runs silently in the background.
+                To auto-start, add a shortcut to <code>shell:startup</code>.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                <button
+                  onClick={() => downloadAgentFiles(worker)}
+                  style={{ padding: "5px 12px", border: "1px dashed var(--c-cyan)", borderRadius: 3, background: "rgba(107,214,224,0.08)", color: "var(--c-cyan)", fontFamily: "var(--f-mono)", fontSize: 10.5, cursor: "pointer" }}>
+                  ↓ Download config for {name}
+                </button>
+                <span className="mono dim" style={{ fontSize: 10, alignSelf: "center" }}>
+                  · place <code>capcut_config.json</code> next to the .exe
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* 7-day bar — click a day to drill in */}
         <div className="card" style={{ padding: "16px 18px" }}>
-          <div className="mono dim" style={{ fontSize: 10, marginBottom: 14, letterSpacing: ".06em" }}>
-            CAPCUT TIME · LAST 7 DAYS · click a day for detail
+          <div className="mono dim" style={{ fontSize: 10, marginBottom: 6, letterSpacing: ".06em" }}>
+            CAPCUT TIME · click a day for detail
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <button onClick={() => setWeekOffset(o => o - 1)} style={navBtnStyle}>← Prev</button>
+            <span className="mono dim" style={{ fontSize: 10.5, flex: 1, textAlign: "center" }}>
+              {daily.length > 0
+                ? `${daily[0].start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${daily[daily.length - 1].start.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                : ""}
+            </span>
+            <button onClick={() => setWeekOffset(o => o + 1)} disabled={weekOffset >= 0} style={{ ...navBtnStyle, opacity: weekOffset >= 0 ? 0.35 : 1 }}>Next →</button>
           </div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: 130 }}>
             {daily.map((d, i) => {

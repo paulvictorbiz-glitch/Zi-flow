@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { DPill } from "./components/components.jsx";
-import { PEOPLE, ROLES } from "./lib/shared-data.jsx";
+import { ROLES } from "./lib/shared-data.jsx";
 import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
 import { MyWork } from "./pages/my-work.jsx";
 import { Pipeline } from "./pages/pipeline.jsx";
@@ -22,29 +22,46 @@ import { IdeaGenerator } from "./pages/idea-generator.jsx";
 import { Activity } from "./pages/activity.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider, useNotifications } from "./components/notifications.jsx";
+import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
+import { RosterProvider, useRoster } from "./lib/roster.jsx";
+import { RolesAdmin } from "./pages/roles-admin.jsx";
 
 /* Private monitoring surfaces (e.g. the CapCut Activity tab) render ONLY when
    the dashboard is served from localhost — never on the public footagebrain.com. */
 const IS_LOCALHOST = typeof window !== "undefined" &&
   /^(localhost|127\.0\.0\.1|::1)$/.test(window.location.hostname);
 
-/* Map the four person.role values onto the four role-switcher keys. */
-function defaultRoleKey(person) {
-  if (!person) return "skilled";
-  if (person.role === "owner")    return "owner";
-  if (person.role === "variant")  return "variant";
-  if (person.role === "reviewer") return "reviewer";
-  return "skilled";
-}
+/* Priority order for picking a safe landing tab when a role can't see the
+   current view. Excludes "detail" (needs a selected reel) and "settings"
+   (owner-only gear). Kept in landing-usefulness order, not tab order. */
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "coverage", "locations", "analytics", "export", "generate"];
+
+/* Tab strip definition (order shown). `key` matches the `view` string and
+   the permission catalog's view keys, so canView() gates each tab. Numbers
+   are assigned dynamically over the *visible* set so they stay contiguous
+   when a role has tabs removed. */
+const TABS = [
+  { key: "mywork",    label: "My work" },
+  { key: "pipeline",  label: "Pipeline" },
+  { key: "detail",    label: "Reel detail" },
+  { key: "footage",   label: "Footage" },
+  { key: "export",    label: "Export" },
+  { key: "analytics", label: "Analytics" },
+  { key: "locations", label: "Locations" },
+  { key: "coverage",  label: "Coverage" },
+  { key: "generate",  label: "Generate" },
+];
 
 function AppShell() {
   const { person: me, signOut } = useAuth();
   const { reels } = useWorkflow();
+  const { peopleById, peopleList } = useRoster();
   const { totalUnread } = useNotifications();
+  const { canView, setEffectiveRole, setEffectivePersonId } = usePermissions();
   const [view, setView]                 = useState("pipeline");
   const [pipelineMode, setPipelineMode] = useState("board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
-  const [role, setRole]                 = useState(() => defaultRoleKey(me));
+  const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
 
   /* "Needs you" badge — count of non-archived reels currently
@@ -61,7 +78,39 @@ function AppShell() {
   }, [reels, me]);
 
   // Re-sync the perspective default if `me` arrives after first render
-  useEffect(() => { if (me) setRole(defaultRoleKey(me)); }, [me?.id]);
+  useEffect(() => { if (me) setRole(me.id); }, [me?.id]);
+
+  /* Gating is evaluated against the active perspective. For a non-owner
+     that's locked to their own role; for the owner it follows whichever
+     perspective they're previewing (so they can QA a restricted view).
+     `role` is now a person ID — derive the role key before passing it
+     to the permissions system so tab-gating still works correctly. */
+  useEffect(() => {
+    const personRole = peopleById[role]?.role || role;
+    setEffectiveRole(personRole);
+  }, [role, setEffectiveRole, peopleById]);
+
+  // Keep effectivePersonId in sync with the active perspective (person id)
+  useEffect(() => {
+    // `role` is a person ID; non-owners are always their own person.
+    // For the owner, role tracks whichever person they're previewing.
+    const personId = me?.role === "owner"
+      ? (peopleById[role]?.id || me?.id || null)
+      : (me?.id || null);
+    setEffectivePersonId(personId);
+  }, [role, me?.id, me?.role, peopleById, setEffectivePersonId]);
+
+  /* Safety net: if the current tab isn't visible to the active role,
+     bounce to the first allowed tab so a restricted user never lands on
+     a blank screen. "settings" (owner gear) and "activity" are not
+     role-gated tabs, so they're left alone. */
+  useEffect(() => {
+    if (view === "settings" || view === "activity") return;
+    if (!canView(view)) {
+      const firstAllowed = VIEW_ORDER.find(v => canView(v));
+      if (firstAllowed) setView(firstAllowed);
+    }
+  }, [view, canView]);
 
   const openReel = reel => {
     setSelectedReel(reel);
@@ -91,7 +140,16 @@ function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const person = PEOPLE[ROLES[role]?.person];
+  /* Only the owner may switch perspectives. The avatar in the topbar shows
+     the perspective the owner is currently viewing; everyone else sees just
+     their own icon. */
+  const isOwner = me?.role === "owner";
+  const shownPerson = isOwner ? (peopleById[role] || me) : me;
+  // Role key the rest of the app (MyWork, permissions) needs.
+  const viewingRoleKey = shownPerson?.role || "skilled";
+
+  /* Tabs visible to the active perspective (hidden ones are removed). */
+  const visibleTabs = TABS.filter(t => canView(t.key));
 
   return (
     <div className="app">
@@ -120,46 +178,55 @@ function AppShell() {
         </div>
         <div className="topbar-spacer" />
 
-        {/* Role perspective switcher */}
-        <div className="role-switch" onClick={() => setRoleMenu(o => !o)}>
-          <span className={"avatar-chip " + (person?.role || "")}>{person?.avatar}</span>
-          <div className="rs-body">
-            <div className="rs-label">{person?.short}</div>
-            <div className="rs-role">{ROLES[role]?.label}</div>
-          </div>
-          <span className="rs-caret">▾</span>
-          {roleMenu && (
+        {/* Identity / perspective. Owners can switch perspectives (dropdown);
+            everyone else just sees their own icon. Clicking opens the menu. */}
+        <div className={"role-switch" + (isOwner ? "" : " icon-only")}
+             onClick={() => setRoleMenu(o => !o)}
+             title={shownPerson?.name || me?.name || ""}>
+          <span className={"avatar-chip " + (shownPerson?.role || "")}>{shownPerson?.avatar}</span>
+          {isOwner && <span className="rs-caret">▾</span>}
+          {roleMenu && me && (
             <div className="role-menu" onClick={e => e.stopPropagation()}>
-              <div className="rm-h">Switch perspective</div>
-              {Object.entries(ROLES).map(([k, v]) => {
-                const p = PEOPLE[v.person];
-                return (
-                  <div key={k}
-                       className={"rm-opt " + (k === role ? "active" : "")}
-                       onClick={() => { setRole(k); setRoleMenu(false); }}>
-                    <span className={"avatar-chip " + p.role}>{p.avatar}</span>
-                    <div>
-                      <div className="rm-name">{p.name}</div>
-                      <div className="rm-role">{v.label}</div>
+              {isOwner && (
+                <React.Fragment>
+                  <div className="rm-h">Switch perspective</div>
+                  {peopleList.map(p => (
+                    <div key={p.id}
+                         className={"rm-opt " + (p.id === role ? "active" : "")}
+                         onClick={() => { setRole(p.id); setRoleMenu(false); }}>
+                      <span className={"avatar-chip " + (p.role || "")}>{p.avatar}</span>
+                      <div>
+                        <div className="rm-name">{p.name}</div>
+                        <div className="rm-role">{ROLES[p.role]?.label || p.role}</div>
+                      </div>
+                      {p.id === role && <span className="mono cyan">●</span>}
                     </div>
-                    {k === role && <span className="mono cyan">●</span>}
+                  ))}
+                </React.Fragment>
+              )}
+              {isOwner && (
+                <div className="rm-opt"
+                     style={{ borderTop: "1px dashed var(--line-hard)", marginTop: 6, paddingTop: 10 }}
+                     onClick={() => { setView("settings"); setRoleMenu(false); }}>
+                  <span className="avatar-chip" style={{ fontSize: 13 }}>⚙</span>
+                  <div>
+                    <div className="rm-name">Roles &amp; permissions</div>
+                    <div className="rm-role">Edit what each role can see &amp; do</div>
                   </div>
-                );
-              })}
-              {me && (
-                <div className="rm-footer" style={{
-                  borderTop: "1px dashed var(--line-hard)",
-                  marginTop: 6, paddingTop: 8,
-                  fontFamily: "var(--f-mono)", fontSize: 10.5,
-                  color: "var(--fg-mute)", display: "flex",
-                  justifyContent: "space-between", alignItems: "center",
-                  padding: "8px 12px",
-                }}>
-                  <span>signed in · <b style={{ color: "var(--fg)" }}>{me.short || me.name}</b></span>
-                  <a href="#" style={{ color: "var(--c-cyan)" }}
-                     onClick={e => { e.preventDefault(); signOut(); }}>sign out</a>
                 </div>
               )}
+              <div className="rm-footer" style={{
+                borderTop: isOwner ? "1px dashed var(--line-hard)" : "none",
+                marginTop: isOwner ? 6 : 0,
+                fontFamily: "var(--f-mono)", fontSize: 10.5,
+                color: "var(--fg-mute)", display: "flex",
+                justifyContent: "space-between", alignItems: "center",
+                gap: 14, padding: "8px 12px",
+              }}>
+                <span>signed in · <b style={{ color: "var(--fg)" }}>{me.short || me.name}</b></span>
+                <a href="#" style={{ color: "var(--c-cyan)" }}
+                   onClick={e => { e.preventDefault(); signOut(); }}>sign out</a>
+              </div>
             </div>
           )}
         </div>
@@ -181,42 +248,22 @@ function AppShell() {
 
       {/* Tab strip */}
       <div className="tabstrip">
-        <button className={"tab " + (view === "mywork" ? "is-active" : "")} onClick={() => setView("mywork")}>
-          <span className="n">1 ·</span> My work
-          {needsYouCount > 0 && (
-            <span className="needs-badge" title={needsYouCount + " reel" + (needsYouCount === 1 ? "" : "s") + " waiting on you"}>
-              {needsYouCount}
-            </span>
-          )}
-        </button>
-        <button className={"tab " + (view === "pipeline" ? "is-active" : "")} onClick={() => setView("pipeline")}>
-          <span className="n">2 ·</span> Pipeline
-        </button>
-        <button className={"tab " + (view === "detail" ? "is-active" : "")} onClick={() => setView("detail")}>
-          <span className="n">3 ·</span> Reel detail
-        </button>
-        <button className={"tab " + (view === "footage" ? "is-active" : "")} onClick={() => setView("footage")}>
-          <span className="n">4 ·</span> Footage
-        </button>
-        <button className={"tab " + (view === "export" ? "is-active" : "")} onClick={() => setView("export")}>
-          <span className="n">5 ·</span> Export
-        </button>
-        <button className={"tab " + (view === "analytics" ? "is-active" : "")} onClick={() => setView("analytics")}>
-          <span className="n">6 ·</span> Analytics
-        </button>
-        <button className={"tab " + (view === "locations" ? "is-active" : "")} onClick={() => setView("locations")}>
-          <span className="n">7 ·</span> Locations
-        </button>
-        <button className={"tab " + (view === "coverage" ? "is-active" : "")} onClick={() => setView("coverage")}>
-          <span className="n">8 ·</span> Coverage
-        </button>
-        <button className={"tab " + (view === "generate" ? "is-active" : "")} onClick={() => setView("generate")}>
-          <span className="n">9 ·</span> Generate
-        </button>
+        {visibleTabs.map((t, i) => (
+          <button key={t.key}
+                  className={"tab " + (view === t.key ? "is-active" : "")}
+                  onClick={() => setView(t.key)}>
+            <span className="n">{i + 1} ·</span> {t.label}
+            {t.key === "mywork" && needsYouCount > 0 && (
+              <span className="needs-badge" title={needsYouCount + " reel" + (needsYouCount === 1 ? "" : "s") + " waiting on you"}>
+                {needsYouCount}
+              </span>
+            )}
+          </button>
+        ))}
         {IS_LOCALHOST && (
           <button className={"tab " + (view === "activity" ? "is-active" : "")} onClick={() => setView("activity")}
                   title="Private — only visible on your local machine">
-            <span className="n">10 ·</span> Activity 🔒
+            <span className="n">{visibleTabs.length + 1} ·</span> Activity 🔒
           </button>
         )}
 
@@ -236,7 +283,7 @@ function AppShell() {
       </div>
 
       {/* Body */}
-      {view === "mywork"    && <MyWork    role={role} onOpen={openReel} />}
+      {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "board"    && <Pipeline    onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
@@ -248,7 +295,8 @@ function AppShell() {
       {view === "locations" && <Locations />}
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
-      {view === "activity"  && IS_LOCALHOST && <Activity workerId="sam" />}
+      {view === "activity"  && IS_LOCALHOST && <Activity />}
+      {view === "settings"  && isOwner && <RolesAdmin onBack={() => setView("pipeline")} />}
 
       {/* Global create FAB */}
       <CreateFab />
@@ -262,13 +310,17 @@ function App() {
       <AuthProvider>
         <AuthGate>
           <IdentityGate>
-            <WorkflowProvider>
-              <LocationsProvider>
-                <NotificationsProvider>
-                  <AppShell />
-                </NotificationsProvider>
-              </LocationsProvider>
-            </WorkflowProvider>
+            <RosterProvider>
+              <WorkflowProvider>
+                <LocationsProvider>
+                  <NotificationsProvider>
+                    <PermissionsProvider>
+                      <AppShell />
+                    </PermissionsProvider>
+                  </NotificationsProvider>
+                </LocationsProvider>
+              </WorkflowProvider>
+            </RosterProvider>
           </IdentityGate>
         </AuthGate>
       </AuthProvider>

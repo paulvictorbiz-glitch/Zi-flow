@@ -19,7 +19,8 @@
    ========================================================= */
 
 import React from "react";
-import { PEOPLE, ROLES, normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "../lib/shared-data.jsx";
+import { ROLES, normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "../lib/shared-data.jsx";
+import { isKnownPerson, personName } from "../lib/roster.jsx";
 import { supabase } from "../lib/supabase-client.js";
 
 /* ---------- camelCase ↔ snake_case mappers ---------- */
@@ -149,7 +150,7 @@ function workflowReducer(state, action) {
         const explicitLaneReassign =
           action.lane !== undefined &&
           action.lane !== "review" &&
-          PEOPLE[action.lane] &&
+          isKnownPerson(action.lane) &&
           action.lane !== r.owner;
 
         if (action.lane !== undefined) next.lane = action.lane;
@@ -376,7 +377,7 @@ async function persistMoveStage(state, id, { lane, stage, systemComment }) {
     !isCard &&
     lane !== undefined &&
     lane !== "review" &&
-    PEOPLE[lane] &&
+    isKnownPerson(lane) &&
     lane !== reel.owner;
 
   if (lane !== undefined) patch.lane = lane;
@@ -425,7 +426,16 @@ async function persistUpdateReel(state, id, patch) {
   if ("stageEnteredAt" in patch) { dbPatch.stage_entered_at = patch.stageEnteredAt; delete dbPatch.stageEnteredAt; }
   if ("archivedAt" in patch)  { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
   if ("parentId" in patch)    { dbPatch.parent_id = patch.parentId; delete dbPatch.parentId; }
-  const { error } = await supabase.from(table).update(dbPatch).eq("id", id);
+  let { error } = await supabase.from(table).update(dbPatch).eq("id", id);
+  // board_order may not be migrated yet — if PostgREST rejects it, drop it and
+  // retry (the reorder still shows locally; it just won't persist until the
+  // `board_order` column is added).
+  if (error && "board_order" in dbPatch && /board_order|column|PGRST204/i.test(error.message || "")) {
+    const { board_order, ...rest } = dbPatch;
+    error = Object.keys(rest).length
+      ? (await supabase.from(table).update(rest).eq("id", id)).error
+      : null;
+  }
   if (error) throw error;
 }
 
@@ -619,13 +629,11 @@ function WorkflowProvider({ children }) {
         let systemComment = null;
         if (reel && !isCard && reel.stage !== stage) {
           const explicit = lane !== undefined && lane !== "review" &&
-                           PEOPLE[lane] && lane !== reel.owner;
+                           isKnownPerson(lane) && lane !== reel.owner;
           const targetOwner = explicit ? lane :
             (stageOwnerPersonId(stage) || reel.owner);
-          const personName = PEOPLE[targetOwner]?.short ||
-                             PEOPLE[targetOwner]?.name || targetOwner;
           const txt = "Stage: " + (reel.stage || "—") + " → " + stage +
-            (targetOwner ? " · assigned to " + personName : "");
+            (targetOwner ? " · assigned to " + personName(targetOwner) : "");
           systemComment = buildSystemComment(txt);
         }
         wrap(

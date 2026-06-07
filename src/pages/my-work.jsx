@@ -19,8 +19,10 @@ import React, { useState } from "react";
 import { DPill, Pill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
+import { usePermissions } from "../lib/permissions.jsx";
 import { useNow, formatDue } from "../lib/time.jsx";
-import { PEOPLE } from "../lib/shared-data.jsx";
+import { ROLES } from "../lib/shared-data.jsx";
+import { useRoster } from "../lib/roster.jsx";
 
 /* Build the revision history array, folding the older single-field
    shape into one entry so display code only handles one schema. */
@@ -59,11 +61,61 @@ function useCanAct(requiredRole) {
   return person.role === requiredRole;
 }
 
-function MyWork({ role, onOpen }) {
+/* Resolve whose reels this dashboard shows.
+   - When personId is provided (owner switched to a specific person), use it.
+   - Otherwise fall back to the authenticated person or the canonical slot for the role. */
+function whoseWork(role, person, personId) {
+  if (personId) return personId;
+  if (person && person.role === role) return person.id;
+  return ROLES[role]?.person || null;
+}
+
+function downloadAgentFiles(personId) {
+  const cfg = { WORKER: personId, POLL_SECONDS: 15 };
+  const cfgBlob = new Blob([JSON.stringify(cfg, null, 2)], { type: "application/json" });
+  const cfgUrl = URL.createObjectURL(cfgBlob);
+  const a1 = document.createElement("a");
+  a1.href = cfgUrl; a1.download = "capcut_config.json"; a1.click();
+  URL.revokeObjectURL(cfgUrl);
+
+  setTimeout(() => {
+    const bat = [
+      "@echo off",
+      "REM Adds capcut_agent.exe (in this folder) to Windows Startup so it",
+      "REM runs automatically at every logon. Run once per machine.",
+      "setlocal",
+      `set WORKER=${personId}`,
+      "set EXE=%~dp0capcut_agent.exe",
+      "set STARTUP=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+      "set LNK=%STARTUP%\\CapCutActivityAgent.lnk",
+      "",
+      "if not exist \"%EXE%\" (",
+      "  echo ERROR: capcut_agent.exe not found in this folder.",
+      "  pause & exit /b 1",
+      ")",
+      "",
+      "powershell -NoProfile -Command \"$sh=New-Object -ComObject WScript.Shell;$lnk=$sh.CreateShortcut('%LNK%');$lnk.TargetPath='%EXE%';$lnk.WorkingDirectory='%~dp0';$lnk.WindowStyle=7;$lnk.Save()\"",
+      "",
+      "echo Startup shortcut created. Starting agent now...",
+      "start \"\" \"%EXE%\"",
+      "echo Done. Agent is running and will auto-start at every logon.",
+      "pause",
+    ].join("\r\n");
+    const batBlob = new Blob([bat], { type: "text/plain" });
+    const batUrl = URL.createObjectURL(batBlob);
+    const a2 = document.createElement("a");
+    a2.href = batUrl; a2.download = "capcut_install.bat"; a2.click();
+    URL.revokeObjectURL(batUrl);
+  }, 300);
+}
+
+function MyWork({ role, personId, onOpen }) {
+  const { person } = useAuth();
+  const me = whoseWork(role, person, personId);
   // Owner and Reviewer share the same review-queue dashboard.
-  if (role === "owner" || role === "reviewer") return <ReviewQueueWork onOpen={onOpen} />;
-  if (role === "variant") return <VariantWork onOpen={onOpen} />;
-  return <SkilledWork onOpen={onOpen} />;
+  if (role === "owner" || role === "reviewer") return <ReviewQueueWork me={me} onOpen={onOpen} />;
+  if (role === "variant") return <VariantWork me={me} onOpen={onOpen} />;
+  return <SkilledWork me={me} onOpen={onOpen} />;
 }
 
 /* ─────────────────────────────────────────────────────── */
@@ -77,10 +129,11 @@ const SKILLED_COLS = [
   { key: "completed",   title: "Completed"   },
 ];
 
-function SkilledWork({ onOpen }) {
+function SkilledWork({ me, onOpen }) {
   const { reels, actions, attachedFootage } = useWorkflow();
-  const me = "alex";
+  const { peopleById } = useRoster();
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
+  const whoLabel = peopleById[me]?.short || "Skilled editor";
 
   const [dragId, setDragId] = useState(null);
   const [dropCol, setDropCol] = useState(null);
@@ -96,10 +149,15 @@ function SkilledWork({ onOpen }) {
     <div>
       <div className="page-head">
         <div className="titles">
-          <h1>My work — Judy A · skilled editor</h1>
+          <h1>My work — {whoLabel} · skilled editor</h1>
           <div className="sub">
             Drag a card between columns to update its status.
           </div>
+        </div>
+        <div className="actions">
+          <DPill onClick={() => downloadAgentFiles(me)} title="Download the CapCut tracker config for this person">
+            ↓ CapCut tracker setup
+          </DPill>
         </div>
       </div>
 
@@ -150,19 +208,25 @@ function SkilledWork({ onOpen }) {
 /* Variant editor dashboard — unchanged                    */
 /* ─────────────────────────────────────────────────────── */
 
-function VariantWork({ onOpen }) {
+function VariantWork({ me, onOpen }) {
   const { reels, tasks } = useWorkflow();
-  const me = "sam";
+  const { peopleById } = useRoster();
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
   const myTasks = tasks.filter(t => t.to === me);
   const now = useNow();
+  const whoLabel = peopleById[me]?.short || "Variant editor";
 
   return (
     <div>
       <div className="page-head">
         <div className="titles">
-          <h1>My work — Jay · variant editor</h1>
+          <h1>My work — {whoLabel} · variant editor</h1>
           <div className="sub">Reels assigned to you.</div>
+        </div>
+        <div className="actions">
+          <DPill onClick={() => downloadAgentFiles(me)} title="Download the CapCut tracker config for this person">
+            ↓ CapCut tracker setup
+          </DPill>
         </div>
       </div>
 
@@ -203,23 +267,31 @@ function VariantWork({ onOpen }) {
 /* Review queue dashboard — Paul + Leroy                   */
 /* ─────────────────────────────────────────────────────── */
 
-function ReviewQueueWork({ onOpen }) {
+function ReviewQueueWork({ me, onOpen }) {
   const { reels } = useWorkflow();
   const { person } = useAuth();
+  const { peopleById } = useRoster();
   const inReview = reels.filter(r => r.stage === "review" && !r.archivedAt);
-  const heading = person?.name || "Reviewer";
-  const subtitle = person?.role === "owner" ? "owner · creative director" : "reviewer";
+  const viewedPerson = (me && peopleById[me]) || person;
+  const heading = viewedPerson?.name || "Reviewer";
 
   return (
     <div>
       <div className="page-head">
         <div className="titles">
-          <h1>My work — {heading} · {subtitle}</h1>
+          <h1>My work — {heading}</h1>
           <div className="sub">
             {inReview.length === 0
               ? "Nothing waiting on you."
               : `${inReview.length} reel${inReview.length === 1 ? "" : "s"} waiting on review.`}
           </div>
+        </div>
+        <div className="actions">
+          {me && (
+            <DPill onClick={() => downloadAgentFiles(me)} title="Download the CapCut tracker config for this person">
+              ↓ CapCut tracker setup
+            </DPill>
+          )}
         </div>
       </div>
 
@@ -247,8 +319,10 @@ function ReviewQueueWork({ onOpen }) {
 function ReviewRow({ reel, onOpen }) {
   const { actions } = useWorkflow();
   const { person } = useAuth();
+  const { peopleById } = useRoster();
+  const { can } = usePermissions();
   const now = useNow();
-  const canAct = useCanAct(["owner", "reviewer"]);
+  const canAct = can("approveReview");
   const [note, setNote] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -335,7 +409,7 @@ function ReviewRow({ reel, onOpen }) {
             <span>Your last note</span>
             {lastSendBack.by && (
               <span style={{ color: "var(--fg-dim)" }}>
-                · {PEOPLE[lastSendBack.by]?.short || lastSendBack.by}
+                · {peopleById[lastSendBack.by]?.short || lastSendBack.by}
               </span>
             )}
             {lastSendBack.ts && (
@@ -372,7 +446,7 @@ function ReviewRow({ reel, onOpen }) {
                         fontSize: 10,
                         letterSpacing: "0.06em",
                       }}>
-                        {h.by ? (PEOPLE[h.by]?.short || h.by) : "anon"} · {formatHistoryTs(h.ts)}
+                        {h.by ? (peopleById[h.by]?.short || h.by) : "anon"} · {formatHistoryTs(h.ts)}
                       </div>
                       <div style={{ color: "var(--fg-mute)", fontSize: 11.5 }}>
                         {h.note || <span style={{ color: "var(--fg-dim)" }}>(no note)</span>}
@@ -444,6 +518,7 @@ function fromDatetimeLocalValue(v) {
 }
 
 function WorkCard({ reel, onOpen, clipCount, onDueChange }) {
+  const { peopleById } = useRoster();
   // Most recent "sent_back" entry — only renders the orange badge if
   // it's the latest history event (i.e. no later approval).
   const history = getRevisionHistory(reel.detail);
@@ -451,7 +526,7 @@ function WorkCard({ reel, onOpen, clipCount, onDueChange }) {
   const revision = last && last.action === "sent_back" ? last : null;
   const revisionNote = revision?.note;
   const revisionTs   = revision?.ts;
-  const revisionBy   = revision?.by ? (PEOPLE[revision.by]?.short || revision.by) : null;
+  const revisionBy   = revision?.by ? (peopleById[revision.by]?.short || revision.by) : null;
   const logPreview = (reel.logline || "").trim().slice(0, 100);
 
   // Stop drag from triggering on the date input / link interactions.

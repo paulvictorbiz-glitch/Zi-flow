@@ -11,6 +11,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Card, DPill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
+import { usePermissions } from "../lib/permissions.jsx";
 import { useNotifications } from "../components/notifications.jsx";
 import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
 import { getFootageFileMetadata } from "../lib/footage-brain-client.js";
@@ -63,6 +64,9 @@ function ReelDetail({ reel, onBack }) {
      record for the currently displayed reel — what we read seed
      values from and what we write Blueprint edits back into. */
   const { reels, actions } = useWorkflow();
+  const { can } = usePermissions();
+  const canAttach = can("attachFootage");
+  const canColor = can("changeCardColor");
   const stored = reels.find(r => r.id === current.id);
 
   const [blueprintTab, setBlueprintTab] = useState("script");
@@ -377,6 +381,29 @@ function ReelDetail({ reel, onBack }) {
                 </button>
               )}
             </span>
+            {/* Card colour — recolours this reel's card on the pipeline board */}
+            {canColor && (
+            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span className="mono dim" style={{ fontSize: 10, userSelect: "none" }}>card colour</span>
+              {["cyan", "violet", "green", "amber", "red"].map(c => {
+                const active = (stored?.tone || "cyan") === c;
+                return (
+                  <span
+                    key={c}
+                    onClick={() => stored && actions.updateReel(current.id, { tone: c })}
+                    title={c}
+                    style={{
+                      width: 16, height: 16, borderRadius: "50%",
+                      background: `var(--c-${c})`, cursor: "pointer", display: "inline-block",
+                      border: active ? "2px solid var(--fg)" : "2px solid var(--bg)",
+                      boxShadow: active ? `0 0 0 1px var(--c-${c})` : "none",
+                      transition: "border-color .1s",
+                    }}
+                  />
+                );
+              })}
+            </span>
+            )}
           </div>
         </div>
         <div className="actions" style={{ alignItems: "center", gap: 8 }}>
@@ -389,7 +416,9 @@ function ReelDetail({ reel, onBack }) {
           <DPill onClick={editReelStateUrl}>
             {reelStateUrl ? "Edit link" : "+ Current reel state"}
           </DPill>
-          <DPill onClick={() => setSearchModalOpen(true)} primary>+ Search Footage</DPill>
+          {canAttach && (
+            <DPill onClick={() => setSearchModalOpen(true)} primary>+ Search Footage</DPill>
+          )}
         </div>
       </div>
 
@@ -415,11 +444,13 @@ function ReelDetail({ reel, onBack }) {
               items={reelAttachedFootage}
               onRemove={handleRemoveFootage}
             />
-            <div style={{ marginTop: 10 }}>
-              <DPill onClick={() => setSearchModalOpen(true)}>
-                {reelAttachedFootage.length === 0 ? "+ Add Footage" : "+ Add more"}
-              </DPill>
-            </div>
+            {canAttach && (
+              <div style={{ marginTop: 10 }}>
+                <DPill onClick={() => setSearchModalOpen(true)}>
+                  {reelAttachedFootage.length === 0 ? "+ Add Footage" : "+ Add more"}
+                </DPill>
+              </div>
+            )}
           </Card>
         </div>
 

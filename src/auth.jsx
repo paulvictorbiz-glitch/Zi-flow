@@ -80,22 +80,7 @@ function AuthProvider({ children }) {
     person,
     /* Returns { error?: { message } } on failure. */
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
-    signUp: (email, password) => supabase.auth.signUp({ email, password }),
     signOut: () => supabase.auth.signOut(),
-    claimIdentity: async (personId) => {
-      if (!session) throw new Error("Not signed in");
-      const { error } = await supabase
-        .from("people")
-        .update({ user_id: session.user.id, email: session.user.email })
-        .eq("id", personId);
-      if (error) throw error;
-      const { data } = await supabase
-        .from("people")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .maybeSingle();
-      setPerson(data || null);
-    },
   }), [session, authLoaded, personLoaded, person]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -136,29 +121,20 @@ function Splash({ label }) {
 }
 
 function SignInScreen() {
-  const { signIn, signUp } = useAuth();
-  const [mode, setMode]         = React.useState("signin"); // signin | signup
+  const { signIn } = useAuth();
   const [email, setEmail]       = React.useState("");
   const [password, setPassword] = React.useState("");
   const [busy, setBusy]         = React.useState(false);
   const [err, setErr]           = React.useState(null);
-  const [info, setInfo]         = React.useState(null);
 
+  // Sign-in only. Accounts are created by the owner in the
+  // Roles & Permissions panel — there is no self-service signup.
   const submit = async (e) => {
     e?.preventDefault();
-    setErr(null); setInfo(null); setBusy(true);
+    setErr(null); setBusy(true);
     try {
-      const fn = mode === "signin" ? signIn : signUp;
-      const { error, data } = await fn(email.trim(), password);
+      const { error } = await signIn(email.trim(), password);
       if (error) throw error;
-      if (mode === "signup") {
-        if (data?.session) {
-          // Confirmation disabled — straight into the app.
-        } else {
-          setInfo("Account created. Check your inbox for the confirmation email, then sign in.");
-          setMode("signin");
-        }
-      }
     } catch (e) {
       setErr(e.message || String(e));
     } finally {
@@ -173,13 +149,9 @@ function SignInScreen() {
           <span style={authBrandDotStyle} />
           <span>Workflow</span>
         </div>
-        <div style={authTitleStyle}>
-          {mode === "signin" ? "Sign in" : "Create an account"}
-        </div>
+        <div style={authTitleStyle}>Sign in</div>
         <div style={authSubStyle}>
-          {mode === "signin"
-            ? "Use the email/password you registered with."
-            : "Pick the email you'll use day-to-day. You'll claim your role after sign-in."}
+          Use the email and password you were given. Need access? Ask Paul to set you up.
         </div>
 
         <label style={authLabelStyle}>Email</label>
@@ -195,98 +167,43 @@ function SignInScreen() {
         <label style={authLabelStyle}>Password</label>
         <input
           type="password"
-          autoComplete={mode === "signin" ? "current-password" : "new-password"}
+          autoComplete="current-password"
           required
-          minLength={6}
           value={password}
           onChange={e => setPassword(e.target.value)}
           style={authInputStyle}
         />
 
         {err && <div style={authErrStyle}>{err}</div>}
-        {info && <div style={authInfoStyle}>{info}</div>}
 
         <button type="submit" disabled={busy} style={authBtnPrimaryStyle}>
-          {busy ? "…" : (mode === "signin" ? "Sign in" : "Create account")}
+          {busy ? "…" : "Sign in"}
         </button>
-
-        <div style={authToggleStyle}>
-          {mode === "signin" ? "Don't have an account? " : "Already have one? "}
-          <a
-            href="#"
-            onClick={e => { e.preventDefault(); setMode(mode === "signin" ? "signup" : "signin"); setErr(null); setInfo(null); }}
-          >
-            {mode === "signin" ? "Sign up" : "Sign in"}
-          </a>
-        </div>
       </form>
     </div>
   );
 }
 
+/* Shown when a signed-in auth user has no `people` slot bound to
+   their uid. With self-signup removed, this only happens if an
+   account exists in auth.users but the owner hasn't linked it to a
+   team profile yet (e.g. an orphaned account). No slot-picker — the
+   owner sets people up from the Roles & Permissions panel. */
 function ClaimIdentityScreen() {
-  const { user, claimIdentity, signOut } = useAuth();
-  const [slots, setSlots] = React.useState([]);
-  const [busy, setBusy]   = React.useState(null);
-  const [err, setErr]     = React.useState(null);
-
-  React.useEffect(() => {
-    supabase.from("people").select("*").order("id").then(({ data, error }) => {
-      if (error) setErr(error.message);
-      else setSlots(data || []);
-    });
-  }, []);
-
-  const claim = async (slot) => {
-    setBusy(slot.id); setErr(null);
-    try { await claimIdentity(slot.id); }
-    catch (e) { setErr(e.message || String(e)); setBusy(null); }
-  };
+  const { user, signOut } = useAuth();
 
   return (
     <div style={authShellStyle}>
-      <div style={{ ...authCardStyle, width: 520 }}>
+      <div style={authCardStyle}>
         <div style={authBrandStyle}>
           <span style={authBrandDotStyle} />
           <span>Workflow</span>
         </div>
-        <div style={authTitleStyle}>Claim your identity</div>
+        <div style={authTitleStyle}>Account not set up</div>
         <div style={authSubStyle}>
-          Signed in as <b style={{ color: "var(--fg)" }}>{user?.email}</b>.
-          Pick the person slot you act as on the team. This is a one-time choice
-          and binds your account to that role.
-        </div>
-
-        {err && <div style={authErrStyle}>{err}</div>}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
-          {slots.map(s => {
-            const taken = s.user_id && s.user_id !== user?.id;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => !taken && claim(s)}
-                disabled={taken || busy === s.id}
-                style={{
-                  ...slotCardStyle,
-                  opacity: taken ? 0.4 : 1,
-                  cursor: taken ? "not-allowed" : "pointer",
-                }}
-              >
-                <div style={slotAvatarStyle}>{s.avatar}</div>
-                <div style={{ flex: 1, textAlign: "left" }}>
-                  <div style={{ color: "var(--fg)", fontSize: 14 }}>{s.name}</div>
-                  <div style={{ color: "var(--fg-mute)", fontSize: 11.5, fontFamily: "var(--f-mono)" }}>
-                    {s.role}
-                  </div>
-                </div>
-                <div style={{ color: "var(--fg-mute)", fontSize: 10.5, fontFamily: "var(--f-mono)" }}>
-                  {taken ? "claimed" : (busy === s.id ? "…" : "claim")}
-                </div>
-              </button>
-            );
-          })}
+          You're signed in as <b style={{ color: "var(--fg)" }}>{user?.email}</b>, but this
+          account isn't linked to a team profile yet. Ask Paul to add you in the
+          Roles &amp; Permissions panel, then sign in again.
         </div>
 
         <div style={{ marginTop: 14, fontSize: 11, color: "var(--fg-mute)", fontFamily: "var(--f-mono)" }}>
@@ -377,38 +294,12 @@ const authErrStyle = {
   fontFamily: "var(--f-mono)",
   borderRadius: 4,
 };
-const authInfoStyle = {
-  marginTop: 12,
-  padding: "8px 10px",
-  border: "1px dashed var(--c-cyan)",
-  color: "var(--c-cyan)",
-  fontSize: 12,
-  fontFamily: "var(--f-mono)",
-  borderRadius: 4,
-};
 const splashStyle = {
   display: "flex", alignItems: "center", justifyContent: "center",
   height: "100vh", color: "var(--fg-mute)",
   fontFamily: "var(--f-mono)", fontSize: 12,
   letterSpacing: "0.1em", textTransform: "uppercase",
   background: "var(--bg-0)",
-};
-const slotCardStyle = {
-  display: "flex", alignItems: "center", gap: 12,
-  padding: "12px 14px",
-  border: "1px dashed var(--line-hard)",
-  borderRadius: 6,
-  background: "var(--bg-2)",
-  textAlign: "left",
-  fontFamily: "var(--f-sans)",
-};
-const slotAvatarStyle = {
-  width: 34, height: 34, borderRadius: "50%",
-  display: "flex", alignItems: "center", justifyContent: "center",
-  fontFamily: "var(--f-mono)", fontSize: 11.5,
-  background: "var(--bg-1)",
-  border: "1px dashed var(--line-hard)",
-  color: "var(--fg)",
 };
 
 export { AuthProvider, AuthGate, IdentityGate, useAuth };

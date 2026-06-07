@@ -8,10 +8,12 @@ import React, { useState, useMemo } from "react";
 import { DPill, Pill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useNow, formatAge, formatDue } from "../lib/time.jsx";
-import { PEOPLE, ROLES, STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
+import { ROLES, STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
+import { useRoster } from "../lib/roster.jsx";
 
 function ListView({ role, onOpen }) {
   const { reels } = useWorkflow();
+  const { peopleById } = useRoster();
   const now = useNow();
   const [sort, setSort] = useState("stage");
   const [filterStage, setFilterStage] = useState("all");
@@ -83,10 +85,10 @@ function ListView({ role, onOpen }) {
                 </td>
                 <td><Pill tone={STAGE_TONE[r.stage]}>{STAGE_LABEL[r.stage]}</Pill></td>
                 <td>
-                  <span className={"avatar-chip " + (PEOPLE[r.owner]?.role || "")}>
-                    {PEOPLE[r.owner]?.avatar}
+                  <span className={"avatar-chip " + (peopleById[r.owner]?.role || "")}>
+                    {peopleById[r.owner]?.avatar}
                   </span>
-                  <span style={{ marginLeft: 8, color: "var(--fg-mute)" }}>{PEOPLE[r.owner]?.short}</span>
+                  <span style={{ marginLeft: 8, color: "var(--fg-mute)" }}>{peopleById[r.owner]?.short}</span>
                 </td>
                 <td>
                   {r.blocker

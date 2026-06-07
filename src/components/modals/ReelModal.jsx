@@ -8,9 +8,11 @@
    queued footage row with the new reel's id.
    ========================================================= */
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { DPill } from "../components.jsx";
 import { useWorkflow } from "../../store/store.jsx";
+import { useRoster } from "../../lib/roster.jsx";
+import { ROLES } from "../../lib/shared-data.jsx";
 import { FootageBrainSearch } from "../FootageBrainSearch.jsx";
 import { Modal, Field, SegRow } from "./Modal.jsx";
 
@@ -30,13 +32,21 @@ function nextReelId(reels) {
 
 export function ReelModal({ onClose }) {
   const { actions, reels } = useWorkflow();
+  const { peopleList, canonicalPersonId } = useRoster();
+  /* A reel is owned by an editor, never the reviewer (work reaches the
+     reviewer via the review stage, not direct ownership). */
+  const ownerOptions = useMemo(() =>
+    peopleList
+      .filter(p => p.role !== "reviewer")
+      .map(p => ({ k: p.id, l: `${p.short} · ${ROLES[p.role]?.short || p.role}` })),
+    [peopleList]);
   const [title, setTitle]       = useState("");
   const [logline, setLogline]   = useState("");
   const [vo, setVo]             = useState("");
   const [audio, setAudio]       = useState("");
   const [inspo, setInspo]       = useState("");
   const [plan, setPlan]         = useState("");
-  const [owner, setOwner]       = useState("alex");
+  const [owner, setOwner]       = useState(() => canonicalPersonId("skilled") || "");
   const [stage, setStage]       = useState("not_started");
   const [pending, setPending]   = useState([]); // footage queued for attach on submit
   const [searchOpen, setSearchOpen] = useState(false);
@@ -105,12 +115,7 @@ export function ReelModal({ onClose }) {
         </Field>
         <div className="modal-grid-2">
           <Field label="Owner / assignee">
-            <SegRow value={owner} onChange={setOwner}
-                    options={[
-                      { k: "alex", l: "Judy A · Skilled" },
-                      { k: "sam",  l: "Jay · Variant"     },
-                      { k: "paul", l: "Paul V · Owner"   },
-                    ]} />
+            <SegRow value={owner} onChange={setOwner} options={ownerOptions} />
           </Field>
           <Field label="Stage">
             <SegRow value={stage} onChange={setStage}

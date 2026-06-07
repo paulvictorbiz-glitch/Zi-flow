@@ -16,10 +16,15 @@ const IS_LOCAL_DEV =
   typeof window !== "undefined" &&
   /^(localhost|127\.0\.0\.1|::1)$/.test(window.location.hostname);
 
-const FB_API_ORIGIN = IS_LOCAL_DEV ? "" : "https://api.footagebrain.com";
-
-const FOOTAGE_BRAIN_BASE = IS_LOCAL_DEV ? "/fb/api" : `${FB_API_ORIGIN}/api`;
-const FOOTAGE_BRAIN_HEALTH = IS_LOCAL_DEV ? "/fb/health" : `${FB_API_ORIGIN}/health`;
+// Talk to FootageBrain through the same-origin "/fb" prefix on BOTH localhost
+// and production, so the browser only ever connects to THIS app's origin:
+//   - localhost  : Vite proxies /fb -> local FootageBrain :8765 (vite.config.js)
+//   - production : a Vercel rewrite proxies /fb -> https://api.footagebrain.com
+// Editors on networks that can't reach api.footagebrain.com directly were
+// getting "Failed to fetch" on coverage + drive lookups; routing through our
+// own domain (which their browser already loads) fixes that.
+const FOOTAGE_BRAIN_BASE = "/fb/api";
+const FOOTAGE_BRAIN_HEALTH = "/fb/health";
 
 /**
  * Search Footage Brain semantic index.
@@ -250,7 +255,9 @@ export async function checkFootageBrainHealth() {
 export function footageBrainThumbnailUrl(thumbnailPath) {
   if (!thumbnailPath) return "";
   const name = String(thumbnailPath).split(/[\\/]/).pop();
-  return `${FB_API_ORIGIN}/thumbnails/${name}`;
+  // Proxied through our own origin (/fb) so it loads even where
+  // api.footagebrain.com is unreachable from the browser.
+  return `/fb/thumbnails/${name}`;
 }
 
 /**
@@ -262,7 +269,8 @@ export function footageBrainThumbnailUrl(thumbnailPath) {
  * @returns {string}
  */
 export function footageBrainFileUrl(fileId) {
-  const origin = IS_LOCAL_DEV ? "http://localhost:8765" : FB_API_ORIGIN;
+  // Full-page Preview link (new tab) — points at FootageBrain directly.
+  const origin = IS_LOCAL_DEV ? "http://localhost:8765" : "https://api.footagebrain.com";
   return `${origin}/files/${fileId}`;
 }
 

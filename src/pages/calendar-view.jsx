@@ -6,7 +6,8 @@
 
 import React, { useState } from "react";
 import { DPill, Pill } from "../components/components.jsx";
-import { ROLES, CAL_WEEK, CAL_ITEMS, PEOPLE } from "../lib/shared-data.jsx";
+import { ROLES, CAL_WEEK, CAL_ITEMS } from "../lib/shared-data.jsx";
+import { useRoster } from "../lib/roster.jsx";
 
 function CalendarView({ role, onOpen }) {
   const [mode, setMode] = useState("week"); // week | month
@@ -41,6 +42,7 @@ function CalendarView({ role, onOpen }) {
 
 /* ---------- Week grid: 7 cols x time-of-day rows ---------- */
 function WeekGrid({ filterItem, onOpen }) {
+  const { peopleById } = useRoster();
   const slots = ["08:00","10:00","12:00","14:00","16:00","18:00","20:00","22:00"];
 
   // bin items into slot rows by hour
@@ -75,8 +77,8 @@ function WeekGrid({ filterItem, onOpen }) {
                     <div className="ci-title">{it.title}</div>
                     <div className="ci-foot">
                       <span className="mono dim">{it.reel}</span>
-                      <span className={"avatar-chip " + (PEOPLE[it.owner]?.role || "")}>
-                        {PEOPLE[it.owner]?.avatar}
+                      <span className={"avatar-chip " + (peopleById[it.owner]?.role || "")}>
+                        {peopleById[it.owner]?.avatar}
                       </span>
                     </div>
                   </div>

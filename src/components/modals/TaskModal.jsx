@@ -3,12 +3,15 @@
 
 import React, { useState } from "react";
 import { useWorkflow } from "../../store/store.jsx";
-import { PEOPLE } from "../../lib/shared-data.jsx";
+import { useRoster } from "../../lib/roster.jsx";
+import { useAuth } from "../../auth.jsx";
 import { Modal, Field, SegRow, SelectInput } from "./Modal.jsx";
 
 export function TaskModal({ onClose }) {
   const { reels, actions } = useWorkflow();
-  const [assignee, setAssignee] = useState("paul");
+  const { peopleList, canonicalPersonId } = useRoster();
+  const { person } = useAuth();
+  const [assignee, setAssignee] = useState(() => canonicalPersonId("owner") || person?.id || "");
   const [type, setType]         = useState("Decision");
   const [reel, setReel]         = useState("REEL-201");
   const [ref, setRef]           = useState("");
@@ -18,7 +21,7 @@ export function TaskModal({ onClose }) {
   const submit = () => {
     const t = {
       id: "T-" + Math.floor(Math.random() * 900 + 100),
-      from: "paul",                    // FAB ships from the current operator; hardcoded for now
+      from: person?.id || canonicalPersonId("owner"),   // the signed-in operator
       to: assignee,
       type,
       reel,
@@ -36,7 +39,7 @@ export function TaskModal({ onClose }) {
            onClose={onClose} onSubmit={submit} submitLabel="Create task">
       <Field label="Assign to">
         <SegRow value={assignee} onChange={setAssignee}
-                options={Object.values(PEOPLE).map(p => ({ k: p.id, l: p.short + " · " + p.role }))} />
+                options={peopleList.map(p => ({ k: p.id, l: p.short }))} />
       </Field>
       <Field label="Type">
         <SegRow value={type} onChange={setType}

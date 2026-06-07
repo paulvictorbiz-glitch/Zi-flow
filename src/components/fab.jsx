@@ -12,8 +12,11 @@
 import React, { useState } from "react";
 import { TaskModal } from "./modals/TaskModal.jsx";
 import { ReelModal } from "./modals/ReelModal.jsx";
+import { usePermissions } from "../lib/permissions.jsx";
 
 export function CreateFab() {
+  const { can } = usePermissions();
+  const canCreateReel = can("createReel");
   const [open, setOpen] = useState(false);
   const [flow, setFlow] = useState(null); // null | "task" | "reel"
 
@@ -29,13 +32,15 @@ export function CreateFab() {
                 <div className="s">Request someone do something — pick hook, upload source, package variants…</div>
               </div>
             </div>
-            <div className="fab-opt" onClick={() => { setFlow("reel"); setOpen(false); }}>
-              <span className="k">◐</span>
-              <div>
-                <div className="t">Create new reel</div>
-                <div className="s">Seed a reel with title, logline, footage links and shot plan.</div>
+            {canCreateReel && (
+              <div className="fab-opt" onClick={() => { setFlow("reel"); setOpen(false); }}>
+                <span className="k">◐</span>
+                <div>
+                  <div className="t">Create new reel</div>
+                  <div className="s">Seed a reel with title, logline, footage links and shot plan.</div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
         <button className={"fab " + (open ? "is-open" : "")} onClick={() => setOpen(o => !o)}>

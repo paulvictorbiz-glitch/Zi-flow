@@ -7,6 +7,7 @@ import { useNow, formatAge } from "../lib/time.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { useNotifications } from "./notifications.jsx";
+import { usePermissions } from "../lib/permissions.jsx";
 
 /* ---------- Status pill ---------- */
 function Pill({ tone, dashed, children }) {
@@ -58,6 +59,10 @@ function Card({ title, right, footLeft, children, defaultOpen = true, tone, soli
 }
 
 /* ---------- Reel card (board) ---------- */
+// The 5 card colours the user can pick (must match CARD_COLORS in detail.jsx
+// and the --c-* tokens in styles.css). Default is cyan.
+const CARD_COLORS = ["cyan", "violet", "green", "amber", "red"];
+
 function ReelCard({ reel, onOpen, state, isSelected }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'
   const [collapsed, setCollapsed] = useState(false);
@@ -69,7 +74,10 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
     state === "selected" ? "is-selected" : "",
     isSelected ? "is-multi-selected" : "",
   ].filter(Boolean).join(" ");
-  const pillTone = state === "block" ? "block" : state === "warn" ? "warn" : reel.tone || "cyan";
+  const cardColor = CARD_COLORS.includes(reel.tone) ? reel.tone : "cyan";
+  // A coloured left bar marks the card's chosen colour on the board.
+  const cardStyle = { boxShadow: `inset 4px 0 0 0 var(--c-${cardColor})` };
+  const pillTone = state === "block" ? "block" : state === "warn" ? "warn" : cardColor;
 
   const openReel = (e) => onOpen && onOpen(reel, e);
 
@@ -82,12 +90,14 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
   const liveAge = reel.stageEnteredAt ? formatAge(reel, now) : (reel.age || "");
   const pillText = reel.status || liveAge;
 
-  /* Per-card action menu (archive / delete) — owner only for delete. */
+  /* Per-card action menu (archive / delete) — gated by role permissions. */
   const { actions } = useWorkflow();
-  const { person } = useAuth();
+  const { can } = usePermissions();
   const { unreadByReel } = useNotifications();
   const unreadCount = unreadByReel[reel.id] || 0;
-  const isOwner = person?.role === "owner";
+  const canArchive = can("archiveReel");
+  const canDelete = can("deleteReel");
+  const showMenu = canArchive || canDelete;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   useEffect(() => {
@@ -111,7 +121,7 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
   };
 
   return (
-    <div className={cls} onClick={openReel}>
+    <div className={cls} onClick={openReel} style={cardStyle}>
       <div className="head">
         <div>
           <div className="id">
@@ -126,15 +136,17 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
           <div className="title">{reel.title}</div>
         </div>
         {pillText && <Pill tone={pillTone}>{pillText}</Pill>}
-        <button
-          className="reel-menu-btn"
-          onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
-          aria-label="Card actions"
-        >⋯</button>
-        {menuOpen && (
+        {showMenu && (
+          <button
+            className="reel-menu-btn"
+            onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
+            aria-label="Card actions"
+          >⋯</button>
+        )}
+        {showMenu && menuOpen && (
           <div ref={menuRef} className="reel-menu" onClick={e => e.stopPropagation()}>
-            <div className="reel-menu-opt" onClick={onArchive}>Archive</div>
-            {isOwner && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
+            {canArchive && <div className="reel-menu-opt" onClick={onArchive}>Archive</div>}
+            {canDelete && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
           </div>
         )}
       </div>

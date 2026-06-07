@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/fb/:path*", "destination": "https://api.footagebrain.com/:path*" }
+  ]
+}

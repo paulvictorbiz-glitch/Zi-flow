@@ -11,14 +11,13 @@
    by calendar-view.jsx until that view is moved onto `reels.dueAt`.
    ========================================================= */
 
-/* ---------- People + roles ---------- */
-const PEOPLE = {
-  paul:  { id: "paul",  name: "Paul Victor",  short: "Paul V",  role: "owner",   avatar: "PV", tone: "amber"  },
-  alex:  { id: "alex",  name: "Judy Adawag",  short: "Judy A",  role: "skilled", avatar: "JA", tone: "cyan"   },
-  sam:   { id: "sam",   name: "Jay",          short: "Jay",     role: "variant", avatar: "JY", tone: "violet" },
-  maya:  { id: "maya",  name: "Leroy Crosby", short: "Leroy C", role: "reviewer",avatar: "LC", tone: "green"  },
-};
-
+/* ---------- Roles ----------
+   The four fixed roles and their canonical person slot. The actual
+   people (names/avatars/emails) are read live from the Supabase
+   `people` table via src/lib/roster.jsx — see useRoster()/getRoster().
+   `person` here is the canonical holder used for auto-handoff routing
+   and the owner's perspective switcher; additional same-role members
+   are added through the admin panel and receive work by assignment. */
 const ROLES = {
   owner:    { label: "Owner / Creative Director", short: "Owner",    person: "paul" },
   skilled:  { label: "Skilled Editor",            short: "Skilled",  person: "alex" },
@@ -94,17 +93,8 @@ function stageOwnerPersonId(stage) {
   return role ? ROLES[role]?.person : null;
 }
 
-/* ---------- Pipeline-board lanes ----------
-   Rows on the kanban board. Three person lanes plus a special
-   "review" lane that's a workflow slot rather than a person —
-   reels sitting in the review stage live there regardless of
-   who owns them. */
-const PIPELINE_LANES = [
-  { id: "alex",   name: PEOPLE.alex.name, role: "Skilled editor" },
-  { id: "paul",   name: PEOPLE.paul.name, role: "Owner / Creative Director" },
-  { id: "sam",    name: PEOPLE.sam.name,  role: "Variant editor" },
-  { id: "review", name: PEOPLE.maya.name, role: "Reviewer" },
-];
+/* Pipeline-board lanes are built live from the roster in pipeline.jsx
+   (one row per non-reviewer member + the shared "review" lane). */
 
 /* ---------- Calendar seed (week of May 13–19, 2026) ---------- */
 const CAL_WEEK = [
@@ -135,9 +125,8 @@ const CAL_ITEMS = [
 ];
 
 export {
-  PEOPLE, ROLES,
+  ROLES,
   STAGES, STAGE_LABEL, STAGE_TONE, normalizeStage,
   STAGE_ROLE, stageOwnerPersonId,
-  PIPELINE_LANES,
   CAL_WEEK, CAL_ITEMS,
 };

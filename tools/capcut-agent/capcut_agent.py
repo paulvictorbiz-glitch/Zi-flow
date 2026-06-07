@@ -65,6 +65,10 @@ def load_config():
                 CONFIG.update(json.load(f))
         except Exception as e:
             _log(f"config read error: {e}")
+    # Env override — lets one machine run as a different worker without editing
+    # the shared config (e.g. the owner tracking their own CapCut as "paul").
+    if os.environ.get("CAPCUT_WORKER"):
+        CONFIG["WORKER"] = os.environ["CAPCUT_WORKER"].strip()
     return CONFIG
 
 

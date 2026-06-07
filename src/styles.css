@@ -320,6 +320,15 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .pill.warn::before { background: var(--c-amber); }
 .pill.block    { color: var(--c-red); border-color: var(--c-red-soft); }
 .pill.block::before { background: var(--c-red); }
+/* Card-colour pill tones (match the 5 pickable card colours) */
+.pill.violet   { color: var(--c-violet); border-color: var(--c-violet); }
+.pill.violet::before { background: var(--c-violet); }
+.pill.green    { color: var(--c-green); border-color: var(--c-green-soft); }
+.pill.green::before { background: var(--c-green); }
+.pill.amber    { color: var(--c-amber); border-color: var(--c-amber-soft); }
+.pill.amber::before { background: var(--c-amber); }
+.pill.red      { color: var(--c-red); border-color: var(--c-red-soft); }
+.pill.red::before { background: var(--c-red); }
 .pill.dashed   { border-style: dashed; }
 .pill.bare     { border: 0; padding: 2px 0; }
 
@@ -1326,6 +1335,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   cursor: pointer;
 }
 .role-switch:hover { border-color: var(--c-cyan-soft); }
+/* Icon-only variant: just the signed-in user's avatar, no body/caret/pill. */
+.role-switch.icon-only { gap: 0; padding: 2px; border-color: transparent; border-radius: 50%; }
+.role-switch.icon-only:hover { border-color: var(--c-cyan-soft); }
 .role-switch .rs-body { display: flex; flex-direction: column; line-height: 1.1; }
 .role-switch .rs-label { font-size: 11.5px; color: var(--fg); }
 .role-switch .rs-role  { font-family: var(--f-mono); font-size: 9.5px; color: var(--fg-mute); letter-spacing: 0.04em; }
