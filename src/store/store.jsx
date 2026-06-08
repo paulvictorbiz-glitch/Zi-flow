@@ -166,8 +166,16 @@ function workflowReducer(state, action) {
            moving between stage columns) keeps the card with its current
            owner — no automatic handoff by stage role.
            Exception: dropping onto the shared "review" lane assigns to
-           the canonical reviewer. */
+           the canonical reviewer.
+
+           A stage change with NO explicit lane (list-view / my-work,
+           which never pass one) must re-pin the card to its owner's lane.
+           The pipeline buckets by `lane || owner`, so a stale lane left
+           over from an earlier board placement would otherwise strand the
+           card in the wrong row even though its owner is correct. Shadow
+           review-lane cards (parentId) keep their fixed lane. */
         if (action.lane !== undefined) next.lane = action.lane;
+        else if (!r.parentId) next.lane = next.owner;
 
         if (action.lane !== undefined && action.lane !== "review" &&
             isKnownPerson(action.lane) && action.lane !== r.owner) {
@@ -297,6 +305,17 @@ function workflowReducer(state, action) {
     case "DELETE_ATTACHED_FOOTAGE_BY_ID":
       return { ...state, attachedFootage: state.attachedFootage.filter(f => f.id !== action.id) };
 
+    case "SET_FOOTAGE_TAGS": {
+      // Vision tags describe the clip, not one attachment — apply to every row
+      // sharing the same footage_file_id so the library (grouped by clip) and
+      // each reel that uses it all reflect the tags.
+      return {
+        ...state,
+        attachedFootage: state.attachedFootage.map(f =>
+          f.footage_file_id === action.footageFileId ? { ...f, vision_tags: action.tags } : f),
+      };
+    }
+
     case "SET_DAILY_TASKS":
       return { ...state, dailyTasks: action.items };
 
@@ -402,7 +421,11 @@ async function persistMoveStage(state, id, { lane, stage, systemComment, schedul
   const stageChanged = reel.stage !== stage;
   const patch = { stage };
 
+  // Explicit lane (board drag) persists as-is; a no-lane stage change
+  // (list-view / my-work) re-pins lane to the current owner so the pipeline
+  // doesn't strand the card in a stale lane. Mirrors the reducer above.
   if (lane !== undefined) patch.lane = lane;
+  else if (!isCard) patch.lane = reel.owner;
   if (!isCard && scheduledPostDate !== undefined) patch.scheduled_post_date = scheduledPostDate ?? null;
 
   if (!isCard) {
@@ -721,6 +744,19 @@ function WorkflowProvider({ children }) {
       removeAttachedFootage: (id) => wrap(
         { type: "REMOVE_ATTACHED_FOOTAGE", id },
         () => persistRemoveAttachedFootage(id)),
+
+      /* Save vision tags for a clip across every attachment that shares its
+         footage_file_id. Fire-and-forget persist (like daily tasks) — no
+         optimistic rollback needed; the user can just re-analyze. */
+      setFootageTags: (footageFileId, tags) => {
+        dispatch({ type: "SET_FOOTAGE_TAGS", footageFileId, tags });
+        supabase.from("attached_footage_items")
+          .update({ vision_tags: tags })
+          .eq("footage_file_id", footageFileId)
+          .then(({ error }) => {
+            if (error) console.error("setFootageTags persist failed:", error);
+          });
+      },
 
       /* Create a reel AND its attached footage atomically-ish.
          The footage rows have a reel_id FK to reels.id, so the reel

@@ -10,8 +10,10 @@ import {
   footageBrainThumbnailUrl,
   footageFolderLabel,
   getFootageTranscript,
+  tagFootage,
 } from "../lib/footage-brain-client.js";
 import { supabase } from "../lib/supabase-client.js";
+import { useWorkflow } from "../store/store.jsx";
 
 /* Seconds → "M:SS" for transcript timecodes (e.g. 75 → "1:15"). */
 function fmtTime(sec) {
@@ -19,6 +21,55 @@ function fmtTime(sec) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+/* Per-category accent for vision-tag chips — quick visual grouping. */
+export const TAG_CATEGORY_COLOR = {
+  objects:    "var(--c-cyan, #22d3ee)",
+  scenes:     "var(--c-violet, #a78bfa)",
+  activities: "var(--c-amber, #f59e0b)",
+  mood:       "var(--c-green, #34d399)",
+  setting:    "var(--c-blue, #60a5fa)",
+};
+
+/* Flatten a vision_tags object into [{ category, tag }] (skips tagged_at). */
+export function flattenVisionTags(tags) {
+  if (!tags || typeof tags !== "object") return [];
+  const out = [];
+  for (const cat of ["objects", "scenes", "activities", "mood", "setting"]) {
+    for (const t of tags[cat] || []) if (t) out.push({ category: cat, tag: t });
+  }
+  return out;
+}
+
+/* Compact colored chip row for a clip's vision tags. */
+export function VisionTagChips({ tags, onTagClick = null, max = null, style = {} }) {
+  let flat = flattenVisionTags(tags);
+  if (!flat.length) return null;
+  if (max != null) flat = flat.slice(0, max);
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, ...style }}>
+      {flat.map(({ category, tag }, i) => {
+        const color = TAG_CATEGORY_COLOR[category] || "var(--fg-mute)";
+        return (
+          <span
+            key={category + tag + i}
+            onClick={onTagClick ? () => onTagClick(tag) : undefined}
+            title={onTagClick ? `Filter by "${tag}"` : category}
+            style={{
+              fontSize: 10, fontFamily: "var(--f-mono)",
+              color, border: `1px solid ${color}`,
+              background: "transparent", borderRadius: 8,
+              padding: "1px 7px", whiteSpace: "nowrap",
+              cursor: onTagClick ? "pointer" : "default",
+            }}
+          >
+            {tag}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 export function AttachedFootageList({ items, onRemove, canRemove = true, beatTitleByItemId = {} }) {
@@ -63,12 +114,35 @@ export function AttachedFootageList({ items, onRemove, canRemove = true, beatTit
  * Individual attached footage item
  */
 function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitle = null }) {
+  const { actions } = useWorkflow();
   const durationText = item.duration_seconds
     ? `${item.duration_seconds.toFixed(1)}s`
     : "?";
   const folder = footageFolderLabel(item.source_path);
   // Per-file Drive link, falling back to the clip's Drive folder.
   const driveLink = item.drive_url || item.drive_folder_url || null;
+
+  /* Vision tagging — analyze the thumbnail with a free OpenRouter vision model
+     and persist structured tags across every attachment of this clip. */
+  const [tagging, setTagging] = useState(false);
+  const [tagError, setTagError] = useState(null);
+  const hasTags = flattenVisionTags(item.vision_tags).length > 0;
+
+  const handleAnalyze = async () => {
+    if (tagging) return;
+    if (!item.footage_file_id) { setTagError("No clip id to tag"); return; }
+    if (!item.thumbnail_url) { setTagError("No thumbnail to analyze"); return; }
+    setTagging(true);
+    setTagError(null);
+    try {
+      const tags = await tagFootage(item.footage_file_id, item.thumbnail_url, item.filename);
+      actions.setFootageTags(item.footage_file_id, tags);
+    } catch (e) {
+      setTagError(e.message || "Analysis failed");
+    } finally {
+      setTagging(false);
+    }
+  };
 
   /* In-app transcript viewer (no video download). Collapsed by default.
      On first expand: use item.full_transcript if already cached (migration
@@ -305,6 +379,24 @@ function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitl
           >
             📄 Transcript {showTranscript ? "▴" : "▾"}
           </button>
+          <button
+            onClick={handleAnalyze}
+            disabled={tagging}
+            title="Analyze the thumbnail with a vision model and tag what's on screen"
+            style={{
+              padding: "6px 12px",
+              backgroundColor: "transparent",
+              border: "1px solid var(--c-violet, #a78bfa)",
+              color: "var(--c-violet, #a78bfa)",
+              borderRadius: "3px",
+              cursor: tagging ? "wait" : "pointer",
+              fontSize: 11,
+              fontWeight: 500,
+              opacity: tagging ? 0.6 : 1,
+            }}
+          >
+            {tagging ? "🔍 Analyzing…" : hasTags ? "🔍 Re-analyze" : "🔍 Analyze"}
+          </button>
           {/* Removal is owner-configurable — editors with `removeFootage` off
               don't see this button at all. */}
           {canRemove && (
@@ -325,6 +417,16 @@ function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitl
             </button>
           )}
         </div>
+
+        {/* Vision tags + any analysis error. */}
+        {tagError && (
+          <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--fg-warn)" }}>
+            {tagError}
+          </div>
+        )}
+        {hasTags && (
+          <VisionTagChips tags={item.vision_tags} style={{ marginTop: 8 }} />
+        )}
 
         {/* Transcript panel — scrollable, compact, monospace timecoded lines. */}
         {showTranscript && (

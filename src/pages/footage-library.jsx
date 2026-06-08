@@ -17,7 +17,8 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { DPill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
-import { footageBrainThumbnailUrl, footageBrainFileUrl } from "../lib/footage-brain-client.js";
+import { footageBrainThumbnailUrl, footageBrainFileUrl, tagFootage } from "../lib/footage-brain-client.js";
+import { VisionTagChips, flattenVisionTags } from "../components/AttachedFootageList.jsx";
 
 /* Group all attached_footage_items rows by clip identity. Each
    resulting record carries the clip's metadata (taken from the
@@ -43,11 +44,14 @@ function groupByClip(rows) {
         is_vertical: row.is_vertical,
         best_score: row.best_score,
         matched_chunks: row.matched_chunks,
+        vision_tags: row.vision_tags || null,
         reelIds: [],
         latest: row.created_at || null,
       };
       byClip.set(key, g);
     }
+    // Tags live on the clip — keep the first non-null set found across its rows.
+    if (!g.vision_tags && row.vision_tags) g.vision_tags = row.vision_tags;
     if (row.reel_id) g.reelIds.push({ reel_id: row.reel_id, link_id: row.id });
     if (row.created_at && (!g.latest || row.created_at > g.latest)) {
       g.latest = row.created_at;
@@ -216,6 +220,25 @@ function FootageLibrary({ onOpen }) {
   // attachPopover: { clipKey } | null
   const [attachPopover, setAttachPopover] = useState(null);
 
+  /* Vision-tag filtering + analysis state. */
+  const [selectedTags, setSelectedTags] = useState(() => new Set());
+  const [analyzingKeys, setAnalyzingKeys] = useState(() => new Set()); // clip keys mid-analysis
+  const [bulk, setBulk] = useState(null); // { done, total } | null while bulk-analyzing
+
+  /* Analyze one clip's thumbnail and persist tags across its attachments. */
+  async function analyzeClip(c) {
+    if (!c.footage_file_id || !c.thumbnail_url) return;
+    setAnalyzingKeys(prev => new Set(prev).add(c.key));
+    try {
+      const tags = await tagFootage(c.footage_file_id, c.thumbnail_url, c.filename);
+      actions.setFootageTags(c.footage_file_id, tags);
+    } catch (e) {
+      console.error("Analyze failed for", c.filename, e);
+    } finally {
+      setAnalyzingKeys(prev => { const n = new Set(prev); n.delete(c.key); return n; });
+    }
+  }
+
   /* Build a reel lookup so each reelId can render its title. */
   const reelById = useMemo(() => {
     const m = new Map();
@@ -224,6 +247,39 @@ function FootageLibrary({ onOpen }) {
   }, [reels]);
 
   const clips = useMemo(() => groupByClip(attachedFootage), [attachedFootage]);
+
+  /* Every distinct tag across all clips — drives the filter chip row. */
+  const allTags = useMemo(() => {
+    const set = new Set();
+    clips.forEach(c => flattenVisionTags(c.vision_tags).forEach(({ tag }) => set.add(tag)));
+    return [...set].sort();
+  }, [clips]);
+
+  const untagged = useMemo(
+    () => clips.filter(c => c.footage_file_id && c.thumbnail_url && !flattenVisionTags(c.vision_tags).length),
+    [clips]
+  );
+
+  /* Analyze every untagged clip, one at a time (don't hammer the free pool). */
+  async function analyzeAll() {
+    if (bulk) return;
+    const todo = untagged;
+    if (!todo.length) return;
+    setBulk({ done: 0, total: todo.length });
+    for (let i = 0; i < todo.length; i++) {
+      await analyzeClip(todo[i]);
+      setBulk({ done: i + 1, total: todo.length });
+    }
+    setBulk(null);
+  }
+
+  function toggleTagFilter(tag) {
+    setSelectedTags(prev => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag); else next.add(tag);
+      return next;
+    });
+  }
 
   /* Filter + search. Global search hits filename, source path, and the
      first transcript chunk if present. Per-column filters narrow further. */
@@ -240,12 +296,21 @@ function FootageLibrary({ onOpen }) {
     return clips.filter(c => {
       if (filter === "reused" && c.reelIds.length < 2) return false;
 
-      // Global search
+      const clipTags = flattenVisionTags(c.vision_tags).map(({ tag }) => tag);
+
+      // Tag filter — clip must carry every selected tag.
+      if (selectedTags.size > 0) {
+        const have = new Set(clipTags);
+        for (const t of selectedTags) if (!have.has(t)) return false;
+      }
+
+      // Global search — filename, path, transcript, AND vision tags.
       if (q) {
         const haystacks = [
           c.filename,
           c.source_path,
           c.matched_chunks?.[0]?.text,
+          clipTags.join(" "),
         ].filter(Boolean).map(s => String(s).toLowerCase());
         if (!haystacks.some(h => h.includes(q))) return false;
       }
@@ -283,7 +348,7 @@ function FootageLibrary({ onOpen }) {
       if (a.latest && b.latest && a.latest !== b.latest) return b.latest.localeCompare(a.latest);
       return String(a.filename || "").localeCompare(String(b.filename || ""));
     });
-  }, [clips, query, filter, colFilters, reelById]);
+  }, [clips, query, filter, colFilters, reelById, selectedTags]);
 
   const reusedCount = clips.filter(c => c.reelIds.length >= 2).length;
 
@@ -321,6 +386,26 @@ function FootageLibrary({ onOpen }) {
           <DPill active={filter === "reused"} onClick={() => setFilter("reused")}>
             Re-used · {reusedCount}
           </DPill>
+          {(untagged.length > 0 || bulk) && (
+            <button
+              onClick={analyzeAll}
+              disabled={!!bulk}
+              title="Run the vision model on every clip that has no tags yet"
+              style={{
+                background: "transparent",
+                border: "1px solid var(--c-violet, #a78bfa)",
+                color: "var(--c-violet, #a78bfa)",
+                borderRadius: 4,
+                cursor: bulk ? "wait" : "pointer",
+                fontSize: 11, fontWeight: 600,
+                padding: "4px 12px",
+                fontFamily: "var(--f-mono)",
+                opacity: bulk ? 0.7 : 1,
+              }}
+            >
+              {bulk ? `🔍 Analyzing ${bulk.done}/${bulk.total}…` : `🔍 Analyze ${untagged.length} untagged`}
+            </button>
+          )}
         </div>
       </div>
 
@@ -348,6 +433,44 @@ function FootageLibrary({ onOpen }) {
         />
         <span className="mono dim">{visible.length} clip{visible.length === 1 ? "" : "s"}</span>
       </div>
+
+      {/* Vision-tag filter chips — click to narrow the list to clips with that tag. */}
+      {allTags.length > 0 && (
+        <div style={{
+          padding: "0 22px 14px",
+          display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center",
+        }}>
+          <span className="mono dim" style={{ fontSize: 10 }}>tags:</span>
+          {allTags.map(tag => {
+            const on = selectedTags.has(tag);
+            return (
+              <span
+                key={tag}
+                onClick={() => toggleTagFilter(tag)}
+                style={{
+                  fontSize: 10, fontFamily: "var(--f-mono)",
+                  color: on ? "#0b0e14" : "var(--c-violet, #a78bfa)",
+                  background: on ? "var(--c-violet, #a78bfa)" : "transparent",
+                  border: "1px solid var(--c-violet, #a78bfa)",
+                  borderRadius: 8, padding: "2px 8px", cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {tag}
+              </span>
+            );
+          })}
+          {selectedTags.size > 0 && (
+            <span
+              onClick={() => setSelectedTags(new Set())}
+              className="mono dim"
+              style={{ fontSize: 10, cursor: "pointer", textDecoration: "underline", marginLeft: 4 }}
+            >
+              clear
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="exp-scroll">
         <table className="exp-table">
@@ -470,6 +593,29 @@ function FootageLibrary({ onOpen }) {
                       "{c.matched_chunks[0].text}"
                     </div>
                   )}
+                  {/* Vision tags (click a chip to filter) + per-clip analyze. */}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 6 }}>
+                    <VisionTagChips tags={c.vision_tags} onTagClick={toggleTagFilter} max={12} />
+                    {c.footage_file_id && c.thumbnail_url && (
+                      <button
+                        onClick={e => { e.stopPropagation(); analyzeClip(c); }}
+                        disabled={analyzingKeys.has(c.key)}
+                        title="Analyze this clip's thumbnail with a vision model"
+                        style={{
+                          background: "none", border: "none",
+                          color: "var(--c-violet, #a78bfa)",
+                          cursor: analyzingKeys.has(c.key) ? "wait" : "pointer",
+                          fontSize: 10, fontFamily: "var(--f-mono)",
+                          padding: 0, textDecoration: "underline",
+                          opacity: analyzingKeys.has(c.key) ? 0.6 : 1,
+                        }}
+                      >
+                        {analyzingKeys.has(c.key)
+                          ? "analyzing…"
+                          : flattenVisionTags(c.vision_tags).length ? "re-analyze" : "🔍 analyze"}
+                      </button>
+                    )}
+                  </div>
                 </td>
                 <td className="mono">{formatDuration(c.duration_seconds)}</td>
                 <td className="mono dim">

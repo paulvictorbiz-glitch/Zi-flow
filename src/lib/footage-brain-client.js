@@ -334,6 +334,36 @@ export function driveDownloadUrl(driveUrl) {
  * @param {SearchResult} result - Raw search result from Footage Brain
  * @returns {object} Formatted for attached_footage_items table
  */
+/**
+ * Analyze a clip's thumbnail with a free OpenRouter vision model and return
+ * structured tags { objects, scenes, activities, mood, setting, tagged_at }.
+ * Hits our own /api/tag-footage serverless function (which holds the key and
+ * fetches the raw thumbnail server-side).
+ *
+ * @param {string} footageFileId - FootageBrain video_file.id (for reference)
+ * @param {string} thumbnailUrl  - thumbnail_url stored on the footage row
+ * @param {string} filename      - filename, used as a hint in the prompt
+ * @returns {Promise<object>} the tags object
+ */
+export async function tagFootage(footageFileId, thumbnailUrl, filename) {
+  const res = await fetch("/api/tag-footage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      footage_file_id: footageFileId,
+      thumbnail_url: thumbnailUrl,
+      filename,
+    }),
+  });
+  if (!res.ok) {
+    let msg = `Tag generation failed (${res.status})`;
+    try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  return data.tags;
+}
+
 export function formatSearchResultForAttachment(result) {
   return {
     footage_file_id: result.video_file_id,
