@@ -1,0 +1,295 @@
+/* =========================================================
+   Lossless tab — in-browser lossless trimmer (ffmpeg.wasm) styles.
+   Own file so we never touch the shared styles.css.
+   Uses the app theme CSS variables (--fg, --bg-2, --line-hard,
+   --c-cyan, --c-amber, --c-red, --f-mono) to match the dark UI.
+   ========================================================= */
+
+.lossless-page {
+  display: flex;
+  flex-direction: column;
+  padding: 0 22px 22px;
+  gap: 14px;
+}
+
+/* Two-column body: left = preview + scrubber, right = trim/segments/export */
+.ll-body {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .ll-body { grid-template-columns: 1fr; }
+}
+
+.ll-card {
+  border: 1px solid var(--line-hard, #2a3754);
+  border-radius: 8px;
+  background: var(--bg-2, #111827);
+  padding: 12px 14px;
+}
+
+.ll-card-h {
+  font-family: var(--f-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-mute, #8a98ad);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ── Drop zone / file picker ───────────────────────────── */
+.ll-drop {
+  border: 1px dashed var(--line-hard, #2a3754);
+  border-radius: 8px;
+  background: var(--bg-1, #0d1320);
+  padding: 34px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ll-drop:hover,
+.ll-drop.is-drag {
+  border-color: var(--c-cyan, #6bd6e0);
+  background: rgba(107, 214, 224, 0.05);
+}
+.ll-drop .ll-drop-title {
+  font-size: 14px;
+  color: var(--fg, #d8e2ee);
+  margin-bottom: 6px;
+}
+.ll-drop .ll-drop-sub {
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  color: var(--fg-dim, #5e6c82);
+}
+
+/* ── Video preview ─────────────────────────────────────── */
+.ll-video-wrap {
+  border: 1px solid var(--line-hard, #2a3754);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #060a11;
+}
+.ll-video-wrap video {
+  width: 100%;
+  display: block;
+  max-height: 56vh;
+  background: #060a11;
+}
+
+/* ── Scrubber / timeline with in/out markers ───────────── */
+.ll-scrub {
+  margin-top: 12px;
+}
+.ll-scrub-bar {
+  position: relative;
+  height: 26px;
+  border-radius: 5px;
+  background: var(--bg-0, #0a0f17);
+  border: 1px solid var(--line, #1f2a3d);
+  cursor: pointer;
+  overflow: hidden;
+}
+.ll-scrub-sel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(107, 214, 224, 0.18);
+  border-left: 2px solid var(--c-cyan, #6bd6e0);
+  border-right: 2px solid var(--c-amber, #f5c266);
+  pointer-events: none;
+}
+.ll-scrub-play {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--fg, #d8e2ee);
+  pointer-events: none;
+}
+.ll-scrub-times {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--f-mono, monospace);
+  font-size: 10.5px;
+  color: var(--fg-dim, #5e6c82);
+  margin-top: 5px;
+}
+
+/* ── Inputs / buttons ──────────────────────────────────── */
+.ll-input {
+  width: 100%;
+  background: var(--bg-0, #0a0f17);
+  border: 1px solid var(--line-hard, #2a3754);
+  border-radius: 5px;
+  color: var(--fg, #d8e2ee);
+  font-family: var(--f-mono, monospace);
+  font-size: 12px;
+  padding: 7px 9px;
+  outline: none;
+  box-sizing: border-box;
+}
+.ll-input:focus { border-color: var(--c-cyan, #6bd6e0); }
+
+.ll-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ll-field-label {
+  font-family: var(--f-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-mute, #8a98ad);
+}
+.ll-row { display: flex; gap: 8px; align-items: flex-end; }
+.ll-row > .ll-field { flex: 1; }
+
+.ll-btn {
+  border: 1px solid var(--line-hard, #2a3754);
+  background: transparent;
+  color: var(--fg, #d8e2ee);
+  border-radius: 5px;
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  padding: 6px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ll-btn:hover:not(:disabled) {
+  border-color: var(--c-cyan, #6bd6e0);
+  color: var(--c-cyan, #6bd6e0);
+}
+.ll-btn.primary {
+  border-color: var(--c-cyan, #6bd6e0);
+  color: var(--c-cyan, #6bd6e0);
+  background: rgba(107, 214, 224, 0.08);
+}
+.ll-btn.amber {
+  border-color: var(--c-amber, #f5c266);
+  color: var(--c-amber, #f5c266);
+}
+.ll-btn.danger:hover:not(:disabled) {
+  border-color: var(--c-red, #ff7373);
+  color: var(--c-red, #ff7373);
+}
+.ll-btn:disabled { opacity: 0.4; cursor: default; }
+.ll-btn-grp { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── Segment list ──────────────────────────────────────── */
+.ll-seg {
+  border: 1px solid var(--line, #1f2a3d);
+  border-radius: 6px;
+  background: var(--bg-1, #0d1320);
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.ll-seg-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ll-seg-name {
+  font-family: var(--f-mono, monospace);
+  font-size: 12px;
+  color: var(--fg, #d8e2ee);
+}
+.ll-seg-range {
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  color: var(--fg-mute, #8a98ad);
+}
+.ll-seg-dur { color: var(--c-cyan, #6bd6e0); }
+.ll-seg-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ── Status / progress / log ───────────────────────────── */
+.ll-status {
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  color: var(--fg-mute, #8a98ad);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ll-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-0, #0a0f17);
+  border: 1px solid var(--line, #1f2a3d);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.ll-progress > i {
+  display: block;
+  height: 100%;
+  background: var(--c-cyan, #6bd6e0);
+  transition: width 0.15s linear;
+}
+
+.ll-log {
+  margin-top: 8px;
+  max-height: 150px;
+  overflow: auto;
+  background: var(--bg-0, #0a0f17);
+  border: 1px solid var(--line, #1f2a3d);
+  border-radius: 5px;
+  padding: 8px 9px;
+  font-family: var(--f-mono, monospace);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg-dim, #5e6c82);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ll-pill {
+  font-family: var(--f-mono, monospace);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line-hard, #2a3754);
+  color: var(--fg-mute, #8a98ad);
+}
+.ll-pill.ok    { color: var(--c-green, #7fd49a); border-color: var(--c-green, #7fd49a); }
+.ll-pill.amber { color: var(--c-amber, #f5c266); border-color: var(--c-amber, #f5c266); }
+.ll-pill.cyan  { color: var(--c-cyan, #6bd6e0); border-color: var(--c-cyan, #6bd6e0); }
+.ll-pill.red   { color: var(--c-red, #ff7373); border-color: var(--c-red, #ff7373); }
+
+.ll-help {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--fg-dim, #5e6c82);
+}
+.ll-help code {
+  font-family: var(--f-mono, monospace);
+  color: var(--fg-mute, #8a98ad);
+}
+
+.ll-note {
+  font-family: var(--f-mono, monospace);
+  font-size: 10.5px;
+  color: var(--c-amber, #f5c266);
+  line-height: 1.5;
+}
+
+.ll-err {
+  border: 1px solid var(--c-red, #ff7373);
+  border-radius: 6px;
+  background: rgba(255, 115, 115, 0.06);
+  padding: 12px 14px;
+  color: var(--fg, #d8e2ee);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ll-err b { color: var(--c-red, #ff7373); }

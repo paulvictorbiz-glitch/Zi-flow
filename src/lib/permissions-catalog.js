@@ -28,13 +28,16 @@ export const VIEW_CAPS = [
   { key: "detail",    label: "Reel detail" },
   { key: "footage",   label: "Footage library" },
   { key: "editor",    label: "Video editor (OpenCut)" },
+  { key: "lossless",  label: "Lossless cut (in-browser)" },
   { key: "export",    label: "Export" },
   { key: "analytics", label: "Analytics" },
+  { key: "inbox",     label: "Inbox (comments & DMs)" },
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate (AI · paid)" },
   { key: "activity",  label: "Activity (CapCut tracker)" },
   { key: "resources", label: "Resources (link sheet)" },
+  { key: "monitor",   label: "Monitor (infra usage)" },
 ];
 
 /* Actions wired in Phase 1. Every key here maps to a real, gated
@@ -73,6 +76,7 @@ export function defaultPermsForRole(roleKey) {
   const views = {};
   for (const v of VIEW_CAPS) views[v.key] = true;
   views.activity = false; // private monitoring tab — owner enables per-person
+  views.monitor  = false; // infra usage — owner only
 
   const actions = {};
   for (const a of ACTION_CAPS) actions[a.key] = true;

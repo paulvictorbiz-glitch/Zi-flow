@@ -22,6 +22,14 @@ import { DPill } from "../components/components.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { useAuth } from "../auth.jsx";
 import { useRoster } from "../lib/roster.jsx";
+import {
+  PLATFORMS,
+  PLATFORM_BY_KEY,
+  CONNECT_URLS,
+  fetchConnections,
+  runHealthChecks,
+  deriveStatus,
+} from "../lib/social-client.js";
 
 /* =========================================================
    Permissions matrix (left panel)
@@ -514,6 +522,192 @@ function AddEditorForm({ token, onSuccess, onResult }) {
   );
 }
 
+/* =========================================================
+   Social accounts panel (OAuth status)
+
+   Owner-only view of every linked platform's connection health, the
+   last error returned by the platform API, and a Connect / Reconnect
+   entry point. Reads from social-client.js (live from app_settings,
+   tokens stay server-side). "Check now" runs a live health probe
+   (Facebook today) and persists the result back to Supabase.
+   ========================================================= */
+
+const STATUS_META = {
+  connected:    { dot: "●", color: "var(--c-green)",          label: "connected" },
+  expiring:     { dot: "⚠", color: "var(--c-amber)",          label: "token expiring" },
+  error:        { dot: "●", color: "var(--c-red, #f87171)",   label: "error" },
+  disconnected: { dot: "○", color: "var(--fg-mute)",          label: "not connected" },
+};
+
+function relCheckedAt(iso) {
+  if (!iso) return "never checked";
+  const d = new Date(iso);
+  if (isNaN(d)) return "never checked";
+  return "checked " + d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function SocialAccountRow({ conn }) {
+  const p = PLATFORM_BY_KEY[conn.platform];
+  const status = deriveStatus(conn);
+  const meta = STATUS_META[status] || STATUS_META.disconnected;
+  const connectUrl = CONNECT_URLS[conn.platform];
+  const isConnected = status === "connected" || status === "expiring";
+
+  return (
+    <div style={{ borderBottom: "1px dashed var(--line-soft, rgba(255,255,255,0.04))", paddingBottom: 8, marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 8 }}>
+        {/* Platform glyph chip */}
+        <div style={{
+          width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "var(--f-mono)", fontSize: 12,
+          background: "var(--bg-2)", border: "1px dashed " + (p?.color || "var(--line-hard)"),
+          color: p?.color || "var(--fg)",
+        }}>
+          {p?.glyph || "?"}
+        </div>
+
+        {/* Name + handle / follower count */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, color: "var(--fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {p?.label || conn.platform}
+          </div>
+          <div className="mono dim" style={{ fontSize: 9.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {isConnected
+              ? `${conn.handle || conn.account || "—"}${conn.followers ? " · " + conn.followers.toLocaleString() + " followers" : ""}`
+              : (conn.note || "—")}
+          </div>
+        </div>
+
+        {/* Status + action */}
+        <div style={{ flexShrink: 0, textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          <div className="mono" style={{ fontSize: 9, color: meta.color, whiteSpace: "nowrap" }}>
+            {meta.dot} {meta.label}
+          </div>
+          {connectUrl ? (
+            <IconBtn
+              title={isConnected ? "Re-run the OAuth flow to refresh the token" : "Start the OAuth connect flow"}
+              onClick={() => window.open(connectUrl, "_blank", "noopener")}
+            >
+              {isConnected ? "reconnect" : "connect"}
+            </IconBtn>
+          ) : (
+            <span className="mono dim" style={{ fontSize: 8.5, whiteSpace: "nowrap" }} title={conn.note || ""}>
+              flow not wired
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Last error (only when present) */}
+      {conn.lastError && (
+        <div style={{
+          marginTop: 6, padding: "5px 8px",
+          border: "1px dashed var(--c-red, #f87171)", borderRadius: 4,
+          background: "rgba(248,113,113,0.05)",
+          fontSize: 10, lineHeight: 1.4, fontFamily: "var(--f-mono)",
+          color: "var(--c-red, #f87171)",
+        }}>
+          {conn.lastError}
+        </div>
+      )}
+
+      {/* Last checked timestamp */}
+      <div className="mono dim" style={{ fontSize: 8.5, marginTop: 4 }}>
+        {relCheckedAt(conn.lastCheckedAt)}
+      </div>
+    </div>
+  );
+}
+
+function SocialAccountsPanel() {
+  const [conns, setConns]   = React.useState(() => PLATFORMS.map(p => ({ platform: p.key, connected: false, status: "disconnected" })));
+  const [loading, setLoading] = React.useState(true);
+  const [checking, setChecking] = React.useState(false);
+  const [flash, setFlash]   = React.useState(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const rows = await fetchConnections(supabase);
+      // Keep stable PLATFORMS order even if the row set is partial.
+      setConns(PLATFORMS.map(p => rows.find(r => r.platform === p.key) || { platform: p.key, connected: false, status: "disconnected" }));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const checkNow = async () => {
+    setChecking(true); setFlash(null);
+    try {
+      const rows = await runHealthChecks(supabase);
+      setConns(PLATFORMS.map(p => rows.find(r => r.platform === p.key) || { platform: p.key, connected: false, status: "disconnected" }));
+      const errs = rows.filter(r => deriveStatus(r) === "error").length;
+      setFlash({ ok: errs === 0, text: errs === 0 ? "All connected accounts healthy." : `${errs} account${errs === 1 ? "" : "s"} need attention.` });
+      setTimeout(() => setFlash(null), 6000);
+    } catch (e) {
+      setFlash({ ok: false, text: e.message || String(e) });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const connectedCount = conns.filter(c => deriveStatus(c) === "connected" || deriveStatus(c) === "expiring").length;
+  const errorCount     = conns.filter(c => deriveStatus(c) === "error").length;
+
+  return (
+    <div style={{
+      minWidth: 300, maxWidth: 360,
+      border: "1px dashed var(--line-hard)", borderRadius: 8,
+      background: "var(--bg-1)", padding: "14px 16px",
+      alignSelf: "start", marginTop: 16,
+    }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 13, color: "var(--fg)", fontWeight: 500 }}>Social accounts</div>
+          {!loading && (
+            <div className="mono dim" style={{ fontSize: 10 }}>
+              {connectedCount} connected{errorCount ? " · " + errorCount + " error" + (errorCount === 1 ? "" : "s") : ""} · OAuth status
+            </div>
+          )}
+        </div>
+        <IconBtn title="Run a live health check on connected platforms" active={checking} onClick={checkNow}>
+          {checking ? "…" : "check now"}
+        </IconBtn>
+      </div>
+
+      {/* Result banner */}
+      {flash && (
+        <div style={{
+          marginBottom: 10, padding: "7px 10px", borderRadius: 4, fontSize: 11, lineHeight: 1.45,
+          fontFamily: "var(--f-mono)",
+          border: "1px dashed " + (flash.ok ? "var(--c-green)" : "var(--c-red, #f87171)"),
+          background: flash.ok ? "rgba(120,200,140,0.06)" : "rgba(248,113,113,0.06)",
+          color: flash.ok ? "var(--c-green)" : "var(--c-red, #f87171)",
+        }}>
+          {flash.text}
+        </div>
+      )}
+
+      {/* Rows */}
+      {loading ? (
+        <div className="mono dim" style={{ fontSize: 10.5, textAlign: "center", padding: "10px 0" }}>loading…</div>
+      ) : (
+        <div>
+          {conns.map(c => <SocialAccountRow key={c.platform} conn={c} />)}
+        </div>
+      )}
+
+      <div className="mono dim" style={{ fontSize: 9, lineHeight: 1.5, marginTop: 8 }}>
+        Tokens are stored server-side (api.footagebrain.com) — never in the browser. Connect/Reconnect opens the platform's OAuth flow in a new tab.
+      </div>
+    </div>
+  );
+}
+
 function UsersPanel() {
   const { session } = useAuth();
   const [people, setPeople]     = React.useState([]);
@@ -687,8 +881,11 @@ function RolesAdmin({ onBack }) {
           </div>
         </div>
 
-        {/* Right: users panel */}
-        <UsersPanel />
+        {/* Right: users panel + social accounts (OAuth status) */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch" }}>
+          <UsersPanel />
+          <SocialAccountsPanel />
+        </div>
       </div>
     </div>
   );

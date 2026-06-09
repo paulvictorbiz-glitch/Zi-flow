@@ -440,6 +440,26 @@ function useLocations() {
   return ctx;
 }
 
+/** Converts an address string to {lat, lng} using the Google Geocoding API.
+ *  Returns null if the API key is absent, the address is empty, or the call fails. */
+async function geocode(address) {
+  const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (!key || !address) return null;
+  try {
+    const r = await fetch(
+      "https://maps.googleapis.com/maps/api/geocode/json" +
+      "?address=" + encodeURIComponent(address) +
+      "&key=" + encodeURIComponent(key)
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    const loc = d?.results?.[0]?.geometry?.location;
+    return loc ? { lat: loc.lat, lng: loc.lng } : null;
+  } catch {
+    return null;
+  }
+}
+
 export {
   MY_MAPS,
   myMapsEmbedUrl,
@@ -448,6 +468,7 @@ export {
   parseGeoJson,
   parseCsv,
   parseAny,
+  geocode,
   LocationsProvider,
   useLocations,
   LocationsContext,

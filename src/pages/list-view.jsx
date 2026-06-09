@@ -310,7 +310,7 @@ function ScheduleModal({ onConfirm, onCancel, date, setDate }) {
 }
 
 /* ---- Bulk action bar ---- */
-function BulkBar({ count, onClear, onMoveStage, onAssign, peopleList }) {
+function BulkBar({ count, onClear, onApply, peopleList }) {
   const [bulkStage, setBulkStage]    = useState("");
   const [bulkPerson, setBulkPerson]  = useState("");
 
@@ -349,18 +349,6 @@ function BulkBar({ count, onClear, onMoveStage, onAssign, peopleList }) {
           <option key={s} value={s}>{STAGE_LABEL[s]}</option>
         ))}
       </select>
-      <button
-        disabled={!bulkStage}
-        onClick={() => { onMoveStage(bulkStage); setBulkStage(""); }}
-        style={{
-          ...selStyle,
-          background: bulkStage ? "var(--c-cyan, #22d3ee)" : "rgba(255,255,255,0.04)",
-          color: bulkStage ? "#000" : "var(--fg-mute, #8899aa)",
-          fontWeight: 600,
-        }}
-      >
-        Apply
-      </button>
 
       <span style={{ color: "var(--fg-mute, #8899aa)", fontSize: 12, marginLeft: 6 }}>Assign to:</span>
       <select
@@ -374,12 +362,12 @@ function BulkBar({ count, onClear, onMoveStage, onAssign, peopleList }) {
         ))}
       </select>
       <button
-        disabled={!bulkPerson}
-        onClick={() => { onAssign(bulkPerson); setBulkPerson(""); }}
+        disabled={!bulkStage && !bulkPerson}
+        onClick={() => { onApply(bulkStage, bulkPerson); setBulkStage(""); setBulkPerson(""); }}
         style={{
           ...selStyle,
-          background: bulkPerson ? "var(--c-cyan, #22d3ee)" : "rgba(255,255,255,0.04)",
-          color: bulkPerson ? "#000" : "var(--fg-mute, #8899aa)",
+          background: (bulkStage || bulkPerson) ? "var(--c-cyan, #22d3ee)" : "rgba(255,255,255,0.04)",
+          color: (bulkStage || bulkPerson) ? "#000" : "var(--fg-mute, #8899aa)",
           fontWeight: 600,
         }}
       >
@@ -492,21 +480,28 @@ function ListView({ role, onOpen }) {
     });
   }
 
-  /* -- bulk actions -- */
-  function bulkMove(stage) {
+  /* -- bulk action: applies stage and/or person together so a combined
+     reassignment lands in one atomic move per reel. Passing lane=personId
+     to moveStage makes the store set stage + owner + lane together, so the
+     card shows up in the new person's column on the board and their
+     dashboard (not stranded in the old owner's lane). -- */
+  function bulkApply(stage, personId) {
     if (stage === "completed" && !can("moveToCompleted")) return;
-    for (const id of selected) {
+    const ids = [...selected];
+    for (const id of ids) {
       if (stage === "posted") {
-        setScheduleModal({ reelId: id, bulk: true, pendingStage: stage });
+        // "posted" needs the schedule-date modal; hand off and let its
+        // confirm handler finish the rest of the selection.
+        setScheduleModal({ reelId: id, bulk: true, pendingStage: stage, person: personId });
         return;
       }
-      actions.moveStage(id, { stage });
-    }
-    setSelected(new Set());
-  }
-  function bulkAssign(personId) {
-    for (const id of selected) {
-      actions.updateReel(id, { owner: personId });
+      if (stage && personId) {
+        actions.moveStage(id, { stage, lane: personId });
+      } else if (stage) {
+        actions.moveStage(id, { stage });
+      } else if (personId) {
+        actions.updateReel(id, { owner: personId });
+      }
     }
     setSelected(new Set());
   }
@@ -526,15 +521,21 @@ function ListView({ role, onOpen }) {
   /* -- schedule modal confirm -- */
   function confirmSchedule() {
     if (!scheduleModal) return;
-    actions.moveStage(scheduleModal.reelId, {
-      stage: "posted",
+    // A bulk apply may carry a person reassignment alongside the "posted"
+    // move; pass it as `lane` so the card lands in the new owner's row
+    // (moveStage sets stage + owner + lane together). Per-row posts and
+    // bulk posts without a person reassignment leave lane untouched.
+    const person = scheduleModal.person;
+    const extra = {
       ...(scheduleDate ? { scheduledPostDate: scheduleDate } : {}),
-    });
+      ...(person ? { lane: person } : {}),
+    };
+    actions.moveStage(scheduleModal.reelId, { stage: "posted", ...extra });
     if (scheduleModal.bulk) {
       // continue bulk for remaining ids if needed
       const remaining = [...selected].filter(id => id !== scheduleModal.reelId);
       for (const id of remaining) {
-        actions.moveStage(id, { stage: "posted", ...(scheduleDate ? { scheduledPostDate: scheduleDate } : {}) });
+        actions.moveStage(id, { stage: "posted", ...extra });
       }
       setSelected(new Set());
     }
@@ -585,8 +586,7 @@ function ListView({ role, onOpen }) {
         <BulkBar
           count={selected.size}
           onClear={() => setSelected(new Set())}
-          onMoveStage={bulkMove}
-          onAssign={bulkAssign}
+          onApply={bulkApply}
           peopleList={peopleList}
         />
       )}

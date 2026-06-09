@@ -27,11 +27,15 @@ import { NotificationsProvider, useNotifications } from "./components/notificati
 import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import { RolesAdmin } from "./pages/roles-admin.jsx";
+import { Inbox } from "./pages/inbox.jsx";
+import { LosslessCut } from "./pages/lossless.jsx";
+import { Monitor } from "./pages/monitor.jsx";
+import { getInboxSummary } from "./lib/social-client.js";
 
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "coverage", "locations", "analytics", "export", "generate"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "export", "generate", "monitor"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -43,13 +47,16 @@ const TABS = [
   { key: "detail",    label: "Reel detail" },
   { key: "footage",   label: "Footage" },
   { key: "editor",    label: "Editor" },
+  { key: "lossless",  label: "Lossless" },
   { key: "export",    label: "Export" },
   { key: "analytics", label: "Analytics" },
+  { key: "inbox",     label: "Inbox" },
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate" },
   { key: "activity",  label: "Activity" },
   { key: "resources", label: "Resources" },
+  { key: "monitor",   label: "Monitor" },
 ];
 
 function AppShell() {
@@ -63,8 +70,17 @@ function AppShell() {
   const [selectedReel, setSelectedReel] = useState(null);
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
+  const [navOpen, setNavOpen]           = useState(false);   // left slide-in drawer
   const [globalSearch, setGlobalSearch] = useState("");
   const searchRef                       = useRef(null);
+
+  /* Inbox unread badge — count of unreplied comments/DMs across
+     connected social platforms. Cheap, synchronous read from the
+     local social-client cache; refreshed when the nav opens. */
+  const [inboxUnread, setInboxUnread] = useState(0);
+  useEffect(() => {
+    try { setInboxUnread(getInboxSummary()?.unreplied || 0); } catch { setInboxUnread(0); }
+  }, [navOpen, view]);
 
   /* "Needs you" badge — count of non-archived reels currently
      assigned to the signed-in person that still need work (any
@@ -134,6 +150,17 @@ function AppShell() {
      straight into the new reel after dispatch. */
   useEffect(() => { window.__openReel = openReel; });
 
+  /* Close the nav drawer on Escape (only while it's open). */
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setNavOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
+
+  /* Navigate from the drawer: switch view and close the drawer. */
+  const goView = (key) => { setView(key); setNavOpen(false); };
+
   /* Prevent Backspace from navigating the browser back when the
      user isn't typing in a field. Some browsers / embedded
      webviews still treat Backspace as "history.back" outside of
@@ -168,6 +195,19 @@ function AppShell() {
     <div className="app">
       {/* Top bar */}
       <div className="topbar">
+        {/* Menu trigger — opens the left slide-in nav drawer. */}
+        <button
+          className={"nav-toggle" + (navOpen ? " is-open" : "")}
+          aria-label="Open navigation menu"
+          aria-expanded={navOpen}
+          onClick={() => setNavOpen(o => !o)}
+        >
+          <span className="nav-toggle-bars" aria-hidden="true">
+            <span /><span /><span />
+          </span>
+          <span className="nav-toggle-label">Menu</span>
+          {(needsYouCount > 0 || inboxUnread > 0) && <span className="nav-toggle-dot" />}
+        </button>
         <div className="brand">
           <span className="dot" />
           <span>Workflow</span>
@@ -180,7 +220,8 @@ function AppShell() {
              view === "footage"   ? "Footage library" :
              view === "coverage"  ? "Coverage" :
              view === "locations" ? "Locations" :
-             view === "export"    ? "Export prep" : "Analytics"}
+             view === "export"    ? "Export prep" :
+             view === "monitor"   ? "Monitor" : "Analytics"}
           </span>
           <span className="sep">/</span>
           <span>
@@ -317,37 +358,66 @@ function AppShell() {
             <span style={{ marginRight: 6 }}>🔔</span>
             {totalUnread > 0 ? totalUnread + " unread" : "No new comments"}
           </DPill>
+
         </div>
       </div>
 
-      {/* Tab strip */}
-      <div className="tabstrip">
-        {visibleTabs.map((t, i) => (
-          <button key={t.key}
-                  className={"tab " + (view === t.key ? "is-active" : "")}
-                  onClick={() => setView(t.key)}>
-            <span className="n">{i + 1} ·</span> {t.label}
-            {t.key === "mywork" && needsYouCount > 0 && (
-              <span className="needs-badge" title={needsYouCount + " reel" + (needsYouCount === 1 ? "" : "s") + " waiting on you"}>
-                {needsYouCount}
-              </span>
-            )}
-          </button>
-        ))}
-        {/* Pipeline sub-mode chips — only when on Pipeline */}
-        {view === "pipeline" && (
-          <React.Fragment>
-            <span style={{ width: 14 }} />
-            <span className="mono dim" style={{ alignSelf: "center" }}>view</span>
-            <DPill active={pipelineMode === "board"}    onClick={() => setPipelineMode("board")}>Board</DPill>
-            <DPill active={pipelineMode === "list"}     onClick={() => setPipelineMode("list")}>List</DPill>
-            <DPill active={pipelineMode === "calendar"} onClick={() => setPipelineMode("calendar")}>Calendar</DPill>
-            <DPill active={pipelineMode === "archived"} onClick={() => setPipelineMode("archived")}>Archived</DPill>
-          </React.Fragment>
-        )}
-        <span style={{ flex: 1 }} />
-        <span className="mono dim" style={{ alignSelf: "center" }}>realtime · live</span>
-      </div>
+      {/* Left slide-in navigation drawer + backdrop */}
+      <div
+        className={"nav-backdrop" + (navOpen ? " is-open" : "")}
+        onClick={() => setNavOpen(false)}
+        aria-hidden="true"
+      />
+      <nav
+        className={"nav-drawer" + (navOpen ? " is-open" : "")}
+        role="navigation"
+        aria-label="Primary"
+        aria-hidden={!navOpen}
+      >
+        <div className="nav-drawer-head">
+          <span className="nav-drawer-title">Navigate</span>
+          <button className="nav-drawer-close" aria-label="Close navigation menu"
+                  onClick={() => setNavOpen(false)}>✕</button>
+        </div>
+        <div className="nav-drawer-list">
+          {visibleTabs.map((t, i) => (
+            <button key={t.key}
+                    className={"nav-item " + (view === t.key ? "is-active" : "")}
+                    onClick={() => goView(t.key)}
+                    aria-current={view === t.key ? "page" : undefined}>
+              <span className="nav-item-n">{String(i + 1).padStart(2, "0")}</span>
+              <span className="nav-item-label">{t.label}</span>
+              {t.key === "mywork" && needsYouCount > 0 && (
+                <span className="needs-badge" title={needsYouCount + " reel" + (needsYouCount === 1 ? "" : "s") + " waiting on you"}>
+                  {needsYouCount}
+                </span>
+              )}
+              {t.key === "inbox" && inboxUnread > 0 && (
+                <span className="needs-badge" title={inboxUnread + " unreplied"}>
+                  {inboxUnread}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="nav-drawer-foot">
+          <span className="nav-live"><span className="nav-live-dot" />realtime · live</span>
+        </div>
+      </nav>
+
+      {/* Pipeline sub-mode bar — thin row under the topbar, only on Pipeline.
+          The main tab nav now lives in the slide-in drawer. */}
+      {view === "pipeline" && (
+        <div className="submode-bar">
+          <span className="mono dim" style={{ alignSelf: "center" }}>view</span>
+          <DPill active={pipelineMode === "board"}    onClick={() => setPipelineMode("board")}>Board</DPill>
+          <DPill active={pipelineMode === "list"}     onClick={() => setPipelineMode("list")}>List</DPill>
+          <DPill active={pipelineMode === "calendar"} onClick={() => setPipelineMode("calendar")}>Calendar</DPill>
+          <DPill active={pipelineMode === "archived"} onClick={() => setPipelineMode("archived")}>Archived</DPill>
+          <span style={{ flex: 1 }} />
+          <span className="mono dim" style={{ alignSelf: "center" }}>realtime · live</span>
+        </div>
+      )}
 
       {/* Body */}
       {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} />}
@@ -358,13 +428,16 @@ function AppShell() {
       {view === "detail"    && <ReelDetail reel={selectedReel} onBack={() => setView("pipeline")} />}
       {view === "footage"   && <FootageLibrary onOpen={openReel} />}
       {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
+      {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}
       {view === "export"    && <ExportView onOpen={openReel} />}
       {view === "analytics" && <Analytics />}
+      {view === "inbox"     && <Inbox />}
       {view === "locations" && <Locations />}
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
       {view === "activity"  && <Activity />}
       {view === "resources" && <Resources />}
+      {view === "monitor"   && isOwner && <Monitor />}
       {view === "settings"  && isOwner && <RolesAdmin onBack={() => setView("pipeline")} />}
 
       {/* Global create FAB */}

@@ -13,14 +13,50 @@
    new global CSS.
    ========================================================= */
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState, useCallback } from "react";
 import { DPill } from "../components/components.jsx";
+import { APIProvider, Map, AdvancedMarker, InfoWindow } from "@vis.gl/react-google-maps";
 import {
   MY_MAPS,
-  myMapsEmbedUrl,
   parseAny,
+  geocode,
   useLocations,
 } from "../lib/locations-data.jsx";
+
+const MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
+
+/* ── Marker + InfoWindow for one location ──────────────── */
+function LocationMarker({ location: l, selected, onSelect }) {
+  if (l.lat == null || l.lng == null) return null;
+  const pos = { lat: l.lat, lng: l.lng };
+  return (
+    <>
+      <AdvancedMarker
+        position={pos}
+        onClick={() => onSelect(selected ? null : l)}
+        title={l.name}
+      />
+      {selected && (
+        <InfoWindow position={pos} onCloseClick={() => onSelect(null)}>
+          <div style={{ fontFamily: "sans-serif", maxWidth: 210, fontSize: 13 }}>
+            <div style={{ fontWeight: 700, marginBottom: 3 }}>{l.name}</div>
+            {l.category && (
+              <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>{l.category}</div>
+            )}
+            {l.notes && (
+              <div style={{ fontSize: 12, marginTop: 4, color: "#444" }}>{l.notes}</div>
+            )}
+            {l.linkedReelIds?.length > 0 && (
+              <div style={{ fontSize: 11, marginTop: 5, color: "#0a8" }}>
+                {l.linkedReelIds.length} linked reel{l.linkedReelIds.length > 1 ? "s" : ""}
+              </div>
+            )}
+          </div>
+        </InfoWindow>
+      )}
+    </>
+  );
+}
 
 /* Same blob-download helper Export uses, kept local so the two
    pages stay independent. */
@@ -184,6 +220,24 @@ function Locations() {
   const { locations, loaded, actions } = useLocations();
   const [tab, setTab] = useState("map"); // map | data
   const [showImport, setShowImport] = useState(false);
+  const [selectedMarker, setSelectedMarker] = useState(null);
+  const [geocoding, setGeocoding] = useState({}); // {[locId]: true} while in-flight
+
+  const handleGeocode = useCallback(async (l) => {
+    const addr = l.address || l.notes;
+    if (!addr || geocoding[l.id]) return;
+    setGeocoding(g => ({ ...g, [l.id]: true }));
+    const pt = await geocode(addr);
+    setGeocoding(g => { const n = { ...g }; delete n[l.id]; return n; });
+    if (pt) actions.update(l.id, { lat: pt.lat, lng: pt.lng });
+  }, [geocoding, actions]);
+
+  const handleGeocodeAll = useCallback(async () => {
+    const missing = locations.filter(l => l.lat == null && (l.address || l.notes));
+    for (const l of missing) {
+      await handleGeocode(l);
+    }
+  }, [locations, handleGeocode]);
 
   const sorted = useMemo(
     () =>

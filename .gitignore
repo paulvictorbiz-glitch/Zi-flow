@@ -1,6 +1,9 @@
 node_modules/
 dist/
 
+# Claude Code local state — not for the shared repo
+.claude/
+
 # Local secrets — keep these off any shared repo
 .env
 .env.local

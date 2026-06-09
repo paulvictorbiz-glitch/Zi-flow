@@ -1,0 +1,152 @@
+/* =========================================================
+   Analytics tab — cross-platform analytics dashboard styles.
+   Scoped under .analytics so nothing leaks into other pages.
+   ========================================================= */
+
+.analytics { display: block; }
+
+/* ── Platform connection chips (header) ─────────────────── */
+.analytics .conn-chips {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+}
+.analytics .conn-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-hard);
+  border-radius: 5px;
+  background: var(--bg-2);
+  font-family: var(--f-mono); font-size: 11px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+}
+.analytics .conn-chip.is-off { opacity: 0.55; }
+.analytics .conn-chip .glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 4px;
+  font-size: 11px; font-weight: 700;
+  color: #0a0e14;
+}
+.analytics .conn-chip .glyph.off {
+  color: var(--fg-mute); background: transparent;
+  border: 1px dashed var(--line-hard);
+}
+.analytics .conn-chip .c-label { color: var(--fg); }
+.analytics .conn-chip .c-foll { color: var(--fg-dim); }
+.analytics .conn-chip .c-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--fg-faint);
+}
+
+/* ── Connect / Disconnect buttons (owner-only, inside chips) */
+.analytics .conn-btn {
+  padding: 2px 7px;
+  font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.04em;
+  border: 1px solid var(--line-hard); border-radius: 3px;
+  background: var(--bg-3); color: var(--c-cyan);
+  cursor: pointer; line-height: 1.6;
+  transition: background .12s, border-color .12s;
+}
+.analytics .conn-btn:hover { background: var(--c-cyan-soft); border-color: var(--c-cyan); }
+.analytics .conn-btn--disconnect { color: var(--c-red); }
+.analytics .conn-btn--disconnect:hover { background: rgba(239,68,68,.08); border-color: var(--c-red); }
+
+/* ── KPI deltas ─────────────────────────────────────────── */
+.analytics .kpi .delta.up   { color: var(--c-green); }
+.analytics .kpi .delta.down { color: var(--c-red); }
+
+/* ── Per-platform tiles ─────────────────────────────────── */
+.analytics .plat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.analytics .plat-tile {
+  border: 1px solid var(--line-hard);
+  border-left-width: 3px;
+  border-radius: 5px;
+  background: var(--bg-2);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.analytics .plat-tile .pt-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.analytics .plat-tile .pt-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 5px;
+  font-size: 12px; font-weight: 700; color: #0a0e14;
+}
+.analytics .plat-tile .pt-name {
+  font-family: var(--f-mono); font-size: 12px; color: var(--fg);
+  letter-spacing: 0.04em;
+}
+.analytics .plat-tile .pt-tag {
+  margin-left: auto;
+  font-family: var(--f-mono); font-size: 9px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--fg-dim);
+  border: 1px dashed var(--line-hard);
+  border-radius: 3px; padding: 1px 5px;
+}
+.analytics .plat-tile .pt-big {
+  font-family: var(--f-serif); font-style: italic;
+  font-size: 26px; color: #f1f6ff; line-height: 1;
+}
+.analytics .plat-tile .pt-sub {
+  font-family: var(--f-mono); font-size: 10.5px; color: var(--fg-mute);
+}
+.analytics .plat-tile .pt-rows {
+  display: flex; flex-direction: column; gap: 4px;
+  border-top: 1px dashed var(--line); padding-top: 8px;
+}
+.analytics .plat-tile .pt-row {
+  display: flex; justify-content: space-between;
+  font-family: var(--f-mono); font-size: 11px;
+}
+.analytics .plat-tile .pt-row .k { color: var(--fg-mute); }
+.analytics .plat-tile .pt-row .v {
+  color: var(--fg); font-variant-numeric: tabular-nums;
+}
+
+/* ── Trend chart ────────────────────────────────────────── */
+.analytics .trend { width: 100%; }
+.analytics .trend svg { width: 100%; height: auto; display: block; }
+.analytics .trend-legend {
+  display: flex; gap: 16px; flex-wrap: wrap;
+  margin-top: 8px;
+  font-family: var(--f-mono); font-size: 10.5px; color: var(--fg-mute);
+}
+.analytics .trend-legend .lg {
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.analytics .trend-legend .lg .swatch {
+  width: 14px; height: 2px; border-radius: 2px;
+}
+
+/* ── Top content table extras ───────────────────────────── */
+.analytics .plat-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--f-mono); font-size: 11px;
+}
+.analytics .plat-badge .pb-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 4px;
+  font-size: 9px; font-weight: 700; color: #0a0e14;
+}
+.analytics .reel-cell .rc-id {
+  font-family: var(--f-mono); font-size: 11px; color: var(--c-cyan);
+}
+.analytics .reel-cell .rc-title {
+  font-family: var(--f-serif); font-style: italic;
+  font-size: 14px; color: var(--fg);
+}
+
+/* ── Cross-platform compare ─────────────────────────────── */
+.analytics .compare-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+@media (max-width: 1100px) {
+  .analytics .plat-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 700px) {
+  .analytics .plat-grid { grid-template-columns: 1fr; }
+}
