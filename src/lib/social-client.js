@@ -28,7 +28,8 @@
      • Comments:      GET /v21.0/{post-id}/comments  (reply via POST)
      • DMs:           GET /v21.0/{page-id}/conversations  (needs pages_messaging)
    YouTube  → YouTube Data API v3 (Analytics API for views/retention,
-              commentThreads for comments).
+              commentThreads for comments). Live helpers now exist:
+              fetchLiveYouTubeAnalytics()/fetchLiveYouTubeInbox() (via /fb).
    TikTok   → TikTok Display API / Business API (video.list, comment.list).
    ========================================================= */
 
@@ -48,22 +49,34 @@ export const PLATFORM_BY_KEY = Object.fromEntries(PLATFORMS.map(p => [p.key, p])
    module-level cache. Token material NEVER lives here or in Supabase —
    tokens stay on the Hetzner backend only. */
 
+// All platforms start as disconnected until syncLiveConnections() confirms
+// real token state from the backend. Showing any "connected" state here before
+// verification would display fabricated follower counts to the user.
 const CONNECTIONS_FALLBACK = [
-  { platform: "facebook",  connected: true,  account: "Samuel Paul Victor", handle: "@samuelpaulvictor", followers: 8420,  tokenKind: "page", status: "connected",    lastError: null, lastCheckedAt: null, note: "Live — Page token via api.footagebrain.com" },
-  { platform: "instagram", connected: false, account: null, handle: null, followers: 0, tokenKind: null, status: "disconnected", lastError: null, lastCheckedAt: null, note: "Connect via Facebook Business Login" },
-  { platform: "youtube",   connected: false, account: null, handle: null, followers: 0, tokenKind: null, status: "disconnected", lastError: null, lastCheckedAt: null, note: "Connect via Google OAuth (YouTube Data + Analytics API)" },
-  { platform: "tiktok",    connected: false, account: null, handle: null, followers: 0, tokenKind: null, status: "disconnected", lastError: null, lastCheckedAt: null, note: "Connect via TikTok Login Kit (requires app approval)" },
+  { platform: "facebook",  connected: false, account: null, handle: null, followers: 0, tokenKind: null, status: "initializing", lastError: null, lastCheckedAt: null, note: "Live — Page token via api.footagebrain.com" },
+  { platform: "instagram", connected: false, account: null, handle: null, followers: 0, tokenKind: null, status: "initializing", lastError: null, lastCheckedAt: null, note: "Connect via Facebook Business Login" },
+  { platform: "youtube",   connected: false, account: null, handle: null, followers: 0, tokenKind: null, status: "initializing", lastError: null, lastCheckedAt: null, note: "Connect via Google OAuth (YouTube Data + Analytics API)" },
+  { platform: "tiktok",    connected: true,  account: "paulvictortravels", handle: "@paulvictortravels", followers: 0, tokenKind: "rapidapi", status: "connected", lastError: null, lastCheckedAt: null, note: "RapidAPI tiktok-api23 — personal page via secUid" },
 ];
 
-/* OAuth connect/reconnect entry points (proxied through /fb to the Hetzner
-   backend). Reconnect re-runs the same flow as connect. These mirror the paths
-   the Analytics tab uses; each backend route returns {connected:false} and
-   guides the operator through the platform's OAuth until tokens are stored. */
+/* OAuth connect/reconnect entry points. Reconnect re-runs the same flow as
+   connect. Each backend route returns {connected:false} and guides the
+   operator through the platform's OAuth until tokens are stored.
+
+   NOTE: connect URLs point DIRECTLY at api.footagebrain.com, not the /fb proxy
+   on www. The OAuth CSRF state is a cookie the backend sets when the flow
+   starts and reads when Google redirects back to
+   api.footagebrain.com/api/auth/.../callback. If the flow STARTED on www (via
+   /fb) the cookie would be scoped to www and never reach the api callback —
+   producing "Invalid OAuth state (possible CSRF)". Starting on api keeps the
+   cookie same-host. (The data-fetch helpers below still use /fb — they're
+   same-origin XHR and don't rely on this cookie.) */
+const API_ORIGIN = "https://api.footagebrain.com";
 export const CONNECT_URLS = {
-  facebook:  "/fb/api/auth/facebook/login",
-  instagram: "/fb/api/auth/instagram",
-  youtube:   "/fb/api/auth/youtube",
-  tiktok:    "/fb/api/auth/tiktok",
+  facebook:  `${API_ORIGIN}/api/auth/facebook/login`,
+  instagram: `${API_ORIGIN}/api/auth/instagram`,
+  youtube:   `${API_ORIGIN}/api/auth/youtube`,
+  tiktok:    `${API_ORIGIN}/api/auth/tiktok`,
 };
 
 let _connectionsCache = null;
@@ -82,6 +95,7 @@ export function deriveStatus(conn) {
   if (!conn.connected) return "disconnected";
   if (conn.expiresAt) {
     const ms = new Date(conn.expiresAt).getTime() - Date.now();
+    if (Number.isFinite(ms) && ms <= 0) return "error";   // already expired
     if (Number.isFinite(ms) && ms < 7 * 864e5) return "expiring";
   }
   return "connected";
@@ -99,7 +113,7 @@ export async function fetchConnections(supabaseClient) {
       .maybeSingle();
     if (error || !data) return getConnections();
     const rows = Array.isArray(data.value) ? data.value : [];
-    _connectionsCache = rows.map(r => ({
+    _connectionsCache = rows.filter(r => PLATFORM_BY_KEY[r.platform]).map(r => ({
       platform:      r.platform,
       connected:     !!r.connected,
       account:       r.handle || null,
@@ -159,6 +173,30 @@ export async function runHealthChecks(supabaseClient) {
         c.lastError = "Couldn't reach the Facebook Page API — the Page token may have expired, or api.footagebrain.com is unreachable. Reconnect to refresh it.";
       }
       c.lastCheckedAt = nowIso;
+    } else if (c.platform === "youtube" && c.connected) {
+      const live = await fetchLiveYouTubeAnalytics();
+      if (live) {
+        c.status = "connected";
+        c.lastError = null;
+        const subs = Number(live.channel?.subscriberCount);
+        if (Number.isFinite(subs)) c.followers = subs;
+      } else {
+        c.status = "error";
+        c.lastError = "Couldn't reach the YouTube Data API — the Google OAuth token may have expired (Testing-mode tokens lapse after 7 days), or api.footagebrain.com is unreachable. Reconnect to refresh it.";
+      }
+      c.lastCheckedAt = nowIso;
+    } else if (c.platform === "instagram" && c.connected) {
+      const live = await fetchLiveInstagramAnalytics();
+      if (live) {
+        c.status = "connected";
+        c.lastError = null;
+        const fans = Number(live.account?.followers_count);
+        if (Number.isFinite(fans)) c.followers = fans;
+      } else {
+        c.status = "error";
+        c.lastError = "Couldn't reach the Instagram Graph API — reconnect Facebook to refresh the Page token, and confirm the IG account is a Business/Creator account linked to the Page.";
+      }
+      c.lastCheckedAt = nowIso;
     } else if (c.connected) {
       // Connected but no live probe wired yet — mark checked, keep status.
       c.lastCheckedAt = nowIso;
@@ -188,6 +226,112 @@ export async function runHealthChecks(supabaseClient) {
     // Non-fatal — the in-memory cache below still reflects the check.
   }
 
+  _connectionsCache = conns;
+  return conns;
+}
+
+/* Persist the UI-shape connection rows back to app_settings.social_connections
+   (the jsonb array the migration seeds). Best-effort: a write failure (e.g. RLS
+   for a non-owner viewer) is swallowed — the in-memory cache still reflects the
+   live truth for the current session. */
+async function persistConnections(supabaseClient, conns, nowIso) {
+  try {
+    const value = conns.map(c => ({
+      platform: c.platform,
+      connected: !!c.connected,
+      handle: c.handle,
+      followers: c.followers || 0,
+      token_kind: c.tokenKind || null,
+      expires_at: c.expiresAt || null,
+      connected_at: c.connectedAt || null,
+      status: c.status || (c.connected ? "connected" : "disconnected"),
+      last_error: c.lastError || null,
+      last_checked_at: c.lastCheckedAt || null,
+      note: c.note || "",
+    }));
+    await supabaseClient
+      .from("app_settings")
+      .upsert({ key: "social_connections", value, updated_at: nowIso }, { onConflict: "key" });
+  } catch { /* non-fatal */ }
+}
+
+/* Probe a platform's backend /status (token presence — does NOT call the
+   platform API, so a Google/FB outage can't cause a false demotion). Returns
+   the parsed JSON ({connected, channel?/page?}) or undefined on a transport
+   error (in which case callers leave the stored row unchanged — no flapping). */
+async function probeStatus(apiBase) {
+  try {
+    const r = await fetch(`${apiBase}/status`);
+    if (!r.ok) return undefined;
+    return await r.json();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reconcile stored connection state against the REAL backend, then persist.
+ *
+ * The source of truth is each platform's `/status` (token presence), NOT the
+ * stored `connected` flag — which can be stale or fabricated (e.g. a seeded
+ * "facebook connected:true / 8420 followers" row with no token). This:
+ *   · promotes a platform to connected with its real follower count once its
+ *     OAuth token lands (YouTube → subscriberCount), and
+ *   · demotes a platform with no backing token to "not connected" (clearing any
+ *     fake follower number) so the UI never shows an unverified count as real.
+ *
+ * Call on Analytics mount and after a connect completes.
+ * @returns {Promise<Array>} the reconciled connection rows (UI shape)
+ */
+export async function syncLiveConnections(supabaseClient) {
+  const nowIso = new Date().toISOString();
+  await fetchConnections(supabaseClient);
+  const conns = getConnections().map(c => ({ ...c }));
+
+  const apply = async (platform, apiBase, pick) => {
+    const row = conns.find(c => c.platform === platform);
+    if (!row) return;
+    const st = await probeStatus(apiBase);
+    if (st === undefined) return; // transport error — leave unchanged
+    if (st.connected) {
+      row.connected = true;
+      row.status = "connected";
+      row.lastError = null;
+      pick(row, st);
+    } else {
+      row.connected = false;
+      row.status = "disconnected";
+      row.followers = 0;
+      row.account = null;
+      row.handle = null;
+    }
+    row.lastCheckedAt = nowIso;
+  };
+
+  await apply("youtube", YT_API, (row, st) => {
+    const ch = st.channel || {};
+    row.handle = ch.handle || row.handle;
+    row.account = ch.title || row.account;
+    row.tokenKind = "oauth";
+    row.expiresAt = st.expires_at || null;
+    const subs = Number(ch.subscriberCount);
+    if (Number.isFinite(subs)) row.followers = subs;
+  });
+  await apply("facebook", FB_API, (row, st) => {
+    const pg = st.page || {};
+    const fans = Number(pg.followers_count ?? pg.fan_count);
+    if (Number.isFinite(fans)) row.followers = fans;
+  });
+  await apply("instagram", IG_API, (row, st) => {
+    const ac = st.account || {};
+    row.handle = ac.username ? "@" + ac.username : row.handle;
+    row.account = ac.username || row.account;
+    row.tokenKind = "page";
+    const fans = Number(ac.followers_count);
+    if (Number.isFinite(fans)) row.followers = fans;
+  });
+
+  await persistConnections(supabaseClient, conns, nowIso);
   _connectionsCache = conns;
   return conns;
 }
@@ -429,17 +573,51 @@ export function getInboxSummary() {
 }
 
 /**
- * Reply to a comment or DM. MOCK: resolves after a tick.
+ * Reply to a comment or DM. Routes to the real backend for Facebook + Instagram
+ * (the Page token posts the reply on the live platform); falls back to a local
+ * mock for platforms without a write endpoint yet (YouTube/TikTok) or if the
+ * network call fails, so the UI never dead-ends.
+ *
+ * Pass the whole `thread` (or at least {id, platform, kind}) so we can route.
+ * A bare string id still works and uses the mock.
  * @returns {Promise<{ok:true, reply:{author:string,text:string,minsAgo:number}}>}
  */
-export async function replyToThread(threadId, text) {
-  // TODO(real): route by platform —
-  //   FB/IG comment:  POST /v21.0/{comment-id}/comments  {message}
-  //   FB/IG DM:        POST /v21.0/{page-id}/messages
-  //   YouTube:         comments.insert (parentId = top-level comment)
-  //   TikTok:          comment reply endpoint
-  await new Promise(r => setTimeout(r, 250));
-  return { ok: true, reply: { author: "you", text, minsAgo: 0 } };
+export async function replyToThread(thread, text) {
+  const t = typeof thread === "object" && thread ? thread : { id: thread };
+  const platform = t.platform;
+  const mock = () => ({ ok: true, reply: { author: "you", text, minsAgo: 0 } });
+
+  try {
+    if (platform === "facebook") {
+      const r = await fetch(`${FB_API}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: t.id, message: text, kind: t.kind || "comment" }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok) return { ok: true, reply: { author: "you", text, minsAgo: 0, replyId: d.reply_id } };
+      return { ok: false, error: d.error || "Facebook reply failed" };
+    }
+    if (platform === "instagram") {
+      const r = await fetch(`${IG_API}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment_id: t.id, message: text }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok) return { ok: true, reply: { author: "you", text, minsAgo: 0, replyId: d.reply_id } };
+      return { ok: false, error: d.error || "Instagram reply failed" };
+    }
+  } catch {
+    // network/transport error — fall through to mock so the draft isn't lost
+    return mock();
+  }
+
+  // YouTube / TikTok replies are not yet wired to a backend endpoint.
+  // Return an explicit error so the UI surfaces a clear message instead of
+  // silently pretending the reply was posted.
+  const platformLabel = t.platform === "youtube" ? "YouTube" : "TikTok";
+  return { ok: false, error: `${platformLabel} replies are not yet supported — your reply was NOT sent. Use ${platformLabel} directly to reply.` };
 }
 
 /* ── Live data (real platform APIs) ─────────────────────────────────────────
@@ -475,6 +653,124 @@ export async function fetchLiveFacebookInbox() {
   } catch {
     return null;
   }
+}
+
+const YT_API = "/fb/api/auth/youtube";
+
+export async function fetchLiveYouTubeAnalytics() {
+  try {
+    const r = await fetch(`${YT_API}/insights`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && d.connected ? d : null; // {channel:{title,subscriberCount}, analytics[], videos[]}
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchLiveYouTubeInbox() {
+  try {
+    const r = await fetch(`${YT_API}/comments`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && d.connected ? (d.threads || []) : null; // commentThreads normalized to inbox shape
+  } catch {
+    return null;
+  }
+}
+
+/* Instagram rides the same Facebook Page token (Business/Creator IG linked to
+   the Page). The backend resolves the IG Business Account ID from the Page and
+   reads insights via the Instagram Graph API — no separate OAuth. Returns null
+   until the Page is connected AND re-authorized with instagram_manage_insights. */
+const IG_API = "/fb/api/auth/instagram";
+
+/* TikTok goes through the Hetzner backend via the /fb proxy — same-origin XHR,
+   and (critically) the RapidAPI key stays SERVER-SIDE on Hetzner. Never call
+   RapidAPI directly from the browser: the key would ship in the public bundle
+   and anyone could run up the bill. */
+const TIKTOK_API = "/fb/api/auth/tiktok";
+
+export async function fetchLiveInstagramAnalytics() {
+  try {
+    const r = await fetch(`${IG_API}/insights`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && d.connected ? d : null; // {account:{username,followers_count,media_count}, insights[]}
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchInstagramMedia() {
+  try {
+    const r = await fetch(`${IG_API}/media`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && d.connected ? (d.media || []) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchInstagramMediaDetail(mediaId) {
+  try {
+    const r = await fetch(`${IG_API}/media/${encodeURIComponent(mediaId)}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && d.connected ? (d.metrics || null) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchLiveInstagramInbox() {
+  try {
+    const r = await fetch(`${IG_API}/comments`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && d.connected ? (d.threads || []) : null; // normalized inbox threads (comments + DMs)
+  } catch {
+    return null;
+  }
+}
+
+/* ── TikTok analytics (via Hetzner /fb proxy → RapidAPI tiktok-api23) ────────
+   The RapidAPI key lives ONLY in the Hetzner backend env. The backend calls
+   RapidAPI server-side and returns the already-aggregated shape below, so the
+   key never reaches the browser bundle. Returns null until the backend route
+   (/api/auth/tiktok/analytics) is live. */
+export async function fetchLiveTikTokAnalytics() {
+  try {
+    const r = await fetch(`${TIKTOK_API}/analytics`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d || d.connected === false) return null;
+    const videos = d.videos || d.itemList || [];
+    // Prefer backend-computed totals; fall back to computing from videos.
+    const totals = d.totals || videos.reduce(
+      (acc, v) => ({
+        views:    acc.views    + (v.stats?.playCount    || 0),
+        likes:    acc.likes    + (v.stats?.diggCount    || 0),
+        comments: acc.comments + (v.stats?.commentCount || 0),
+        shares:   acc.shares   + (v.stats?.shareCount   || 0),
+      }),
+      { views: 0, likes: 0, comments: 0, shares: 0 }
+    );
+    return {
+      platform: "tiktok",
+      videos,
+      totals,
+      videoCount: d.videoCount ?? videos.length,
+      topVideo: d.topVideo || [...videos].sort(
+        (a, b) => (b.stats?.playCount || 0) - (a.stats?.playCount || 0)
+      )[0] || null,
+    };
+  } catch { return null; }
+}
+
+export async function fetchLiveTikTokInbox() {
+  return []; // comments not available via this RapidAPI endpoint
 }
 
 /* ── util ───────────────────────────────────────────────────────────────── */

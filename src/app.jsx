@@ -28,6 +28,7 @@ import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import { RolesAdmin } from "./pages/roles-admin.jsx";
 import { Inbox } from "./pages/inbox.jsx";
+import { TeamChat } from "./pages/team-chat.jsx";
 import { LosslessCut } from "./pages/lossless.jsx";
 import { Monitor } from "./pages/monitor.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
@@ -35,7 +36,7 @@ import { getInboxSummary } from "./lib/social-client.js";
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "export", "generate", "monitor"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "monitor"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -51,6 +52,7 @@ const TABS = [
   { key: "export",    label: "Export" },
   { key: "analytics", label: "Analytics" },
   { key: "inbox",     label: "Inbox" },
+  { key: "team",      label: "Team" },
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate" },
@@ -65,8 +67,8 @@ function AppShell() {
   const { peopleById, peopleList } = useRoster();
   const { totalUnread } = useNotifications();
   const { canView, setEffectiveRole, setEffectivePersonId } = usePermissions();
-  const [view, setView]                 = useState("pipeline");
-  const [pipelineMode, setPipelineMode] = useState("board");   // board | list | calendar
+  const [view, setView]                 = useState(() => localStorage.getItem("wb_view") || "pipeline");
+  const [pipelineMode, setPipelineMode] = useState(() => localStorage.getItem("wb_pipeline_mode") || "board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
@@ -82,29 +84,38 @@ function AppShell() {
     try { setInboxUnread(getInboxSummary()?.unreplied || 0); } catch { setInboxUnread(0); }
   }, [navOpen, view]);
 
-  /* "Needs you" badge — count of non-archived reels currently
-     assigned to the signed-in person that still need work (any
-     stage before posted). Stage transitions auto-reassign owner
-     per STAGE_ROLE, so this stays accurate without manual updates. */
+  /* "Needs you" badge — reels actually waiting on the signed-in person:
+     · their own pre-posted reels, EXCEPT ones sitting in review (the
+       submitter can't act while the reviewer has it), plus
+     · for owner/reviewer roles, every reel currently in review — that
+       queue is theirs to clear. */
   const needsYouCount = useMemo(() => {
     if (!me) return 0;
-    return reels.filter(r =>
-      !r.archivedAt &&
-      r.owner === me.id &&
-      r.stage !== "posted"
-    ).length;
+    const reviewsAreMine = me.role === "owner" || me.role === "reviewer";
+    return reels.filter(r => {
+      if (r.archivedAt) return false;
+      if (r.stage === "review") return reviewsAreMine;
+      return r.owner === me.id && r.stage !== "posted";
+    }).length;
   }, [reels, me]);
 
-  /* Global search — filter reels by title or display_number */
+  /* Global search — filter reels by title, number, logline, or the shot
+     plan (so a clip filename in the script finds its reel too). */
   const searchResults = useMemo(() => {
     const q = globalSearch.trim().toLowerCase();
     if (!q) return [];
     return reels
       .filter(r => !r.archivedAt &&
         ((r.title || "").toLowerCase().includes(q) ||
-         String(r.display_number || r.id || "").toLowerCase().includes(q)))
+         String(r.display_number || r.id || "").toLowerCase().includes(q) ||
+         (r.logline || "").toLowerCase().includes(q) ||
+         (r.script || "").toLowerCase().includes(q)))
       .slice(0, 8);
   }, [globalSearch, reels]);
+
+  // Persist active tab and pipeline sub-mode across reloads
+  useEffect(() => { if (view !== "detail") localStorage.setItem("wb_view", view); }, [view]);
+  useEffect(() => { localStorage.setItem("wb_pipeline_mode", pipelineMode); }, [pipelineMode]);
 
   // Re-sync the perspective default if `me` arrives after first render
   useEffect(() => { if (me) setRole(me.id); }, [me?.id]);
@@ -432,6 +443,7 @@ function AppShell() {
       {view === "export"    && <ExportView onOpen={openReel} />}
       {view === "analytics" && <Analytics />}
       {view === "inbox"     && <Inbox />}
+
       {view === "locations" && <Locations />}
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
@@ -440,33 +452,58 @@ function AppShell() {
       {view === "monitor"   && isOwner && <Monitor />}
       {view === "settings"  && isOwner && <RolesAdmin onBack={() => setView("pipeline")} />}
 
+      {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}
+      <TeamChat active={view === "team"} />
+
       {/* Global create FAB */}
       <CreateFab />
     </div>
   );
 }
 
+class AppErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{ padding: "40px 32px", fontFamily: "var(--f-mono)", color: "var(--fg)" }}>
+        <h2 style={{ color: "var(--c-red)", marginBottom: 12 }}>Something went wrong</h2>
+        <p style={{ color: "var(--fg-dim)", marginBottom: 20 }}>{this.state.error.message}</p>
+        <button
+          onClick={() => { this.setState({ error: null }); window.location.reload(); }}
+          style={{ padding: "6px 14px", border: "1px solid var(--line-hard)", borderRadius: 4, background: "var(--bg-2)", color: "var(--fg)", cursor: "pointer" }}
+        >
+          Reload dashboard
+        </button>
+      </div>
+    );
+  }
+}
+
 function App() {
   return (
-    <TimeProvider>
-      <AuthProvider>
-        <AuthGate>
-          <IdentityGate>
-            <RosterProvider>
-              <WorkflowProvider>
-                <LocationsProvider>
-                  <NotificationsProvider>
-                    <PermissionsProvider>
-                      <AppShell />
-                    </PermissionsProvider>
-                  </NotificationsProvider>
-                </LocationsProvider>
-              </WorkflowProvider>
-            </RosterProvider>
-          </IdentityGate>
-        </AuthGate>
-      </AuthProvider>
-    </TimeProvider>
+    <AppErrorBoundary>
+      <TimeProvider>
+        <AuthProvider>
+          <AuthGate>
+            <IdentityGate>
+              <RosterProvider>
+                <WorkflowProvider>
+                  <LocationsProvider>
+                    <NotificationsProvider>
+                      <PermissionsProvider>
+                        <AppShell />
+                      </PermissionsProvider>
+                    </NotificationsProvider>
+                  </LocationsProvider>
+                </WorkflowProvider>
+              </RosterProvider>
+            </IdentityGate>
+          </AuthGate>
+        </AuthProvider>
+      </TimeProvider>
+    </AppErrorBoundary>
   );
 }
 
