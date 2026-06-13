@@ -15,28 +15,9 @@ import { DPill } from "../components/components.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
+import { NOMINAL_POLL_SEC, GAP_CAP_MS, ONLINE_WINDOW_MS, SESSION_GAP_MIN, startOfDayLocal, analyzeDay, fmtDuration, fmtClock, loadDayRows } from "../lib/capcut-utils.js";
 
-const NOMINAL_POLL_SEC = 15;          // agent sample rate — used only for the 7-day bar estimate
-const GAP_CAP_MS = 90 * 1000;         // a sample represents at most 90s (caps breaks/missed beats)
-const ONLINE_WINDOW_MS = 45 * 1000;   // last heartbeat within 45s => CapCut open right now
-const SESSION_GAP_MIN = 4;            // gap > 4 min between samples => new session
 const REFRESH_MS = 12 * 1000;
-
-function startOfDayLocal(offsetDays = 0, base) {
-  const d = base ? new Date(base) : new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + offsetDays);
-  return d;
-}
-function fmtDuration(min) {
-  const m = Math.round(min);
-  if (m <= 0) return "0m";
-  if (m < 60) return `${m}m`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
-}
-function fmtClock(ts) {
-  return new Date(ts).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
 
 // ---- queries -------------------------------------------------------------
 async function loadRecent(worker) {
@@ -46,24 +27,6 @@ async function loadRecent(worker) {
     .eq("worker", worker).order("ts", { ascending: false }).limit(40);
   if (error) { console.error("capcut recent:", error.message); return []; }
   return data || [];
-}
-// All of a day's rows (ascending), paginated past the 1000-row read cap.
-async function loadDayRows(worker, dayStart) {
-  const dayEnd = startOfDayLocal(1, dayStart);
-  const all = []; let from = 0; const page = 1000;
-  for (let guard = 0; guard < 25; guard++) {
-    const { data, error } = await supabase
-      .from("capcut_activity")
-      .select("ts, running, focused, project_title")
-      .eq("worker", worker)
-      .gte("ts", dayStart.toISOString()).lt("ts", dayEnd.toISOString())
-      .order("ts", { ascending: true }).range(from, from + page - 1);
-    if (error) { console.error("capcut day:", error.message); break; }
-    all.push(...(data || []));
-    if (!data || data.length < page) break;
-    from += page;
-  }
-  return all;
 }
 async function loadDailyMinutes(worker, days = 7, baseDate) {
   const reqs = [];
@@ -112,46 +75,6 @@ function downloadAgentFiles(personId) {
   }, 300);
 }
 
-// ---- derivation: everything from timestamp gaps --------------------------
-function analyzeDay(rowsAsc, nowMs) {
-  const n = rowsAsc.length;
-  const span = rowsAsc.map((r, i) => {
-    const t = new Date(r.ts).getTime();
-    const next = i + 1 < n ? new Date(rowsAsc[i + 1].ts).getTime() : nowMs;
-    return Math.min(Math.max(next - t, 0), GAP_CAP_MS);
-  });
-  let total = 0, active = 0;
-  const proj = {}, hourly = Array(24).fill(0);
-  for (let i = 0; i < n; i++) {
-    total += span[i];
-    if (rowsAsc[i].focused) active += span[i];
-    const p = rowsAsc[i].project_title;
-    if (p) proj[p] = (proj[p] || 0) + span[i];
-    hourly[new Date(rowsAsc[i].ts).getHours()] += span[i];
-  }
-  // sessions: split on a time gap OR a project change
-  const sessions = []; let cur = null;
-  for (let i = 0; i < n; i++) {
-    const r = rowsAsc[i], t = new Date(r.ts).getTime(), p = r.project_title || null;
-    const gap = cur ? t - cur.lastT : Infinity;
-    const projChanged = cur && p && cur.project && p !== cur.project;
-    if (cur && gap <= SESSION_GAP_MIN * 60000 && !projChanged) {
-      cur.lastT = t; cur.end = r.ts; cur.ms += span[i]; if (r.focused) cur.activeMs += span[i];
-      if (p) { cur.projects[p] = (cur.projects[p] || 0) + span[i]; if (!cur.project) cur.project = p; }
-    } else {
-      if (cur) sessions.push(cur);
-      cur = { start: r.ts, end: r.ts, lastT: t, ms: span[i], activeMs: r.focused ? span[i] : 0, projects: {}, project: p };
-      if (p) cur.projects[p] = span[i];
-    }
-  }
-  if (cur) sessions.push(cur);
-  return {
-    totalMin: total / 60000, activeMin: active / 60000, idleMin: Math.max(0, total - active) / 60000,
-    sessions: sessions.reverse(),
-    projects: Object.entries(proj).map(([k, v]) => [k, v / 60000]).sort((a, b) => b[1] - a[1]),
-    hourly: hourly.map(ms => ms / 60000),
-  };
-}
 function primaryProject(projects) {
   const e = Object.entries(projects);
   return e.length ? e.sort((a, b) => b[1] - a[1])[0][0] : null;
@@ -202,7 +125,7 @@ export function Activity({ workerId = "paul" }) {
 
   const refresh = async () => {
     const [r, d, dr] = await Promise.all([
-      loadRecent(worker), loadDailyMinutes(worker, 7, weekBase), loadDayRows(worker, selRef.current),
+      loadRecent(worker), loadDailyMinutes(worker, 7, weekBase), loadDayRows(worker, selRef.current, supabase),
     ]);
     setRecent(r); setDaily(d); setDayRows(dr); setLoading(false); setUpdatedAt(new Date());
   };
@@ -221,7 +144,7 @@ export function Activity({ workerId = "paul" }) {
     setSelectedDay(last);
   }, [weekOffset]);
 
-  useEffect(() => { loadDayRows(worker, selectedDay).then(setDayRows); }, [worker, selectedDay]);
+  useEffect(() => { loadDayRows(worker, selectedDay, supabase).then(setDayRows); }, [worker, selectedDay]);
 
   const status = useMemo(() => liveStatus(recent), [recent]);
   const curProject = (recent[0] && Date.now() - new Date(recent[0].ts).getTime() <= ONLINE_WINDOW_MS)

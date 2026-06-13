@@ -23,7 +23,7 @@ import { Activity } from "./pages/activity.jsx";
 import { Resources } from "./pages/resources.jsx";
 import { VideoEditor } from "./pages/editor.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
-import { NotificationsProvider, useNotifications } from "./components/notifications.jsx";
+import { NotificationsProvider } from "./components/notifications.jsx";
 import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import { RolesAdmin } from "./pages/roles-admin.jsx";
@@ -45,7 +45,6 @@ const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "cove
 const TABS = [
   { key: "mywork",    label: "My work" },
   { key: "pipeline",  label: "Pipeline" },
-  { key: "detail",    label: "Reel detail" },
   { key: "footage",   label: "Footage" },
   { key: "editor",    label: "Editor" },
   { key: "lossless",  label: "Lossless" },
@@ -61,13 +60,24 @@ const TABS = [
   { key: "monitor",   label: "Monitor" },
 ];
 
+const DEFAULT_TAB_GROUPS = [
+  { key: "mywork_group",    label: "My Work",                 tabs: ["mywork"] },
+  { key: "pipeline_group",  label: "Pipeline",                tabs: ["pipeline", "generate"] },
+  { key: "footage_group",   label: "Footage",                 tabs: ["footage", "coverage", "editor", "lossless", "export"] },
+  { key: "analytics_group", label: "Analytics & Monitoring",  tabs: ["analytics", "monitor"] },
+  { key: "comms_group",     label: "Communications",          tabs: ["inbox", "team"] },
+  { key: "activity_group",  label: "Activity",                tabs: ["activity"] },
+  { key: "locations_group", label: "Locations",               tabs: ["locations"] },
+  { key: "resources_group", label: "Resources",               tabs: ["resources"] },
+];
+
 function AppShell() {
   const { person: me, signOut } = useAuth();
   const { reels } = useWorkflow();
   const { peopleById, peopleList } = useRoster();
-  const { totalUnread } = useNotifications();
   const { canView, setEffectiveRole, setEffectivePersonId } = usePermissions();
   const [view, setView]                 = useState(() => localStorage.getItem("wb_view") || "pipeline");
+  const [viewStack, setViewStack]       = useState([]);
   const [pipelineMode, setPipelineMode] = useState(() => localStorage.getItem("wb_pipeline_mode") || "board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
@@ -83,6 +93,24 @@ function AppShell() {
   useEffect(() => {
     try { setInboxUnread(getInboxSummary()?.unreplied || 0); } catch { setInboxUnread(0); }
   }, [navOpen, view]);
+
+  const [groupOrder, setGroupOrder] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("nav_group_order") || "null") || DEFAULT_TAB_GROUPS.map(g => g.key); }
+    catch { return DEFAULT_TAB_GROUPS.map(g => g.key); }
+  });
+  const [groupsOpen, setGroupsOpen] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("nav_groups_open") || "{}"); }
+    catch { return {}; }
+  });
+  const [dragGroupKey, setDragGroupKey] = useState(null);
+
+  useEffect(() => { localStorage.setItem("nav_group_order", JSON.stringify(groupOrder)); }, [groupOrder]);
+  useEffect(() => { localStorage.setItem("nav_groups_open", JSON.stringify(groupsOpen)); }, [groupsOpen]);
+
+  const sortedGroups = useMemo(() => {
+    const map = Object.fromEntries(DEFAULT_TAB_GROUPS.map(g => [g.key, g]));
+    return groupOrder.map(k => map[k]).filter(Boolean);
+  }, [groupOrder]);
 
   /* "Needs you" badge — reels actually waiting on the signed-in person:
      · their own pre-posted reels, EXCEPT ones sitting in review (the
@@ -158,8 +186,12 @@ function AppShell() {
   };
 
   /* Expose openReel so the FAB's create-reel flow can deep-link
-     straight into the new reel after dispatch. */
-  useEffect(() => { window.__openReel = openReel; });
+     straight into the new reel after dispatch. __navigate lets deep
+     links (e.g. a reel card's location coords) switch top-level views. */
+  useEffect(() => {
+    window.__openReel = openReel;
+    window.__navigate = (key) => { if (canView(key)) goView(key); };
+  });
 
   /* Close the nav drawer on Escape (only while it's open). */
   useEffect(() => {
@@ -169,8 +201,19 @@ function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [navOpen]);
 
-  /* Navigate from the drawer: switch view and close the drawer. */
-  const goView = (key) => { setView(key); setNavOpen(false); };
+  /* Navigate from the drawer: push current view onto stack, switch, close drawer. */
+  const goView = (key) => {
+    setViewStack(prev => [...prev.slice(-19), view]);
+    setView(key);
+    setNavOpen(false);
+  };
+
+  const goBack = () => {
+    if (viewStack.length === 0) return;
+    const prev = viewStack[viewStack.length - 1];
+    setViewStack(s => s.slice(0, -1));
+    setView(prev);
+  };
 
   /* Prevent Backspace from navigating the browser back when the
      user isn't typing in a field. Some browsers / embedded
@@ -199,9 +242,6 @@ function AppShell() {
   // Role key the rest of the app (MyWork, permissions) needs.
   const viewingRoleKey = shownPerson?.role || "skilled";
 
-  /* Tabs visible to the active perspective (hidden ones are removed). */
-  const visibleTabs = TABS.filter(t => canView(t.key));
-
   return (
     <div className="app">
       {/* Top bar */}
@@ -219,6 +259,23 @@ function AppShell() {
           <span className="nav-toggle-label">Menu</span>
           {(needsYouCount > 0 || inboxUnread > 0) && <span className="nav-toggle-dot" />}
         </button>
+        {viewStack.length > 0 && (
+          <button
+            onClick={goBack}
+            aria-label="Go back"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--fg-dim)",
+              cursor: "pointer",
+              fontSize: 18,
+              padding: "0 8px",
+              lineHeight: 1,
+              flexShrink: 0,
+            }}
+            title="Back"
+          >‹</button>
+        )}
         <div className="brand">
           <span className="dot" />
           <span>Workflow</span>
@@ -359,17 +416,6 @@ function AppShell() {
               </ul>
             )}
           </div>
-          {/* Comments bell — total unread human comments across
-              every non-archived reel for the signed-in user.
-              Clicking opens the My work tab so you can drill in. */}
-          <DPill tone={totalUnread > 0 ? "amber" : undefined}
-                 active={totalUnread > 0}
-                 onClick={() => setView("mywork")}
-                 title={totalUnread + " unread comment" + (totalUnread === 1 ? "" : "s")}>
-            <span style={{ marginRight: 6 }}>🔔</span>
-            {totalUnread > 0 ? totalUnread + " unread" : "No new comments"}
-          </DPill>
-
         </div>
       </div>
 
@@ -391,25 +437,80 @@ function AppShell() {
                   onClick={() => setNavOpen(false)}>✕</button>
         </div>
         <div className="nav-drawer-list">
-          {visibleTabs.map((t, i) => (
-            <button key={t.key}
-                    className={"nav-item " + (view === t.key ? "is-active" : "")}
-                    onClick={() => goView(t.key)}
-                    aria-current={view === t.key ? "page" : undefined}>
-              <span className="nav-item-n">{String(i + 1).padStart(2, "0")}</span>
-              <span className="nav-item-label">{t.label}</span>
-              {t.key === "mywork" && needsYouCount > 0 && (
-                <span className="needs-badge" title={needsYouCount + " reel" + (needsYouCount === 1 ? "" : "s") + " waiting on you"}>
-                  {needsYouCount}
-                </span>
-              )}
-              {t.key === "inbox" && inboxUnread > 0 && (
-                <span className="needs-badge" title={inboxUnread + " unreplied"}>
-                  {inboxUnread}
-                </span>
-              )}
-            </button>
-          ))}
+          {sortedGroups.map((group) => {
+            const groupTabs = group.tabs
+              .map(k => TABS.find(t => t.key === k))
+              .filter(t => t && canView(t.key));
+            if (groupTabs.length === 0) return null;
+
+            const isSingle = groupTabs.length === 1;
+            const isOpen = isSingle || groupsOpen[group.key] !== false;
+            const isActive = groupTabs.some(t => t.key === view);
+
+            const toggleGroup = () => {
+              if (isSingle) return;
+              setGroupsOpen(prev => ({ ...prev, [group.key]: !isOpen }));
+            };
+
+            return (
+              <div
+                key={group.key}
+                draggable
+                onDragStart={() => setDragGroupKey(group.key)}
+                onDragOver={e => { e.preventDefault(); }}
+                onDrop={() => {
+                  if (!dragGroupKey || dragGroupKey === group.key) return;
+                  setGroupOrder(prev => {
+                    const arr = [...prev];
+                    const fromIdx = arr.indexOf(dragGroupKey);
+                    const toIdx = arr.indexOf(group.key);
+                    if (fromIdx < 0 || toIdx < 0) return prev;
+                    arr.splice(fromIdx, 1);
+                    arr.splice(toIdx, 0, dragGroupKey);
+                    return arr;
+                  });
+                  setDragGroupKey(null);
+                }}
+                onDragEnd={() => setDragGroupKey(null)}
+                style={{ marginBottom: isSingle ? 0 : 2 }}
+              >
+                {!isSingle && (
+                  <button
+                    className={"nav-group-header" + (isActive ? " is-active" : "")}
+                    onClick={toggleGroup}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      width: "100%", background: "none", border: "none",
+                      color: isActive ? "var(--c-cyan)" : "var(--fg-dim)",
+                      fontFamily: "var(--f-mono)", fontSize: 10.5,
+                      textTransform: "uppercase", letterSpacing: 0.8,
+                      padding: "8px 14px 4px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ opacity: 0.4, fontSize: 11, cursor: "grab" }}>⠿</span>
+                    <span style={{ flex: 1, textAlign: "left" }}>{group.label}</span>
+                    <span style={{ opacity: 0.5, fontSize: 10 }}>{isOpen ? "▾" : "▸"}</span>
+                  </button>
+                )}
+                {(isSingle || isOpen) && groupTabs.map((t) => (
+                  <button key={t.key}
+                          className={"nav-item " + (view === t.key ? "is-active" : "")}
+                          onClick={() => goView(t.key)}
+                          style={isSingle ? {} : { paddingLeft: 28 }}
+                          aria-current={view === t.key ? "page" : undefined}>
+                    <span className="nav-item-label">{t.label}</span>
+                    {t.key === "mywork" && needsYouCount > 0 && (
+                      <span className="needs-badge">{needsYouCount}</span>
+                    )}
+                    {t.key === "inbox" && inboxUnread > 0 && (
+                      <span className="needs-badge">{inboxUnread}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </div>
         <div className="nav-drawer-foot">
           <span className="nav-live"><span className="nav-live-dot" />realtime · live</span>
@@ -431,12 +532,12 @@ function AppShell() {
       )}
 
       {/* Body */}
-      {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} onNavigate={setView} />}
+      {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} onNavigate={goView} />}
       {view === "pipeline"  && pipelineMode === "board"    && <Pipeline    onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
-      {view === "detail"    && <ReelDetail reel={selectedReel} onBack={() => setView("pipeline")} />}
+      {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} />}
       {view === "footage"   && <FootageLibrary onOpen={openReel} />}
       {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
       {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}
@@ -450,7 +551,7 @@ function AppShell() {
       {view === "activity"  && <Activity />}
       {view === "resources" && <Resources />}
       {view === "monitor"   && isOwner && <Monitor />}
-      {view === "settings"  && isOwner && <RolesAdmin onBack={() => setView("pipeline")} />}
+      {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
 
       {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}
       <TeamChat active={view === "team"} />

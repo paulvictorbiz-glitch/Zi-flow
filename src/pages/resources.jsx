@@ -1,7 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "../lib/supabase-client.js";
+import { useAuth } from "../auth.jsx";
 
 export function Resources() {
+  const { person } = useAuth();
+  const isOwner = person?.role === "owner";
+
   const [columns, setColumns] = useState([]); // sorted by col_index
   const [rows, setRows]       = useState([]); // sorted by row_index
   const [cells, setCells]     = useState({}); // { rowId_colKey: value }
@@ -10,6 +14,8 @@ export function Resources() {
   const [editingValue, setEditingValue] = useState("");
   const [newColLabel, setNewColLabel] = useState("");
   const [addingCol, setAddingCol] = useState(false);
+
+  const visibleRows = useMemo(() => isOwner ? rows : rows.filter(r => !r.hidden), [rows, isOwner]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -42,6 +48,12 @@ export function Resources() {
       Object.keys(next).forEach(k => { if (k.startsWith(id)) delete next[k]; });
       return next;
     });
+  };
+
+  const toggleHideRow = async (row) => {
+    const next = !row.hidden;
+    setRows(prev => prev.map(r => r.id === row.id ? { ...r, hidden: next } : r));
+    await supabase.from("resource_rows").update({ hidden: next }).eq("id", row.id);
   };
 
   const addColumn = async () => {
@@ -77,7 +89,6 @@ export function Resources() {
     const cellKey = rowId + "_" + colKey;
     setCells(prev => ({ ...prev, [cellKey]: value }));
     setEditingCell(null);
-    // Upsert the cell
     await supabase.from("resource_cells").upsert({ row_id: rowId, col_key: colKey, value }, { onConflict: "row_id,col_key" });
   };
 
@@ -133,21 +144,41 @@ export function Resources() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {visibleRows.length === 0 && (
               <tr>
                 <td colSpan={columns.length + 1} style={{ padding: "32px 18px", color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 12 }}>
                   No rows yet. Click "+ Add row" to start.
                 </td>
               </tr>
             )}
-            {rows.map((row, ri) => (
-              <tr key={row.id} className="exp-row">
+            {visibleRows.map((row, ri) => (
+              <tr
+                key={row.id}
+                className="exp-row"
+                style={row.hidden ? { opacity: 0.45, filter: "grayscale(0.4)" } : undefined}
+              >
                 <td>
-                  <button
-                    onClick={() => { if (window.confirm("Delete this row?")) deleteRow(row.id); }}
-                    style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 12, padding: "0 4px" }}
-                    title="Delete row"
-                  >×</button>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <button
+                      onClick={() => { if (window.confirm("Delete this row?")) deleteRow(row.id); }}
+                      style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 12, padding: "0 4px" }}
+                      title="Delete row"
+                    >×</button>
+                    {isOwner && (
+                      <button
+                        onClick={() => toggleHideRow(row)}
+                        title={row.hidden ? "Show this row to all users" : "Hide this row from non-owners"}
+                        style={{
+                          background: "none", border: "none",
+                          color: row.hidden ? "var(--fg-dim)" : "var(--fg)",
+                          cursor: "pointer", fontSize: 13, padding: "2px 4px",
+                          opacity: row.hidden ? 0.5 : 1,
+                        }}
+                      >
+                        {row.hidden ? "🙈" : "👁"}
+                      </button>
+                    )}
+                  </span>
                 </td>
                 {columns.map(col => {
                   const isEditing = editingCell?.rowId === row.id && editingCell?.colKey === col.col_key;

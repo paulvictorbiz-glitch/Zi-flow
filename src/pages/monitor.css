@@ -150,3 +150,100 @@
   color: var(--fg-mute); font-size: 16px; line-height: 1; padding: 0 0 0 8px;
 }
 .mon-toast-close:hover { color: var(--fg); }
+
+/* ── Social accounts / token health section ──────────────── */
+.mon-social-wrap { display: flex; flex-direction: column; gap: 0; }
+
+.mon-social-header-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line-hard);
+  margin-bottom: 4px;
+}
+.mon-social-col-labels {
+  display: grid;
+  grid-template-columns: 200px 120px 220px 130px 100px;
+  font-family: var(--f-mono); font-size: 10px; color: var(--fg-faint);
+  text-transform: uppercase; letter-spacing: .04em; gap: 10px;
+}
+.mon-social-actions { display: flex; align-items: center; gap: 8px; }
+
+.mon-social-row {
+  display: grid;
+  grid-template-columns: 200px 120px 220px 130px 100px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mon-social-row:last-child { border-bottom: none; }
+
+.mon-social-platform { display: flex; align-items: center; gap: 8px; }
+.mon-social-glyph {
+  width: 22px; height: 22px; border-radius: 4px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #0a0e14;
+}
+.mon-social-info { display: flex; flex-direction: column; gap: 1px; }
+.mon-social-name  { font-family: var(--f-mono); font-size: 11.5px; color: var(--fg); font-weight: 500; }
+.mon-social-handle { font-family: var(--f-mono); font-size: 10px; color: var(--fg-dim); }
+
+.mon-social-status { display: flex; align-items: center; gap: 6px; font-family: var(--f-mono); font-size: 11px; }
+.mon-social-expiry { font-family: var(--f-mono); font-size: 10.5px; }
+.mon-social-checked { font-family: var(--f-mono); font-size: 10px; color: var(--fg-faint); }
+
+.mon-reconnect-btn {
+  padding: 3px 8px; font-size: 10px; font-family: var(--f-mono);
+  letter-spacing: 0.05em; text-transform: uppercase;
+  border: 1px solid var(--c-amber, #f5a524); border-radius: 3px;
+  background: rgba(245,165,36,.08); color: var(--c-amber, #f5a524);
+  cursor: pointer; white-space: nowrap;
+}
+.mon-reconnect-btn:hover { background: rgba(245,165,36,.18); }
+
+/* ── Memory donut chart ─────────────────────────────────── */
+.mon-mem-donut-wrap {
+  display: flex; align-items: center; gap: 16px;
+  padding: 6px 0 10px;
+}
+.mon-mem-donut {
+  width: 100px; height: 100px; flex-shrink: 0;
+}
+.mon-donut-val {
+  font-family: var(--f-mono); font-size: 16px; font-weight: 700;
+  fill: var(--fg);
+}
+.mon-donut-sub {
+  font-family: var(--f-mono); font-size: 8px;
+  fill: var(--fg-faint);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.mon-mem-legend {
+  display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0;
+}
+.mon-mem-legend-row {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--f-mono); font-size: 10.5px;
+}
+.mon-mem-legend-row--other { opacity: 0.55; }
+.mon-mem-legend-dot {
+  width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
+}
+.mon-mem-legend-name {
+  color: var(--fg-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mon-mem-legend-val {
+  color: var(--fg); font-weight: 500; white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .mon-social-col-labels,
+  .mon-social-row {
+    grid-template-columns: 1fr 80px !important;
+    overflow: hidden;
+  }
+  .mon-social-col-labels > *:not(:first-child):not(:last-child),
+  .mon-social-row > *:not(:first-child):not(:last-child) {
+    display: none;
+  }
+}

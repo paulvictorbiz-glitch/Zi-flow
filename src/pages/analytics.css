@@ -150,3 +150,12 @@
 @media (max-width: 700px) {
   .analytics .plat-grid { grid-template-columns: 1fr; }
 }
+
+@media (max-width: 600px) {
+  .analytics .content-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .analytics .plat-grid { grid-template-columns: 1fr !important; }
+}

@@ -13,6 +13,20 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { DPill } from "../components/components.jsx";
 import { getFootageBrainCoverageTree } from "../lib/footage-brain-client.js";
+import { FootageStatus } from "./footage-status.jsx";
+
+const STAGE_COLORS = {
+  transcript:   "var(--c-cyan)",
+  drive_linked: "var(--c-green)",
+  raw:          "var(--fg-dim)",
+  processed:    "var(--c-violet)",
+};
+const STAGE_LABELS = {
+  transcript:   "Transcribed",
+  drive_linked: "Drive Linked",
+  raw:          "Raw",
+  processed:    "Processed",
+};
 
 /* transcript completion % for a folder/root, from its stage_counts. */
 function transcribedPct(node) {
@@ -20,6 +34,38 @@ function transcribedPct(node) {
   if (!total) return 0;
   const done = (node.stage_counts && node.stage_counts.transcript) || 0;
   return Math.round((done / total) * 100);
+}
+
+function StagePills({ node }) {
+  const total = node.file_count || 0;
+  const counts = node.stage_counts || {};
+  const entries = Object.entries(counts).filter(([, n]) => n > 0);
+  if (!entries.length) return null;
+  return (
+    <span style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+      {entries.map(([stage, count]) => {
+        const pct = total ? Math.round((count / total) * 100) : 0;
+        const color = STAGE_COLORS[stage] || "var(--c-blue)";
+        const label = STAGE_LABELS[stage] || stage;
+        return (
+          <span
+            key={stage}
+            title={`${count} files (${pct}%) ${label}`}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 3,
+              padding: "1px 7px", borderRadius: 10,
+              background: color + "22",
+              border: "1px solid " + color + "55",
+              color, fontFamily: "var(--f-mono)", fontSize: 10,
+              cursor: "default", whiteSpace: "nowrap",
+            }}
+          >
+            {stage.toUpperCase().slice(0, 5)} {count}
+          </span>
+        );
+      })}
+    </span>
+  );
 }
 
 function CoverageRow({ folder }) {
@@ -45,6 +91,7 @@ function CoverageRow({ folder }) {
         <span className="cov-pct mono" style={{ color: pct >= 100 ? "var(--c-green, #4ade80)" : "var(--fg-dim)" }}>
           {pct}% transcribed
         </span>
+        <StagePills node={folder} />
         <span className="cov-linked mono dim">
           {folder.drive_linked_count || 0} linked
         </span>
@@ -106,11 +153,27 @@ function RootSection({ root, query }) {
   );
 }
 
+function Legend({ stages }) {
+  if (!stages || !stages.length) return null;
+  return (
+    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "0 22px 12px", alignItems: "center" }}>
+      <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: 0.6 }}>Legend:</span>
+      {stages.map(stage => (
+        <span key={stage} style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)" }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: STAGE_COLORS[stage] || "var(--c-blue)", flexShrink: 0, display: "inline-block" }} />
+          {STAGE_LABELS[stage] || stage}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function Coverage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [query, setQuery] = useState("");
+  const [coverageTab, setCoverageTab] = useState("tree");
 
   useEffect(() => {
     let alive = true;
@@ -154,42 +217,63 @@ function Coverage() {
         </div>
       </div>
 
-      <div style={{ padding: "0 22px 14px", display: "flex", gap: 12, alignItems: "center" }}>
-        <input
-          type="text"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          placeholder="Filter folders by name (e.g. Syria, Taiwan)…"
-          style={{
-            flex: 1, background: "var(--bg-2)", border: "1px dashed var(--line-hard)",
-            borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)",
-            fontSize: 12, padding: "8px 12px",
-          }}
-        />
+      <div style={{ display: "flex", gap: 0, padding: "0 22px 0", borderBottom: "1px solid var(--line-hard)", marginBottom: 12 }}>
+        {[["tree", "Folder Tree"], ["status", "Status Sheet"]].map(([k, label]) => (
+          <button key={k} onClick={() => setCoverageTab(k)}
+            style={{ background: "none", border: "none",
+                     borderBottom: coverageTab === k ? "2px solid var(--c-cyan)" : "2px solid transparent",
+                     color: coverageTab === k ? "var(--c-cyan)" : "var(--fg-dim)",
+                     fontFamily: "var(--f-mono)", fontSize: 12,
+                     padding: "8px 14px", cursor: "pointer", marginBottom: -1 }}>
+            {label}
+          </button>
+        ))}
       </div>
 
-      <div className="exp-scroll" style={{ padding: "0 22px 24px" }}>
-        {loading && (
-          <div className="dim" style={{ fontFamily: "var(--f-mono)", fontSize: 12, padding: "24px 0" }}>
-            Loading coverage…
+      {coverageTab === "status" && <FootageStatus />}
+
+      {coverageTab === "tree" && (
+        <>
+          <div style={{ padding: "0 22px 14px", display: "flex", gap: 12, alignItems: "center" }}>
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Filter folders by name (e.g. Syria, Taiwan)…"
+              style={{
+                flex: 1, background: "var(--bg-2)", border: "1px dashed var(--line-hard)",
+                borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)",
+                fontSize: 12, padding: "8px 12px",
+              }}
+            />
           </div>
-        )}
-        {error && !loading && (
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ color: "var(--c-amber, #f59e0b)", fontFamily: "var(--f-mono)", fontSize: 12 }}>
-              Couldn’t load coverage from FootageBrain.
-            </div>
-            <div className="mono dim" style={{ fontSize: 11, marginTop: 6 }}>{error}</div>
+
+          {data && <Legend stages={data.stages} />}
+
+          <div className="exp-scroll" style={{ padding: "0 22px 24px" }}>
+            {loading && (
+              <div className="dim" style={{ fontFamily: "var(--f-mono)", fontSize: 12, padding: "24px 0" }}>
+                Loading coverage…
+              </div>
+            )}
+            {error && !loading && (
+              <div className="card" style={{ padding: 16 }}>
+                <div style={{ color: "var(--c-amber, #f59e0b)", fontFamily: "var(--f-mono)", fontSize: 12 }}>
+                  Couldn't load coverage from FootageBrain.
+                </div>
+                <div className="mono dim" style={{ fontSize: 11, marginTop: 6 }}>{error}</div>
+              </div>
+            )}
+            {!loading && !error && data && data.roots.length === 0 && (
+              <div className="dim" style={{ fontFamily: "var(--f-mono)", fontSize: 12, padding: "24px 0" }}>
+                No scannable drives configured in FootageBrain yet.
+              </div>
+            )}
+            {!loading && !error && data &&
+              data.roots.map(root => <RootSection key={root.root_id} root={root} query={query} />)}
           </div>
-        )}
-        {!loading && !error && data && data.roots.length === 0 && (
-          <div className="dim" style={{ fontFamily: "var(--f-mono)", fontSize: 12, padding: "24px 0" }}>
-            No scannable drives configured in FootageBrain yet.
-          </div>
-        )}
-        {!loading && !error && data &&
-          data.roots.map(root => <RootSection key={root.root_id} root={root} query={query} />)}
-      </div>
+        </>
+      )}
     </div>
   );
 }

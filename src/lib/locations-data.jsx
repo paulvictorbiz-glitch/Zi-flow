@@ -20,6 +20,8 @@
    ========================================================= */
 
 import React from "react";
+import { supabase } from "./supabase-client.js";
+import { useAuth } from "../auth.jsx";
 
 /* ---------- The quick-embed My Maps registry ----------
    Pulled from the embed iframe the operator pasted:
@@ -61,8 +63,10 @@ function makeLocation(partial = {}) {
       : splitTags(partial.tags),
     source: partial.source || "manual", // manual | kml | geojson | csv
     mapMid: partial.mapMid || null, // which My Maps mid it came from
-    linkedReelIds: partial.linkedReelIds || [], // → reels (future)
+    linkedReelIds: partial.linkedReelIds || [], // → internal reel cards (many)
+    reelLinks: normalizeReelLinks(partial.reelLinks), // → external video links [{id,label,url}]
     linkedNoteIds: partial.linkedNoteIds || [], // → notes (future)
+    rowColor: partial.rowColor || null, // CSS hex string for row highlight
     createdAt: partial.createdAt || now,
     updatedAt: now,
   };
@@ -72,6 +76,26 @@ function numOrNull(v) {
   if (v === "" || v == null) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/* External video links (Instagram / YouTube / TikTok …) attached to a
+   place — the actual reels/shots filmed there. Each is {id,label,url}.
+   Defensive: accepts the stored array, drops url-less rows, and backfills
+   ids so list edits have stable keys. */
+function normalizeReelLinks(v) {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map(item => {
+      if (typeof item === "string") item = { url: item };
+      const url = (item?.url || "").trim();
+      if (!url) return null;
+      return {
+        id: item.id || "rl-" + Math.random().toString(36).slice(2, 9),
+        label: (item.label || "").trim(),
+        url,
+      };
+    })
+    .filter(Boolean);
 }
 
 function splitTags(v) {
@@ -300,52 +324,146 @@ function csvRows(text) {
 
 /* =========================================================
    Provider + hook. Mirrors useWorkflow(): { locations, loaded,
-   actions }. Persists synchronously to localStorage so a refresh
-   keeps imported places; swap the persist/hydrate pair for store
-   calls when Locations graduates onto Supabase.
+   actions }. Backed by the Supabase `locations` table (migration
+   0029) so pins are shared across the team. Local state is updated
+   optimistically; DB writes fire in the background. On first load
+   any places still sitting in the old localStorage bucket are
+   migrated up to Supabase once, then that bucket is cleared.
    ========================================================= */
 
-const STORAGE_KEY = "ziflow.locations.v1";
+const STORAGE_KEY = "ziflow.locations.v1"; // legacy — drained on first load
 const LocationsContext = React.createContext(null);
 
-function hydrate() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.map(makeLocation) : [];
-  } catch (_) {
-    return [];
-  }
+/* DB row (snake_case) → app Location (camelCase). */
+function rowToLocation(row) {
+  return makeLocation({
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    lat: row.lat,
+    lng: row.lng,
+    address: row.address,
+    notes: row.notes,
+    tags: row.tags,
+    source: row.source,
+    mapMid: row.map_mid,
+    linkedReelIds: row.linked_reel_ids || [],
+    reelLinks: row.reel_links || [],
+    linkedNoteIds: row.linked_note_ids || [],
+    rowColor: row.row_color || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
 }
 
-function persist(list) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  } catch (_) {
-    /* quota / private-mode — keep working in-memory this session */
+/* Full app Location → DB row for INSERT. createdBy is the person slot. */
+function locationToRow(loc, createdBy = null) {
+  return {
+    id: loc.id,
+    name: loc.name,
+    category: loc.category,
+    lat: loc.lat,
+    lng: loc.lng,
+    address: loc.address,
+    notes: loc.notes,
+    tags: loc.tags,
+    source: loc.source,
+    map_mid: loc.mapMid,
+    linked_reel_ids: loc.linkedReelIds,
+    reel_links: loc.reelLinks || [],
+    linked_note_ids: loc.linkedNoteIds,
+    row_color: loc.rowColor || null,
+    created_by: createdBy,
+    created_at: loc.createdAt,
+    updated_at: loc.updatedAt,
+  };
+}
+
+/* Partial camelCase patch → snake_case column patch for UPDATE.
+   Always stamps updated_at. */
+function patchToRow(patch) {
+  const map = {
+    name: "name", category: "category", lat: "lat", lng: "lng",
+    address: "address", notes: "notes", tags: "tags", source: "source",
+    mapMid: "map_mid",
+    linkedReelIds: "linked_reel_ids", reelLinks: "reel_links",
+    linkedNoteIds: "linked_note_ids",
+    rowColor: "row_color",
+  };
+  const row = { updated_at: new Date().toISOString() };
+  for (const [k, v] of Object.entries(patch)) {
+    if (map[k]) row[map[k]] = v;
   }
+  return row;
 }
 
 function LocationsProvider({ children }) {
   const [locations, setLocations] = React.useState([]);
   const [loaded, setLoaded] = React.useState(false);
+  // Cross-page "fly to this pin" signal. detail.jsx sets it via
+  // actions.requestFocus(id); the Locations page reads + clears it on
+  // mount so clicking a reel card's coordinates lands on the pin.
+  const [focusId, setFocusId] = React.useState(null);
+  const { person } = useAuth();
+  const createdBy = person?.id || null;
 
+  // Initial load: pull from Supabase, then drain any legacy localStorage
+  // bucket into the table (one-time) so previously imported places aren't
+  // stranded on the operator's old browser.
   React.useEffect(() => {
-    setLocations(hydrate());
-    setLoaded(true);
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("locations")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (cancelled) return;
+      if (error) {
+        console.error("Locations load failed:", error);
+        setLoaded(true);
+        return;
+      }
+      let rows = (data || []).map(rowToLocation);
+
+      // One-time migration of legacy localStorage records.
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const legacy = JSON.parse(raw);
+          if (Array.isArray(legacy) && legacy.length) {
+            const have = new Set(rows.map(dedupeKey));
+            const toAdd = legacy
+              .map(makeLocation)
+              .filter(l => !have.has(dedupeKey(l)));
+            if (toAdd.length) {
+              const { error: insErr } = await supabase
+                .from("locations")
+                .insert(toAdd.map(l => locationToRow(l, createdBy)));
+              if (!insErr) rows = [...toAdd, ...rows];
+            }
+          }
+          localStorage.removeItem(STORAGE_KEY); // drained — don't migrate twice
+        }
+      } catch (_) { /* private-mode / parse error — skip migration */ }
+
+      if (!cancelled) {
+        setLocations(rows);
+        setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  // createdBy intentionally omitted: we want exactly one load on mount,
+  // not a reload when the person slot resolves a beat later.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Persist on every change once initial hydrate is done.
-  React.useEffect(() => {
-    if (loaded) persist(locations);
-  }, [locations, loaded]);
 
   const actions = React.useMemo(
     () => ({
       add(partial) {
         const loc = makeLocation(partial);
         setLocations(prev => [loc, ...prev]);
+        supabase.from("locations").insert(locationToRow(loc, createdBy))
+          .then(({ error }) => { if (error) console.error("Location add failed:", error); });
         return loc;
       },
       update(id, patch) {
@@ -356,74 +474,106 @@ function LocationsProvider({ children }) {
               : l
           )
         );
+        supabase.from("locations").update(patchToRow(patch)).eq("id", id)
+          .then(({ error }) => { if (error) console.error("Location update failed:", error); });
       },
       remove(id) {
         setLocations(prev => prev.filter(l => l.id !== id));
+        supabase.from("locations").delete().eq("id", id)
+          .then(({ error }) => { if (error) console.error("Location remove failed:", error); });
       },
       clearAll() {
+        const ids = locations.map(l => l.id);
         setLocations([]);
+        if (ids.length) {
+          supabase.from("locations").delete().in("id", ids)
+            .then(({ error }) => { if (error) console.error("Location clearAll failed:", error); });
+        }
       },
       /* Bulk import with dedupe against what's already stored.
          Returns { added, skipped } so the UI can report. */
       importRecords(records) {
-        let added = 0,
-          skipped = 0;
+        let skipped = 0;
+        const toAdd = [];
         setLocations(prev => {
           const seen = new Set(prev.map(dedupeKey));
-          const next = [...prev];
           for (const rec of records) {
             const loc = makeLocation(rec);
             const k = dedupeKey(loc);
-            if (seen.has(k)) {
-              skipped++;
-              continue;
-            }
+            if (seen.has(k)) { skipped++; continue; }
             seen.add(k);
-            next.unshift(loc);
-            added++;
+            toAdd.push(loc);
           }
-          return next;
+          return [...toAdd, ...prev];
         });
-        return { added, skipped };
+        if (toAdd.length) {
+          supabase.from("locations").insert(toAdd.map(l => locationToRow(l, createdBy)))
+            .then(({ error }) => { if (error) console.error("Location import failed:", error); });
+        }
+        return { added: toAdd.length, skipped };
       },
       /* Forward hooks — wiring points for reels / planning / notes.
          Kept here so consumers link through one stable API. */
       linkReel(id, reelId) {
-        setLocations(prev =>
-          prev.map(l =>
-            l.id === id && !l.linkedReelIds.includes(reelId)
-              ? {
-                  ...l,
-                  linkedReelIds: [...l.linkedReelIds, reelId],
-                  updatedAt: new Date().toISOString(),
-                }
-              : l
-          )
-        );
-      },
-      unlinkReel(id, reelId) {
+        const loc = locations.find(l => l.id === id);
+        if (!loc || loc.linkedReelIds.includes(reelId)) return;
+        const next = [...loc.linkedReelIds, reelId];
         setLocations(prev =>
           prev.map(l =>
             l.id === id
-              ? {
-                  ...l,
-                  linkedReelIds: l.linkedReelIds.filter(r => r !== reelId),
-                  updatedAt: new Date().toISOString(),
-                }
+              ? { ...l, linkedReelIds: next, updatedAt: new Date().toISOString() }
               : l
           )
         );
+        supabase.from("locations")
+          .update({ linked_reel_ids: next, updated_at: new Date().toISOString() })
+          .eq("id", id)
+          .then(({ error }) => { if (error) console.error("Location linkReel failed:", error); });
       },
+      unlinkReel(id, reelId) {
+        const loc = locations.find(l => l.id === id);
+        if (!loc) return;
+        const next = loc.linkedReelIds.filter(r => r !== reelId);
+        setLocations(prev =>
+          prev.map(l =>
+            l.id === id
+              ? { ...l, linkedReelIds: next, updatedAt: new Date().toISOString() }
+              : l
+          )
+        );
+        supabase.from("locations")
+          .update({ linked_reel_ids: next, updated_at: new Date().toISOString() })
+          .eq("id", id)
+          .then(({ error }) => { if (error) console.error("Location unlinkReel failed:", error); });
+      },
+      /* Photo management — backed by location_photos table (migration 0036).
+         location_id is the same string ID used in the locations table. */
+      async addPhoto(locationId, url, caption = "") {
+        const { data, error } = await supabase
+          .from("location_photos")
+          .insert({ location_id: locationId, url, caption })
+          .select()
+          .single();
+        if (error) { console.error("addPhoto failed:", error); return null; }
+        return data;
+      },
+      async removePhoto(photoId) {
+        await supabase.from("location_photos").delete().eq("id", photoId);
+      },
+      /* Cross-page focus: detail.jsx asks the Locations map to center on
+         a pin. requestFocus stores the id; the page consumes it once. */
+      requestFocus(id) { setFocusId(id); },
+      consumeFocus() { setFocusId(null); },
       exportJson() {
         return JSON.stringify(locations, null, 2);
       },
     }),
-    [locations]
+    [locations, createdBy]
   );
 
   const value = React.useMemo(
-    () => ({ locations, loaded, actions }),
-    [locations, loaded, actions]
+    () => ({ locations, loaded, focusId, actions }),
+    [locations, loaded, focusId, actions]
   );
 
   return (

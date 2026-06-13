@@ -7,7 +7,7 @@
    Everything else was non-functioning scaffolding and got removed.
    ========================================================= */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Card, DPill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
@@ -16,6 +16,7 @@ import { useNotifications } from "../components/notifications.jsx";
 import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
 import { getFootageFileMetadata, driveDownloadUrl } from "../lib/footage-brain-client.js";
 import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
+import { useLocations } from "../lib/locations-data.jsx";
 
 /* Blueprint fields start empty for every reel — operators fill them in. */
 const DEFAULT_LOGLINE = "";
@@ -85,6 +86,94 @@ function ReadOnlyField({ value, mono }) {
     >
       {empty ? "Nothing written yet." : value}
     </div>
+  );
+}
+
+function LocationPicker({ reelId }) {
+  const { locations, loaded, actions } = useLocations();
+  const [addOpen, setAddOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const addRef = useRef(null);
+
+  const linked = useMemo(
+    () => locations.filter(l => (l.linkedReelIds || []).includes(reelId)),
+    [locations, reelId]
+  );
+
+  const available = useMemo(() => {
+    const linkedIds = new Set(linked.map(l => l.id));
+    const q = search.trim().toLowerCase();
+    return locations.filter(l => !linkedIds.has(l.id) && (!q || l.name.toLowerCase().includes(q)));
+  }, [locations, linked, search]);
+
+  const detach = (locationId) => actions.unlinkReel(locationId, reelId);
+  const attach = (locationId) => { actions.linkReel(locationId, reelId); setAddOpen(false); setSearch(""); };
+
+  useEffect(() => {
+    if (!addOpen) return;
+    const handler = (e) => { if (addRef.current && !addRef.current.contains(e.target)) setAddOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [addOpen]);
+
+  return (
+    <Card title="Filming location" footLeft="Pin this reel to a place on the map">
+      {!loaded ? (
+        <div className="mono dim" style={{ fontSize: 11 }}>loading places…</div>
+      ) : locations.length === 0 ? (
+        <div className="mono dim" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+          No places yet. Add pins on the <b style={{ color: "var(--fg-mute)" }}>Locations</b> page,
+          then link one here.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+          {linked.map(loc => (
+            <span key={loc.id} style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+              borderRadius: 12, padding: "3px 10px",
+              fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg)",
+            }}>
+              📍 {loc.name}
+              <button onClick={() => detach(loc.id)} title="Remove location link"
+                style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>
+                ✕
+              </button>
+            </span>
+          ))}
+          <div style={{ position: "relative" }} ref={addRef}>
+            <button onClick={() => setAddOpen(o => !o)}
+              style={{ background: "none", border: "1px dashed var(--line-hard)", borderRadius: 12, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 10px", cursor: "pointer" }}>
+              + Add location
+            </button>
+            {addOpen && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 999,
+                background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+                borderRadius: 6, padding: "6px 0", minWidth: 200, maxHeight: 220, overflowY: "auto",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.6)"
+              }}>
+                <div style={{ padding: "4px 10px 6px" }}>
+                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search locations…" autoFocus
+                    style={{ width: "100%", background: "var(--bg-3, #1a2335)", border: "1px solid var(--line-hard)", borderRadius: 3, color: "var(--fg)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "4px 8px", boxSizing: "border-box" }} />
+                </div>
+                {available.length === 0 ? (
+                  <div style={{ padding: "8px 12px", fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>No locations found</div>
+                ) : available.slice(0, 20).map(loc => (
+                  <button key={loc.id} onClick={() => attach(loc.id)}
+                    style={{ display: "block", width: "100%", background: "none", border: "none", textAlign: "left", fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg)", padding: "6px 12px", cursor: "pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--bg-3, #1a2335)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "none"}
+                  >
+                    📍 {loc.name}{loc.category ? ` · ${loc.category}` : ""}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -677,6 +766,7 @@ function ReelDetail({ reel, onBack }) {
               </div>
             )}
           </Card>
+          <LocationPicker reelId={current.id} />
         </div>
 
         {/* ===== CENTER — blueprint + feedback ===== */}

@@ -2,12 +2,13 @@
    Pipeline Board — owner lanes (rows) × workflow stage (cols)
    ========================================================= */
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { DPill, ReelCard } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
+import { useAuth } from "../auth.jsx";
 
 /* Board columns derived from the canonical STAGES list. Labels are
    upper-cased here because the board column heads use that style;
@@ -23,9 +24,72 @@ function Pipeline({ onOpen }) {
   const { reels, reviewLaneCards, actions } = useWorkflow();
   const { peopleList } = useRoster();
   const { can } = usePermissions();
+  const { person } = useAuth();
+  const isOwner = person?.role === "owner";
   const [filter, setFilter] = useState("all");
   const [scheduleModal, setScheduleModal] = useState(null);
   const [scheduleDate, setScheduleDate] = useState("");
+
+  /* Row / column visibility — persisted to localStorage */
+  const [hiddenLanes, setHiddenLanes] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("pipeline_hidden_lanes") || "[]")); }
+    catch { return new Set(); }
+  });
+  const [hiddenCols, setHiddenCols] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("pipeline_hidden_cols") || "[]")); }
+    catch { return new Set(); }
+  });
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const colMenuRef = useRef(null);
+  const [lanesMenuOpen, setLanesMenuOpen] = useState(false);
+  const lanesMenuRef = useRef(null);
+  const [laneCtxMenu, setLaneCtxMenu] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem("pipeline_hidden_lanes", JSON.stringify([...hiddenLanes]));
+  }, [hiddenLanes]);
+  useEffect(() => {
+    localStorage.setItem("pipeline_hidden_cols", JSON.stringify([...hiddenCols]));
+  }, [hiddenCols]);
+
+  /* Close column menu on outside click */
+  useEffect(() => {
+    if (!colMenuOpen) return;
+    const handler = (e) => {
+      if (colMenuRef.current && !colMenuRef.current.contains(e.target)) setColMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [colMenuOpen]);
+
+  /* Close lanes menu on outside click */
+  useEffect(() => {
+    if (!lanesMenuOpen) return;
+    const handler = (e) => {
+      if (lanesMenuRef.current && !lanesMenuRef.current.contains(e.target)) setLanesMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [lanesMenuOpen]);
+
+  /* Close lane context menu on outside click */
+  useEffect(() => {
+    if (!laneCtxMenu) return;
+    const handler = () => setLaneCtxMenu(null);
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [laneCtxMenu]);
+
+  const toggleLane = (laneId) => setHiddenLanes(prev => {
+    const next = new Set(prev);
+    if (next.has(laneId)) next.delete(laneId); else next.add(laneId);
+    return next;
+  });
+  const toggleCol = (colKey) => setHiddenCols(prev => {
+    const next = new Set(prev);
+    if (next.has(colKey)) next.delete(colKey); else next.add(colKey);
+    return next;
+  });
 
   /* Board rows, built live from the team roster: one lane per
      non-reviewer member (so a newly-added editor gets their own row),
@@ -40,6 +104,7 @@ function Pipeline({ onOpen }) {
     personLanes.push({ id: "review", name: reviewer?.name || "Reviewer" });
     return personLanes;
   }, [peopleList]);
+
   const [dragging, setDragging] = useState(null); // reel record being dragged
   const [dropTarget, setDropTarget] = useState(null); // "lane::stage"
   const [dropOnCard, setDropOnCard] = useState(null); // { id, before } — reorder target
@@ -173,6 +238,8 @@ function Pipeline({ onOpen }) {
 
   const clearSelection = () => setSelectedIds(new Set());
 
+  const visibleStages = PIPELINE_STAGES.filter(s => !hiddenCols.has(s.key));
+
   return (
     <div>
       <div className="page-head">
@@ -185,18 +252,101 @@ function Pipeline({ onOpen }) {
         <div className="actions">
           <DPill active={filter === "all"} onClick={() => setFilter("all")}>All reels</DPill>
           <DPill active={filter === "blocked"} onClick={() => setFilter("blocked")} tone="red">Blocked / warn</DPill>
+          {/* Column visibility menu */}
+          <div ref={colMenuRef} style={{ position: "relative" }}>
+            <DPill onClick={() => setColMenuOpen(o => !o)}>
+              Columns {hiddenCols.size > 0 ? `(${hiddenCols.size} hidden)` : "▾"}
+            </DPill>
+            {colMenuOpen && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 200,
+                background: "var(--bg-1)", border: "1px solid var(--border)",
+                borderRadius: 8, padding: "8px 0", minWidth: 180,
+                boxShadow: "0 4px 16px rgba(0,0,0,.35)",
+              }}>
+                {PIPELINE_STAGES.map(s => (
+                  <label key={s.key} style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "7px 16px", cursor: "pointer",
+                    color: hiddenCols.has(s.key) ? "var(--fg-dim)" : "var(--fg-0)",
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={!hiddenCols.has(s.key)}
+                      onChange={() => toggleCol(s.key)}
+                      style={{ accentColor: "var(--c-cyan)", width: 15, height: 15 }}
+                    />
+                    {s.label}
+                  </label>
+                ))}
+                {hiddenCols.size > 0 && (
+                  <div style={{ borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4 }}>
+                    <button onClick={() => setHiddenCols(new Set())} style={{
+                      display: "block", width: "100%", background: "none", border: "none",
+                      color: "var(--c-cyan)", cursor: "pointer", padding: "6px 16px", textAlign: "left", fontSize: 13,
+                    }}>Show all columns</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Lanes visibility toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 16px 4px", position: "relative" }}>
+        <div style={{ position: "relative" }} ref={lanesMenuRef}>
+          <button
+            onClick={() => setLanesMenuOpen(o => !o)}
+            style={{
+              background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+              borderRadius: 4, color: hiddenLanes.size > 0 ? "var(--c-amber)" : "var(--fg-dim)",
+              fontFamily: "var(--f-mono)", fontSize: 11, padding: "4px 10px", cursor: "pointer"
+            }}
+          >
+            Lanes{hiddenLanes.size > 0 ? ` (${hiddenLanes.size} hidden)` : ""}
+          </button>
+          {lanesMenuOpen && (
+            <div style={{
+              position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 999,
+              background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+              borderRadius: 6, padding: "8px 0", minWidth: 200,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.6)"
+            }}>
+              <div style={{ padding: "4px 14px 8px", fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: 0.6 }}>
+                Team lanes
+              </div>
+              {lanes.map(lane => (
+                <label key={lane.id}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 14px", cursor: "pointer" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hiddenLanes.has(lane.id)}
+                    onChange={() => toggleLane(lane.id)}
+                    style={{ cursor: "pointer" }}
+                  />
+                  <span style={{ fontFamily: "var(--f-mono)", fontSize: 12, color: hiddenLanes.has(lane.id) ? "var(--fg-dim)" : "var(--fg)" }}>
+                    {lane.name}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Board grid */}
-      <div className="board">
+      <div className="board" style={{
+        gridTemplateColumns: `200px repeat(${visibleStages.length}, 1fr)`,
+      }}>
         {/* Column heads (offset by lane gutter) */}
         <div className="col-head" style={{ background: "var(--bg-0)" }}>
           <div className="lbl">OWNER / ROLE</div>
           <div className="meta">Rows = who has what.</div>
           <div className="meta">Columns = where it is.</div>
         </div>
-        {PIPELINE_STAGES.map(s => {
+        {visibleStages.map(s => {
           const count = items.filter(r => r.stage === s.key).length;
           const isBlocked = blockedStage === s.key;
           return (
@@ -218,15 +368,19 @@ function Pipeline({ onOpen }) {
         })}
 
         {/* Lanes */}
-        {lanes.map(lane => {
+        {lanes.map((lane, laneIdx) => {
+          if (hiddenLanes.has(lane.id)) return null;
           const laneCount = items.filter(r => r.lane === lane.id).length;
           return (
           <React.Fragment key={lane.id}>
-            <div className="lane-head">
+            <div
+              className="lane-head"
+              onContextMenu={e => { e.preventDefault(); if (isOwner) setLaneCtxMenu({ laneId: lane.id, x: e.clientX, y: e.clientY }); }}
+            >
               <div className="name">{lane.name}</div>
               <div className="stats">{laneCount} reel{laneCount === 1 ? "" : "s"}</div>
             </div>
-            {PIPELINE_STAGES.map(stage => {
+            {visibleStages.map(stage => {
               const reels = cells[lane.id + "::" + stage.key] || [];
               const targetKey = lane.id + "::" + stage.key;
               const isTarget = dropTarget === targetKey;
@@ -307,6 +461,25 @@ function Pipeline({ onOpen }) {
           );
         })}
       </div>
+
+      {/* Lane right-click context menu */}
+      {laneCtxMenu && (
+        <div
+          style={{ position: "fixed", top: laneCtxMenu.y, left: laneCtxMenu.x, zIndex: 9999,
+                   background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+                   borderRadius: 4, padding: "4px 0", boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}
+          onMouseLeave={() => setLaneCtxMenu(null)}
+        >
+          <button
+            style={{ display: "block", width: "100%", background: "none", border: "none",
+                     color: "var(--fg)", fontFamily: "var(--f-mono)", fontSize: 12,
+                     padding: "7px 16px", cursor: "pointer", textAlign: "left" }}
+            onClick={() => { toggleLane(laneCtxMenu.laneId); setLaneCtxMenu(null); }}
+          >
+            Hide this lane
+          </button>
+        </div>
+      )}
 
       {/* Floating multi-select chip — appears whenever any cards
           are selected. Drag any selected card to move the group. */}

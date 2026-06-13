@@ -13,11 +13,14 @@
    new global CSS.
    ========================================================= */
 
-import React, { useMemo, useRef, useState, useCallback } from "react";
+import React, { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import { DPill } from "../components/components.jsx";
 import { APIProvider, Map, AdvancedMarker, InfoWindow } from "@vis.gl/react-google-maps";
+import { supabase } from "../lib/supabase-client.js";
+import { useWorkflow } from "../store/store.jsx";
 import {
   MY_MAPS,
+  myMapsEmbedUrl,
   parseAny,
   geocode,
   useLocations,
@@ -26,7 +29,7 @@ import {
 const MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 
 /* ── Marker + InfoWindow for one location ──────────────── */
-function LocationMarker({ location: l, selected, onSelect }) {
+function LocationMarker({ location: l, selected, onSelect, onEdit }) {
   if (l.lat == null || l.lng == null) return null;
   const pos = { lat: l.lat, lng: l.lng };
   return (
@@ -51,9 +54,181 @@ function LocationMarker({ location: l, selected, onSelect }) {
                 {l.linkedReelIds.length} linked reel{l.linkedReelIds.length > 1 ? "s" : ""}
               </div>
             )}
+            <div style={{ marginTop: 8 }}>
+              <span
+                style={{ fontSize: 11, color: "var(--c-cyan, #06b6d4)", cursor: "pointer" }}
+                onClick={() => onEdit(l)}
+              >
+                ✎ Edit
+              </span>
+            </div>
           </div>
         </InfoWindow>
       )}
+    </>
+  );
+}
+
+/* ── Edit panel drawer for a single location pin ─────────── */
+function EditPinPanel({ location, onClose, actions, reels }) {
+  const [name, setName] = useState(location.name || "");
+  const [category, setCategory] = useState(location.category || "");
+  const [notes, setNotes] = useState(location.notes || "");
+  const [photos, setPhotos] = useState([]);
+  const [photosLoading, setPhotosLoading] = useState(true);
+  const [reelSearch, setReelSearch] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    setPhotosLoading(true);
+    supabase.from("location_photos").select("*").eq("location_id", location.id).order("created_at")
+      .then(({ data }) => { setPhotos(data || []); setPhotosLoading(false); });
+  }, [location.id]);
+
+  const saveField = (field, value) => {
+    actions.update(location.id, { [field]: value });
+  };
+
+  const handleFileUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setUploading(true);
+    for (const file of files) {
+      const ext = file.name.split(".").pop();
+      const path = `${location.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { data: uploadData, error } = await supabase.storage.from("location-photos").upload(path, file, { upsert: false });
+      if (!error && uploadData) {
+        const { data: { publicUrl } } = supabase.storage.from("location-photos").getPublicUrl(uploadData.path);
+        const newPhoto = await actions.addPhoto(location.id, publicUrl, "");
+        if (newPhoto) setPhotos(prev => [...prev, newPhoto]);
+      }
+    }
+    setUploading(false);
+    e.target.value = "";
+  };
+
+  const handleRemovePhoto = async (photoId) => {
+    await actions.removePhoto(photoId);
+    setPhotos(prev => prev.filter(p => p.id !== photoId));
+  };
+
+  const linkedReelIds = location.linkedReelIds || [];
+  const filteredReels = useMemo(() => {
+    const q = reelSearch.trim().toLowerCase();
+    return q ? reels.filter(r => (r.title || r.id || "").toLowerCase().includes(q)) : reels;
+  }, [reels, reelSearch]);
+
+  const toggleReel = (reelId) => {
+    if (linkedReelIds.includes(reelId)) {
+      actions.unlinkReel(location.id, reelId);
+    } else {
+      actions.linkReel(location.id, reelId);
+    }
+  };
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.4)" }}
+      />
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 1001,
+        width: "min(420px, 95vw)",
+        background: "var(--bg, #0d1525)",
+        borderLeft: "1px solid var(--line-hard)",
+        overflowY: "auto",
+        display: "flex", flexDirection: "column",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid var(--line-hard)" }}>
+          <span style={{ fontFamily: "var(--f-mono)", fontSize: 13, color: "var(--fg)", flex: 1 }}>Edit Location</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--fg-dim)", fontSize: 16, cursor: "pointer", padding: "2px 6px" }}>✕</button>
+        </div>
+
+        <div style={{ padding: "16px", flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <label style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: 0.6, display: "block", marginBottom: 4 }}>Name</label>
+            <input value={name} onChange={e => setName(e.target.value)} onBlur={() => saveField("name", name)}
+              style={{ width: "100%", background: "var(--bg-2)", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)", fontSize: 12, padding: "6px 10px", boxSizing: "border-box" }} />
+          </div>
+
+          <div>
+            <label style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: 0.6, display: "block", marginBottom: 4 }}>Category</label>
+            <input value={category} onChange={e => setCategory(e.target.value)} onBlur={() => saveField("category", category)}
+              style={{ width: "100%", background: "var(--bg-2)", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)", fontSize: 12, padding: "6px 10px", boxSizing: "border-box" }} />
+          </div>
+
+          <div>
+            <label style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: 0.6, display: "block", marginBottom: 4 }}>Notes</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} onBlur={() => saveField("notes", notes)}
+              rows={3} style={{ width: "100%", background: "var(--bg-2)", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)", fontSize: 12, padding: "6px 10px", boxSizing: "border-box", resize: "vertical" }} />
+          </div>
+
+          <div>
+            <label style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: 0.6, display: "block", marginBottom: 6 }}>
+              Reel Cards ({linkedReelIds.length} attached)
+            </label>
+            <input value={reelSearch} onChange={e => setReelSearch(e.target.value)} placeholder="Search reels…"
+              style={{ width: "100%", background: "var(--bg-2)", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "5px 10px", marginBottom: 6, boxSizing: "border-box" }} />
+            <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid var(--line-hard)", borderRadius: 4 }}>
+              {filteredReels.slice(0, 40).map(reel => {
+                const linked = linkedReelIds.includes(reel.id);
+                return (
+                  <label key={reel.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", borderBottom: "1px solid var(--line-hard)", background: linked ? "var(--c-cyan)11" : "transparent" }}>
+                    <input type="checkbox" checked={linked} onChange={() => toggleReel(reel.id)} style={{ cursor: "pointer" }} />
+                    <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: linked ? "var(--c-cyan)" : "var(--fg)" }}>
+                      {reel.display_number ? `#${reel.display_number} ` : ""}{reel.title || reel.id}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: 0.6, display: "block", marginBottom: 6 }}>
+              Screenshots & Photos ({photos.length})
+            </label>
+
+            <label style={{ display: "block", border: "1px dashed var(--line-hard)", borderRadius: 4, padding: "12px", textAlign: "center", cursor: "pointer", marginBottom: 10, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11 }}>
+              {uploading ? "Uploading…" : "Click or drag images to upload"}
+              <input type="file" multiple accept="image/*" onChange={handleFileUpload} style={{ display: "none" }} />
+            </label>
+
+            {photosLoading ? (
+              <div style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>Loading photos…</div>
+            ) : photos.length === 0 ? (
+              <div style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>No screenshots yet.</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 10 }}>
+                {photos.map(photo => (
+                  <div key={photo.id} style={{ position: "relative", aspectRatio: "1", overflow: "hidden", borderRadius: 4, border: "1px solid var(--line-hard)" }}>
+                    <img src={photo.url} alt={photo.caption || "location photo"} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <button
+                      onClick={() => handleRemovePhoto(photo.id)}
+                      style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,0.7)", border: "none", color: "#fff", borderRadius: 3, fontSize: 10, padding: "1px 5px", cursor: "pointer" }}
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginTop: "auto", paddingTop: 16, borderTop: "1px solid var(--line-hard)" }}>
+            <button
+              onClick={() => {
+                if (confirm(`Remove "${location.name}"? This cannot be undone.`)) {
+                  actions.remove(location.id);
+                  onClose();
+                }
+              }}
+              style={{ background: "none", border: "1px solid var(--c-red, #ef4444)", borderRadius: 4, color: "var(--c-red, #ef4444)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "6px 14px", cursor: "pointer" }}
+            >
+              Delete location
+            </button>
+          </div>
+        </div>
+      </div>
     </>
   );
 }
@@ -218,10 +393,12 @@ function ImportPanel({ onClose }) {
 
 function Locations() {
   const { locations, loaded, actions } = useLocations();
-  const [tab, setTab] = useState("map"); // map | data
+  const { reels } = useWorkflow();
+  const [tab, setTab] = useState("map");
   const [showImport, setShowImport] = useState(false);
   const [selectedMarker, setSelectedMarker] = useState(null);
-  const [geocoding, setGeocoding] = useState({}); // {[locId]: true} while in-flight
+  const [geocoding, setGeocoding] = useState({});
+  const [editingPin, setEditingPin] = useState(null);
 
   const handleGeocode = useCallback(async (l) => {
     const addr = l.address || l.notes;
@@ -288,27 +465,51 @@ function Locations() {
 
       {tab === "map" && (
         <div style={{ padding: "0 22px 22px 22px" }}>
-          <div
-            style={{
-              border: "1px solid var(--line-hard)",
-              borderRadius: 8,
-              overflow: "hidden",
-              background: "#000",
-            }}
-          >
-            <iframe
-              title={MY_MAPS.label}
-              src={myMapsEmbedUrl()}
-              loading="lazy"
+          {!MAPS_API_KEY ? (
+            <div
               style={{
-                width: "100%",
-                height: "calc(100vh - 240px)",
-                minHeight: 420,
-                border: 0,
-                display: "block",
+                border: "1px solid var(--line-hard)",
+                borderRadius: 8,
+                overflow: "hidden",
+                background: "#000",
               }}
-            />
-          </div>
+            >
+              <iframe
+                title={MY_MAPS.label}
+                src={myMapsEmbedUrl()}
+                loading="lazy"
+                style={{
+                  width: "100%",
+                  height: "calc(100vh - 240px)",
+                  minHeight: 420,
+                  border: 0,
+                  display: "block",
+                }}
+              />
+            </div>
+          ) : (
+            <div style={{ position: "relative", border: "1px solid var(--line-hard)", borderRadius: 8, overflow: "hidden", background: "#000" }}>
+              <APIProvider apiKey={MAPS_API_KEY}>
+                <Map
+                  defaultCenter={{ lat: 39.5, lng: -98.35 }}
+                  defaultZoom={4}
+                  mapId="ziflow-locations"
+                  gestureHandling="greedy"
+                  style={{ width: "100%", height: "calc(100vh - 240px)", minHeight: 420 }}
+                >
+                  {sorted.filter(l => l.lat != null && l.lng != null).map(l => (
+                    <LocationMarker
+                      key={l.id}
+                      location={l}
+                      selected={selectedMarker === l.id}
+                      onSelect={loc => setSelectedMarker(loc ? loc.id : null)}
+                      onEdit={setEditingPin}
+                    />
+                  ))}
+                </Map>
+              </APIProvider>
+            </div>
+          )}
           <div
             className="mono dim"
             style={{ fontSize: 11, marginTop: 8 }}
@@ -459,6 +660,14 @@ function Locations() {
                     <td>
                       <span
                         className="mono dim"
+                        style={{ cursor: "pointer", marginRight: 8 }}
+                        title="Edit this location"
+                        onClick={() => setEditingPin(l)}
+                      >
+                        ✎
+                      </span>
+                      <span
+                        className="mono dim"
                         style={{ cursor: "pointer" }}
                         title="Remove from list"
                         onClick={() => {
@@ -485,6 +694,15 @@ function Locations() {
             connection points reels, planning, and notes will read from.
           </div>
         </div>
+      )}
+
+      {editingPin && (
+        <EditPinPanel
+          location={editingPin}
+          onClose={() => setEditingPin(null)}
+          actions={actions}
+          reels={reels || []}
+        />
       )}
     </div>
   );

@@ -2486,9 +2486,43 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   .page-head h1 { font-size: 20px; }
   .topbar { padding: 9px 12px; }
   .submode-bar { padding: 9px 12px; }
-  /* Let the role switcher and actions share a wrapped row cleanly. */
   .role-switch .rs-body { display: none; }
   .page-head .actions .dpill { flex: 1 1 auto; justify-content: center; }
+
+  .topbar-actions { flex-wrap: wrap; gap: 6px; }
+  .topbar-actions input[type="text"] { width: 100% !important; max-width: 160px; }
+
+  .kpis { grid-template-columns: 1fr 1fr !important; }
+  .ready-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+  .submode-bar .mono.dim:last-child { display: none; }
+
+  .dropdown { max-width: 90vw !important; min-width: 0 !important; }
+  .role-menu { max-width: 90vw !important; min-width: 0 !important; width: min(280px, 90vw) !important; }
+  .var-popover { max-width: 90vw !important; min-width: 0 !important; }
+
+  .nav-drawer { max-width: 85vw !important; }
+
+  .nav-item { min-height: 44px; }
+  button, [role="button"] { min-height: 36px; }
+
+  .loc-trip-panel { display: none !important; }
+}
+
+@media (max-width: 768px) {
+  .detail-grid { grid-template-columns: 1fr !important; }
+  .task-row { grid-template-columns: 1fr !important; gap: 8px; }
+  .kpis { grid-template-columns: 1fr 1fr !important; }
+  .ready-grid { grid-template-columns: repeat(3, 1fr) !important; }
+
+  .board { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .board .col-head { min-width: 120px; }
+  .board .lane-head { min-width: 120px; }
+  .board .cell { min-width: 120px; }
+
+  .topbar-actions input[type="text"] { width: 140px; }
+
+  .loc-trip-panel { display: none !important; }
 }
 
 /* ── Coverage tab rows ─────────────────────────────────────
@@ -2913,160 +2947,4 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   .gen-shot-thumb { width: 56px; height: 34px; }
   .gen-hist-panel { margin: 0 14px 12px; }
   .gen-hist-meta { display: none; }
-}
-
-/* =========================================================
-   Owner command-center dashboard (.ow-*)
-   ========================================================= */
-
-.ow-dashboard {
-  display: block;
-  padding-bottom: 48px;
-}
-
-/* Two rows of 3-col summary cards */
-.ow-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  padding: 0 22px;
-}
-@media (max-width: 1100px) { .ow-summary-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 720px)  { .ow-summary-grid { grid-template-columns: 1fr; } }
-
-/* Individual summary card */
-.ow-card {
-  border: 1px dashed var(--line-hard);
-  border-radius: 8px;
-  background: var(--bg-1);
-  padding: 16px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  cursor: pointer;
-  transition: border-color 0.15s;
-  outline: none;
-}
-.ow-card:hover  { border-color: var(--c-cyan-soft); }
-.ow-card:focus  { outline: 1px dashed var(--c-cyan); outline-offset: 3px; }
-.ow-card.is-warn { border-color: var(--c-amber-soft); }
-.ow-card.is-red  { border-color: var(--c-red-soft); }
-
-.ow-card-label {
-  font-family: var(--f-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
-  margin-bottom: 2px;
-}
-.ow-card-big {
-  font-family: var(--f-mono);
-  font-size: 30px;
-  font-weight: 700;
-  color: var(--fg);
-  line-height: 1;
-}
-.ow-card-big.is-warn { color: var(--c-amber); }
-.ow-card-big.is-red  { color: var(--c-red); }
-
-.ow-card-sub {
-  font-family: var(--f-mono);
-  font-size: 11px;
-  color: var(--fg-mute);
-  line-height: 1.5;
-}
-.ow-card-health-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--f-mono);
-  font-size: 13px;
-  font-weight: 600;
-  margin: 4px 0 2px;
-}
-.ow-card-platforms {
-  display: flex;
-  gap: 10px;
-  margin: 6px 0 2px;
-}
-.ow-plat-glyph {
-  font-size: 14px;
-  font-family: var(--f-mono);
-  transition: color 0.2s;
-}
-.ow-card-link {
-  font-family: var(--f-mono);
-  font-size: 10.5px;
-  color: var(--c-cyan);
-  margin-top: auto;
-  padding-top: 8px;
-}
-
-/* Team status section */
-.ow-team-section {
-  padding: 0 22px;
-  margin-top: 20px;
-}
-.ow-team-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
-  margin-top: 10px;
-}
-.ow-team-card {
-  border: 1px dashed var(--line-hard);
-  border-radius: 8px;
-  background: var(--bg-1);
-  padding: 13px 15px;
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
-.ow-team-card:hover  { border-color: var(--c-cyan-soft); }
-.ow-team-card.is-warn { border-color: var(--c-amber-soft); }
-.ow-team-name {
-  font-size: 13px;
-  color: var(--fg);
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.ow-team-role {
-  font-family: var(--f-mono);
-  font-size: 9.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--fg-dim);
-  margin-top: 3px;
-}
-.ow-team-stat {
-  font-family: var(--f-mono);
-  font-size: 11px;
-  color: var(--fg-mute);
-}
-.ow-team-stat strong {
-  color: var(--c-cyan);
-  font-weight: 600;
-}
-
-/* Section header reused inside ow-dashboard */
-.ow-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line-hard);
-  margin-bottom: 4px;
-}
-.ow-section-title {
-  font-family: var(--f-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
-}
-
-/* Full-width sections below the summary grid */
-.ow-full-section {
-  padding: 20px 22px 0;
 }
