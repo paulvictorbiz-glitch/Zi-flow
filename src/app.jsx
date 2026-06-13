@@ -431,7 +431,7 @@ function AppShell() {
       )}
 
       {/* Body */}
-      {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} />}
+      {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} onNavigate={setView} />}
       {view === "pipeline"  && pipelineMode === "board"    && <Pipeline    onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
