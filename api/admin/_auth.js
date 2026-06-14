@@ -12,8 +12,16 @@ export function adminClient() {
   });
 }
 
-export function setCors(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+const ALLOWED_ORIGINS = new Set([
+  "https://footagebrain.com",
+  "https://www.footagebrain.com",
+]);
+
+export function setCors(res, req) {
+  const origin = req?.headers?.origin || "";
+  const allow = ALLOWED_ORIGINS.has(origin) ? origin : "https://footagebrain.com";
+  res.setHeader("Access-Control-Allow-Origin", allow);
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
@@ -54,3 +62,29 @@ export async function verifyOwner(req) {
 export function parseBody(req) {
   return typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
 }
+
+/**
+ * Reads the `anthropic_enabled` kill switch from app_settings.
+ * Returns true (fail-open) when the flag row is missing or unreadable so a
+ * transient DB hiccup never silently breaks every AI feature. Only an explicit
+ * { enabled: false } pauses Claude usage.
+ */
+export async function isAnthropicEnabled() {
+  try {
+    const { data, error } = await adminClient()
+      .from("app_settings")
+      .select("value")
+      .eq("key", "anthropic_enabled")
+      .maybeSingle();
+    if (error || !data) return true;
+    return data.value?.enabled !== false;
+  } catch {
+    return true;
+  }
+}
+
+/** Standard 503 body for callers to return when Claude is paused. */
+export const ANTHROPIC_PAUSED = {
+  error: "Claude API is paused by the owner. Re-enable it on the Monitor page.",
+  paused: true,
+};

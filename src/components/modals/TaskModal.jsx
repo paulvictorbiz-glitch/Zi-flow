@@ -13,18 +13,19 @@ export function TaskModal({ onClose }) {
   const { person } = useAuth();
   const [assignee, setAssignee] = useState(() => canonicalPersonId("owner") || person?.id || "");
   const [type, setType]         = useState("Decision");
-  const [reel, setReel]         = useState("REEL-201");
+  const [reel, setReel]         = useState("");          // optional — "" = no linked reel
   const [ref, setRef]           = useState("");
   const [due, setDue]           = useState("today 14:00");
   const [note, setNote]         = useState("");
 
   const submit = () => {
     const t = {
-      id: "T-" + Math.floor(Math.random() * 900 + 100),
+      // Timestamp-based id — the old 3-digit random collided easily.
+      id: "T-" + Date.now().toString(36),
       from: person?.id || canonicalPersonId("owner"),   // the signed-in operator
       to: assignee,
       type,
-      reel,
+      reel: reel || null,                               // "" would break the reel_id FK
       instruction: note || ("New " + type.toLowerCase() + " request."),
       due,
       state: "open",
@@ -49,7 +50,9 @@ export function TaskModal({ onClose }) {
       <div className="modal-grid-2">
         <Field label="Linked reel">
           <SelectInput value={reel} onChange={setReel}
-                       options={reels.map(r => ({ k: r.id, l: r.id + " · " + r.title }))} />
+                       options={[{ k: "", l: "— none —" },
+                                 ...reels.filter(r => !r.archivedAt)
+                                   .map(r => ({ k: r.id, l: r.id + " · " + r.title }))]} />
         </Field>
         <Field label="Due">
           <input className="m-input" value={due} onChange={e => setDue(e.target.value)}

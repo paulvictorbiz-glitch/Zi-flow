@@ -7,12 +7,16 @@
     "dev": "vite --port 8000",
     "build": "vite build",
     "preview": "vite preview --port 8000",
-    "seed": "node --env-file=.env.local seed/seed.mjs"
+    "seed": "node --env-file=.env.local seed/seed.mjs",
+    "migrate": "node --env-file=.env.local scripts/migrate.mjs",
+    "migrate:apply": "node --env-file=.env.local scripts/migrate.mjs --apply",
+    "migrate:manifest": "node scripts/gen-migration-manifest.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@supabase/supabase-js": "^2.105.4",
     "@vis.gl/react-google-maps": "^1.8.3",
+    "jszip": "^3.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "resend": "^6.12.4"

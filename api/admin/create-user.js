@@ -8,7 +8,7 @@ import { setCors, verifyOwner, parseBody } from "./_auth.js";
 import { sendAccountEmail } from "./_email.js";
 
 export default async function handler(req, res) {
-  setCors(res);
+  setCors(res, req);
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
@@ -25,7 +25,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "email, password, name, and role are required" });
   }
 
-  const validRoles = ["skilled", "variant", "reviewer"];
+  const validRoles = ["skilled", "variant", "reviewer", "owner"];
   if (!validRoles.includes(role)) {
     return res.status(400).json({ error: `role must be one of: ${validRoles.join(", ")}` });
   }
@@ -45,7 +45,7 @@ export default async function handler(req, res) {
 
   // Tone drives the avatar-chip color. Match the role palette used by the
   // original team so new members blend in (owner is never created here).
-  const TONE_BY_ROLE = { skilled: "cyan", variant: "violet", reviewer: "green" };
+  const TONE_BY_ROLE = { skilled: "cyan", variant: "violet", reviewer: "green", owner: "amber" };
 
   // Insert the people row — use the auth UUID as the text ID for new users
   const { error: peopleErr } = await supabase.from("people").insert({

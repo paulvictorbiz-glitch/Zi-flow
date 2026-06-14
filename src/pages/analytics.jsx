@@ -40,6 +40,13 @@ const fmtDelta = (n) =>
 
 const RANGES = ["7d", "30d", "90d"];
 
+const PLATFORM_URLS = {
+  facebook:  "https://www.facebook.com/PaulVictortravels/",
+  instagram: "https://www.instagram.com/paulvictortravels/",
+  youtube:   "https://www.youtube.com/@paulvictortravels",
+  tiktok:    "https://www.tiktok.com/@paulvictortravels",
+};
+
 /* Build the dashboard data from REAL sources only — no sample/mock numbers.
    An unconnected platform contributes nothing. */
 function buildRealAnalytics({ liveYT, liveIG, liveFB, connections, range, activePlatforms, igMedia }) {
@@ -393,12 +400,20 @@ function Analytics() {
                   title={c.note}
                   style={c.connected ? { borderColor: meta.color } : undefined}
                 >
-                  <span
-                    className={"glyph" + (c.connected ? "" : " off")}
-                    style={c.connected ? { background: meta.color } : undefined}
+                  <a
+                    href={PLATFORM_URLS[c.platform]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={"Open " + meta.label}
+                    style={{ textDecoration: "none" }}
                   >
-                    {meta.glyph}
-                  </span>
+                    <span
+                      className={"glyph" + (c.connected ? "" : " off")}
+                      style={c.connected ? { background: meta.color } : undefined}
+                    >
+                      {meta.glyph}
+                    </span>
+                  </a>
                   <span className="c-label">{meta.label}</span>
                   <span
                     className="c-dot"
@@ -488,10 +503,23 @@ function Analytics() {
                   style={{ borderLeftColor: p.color, opacity: m.connected ? 1 : 0.7 }}
                 >
                   <div className="pt-head">
-                    <span className="pt-glyph" style={{ background: p.color }}>
-                      {p.glyph}
-                    </span>
+                    <a
+                      href={PLATFORM_URLS[p.key]}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={"Open " + p.label}
+                      style={{ textDecoration: "none", flexShrink: 0 }}
+                    >
+                      <span className="pt-glyph" style={{ background: p.color }}>
+                        {p.glyph}
+                      </span>
+                    </a>
                     <span className="pt-name">{p.label}</span>
+                    {p.key === "facebook" && m.connected && liveFB?.page?.name && (
+                      <span className="pt-tag" style={{ borderStyle: "solid", borderColor: "var(--c-amber)", color: "var(--c-amber)" }} title="This is the Facebook Page the token is connected to — reconnect to switch pages">
+                        {liveFB.page.name}
+                      </span>
+                    )}
                     {!m.connected && <span className="pt-tag">not connected</span>}
                   </div>
 
@@ -596,7 +624,7 @@ function Analytics() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+                gridTemplateColumns: "repeat(auto-fill, minmax(140px, 160px))",
                 gap: 12,
               }}
             >

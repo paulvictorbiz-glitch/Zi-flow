@@ -112,7 +112,7 @@ function EditPinPanel({ location, onClose, actions, reels }) {
     setPhotos(prev => prev.filter(p => p.id !== photoId));
   };
 
-  const linkedReelIds = location.linkedReelIds || [];
+  const [linkedReelIds, setLinkedReelIds] = useState(location.linkedReelIds || []);
   const filteredReels = useMemo(() => {
     const q = reelSearch.trim().toLowerCase();
     return q ? reels.filter(r => (r.title || r.id || "").toLowerCase().includes(q)) : reels;
@@ -120,8 +120,10 @@ function EditPinPanel({ location, onClose, actions, reels }) {
 
   const toggleReel = (reelId) => {
     if (linkedReelIds.includes(reelId)) {
+      setLinkedReelIds(prev => prev.filter(id => id !== reelId));
       actions.unlinkReel(location.id, reelId);
     } else {
+      setLinkedReelIds(prev => [...prev, reelId]);
       actions.linkReel(location.id, reelId);
     }
   };
@@ -174,12 +176,24 @@ function EditPinPanel({ location, onClose, actions, reels }) {
               {filteredReels.slice(0, 40).map(reel => {
                 const linked = linkedReelIds.includes(reel.id);
                 return (
-                  <label key={reel.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", borderBottom: "1px solid var(--line-hard)", background: linked ? "var(--c-cyan)11" : "transparent" }}>
-                    <input type="checkbox" checked={linked} onChange={() => toggleReel(reel.id)} style={{ cursor: "pointer" }} />
+                  <div
+                    key={reel.id}
+                    onClick={() => toggleReel(reel.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", cursor: "pointer", borderBottom: "1px solid var(--line-hard)", background: linked ? "rgba(6,182,212,0.08)" : "transparent", userSelect: "none" }}
+                  >
+                    <span style={{
+                      width: 14, height: 14, flexShrink: 0, borderRadius: 3,
+                      border: "1px solid " + (linked ? "var(--c-cyan)" : "var(--line-hard)"),
+                      background: linked ? "var(--c-cyan)" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 10, color: "#0b1220", fontWeight: 700,
+                    }}>
+                      {linked ? "✓" : ""}
+                    </span>
                     <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: linked ? "var(--c-cyan)" : "var(--fg)" }}>
                       {reel.display_number ? `#${reel.display_number} ` : ""}{reel.title || reel.id}
                     </span>
-                  </label>
+                  </div>
                 );
               })}
             </div>
@@ -391,10 +405,165 @@ function ImportPanel({ onClose }) {
   );
 }
 
+/* ── Route Planner — build a Google Maps directions link from location pins ── */
+function RoutePlanner({ locations }) {
+  const [stops, setStops] = useState([]); // array of location objects
+  const [search, setSearch] = useState("");
+
+  const available = useMemo(() => {
+    const stopIds = new Set(stops.map(s => s.id));
+    const q = search.trim().toLowerCase();
+    return locations.filter(l => !stopIds.has(l.id) && (!q || (l.name || "").toLowerCase().includes(q)));
+  }, [locations, stops, search]);
+
+  const addStop = (loc) => {
+    setStops(prev => [...prev, loc]);
+    setSearch("");
+  };
+
+  const removeStop = (id) => setStops(prev => prev.filter(s => s.id !== id));
+
+  const moveStop = (idx, dir) => {
+    setStops(prev => {
+      const arr = [...prev];
+      const target = idx + dir;
+      if (target < 0 || target >= arr.length) return arr;
+      [arr[idx], arr[target]] = [arr[target], arr[idx]];
+      return arr;
+    });
+  };
+
+  const openRoute = () => {
+    if (stops.length < 2) return;
+    const waypoints = stops.map(s => {
+      if (s.lat != null && s.lng != null) return `${s.lat},${s.lng}`;
+      return encodeURIComponent(s.name);
+    });
+    const origin = waypoints[0];
+    const dest   = waypoints[waypoints.length - 1];
+    const mids   = waypoints.slice(1, -1);
+    let url = `https://www.google.com/maps/dir/${origin}/${dest}`;
+    if (mids.length) url = `https://www.google.com/maps/dir/${origin}/${mids.join("/")}/${dest}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <div className="loc-trip-panel" style={{
+      marginTop: 16, border: "1px dashed var(--line-hard)", borderRadius: 8,
+      padding: "14px 16px", background: "rgba(255,255,255,0.015)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Route Planner
+        </span>
+        <span className="mono dim" style={{ fontSize: 10 }}>
+          Add stops in order, then open in Google Maps
+        </span>
+      </div>
+
+      {/* Stop list */}
+      {stops.length > 0 && (
+        <div style={{ marginBottom: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+          {stops.map((s, i) => (
+            <div key={s.id} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              background: "var(--bg-2)", borderRadius: 4, padding: "5px 10px",
+              border: "1px solid var(--line-hard)",
+            }}>
+              <span className="mono" style={{ fontSize: 10, color: "var(--c-cyan)", minWidth: 18 }}>{i + 1}</span>
+              <span style={{ flex: 1, fontSize: 12, fontFamily: "var(--f-mono)", color: "var(--fg)" }}>{s.name}</span>
+              {s.lat == null && (
+                <span className="mono" style={{ fontSize: 9, color: "var(--c-amber)" }}>no coords</span>
+              )}
+              <button onClick={() => moveStop(i, -1)} disabled={i === 0}
+                style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: i === 0 ? "default" : "pointer", fontSize: 12, padding: "0 3px", opacity: i === 0 ? 0.3 : 1 }}>▲</button>
+              <button onClick={() => moveStop(i, 1)} disabled={i === stops.length - 1}
+                style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: i === stops.length - 1 ? "default" : "pointer", fontSize: 12, padding: "0 3px", opacity: i === stops.length - 1 ? 0.3 : 1 }}>▼</button>
+              <button onClick={() => removeStop(s.id)}
+                style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 13, padding: "0 3px" }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {stops.length === 0 && (
+        <div className="mono dim" style={{ fontSize: 11, marginBottom: 10 }}>
+          No stops yet — search and add locations below.
+        </div>
+      )}
+
+      {/* Search to add */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search locations to add as a stop…"
+          style={{
+            flex: 1, minWidth: 180, background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+            borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)", fontSize: 11,
+            padding: "6px 10px",
+          }}
+        />
+        <button
+          onClick={openRoute}
+          disabled={stops.length < 2}
+          style={{
+            padding: "6px 14px", fontSize: 11, fontFamily: "var(--f-mono)",
+            background: stops.length >= 2 ? "var(--c-cyan)" : "var(--bg-2)",
+            color: stops.length >= 2 ? "#0b1220" : "var(--fg-dim)",
+            border: "none", borderRadius: 4, cursor: stops.length >= 2 ? "pointer" : "default",
+            fontWeight: 600, whiteSpace: "nowrap",
+          }}
+        >
+          Open in Google Maps →
+        </button>
+        {stops.length > 0 && (
+          <button onClick={() => setStops([])}
+            style={{ background: "none", border: "1px solid var(--line-hard)", color: "var(--fg-dim)", borderRadius: 4, fontSize: 10, fontFamily: "var(--f-mono)", padding: "5px 10px", cursor: "pointer" }}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      {search.trim() && available.length > 0 && (
+        <div style={{
+          marginTop: 6, border: "1px solid var(--line-hard)", borderRadius: 4,
+          background: "var(--bg-1)", maxHeight: 160, overflowY: "auto",
+        }}>
+          {available.slice(0, 20).map(loc => (
+            <div key={loc.id}
+              onClick={() => addStop(loc)}
+              style={{
+                padding: "7px 12px", cursor: "pointer", fontSize: 12,
+                fontFamily: "var(--f-mono)", color: "var(--fg)",
+                borderBottom: "1px solid var(--line-hard)",
+                display: "flex", alignItems: "center", gap: 8,
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--bg-2)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              <span style={{ flex: 1 }}>{loc.name}</span>
+              {loc.lat != null && (
+                <span className="mono" style={{ fontSize: 9, color: "var(--c-cyan)" }}>
+                  {Number(loc.lat).toFixed(3)},{Number(loc.lng).toFixed(3)}
+                </span>
+              )}
+              <span style={{ fontSize: 11, color: "var(--c-cyan)" }}>+ add</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {search.trim() && available.length === 0 && (
+        <div className="mono dim" style={{ fontSize: 11, marginTop: 6 }}>No matching locations.</div>
+      )}
+    </div>
+  );
+}
+
 function Locations() {
   const { locations, loaded, actions } = useLocations();
   const { reels } = useWorkflow();
-  const [tab, setTab] = useState("map");
+  const [tab, setTab] = useState("mymaps");
   const [showImport, setShowImport] = useState(false);
   const [selectedMarker, setSelectedMarker] = useState(null);
   const [geocoding, setGeocoding] = useState({});
@@ -454,8 +623,11 @@ function Locations() {
           </div>
         </div>
         <div className="actions">
-          <DPill active={tab === "map"} onClick={() => setTab("map")}>
-            Map
+          <DPill active={tab === "mymaps"} onClick={() => setTab("mymaps")}>
+            My Maps
+          </DPill>
+          <DPill active={tab === "interactive"} onClick={() => setTab("interactive")}>
+            Interactive
           </DPill>
           <DPill active={tab === "data"} onClick={() => setTab("data")}>
             Structured ({locations.length})
@@ -463,31 +635,40 @@ function Locations() {
         </div>
       </div>
 
-      {tab === "map" && (
+      {tab === "mymaps" && (
         <div style={{ padding: "0 22px 22px 22px" }}>
-          {!MAPS_API_KEY ? (
-            <div
+          <div
+            style={{
+              border: "1px solid var(--line-hard)",
+              borderRadius: 8,
+              overflow: "hidden",
+              background: "#000",
+            }}
+          >
+            <iframe
+              title={MY_MAPS.label}
+              src={myMapsEmbedUrl()}
+              loading="lazy"
               style={{
-                border: "1px solid var(--line-hard)",
-                borderRadius: 8,
-                overflow: "hidden",
-                background: "#000",
+                width: "100%",
+                height: "calc(100vh - 240px)",
+                minHeight: 420,
+                border: 0,
+                display: "block",
               }}
-            >
-              <iframe
-                title={MY_MAPS.label}
-                src={myMapsEmbedUrl()}
-                loading="lazy"
-                style={{
-                  width: "100%",
-                  height: "calc(100vh - 240px)",
-                  minHeight: 420,
-                  border: 0,
-                  display: "block",
-                }}
-              />
-            </div>
-          ) : (
+            />
+          </div>
+          <div className="mono dim" style={{ fontSize: 11, marginTop: 8 }}>
+            Live embed of the shared Google My&nbsp;Maps map · edits made in
+            My&nbsp;Maps appear here automatically.
+          </div>
+          <RoutePlanner locations={sorted} />
+        </div>
+      )}
+
+      {tab === "interactive" && (
+        <div style={{ padding: "0 22px 22px 22px" }}>
+          {MAPS_API_KEY ? (
             <div style={{ position: "relative", border: "1px solid var(--line-hard)", borderRadius: 8, overflow: "hidden", background: "#000" }}>
               <APIProvider apiKey={MAPS_API_KEY}>
                 <Map
@@ -509,15 +690,22 @@ function Locations() {
                 </Map>
               </APIProvider>
             </div>
+          ) : (
+            <div style={{
+              border: "1px dashed var(--line-hard)", borderRadius: 8,
+              padding: "48px 24px", textAlign: "center",
+              color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 12,
+            }}>
+              Interactive map requires a <code>VITE_GOOGLE_MAPS_API_KEY</code> environment variable.
+              <br />
+              <span style={{ fontSize: 10, color: "var(--fg-faint)", marginTop: 6, display: "block" }}>
+                Use the <strong>My Maps</strong> tab to view and edit your map.
+              </span>
+            </div>
           )}
-          <div
-            className="mono dim"
-            style={{ fontSize: 11, marginTop: 8 }}
-          >
-            Live embed of the shared My&nbsp;Maps map · edits made in Google
-            My&nbsp;Maps appear here automatically. Use{" "}
-            <b style={{ color: "var(--fg-mute)" }}>Structured</b> to pull
-            places out for use in other tools.
+          <div className="mono dim" style={{ fontSize: 11, marginTop: 8 }}>
+            Click a pin to view details or edit. Use{" "}
+            <b style={{ color: "var(--fg-mute)" }}>Structured</b> to manage the place list.
           </div>
         </div>
       )}

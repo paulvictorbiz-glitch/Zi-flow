@@ -278,6 +278,11 @@ function PersonRow({ person, token, onRefresh, onResult, trackerTs }) {
                 onClick={() => { setEmail(person.email || ""); setMode(mode === "edit-email" ? null : "edit-email"); setErr(null); }}
               >✉</IconBtn>
               <IconBtn
+                title="Set password"
+                active={mode === "set-password"}
+                onClick={() => { setPass(""); setMode(mode === "set-password" ? null : "set-password"); setErr(null); }}
+              >⚷</IconBtn>
+              <IconBtn
                 title="Delete account"
                 danger
                 active={mode === "confirm-delete"}
@@ -377,6 +382,32 @@ function PersonRow({ person, token, onRefresh, onResult, trackerTs }) {
             <ActionBtn busy={busy} onClick={() => run(
               () => adminFetch("/api/admin/update-email", token, { peopleId: person.id, newEmail: emailInput }),
               `${person.name}'s email updated to ${emailInput}`
+            )}>
+              {busy ? "…" : "Save"}
+            </ActionBtn>
+          </div>
+          {err && <ErrMsg>{err}</ErrMsg>}
+        </div>
+      )}
+
+      {/* Expanded: set password */}
+      {mode === "set-password" && (
+        <div style={expandStyle}>
+          <div className="mono dim" style={{ fontSize: 9.5, marginBottom: 6 }}>
+            Set a new password for <b style={{ color: "var(--fg)" }}>{person.name}</b>. Existing passwords
+            can't be read back (stored hashed) — this replaces it. Share the new one with them.
+          </div>
+          <div style={{ display: "flex", gap: 5 }}>
+            <input
+              type="text" required
+              placeholder="New password (min 6 chars)"
+              value={passInput}
+              onChange={e => setPass(e.target.value)}
+              style={{ ...inputStyle, flex: 1, fontSize: 11, padding: "5px 7px" }}
+            />
+            <ActionBtn busy={busy} onClick={() => run(
+              () => adminFetch("/api/admin/set-password", token, { peopleId: person.id, password: passInput }),
+              `${person.name}'s password updated → ${passInput} — copy this and share it.`
             )}>
               {busy ? "…" : "Save"}
             </ActionBtn>
@@ -514,6 +545,7 @@ function AddEditorForm({ token, onSuccess, onResult }) {
         <input required type="password" placeholder="Password (min 6 chars)" minLength={6} value={password} onChange={e => setPass(e.target.value)} style={inputStyle} />
         <select value={role} onChange={e => setRole(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
           {EDITABLE_ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+          <option value="owner">Owner (full access)</option>
         </select>
         {err && <ErrMsg>{err}</ErrMsg>}
         <button type="submit" disabled={busy} style={addBtnStyle}>{busy ? "Creating…" : "Create account"}</button>
@@ -587,7 +619,7 @@ function SocialAccountRow({ conn }) {
           {connectUrl ? (
             <IconBtn
               title={isConnected ? "Re-run the OAuth flow to refresh the token" : "Start the OAuth connect flow"}
-              onClick={() => window.open(connectUrl, "_blank", "noopener")}
+              onClick={() => window.open(connectUrl, "_blank", "width=520,height=640")}
             >
               {isConnected ? "reconnect" : "connect"}
             </IconBtn>
@@ -659,10 +691,8 @@ function SocialAccountsPanel() {
 
   return (
     <div style={{
-      minWidth: 300, maxWidth: 360,
       border: "1px dashed var(--line-hard)", borderRadius: 8,
       background: "var(--bg-1)", padding: "14px 16px",
-      alignSelf: "start", marginTop: 16,
     }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -759,10 +789,8 @@ function UsersPanel() {
 
   return (
     <div style={{
-      minWidth: 300, maxWidth: 360,
       border: "1px dashed var(--line-hard)", borderRadius: 8,
       background: "var(--bg-1)", padding: "14px 16px",
-      alignSelf: "start",
     }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -819,7 +847,9 @@ function UsersPanel() {
 
 function RolesAdmin({ onBack }) {
   const { save, dirty, savedAt, resetAll } = usePermissions();
-  const [flash, setFlash] = React.useState(false);
+  const [flash, setFlash]           = React.useState(false);
+  const [showTeam, setShowTeam]     = React.useState(false);
+  const [showSocial, setShowSocial] = React.useState(false);
 
   const onSave = async () => {
     await save();
@@ -836,55 +866,63 @@ function RolesAdmin({ onBack }) {
             Choose what each role sees (tabs) and can do (actions). Saved to Supabase — applies to all team members.
           </div>
         </div>
-        <div className="actions">
+        <div className="actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <DPill onClick={onBack}>← Back</DPill>
+          <DPill onClick={() => setShowTeam(s => !s)}>
+            {showTeam ? "▾ Team accounts" : "▸ Team accounts"}
+          </DPill>
+          <DPill onClick={() => setShowSocial(s => !s)}>
+            {showSocial ? "▾ Social accounts" : "▸ Social accounts"}
+          </DPill>
         </div>
       </div>
 
-      {/* Two-column layout: permissions matrix + users panel */}
-      <div style={{ padding: "0 22px 40px", display: "flex", gap: 24, alignItems: "flex-start" }}>
+      {/* Slide-down panels (above the matrix) */}
+      {showTeam && (
+        <div style={{ padding: "0 22px 12px" }}>
+          <UsersPanel />
+        </div>
+      )}
+      {showSocial && (
+        <div style={{ padding: "0 22px 12px" }}>
+          <SocialAccountsPanel />
+        </div>
+      )}
 
-        {/* Left: permissions matrix */}
-        <div style={{ flex: "1 1 0", minWidth: 0, maxWidth: 760 }}>
-          {/* UI-gating disclosure */}
-          <div style={{
-            border: "1px dashed var(--c-amber-soft)", background: "rgba(245,194,102,0.05)",
-            borderRadius: 6, padding: "10px 12px", fontSize: 11.5, lineHeight: 1.5,
-            color: "var(--fg-mute)", margin: "4px 0 8px",
-          }}>
-            <b style={{ color: "var(--c-amber)" }}>UI-gating only.</b>{" "}
-            These toggles hide tabs and buttons in the dashboard. They are <b>not</b> yet
-            enforced at the database — a determined user could still bypass them via the API.
-            True enforcement is a later phase. Changes save to <b>Supabase</b> and apply to all users.
-          </div>
-          <div className="mono dim" style={{ fontSize: 10.5, marginBottom: 4 }}>
-            Tip: switch perspective in the top-right avatar to preview a role's restricted view.
-          </div>
-
-          <RoleColumnHead />
-          <Section title="Views — tabs this role can open" caps={VIEW_CAPS} kind="views" />
-          <Section title="Actions — what this role can do" caps={ACTION_CAPS} kind="actions" />
-
-          {/* Save bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 22 }}>
-            <DPill primary onClick={onSave}>Save changes</DPill>
-            <DPill onClick={resetAll}>Reset to defaults</DPill>
-            {dirty
-              ? <span className="mono" style={{ fontSize: 10.5, color: "var(--c-amber)" }}>unsaved changes</span>
-              : flash
-                ? <span className="mono" style={{ fontSize: 10.5, color: "var(--c-green)" }}>✓ saved</span>
-                : savedAt
-                  ? <span className="mono dim" style={{ fontSize: 10.5 }}>
-                      saved {savedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                  : null}
-          </div>
+      {/* Permissions matrix — full width now that the sidebar is gone */}
+      <div style={{ padding: "0 22px 40px" }}>
+        {/* UI-gating disclosure */}
+        <div style={{
+          border: "1px dashed var(--c-amber-soft)", background: "rgba(245,194,102,0.05)",
+          borderRadius: 6, padding: "10px 12px", fontSize: 11.5, lineHeight: 1.5,
+          color: "var(--fg-mute)", margin: "4px 0 8px",
+        }}>
+          <b style={{ color: "var(--c-amber)" }}>UI-gating only.</b>{" "}
+          These toggles hide tabs and buttons in the dashboard. They are <b>not</b> yet
+          enforced at the database — a determined user could still bypass them via the API.
+          True enforcement is a later phase. Changes save to <b>Supabase</b> and apply to all users.
+        </div>
+        <div className="mono dim" style={{ fontSize: 10.5, marginBottom: 4 }}>
+          Tip: switch perspective in the top-right avatar to preview a role's restricted view.
         </div>
 
-        {/* Right: users panel + social accounts (OAuth status) */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch" }}>
-          <UsersPanel />
-          <SocialAccountsPanel />
+        <RoleColumnHead />
+        <Section title="Views — tabs this role can open" caps={VIEW_CAPS} kind="views" />
+        <Section title="Actions — what this role can do" caps={ACTION_CAPS} kind="actions" />
+
+        {/* Save bar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 22 }}>
+          <DPill primary onClick={onSave}>Save changes</DPill>
+          <DPill onClick={resetAll}>Reset to defaults</DPill>
+          {dirty
+            ? <span className="mono" style={{ fontSize: 10.5, color: "var(--c-amber)" }}>unsaved changes</span>
+            : flash
+              ? <span className="mono" style={{ fontSize: 10.5, color: "var(--c-green)" }}>✓ saved</span>
+              : savedAt
+                ? <span className="mono dim" style={{ fontSize: 10.5 }}>
+                    saved {savedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                : null}
         </div>
       </div>
     </div>

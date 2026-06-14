@@ -38,6 +38,7 @@ export const VIEW_CAPS = [
   { key: "activity",  label: "Activity (CapCut tracker)" },
   { key: "resources", label: "Resources (link sheet)" },
   { key: "monitor",   label: "Monitor (infra usage)" },
+  { key: "ai",        label: "AI Brain (bot & notes)" },
 ];
 
 /* Actions wired in Phase 1. Every key here maps to a real, gated
@@ -77,6 +78,7 @@ export function defaultPermsForRole(roleKey) {
   for (const v of VIEW_CAPS) views[v.key] = true;
   views.activity = false; // private monitoring tab — owner enables per-person
   views.monitor  = false; // infra usage — owner only
+  views.ai       = false; // AI Brain — owner only
 
   const actions = {};
   for (const a of ACTION_CAPS) actions[a.key] = true;

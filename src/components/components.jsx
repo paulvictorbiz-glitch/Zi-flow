@@ -134,6 +134,14 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
             )}
           </div>
           <div className="title">{reel.title}</div>
+          {/* Posted cards carry their scheduled post date (from the
+              Move-to-Posted modal) so the date is visible on the board. */}
+          {reel.stage === "posted" && reel.scheduledPostDate && (
+            <div className="mono dim" style={{ fontSize: 10, marginTop: 2 }}
+                 title="Scheduled post date">
+              📅 {reel.scheduledPostDate}
+            </div>
+          )}
         </div>
         {pillText && <Pill tone={pillTone}>{pillText}</Pill>}
         {showMenu && (

@@ -25,6 +25,7 @@ import { ROLES } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { startOfDayLocal, analyzeDay, fmtDuration, ONLINE_WINDOW_MS, loadDayRows } from "../lib/capcut-utils.js";
+import { getConnections, PLATFORMS } from "../lib/social-client.js";
 
 /* Build the revision history array, folding the older single-field
    shape into one entry so display code only handles one schema. */
@@ -111,10 +112,10 @@ function downloadAgentFiles(personId) {
   }, 300);
 }
 
-function MyWork({ role, personId, onOpen, onNavigate }) {
+function MyWork({ role, personId, onOpen, onNavigate, onSetPerson }) {
   const { person } = useAuth();
   const me = whoseWork(role, person, personId);
-  if (role === "owner") return <OwnerDashboard me={me} onOpen={onOpen} onNavigate={onNavigate} />;
+  if (role === "owner") return <OwnerDashboard me={me} onOpen={onOpen} onNavigate={onNavigate} onSetPerson={onSetPerson} />;
   if (role === "reviewer") return <ReviewQueueWork me={me} onOpen={onOpen} />;
   return <SkilledWork me={me} onOpen={onOpen} role={role} />;
 }
@@ -123,8 +124,167 @@ function MyWork({ role, personId, onOpen, onNavigate }) {
 /* Tasks & Comms — daily task list per person             */
 /* ─────────────────────────────────────────────────────── */
 
+function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(task.taskText || "");
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(task.notes || "");
+  const [noteSaving, setNoteSaving] = useState(false);
+
+  const commitEdit = () => {
+    const trimmed = editText.trim();
+    if (trimmed && trimmed !== task.taskText) {
+      onUpdate(task.id, { taskText: trimmed });
+    } else {
+      setEditText(task.taskText || "");
+    }
+    setEditing(false);
+  };
+
+  const commitNote = async () => {
+    if (noteDraft === (task.notes || "")) { setNotesOpen(false); return; }
+    setNoteSaving(true);
+    await onUpdate(task.id, { notes: noteDraft });
+    setNoteSaving(false);
+    setNotesOpen(false);
+  };
+
+  // Keep local draft in sync when task.notes changes externally
+  React.useEffect(() => { setNoteDraft(task.notes || ""); }, [task.notes]);
+
+  return (
+    <li style={{
+      display: "flex", flexDirection: "column", gap: 0,
+      borderBottom: "1px solid var(--line-soft, var(--line-hard))",
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
+        <input
+          type="checkbox"
+          checked={!!task.completed}
+          onChange={e => onComplete(task.id, e.target.checked)}
+          style={{ marginTop: 3, cursor: "pointer", accentColor: "var(--c-ok, #22c55e)", flexShrink: 0 }}
+        />
+
+        {editing && isOwner ? (
+          <input
+            autoFocus
+            value={editText}
+            onChange={e => setEditText(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") { setEditText(task.taskText || ""); setEditing(false); } }}
+            style={{
+              flex: 1, background: "var(--bg-2)", border: "1px solid var(--c-cyan)",
+              borderRadius: 3, color: "var(--fg)", fontFamily: "var(--f-sans, var(--f-mono))",
+              fontSize: 13, padding: "2px 6px", outline: "none",
+            }}
+          />
+        ) : (
+          <span
+            onClick={() => { if (isOwner && !task.completed) { setEditText(task.taskText || ""); setEditing(true); } }}
+            title={isOwner && !task.completed ? "Click to edit" : undefined}
+            style={{
+              flex: 1, fontSize: 13,
+              color: task.completed ? "var(--fg-dim)" : "var(--fg)",
+              textDecoration: task.completed ? "line-through" : "none",
+              fontFamily: "var(--f-sans, var(--f-mono))",
+              cursor: isOwner && !task.completed ? "text" : "default",
+            }}
+          >
+            {task.taskText}
+          </span>
+        )}
+
+        <button
+          onClick={() => setNotesOpen(o => !o)}
+          title={task.notes ? "Has notes — click to view/edit" : "Add a note"}
+          style={{
+            background: "none", border: "none", cursor: "pointer",
+            color: task.notes ? "var(--c-cyan)" : "var(--fg-dim)",
+            fontSize: 13, padding: "0 3px", lineHeight: 1, flexShrink: 0,
+          }}
+        >
+          {notesOpen ? "▾" : (task.notes ? "📝" : "▸")}
+        </button>
+
+        {isOwner && (
+          <button
+            onClick={() => onDelete(task.id)}
+            style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 14, padding: "0 2px", lineHeight: 1, flexShrink: 0 }}
+            title="Delete task"
+          >×</button>
+        )}
+      </div>
+
+      {notesOpen && (
+        <div style={{ paddingLeft: 26, paddingBottom: 8 }}>
+          <textarea
+            value={noteDraft}
+            onChange={e => setNoteDraft(e.target.value)}
+            placeholder="Add a note… (Shift+Enter for new line, Ctrl+Enter to save)"
+            readOnly={!isOwner}
+            rows={3}
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                if (e.shiftKey) {
+                  // Shift+Enter: insert newline at cursor position manually
+                  e.preventDefault();
+                  const el = e.target;
+                  const start = el.selectionStart;
+                  const end = el.selectionEnd;
+                  const next = noteDraft.slice(0, start) + "\n" + noteDraft.slice(end);
+                  setNoteDraft(next);
+                  // restore cursor after the inserted newline
+                  requestAnimationFrame(() => {
+                    el.selectionStart = start + 1;
+                    el.selectionEnd   = start + 1;
+                  });
+                } else if (isOwner) {
+                  // Enter alone: save
+                  e.preventDefault();
+                  commitNote();
+                }
+              }
+            }}
+            style={{
+              width: "100%", boxSizing: "border-box",
+              background: "var(--bg-2)",
+              border: "1px dashed var(--line-hard)",
+              borderRadius: 4,
+              color: "var(--fg)",
+              fontFamily: "var(--f-sans, var(--f-mono))",
+              fontSize: 12,
+              padding: "7px 10px",
+              resize: "vertical",
+              outline: "none",
+              whiteSpace: "pre-wrap",
+            }}
+          />
+          {isOwner && (
+            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+              <button
+                className="btn-primary"
+                onClick={commitNote}
+                disabled={noteSaving}
+                style={{ fontSize: 11, padding: "3px 10px" }}
+              >
+                {noteSaving ? "Saving…" : "Save note"}
+              </button>
+              <button
+                onClick={() => { setNoteDraft(task.notes || ""); setNotesOpen(false); }}
+                style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg-dim)", cursor: "pointer", fontSize: 11, padding: "3px 10px" }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
 function DailyTasksSection({ personId, viewerPersonId, isOwner }) {
-  const { dailyTasks, createDailyTask, completeDailyTask, deleteDailyTask } = useWorkflow();
+  const { dailyTasks, actions: { createDailyTask, completeDailyTask, deleteDailyTask, updateDailyTask } } = useWorkflow();
   const [newTaskText, setNewTaskText] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -174,33 +334,14 @@ function DailyTasksSection({ personId, viewerPersonId, isOwner }) {
           </li>
         )}
         {myTasks.map(task => (
-          <li key={task.id} style={{
-            display: "flex", alignItems: "flex-start", gap: 10, padding: "5px 0",
-            borderBottom: "1px solid var(--line-soft, var(--line-hard))",
-          }}>
-            <input
-              type="checkbox"
-              checked={!!task.completed}
-              onChange={e => completeDailyTask(task.id, e.target.checked)}
-              style={{ marginTop: 2, cursor: "pointer", accentColor: "var(--c-ok, #22c55e)", flexShrink: 0 }}
-            />
-            <span style={{
-              flex: 1,
-              fontSize: 13,
-              color: task.completed ? "var(--fg-dim)" : "var(--fg)",
-              textDecoration: task.completed ? "line-through" : "none",
-              fontFamily: "var(--f-sans, var(--f-mono))",
-            }}>
-              {task.taskText}
-            </span>
-            {isOwner && (
-              <button
-                onClick={() => deleteDailyTask(task.id)}
-                style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 14, padding: "0 2px", lineHeight: 1 }}
-                title="Delete task"
-              >×</button>
-            )}
-          </li>
+          <TaskRow
+            key={task.id}
+            task={task}
+            isOwner={isOwner}
+            onComplete={completeDailyTask}
+            onDelete={deleteDailyTask}
+            onUpdate={updateDailyTask}
+          />
         ))}
       </ul>
 
@@ -411,11 +552,16 @@ function VariantWork({ me, onOpen }) {
 
 function CapCutTeamWidget({ teamMembers }) {
   const [expanded, setExpanded] = useState(false);
+  const [viewMode, setViewMode] = useState("day"); // "day" | "week" | "month"
   const [dayOffset, setDayOffset] = useState(0);
-  const [memberData, setMemberData] = useState({});
+  const [memberData, setMemberData] = useState({});      // day view: { personId: { rows, analyzed } }
+  const [calData, setCalData]       = useState({});      // week/month: { "YYYY-MM-DD": { personId: analyzed } }
   const [loadingIds, setLoadingIds] = useState(new Set());
+  const [calLoading, setCalLoading] = useState(false);
   const [expandedPersons, setExpandedPersons] = useState(new Set());
   const [editingOnly, setEditingOnly] = useState(false);
+  const [weekOffset, setWeekOffset] = useState(0);      // 0=this week, -1=last week…
+  const [monthOffset, setMonthOffset] = useState(0);    // 0=this month
 
   const dayStart = useMemo(() => startOfDayLocal(dayOffset), [dayOffset]);
   const dayLabel = useMemo(() => {
@@ -424,15 +570,16 @@ function CapCutTeamWidget({ teamMembers }) {
     return dayStart.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   }, [dayOffset, dayStart]);
 
-  const loadAll = useCallback(async () => {
+  /* ── day-view loader ─────────────────────────────────────── */
+  const loadDayView = useCallback(async (dStart, dOffset) => {
     if (!teamMembers.length) return;
     const ids = teamMembers.map(p => p.id);
     setLoadingIds(new Set(ids));
     const results = await Promise.all(
       ids.map(async (id) => {
         try {
-          const rows = await loadDayRows(id, dayStart, supabase);
-          const analyzed = analyzeDay(rows, dayOffset === 0 ? Date.now() : dayStart.getTime() + 86400000);
+          const rows = await loadDayRows(id, dStart, supabase);
+          const analyzed = analyzeDay(rows, dOffset === 0 ? Date.now() : dStart.getTime() + 86400000);
           return { id, rows, analyzed };
         } catch {
           return { id, rows: [], analyzed: null };
@@ -443,19 +590,109 @@ function CapCutTeamWidget({ teamMembers }) {
     results.forEach(r => { next[r.id] = { rows: r.rows, analyzed: r.analyzed }; });
     setMemberData(next);
     setLoadingIds(new Set());
-  }, [teamMembers, dayStart, dayOffset]);
+    return next;
+  }, [teamMembers]);
 
+  /* ── skip-empty-day navigation ───────────────────────────── */
+  const navPrev = useCallback(async () => {
+    let offset = dayOffset - 1;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const ds = startOfDayLocal(offset);
+      const results = await Promise.all(
+        teamMembers.map(async (p) => {
+          try {
+            const rows = await loadDayRows(p.id, ds, supabase);
+            return rows.length > 0;
+          } catch { return false; }
+        })
+      );
+      if (results.some(Boolean)) { setDayOffset(offset); return; }
+      offset--;
+    }
+    setDayOffset(offset); // fallback: go there even if no data found in 60 days
+  }, [dayOffset, teamMembers]);
+
+  const navNext = useCallback(async () => {
+    if (dayOffset >= 0) return;
+    let offset = dayOffset + 1;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (offset > 0) return; // don't go past today
+      const ds = startOfDayLocal(offset);
+      const results = await Promise.all(
+        teamMembers.map(async (p) => {
+          try {
+            const rows = await loadDayRows(p.id, ds, supabase);
+            return rows.length > 0;
+          } catch { return false; }
+        })
+      );
+      if (results.some(Boolean) || offset === 0) { setDayOffset(offset); return; }
+      offset++;
+    }
+  }, [dayOffset, teamMembers]);
+
+  /* ── week/month calendar loader ──────────────────────────── */
+  const loadCalendar = useCallback(async (days /* Array<Date> */) => {
+    if (!teamMembers.length || !days.length) return;
+    setCalLoading(true);
+    const dayKey = (d) => d.toISOString().slice(0, 10);
+    const results = await Promise.all(
+      days.map(async (ds) => {
+        const perPerson = {};
+        await Promise.all(teamMembers.map(async (p) => {
+          try {
+            const rows = await loadDayRows(p.id, ds, supabase);
+            if (rows.length > 0) perPerson[p.id] = analyzeDay(rows, ds.getTime() + 86400000);
+          } catch { /* skip */ }
+        }));
+        return { key: dayKey(ds), perPerson };
+      })
+    );
+    const next = {};
+    results.forEach(r => { if (Object.keys(r.perPerson).length > 0) next[r.key] = r.perPerson; });
+    setCalData(next);
+    setCalLoading(false);
+  }, [teamMembers]);
+
+  /* ── compute day lists for week/month ───────────────────── */
+  const weekDays = useMemo(() => {
+    const today = startOfDayLocal(0);
+    const dow = today.getDay(); // 0=Sun
+    const mondayOffset = -(dow === 0 ? 6 : dow - 1) + weekOffset * 7;
+    return Array.from({ length: 7 }, (_, i) => startOfDayLocal(mondayOffset + i));
+  }, [weekOffset]);
+
+  const monthDays = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth() + monthOffset;
+    const first = new Date(y, m, 1);
+    const last = new Date(y, m + 1, 0);
+    return Array.from({ length: last.getDate() }, (_, i) => new Date(y, m, i + 1));
+  }, [monthOffset]);
+
+  /* ── effects ─────────────────────────────────────────────── */
   useEffect(() => {
     if (!expanded) return;
-    loadAll();
-  }, [expanded, loadAll]);
+    if (viewMode === "day") loadDayView(dayStart, dayOffset);
+  }, [expanded, viewMode, dayStart, dayOffset, loadDayView]);
 
   useEffect(() => {
-    if (!expanded || dayOffset !== 0) return;
-    const t = setInterval(loadAll, 30000);
-    return () => clearInterval(t);
-  }, [expanded, dayOffset, loadAll]);
+    if (!expanded || viewMode !== "week") return;
+    loadCalendar(weekDays);
+  }, [expanded, viewMode, weekDays, loadCalendar]);
 
+  useEffect(() => {
+    if (!expanded || viewMode !== "month") return;
+    loadCalendar(monthDays);
+  }, [expanded, viewMode, monthDays, loadCalendar]);
+
+  useEffect(() => {
+    if (!expanded || viewMode !== "day" || dayOffset !== 0) return;
+    const t = setInterval(() => loadDayView(dayStart, 0), 30000);
+    return () => clearInterval(t);
+  }, [expanded, viewMode, dayOffset, dayStart, loadDayView]);
+
+  /* ── aggregate (day view) ───────────────────────────────── */
   const aggregate = useMemo(() => {
     const vals = Object.values(memberData).map(d => d.analyzed).filter(Boolean);
     const totalMin = vals.reduce((s, a) => s + (a.totalMin || 0), 0);
@@ -481,6 +718,36 @@ function CapCutTeamWidget({ teamMembers }) {
 
   const summaryLine = `${aggregate.activeMembers} of ${teamMembers.length} active ${dayLabel.toLowerCase()} · ${fmtDuration(aggregate.totalMin)} total`;
 
+  /* ── calendar cell color (intensity based on totalMin) ──── */
+  const cellColor = (totalMin) => {
+    if (!totalMin || totalMin <= 0) return "transparent";
+    const t = Math.min(totalMin / 120, 1); // saturate at 2h
+    const alpha = 0.15 + t * 0.75;
+    return `rgba(6, 182, 212, ${alpha.toFixed(2)})`; // cyan
+  };
+
+  /* ── week/month label helpers ───────────────────────────── */
+  const weekLabel = useMemo(() => {
+    const s = weekDays[0], e = weekDays[6];
+    const fmt = d => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return `${fmt(s)} – ${fmt(e)}`;
+  }, [weekDays]);
+
+  const monthLabel = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() + monthOffset, 1)
+      .toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  }, [monthOffset]);
+
+  const today = useMemo(() => startOfDayLocal(0).toISOString().slice(0, 10), []);
+
+  /* ── calendar day totals (sum across all team members) ──── */
+  const dayTotal = (key) => {
+    const perPerson = calData[key];
+    if (!perPerson) return 0;
+    return Object.values(perPerson).reduce((s, a) => s + (a?.totalMin || 0), 0);
+  };
+
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <div
@@ -496,104 +763,415 @@ function CapCutTeamWidget({ teamMembers }) {
 
       {expanded && (
         <div style={{ borderTop: "1px solid var(--line-hard)", padding: "12px 14px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <button onClick={() => setDayOffset(o => o - 1)} style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 3, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 8px", cursor: "pointer" }}>← Prev</button>
-            <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg)", minWidth: 70, textAlign: "center" }}>{dayLabel}</span>
-            <button onClick={() => setDayOffset(o => Math.min(0, o + 1))} disabled={dayOffset >= 0} style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 3, color: dayOffset >= 0 ? "var(--fg-dim)" : "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 8px", cursor: dayOffset >= 0 ? "default" : "pointer", opacity: dayOffset >= 0 ? 0.4 : 1 }}>Next →</button>
-            <label style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)", cursor: "pointer", marginLeft: "auto" }}>
-              <input type="checkbox" checked={editingOnly} onChange={e => setEditingOnly(e.target.checked)} />
-              Editing only
-            </label>
-          </div>
-
-          <div style={{ display: "flex", gap: 12, marginBottom: 10 }}>
-            <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--c-cyan)" }}>{fmtDuration(aggregate.activeMin)} editing</span>
-            <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>{fmtDuration(aggregate.idleMin)} idle</span>
-            <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>{fmtDuration(aggregate.totalMin)} total</span>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 40, marginBottom: 14 }} title="Total CapCut minutes across all team members per hour">
-            {aggregate.hourly.map((m, h) => (
-              <div key={h} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
-                <div style={{ width: "70%", height: Math.round((m / maxHour) * 38) + "px", minHeight: m > 0.05 ? 2 : 0, background: "var(--c-cyan)", borderRadius: "2px 2px 0 0", opacity: 0.7 }} title={`${h}:00 — ${fmtDuration(m)}`} />
-              </div>
+          {/* View mode tabs */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            {["day", "week", "month"].map(m => (
+              <button key={m} onClick={() => setViewMode(m)} style={{
+                background: viewMode === m ? "var(--c-cyan)" : "none",
+                border: "1px solid var(--line-hard)",
+                borderRadius: 3, color: viewMode === m ? "#000" : "var(--fg-dim)",
+                fontFamily: "var(--f-mono)", fontSize: 10, padding: "2px 8px",
+                cursor: "pointer", textTransform: "capitalize", fontWeight: viewMode === m ? 600 : 400,
+              }}>{m}</button>
             ))}
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
-            {[0,6,12,18].map(h => <span key={h} style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--fg-dim)" }}>{h}h</span>)}
-          </div>
 
-          {teamMembers.map(person => {
-            const d = memberData[person.id];
-            const a = d?.analyzed;
-            const isLoading = loadingIds.has(person.id);
-            const personExpanded = expandedPersons.has(person.id);
-            const hasActivity = a && a.totalMin > 0;
-            const dot = liveStatus(person.id);
+          {/* ── DAY VIEW ── */}
+          {viewMode === "day" && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                <button onClick={navPrev} style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 3, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 8px", cursor: "pointer" }}>← Prev</button>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg)", minWidth: 70, textAlign: "center" }}>{dayLabel}</span>
+                <button onClick={navNext} disabled={dayOffset >= 0} style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 3, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 8px", cursor: dayOffset >= 0 ? "default" : "pointer", opacity: dayOffset >= 0 ? 0.4 : 1 }}>Next →</button>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)", cursor: "pointer", marginLeft: "auto" }}>
+                  <input type="checkbox" checked={editingOnly} onChange={e => setEditingOnly(e.target.checked)} />
+                  Editing only
+                </label>
+              </div>
 
-            return (
-              <div key={person.id} style={{ marginBottom: 6, borderBottom: "1px solid var(--line-hard)", paddingBottom: 6 }}>
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", cursor: hasActivity ? "pointer" : "default" }}
-                  onClick={() => hasActivity && setExpandedPersons(prev => {
-                    const next = new Set(prev);
-                    if (next.has(person.id)) next.delete(person.id); else next.add(person.id);
-                    return next;
-                  })}
-                >
-                  <span style={{ fontSize: 13 }}>{person.avatar || "👤"}</span>
-                  <span style={{ fontFamily: "var(--f-mono)", fontSize: 12, color: "var(--fg)", minWidth: 60 }}>{person.short || person.name}</span>
-                  <span style={{ fontSize: 11 }} title={dot === "🟢" ? "Editing now" : dot === "🟡" ? "CapCut open, idle" : "Not active"}>{dot}</span>
-                  {isLoading ? (
-                    <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)" }}>loading…</span>
-                  ) : hasActivity ? (
-                    <>
-                      <div style={{ flex: 1, height: 4, background: "var(--bg-3, #1a2335)", borderRadius: 2 }}>
-                        <div style={{ width: Math.round((a.totalMin / Math.max(...Object.values(memberData).map(x => x.analyzed?.totalMin || 0), 1)) * 100) + "%", height: "100%", background: "var(--c-cyan)", borderRadius: 2 }} />
-                      </div>
-                      <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--c-cyan)", minWidth: 42 }}>{fmtDuration(a.totalMin)}</span>
-                      <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)" }}>{fmtDuration(a.activeMin)} edit</span>
-                      {hasActivity && <span style={{ fontSize: 10, color: "var(--fg-dim)" }}>{personExpanded ? "▾" : "▸"}</span>}
-                    </>
-                  ) : (
-                    <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", opacity: 0.5 }}>No activity</span>
-                  )}
-                </div>
+              <div style={{ display: "flex", gap: 12, marginBottom: 10 }}>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--c-cyan)" }}>{fmtDuration(aggregate.activeMin)} editing</span>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>{fmtDuration(aggregate.idleMin)} idle</span>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>{fmtDuration(aggregate.totalMin)} total</span>
+              </div>
 
-                {personExpanded && hasActivity && (
-                  <div style={{ paddingLeft: 24, paddingTop: 4 }}>
-                    {a.projects.length > 0 && (
-                      <div style={{ marginBottom: 8 }}>
-                        {a.projects.map(([proj, min]) => (
-                          <div key={proj} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                            <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", minWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={proj}>{proj}</span>
-                            <div style={{ flex: 1, height: 4, background: "var(--bg-3, #1a2335)", borderRadius: 2 }}>
-                              <div style={{ width: Math.round((min / (a.projects[0][1] || 1)) * 100) + "%", height: "100%", background: "var(--c-green)", borderRadius: 2 }} />
-                            </div>
-                            <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", minWidth: 36 }}>{fmtDuration(min)}</span>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 40, marginBottom: 14 }} title="Total CapCut minutes per hour">
+                {aggregate.hourly.map((m, h) => (
+                  <div key={h} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <div style={{ width: "70%", height: Math.round((m / maxHour) * 38) + "px", minHeight: m > 0.05 ? 2 : 0, background: "var(--c-cyan)", borderRadius: "2px 2px 0 0", opacity: 0.7 }} title={`${h}:00 — ${fmtDuration(m)}`} />
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+                {[0,6,12,18].map(h => <span key={h} style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--fg-dim)" }}>{h}h</span>)}
+              </div>
+
+              {teamMembers.map(person => {
+                const d = memberData[person.id];
+                const a = d?.analyzed;
+                const isLoading = loadingIds.has(person.id);
+                const personExpanded = expandedPersons.has(person.id);
+                const hasActivity = a && a.totalMin > 0;
+                const dot = liveStatus(person.id);
+                return (
+                  <div key={person.id} style={{ marginBottom: 6, borderBottom: "1px solid var(--line-hard)", paddingBottom: 6 }}>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", cursor: hasActivity ? "pointer" : "default" }}
+                      onClick={() => hasActivity && setExpandedPersons(prev => {
+                        const next = new Set(prev);
+                        if (next.has(person.id)) next.delete(person.id); else next.add(person.id);
+                        return next;
+                      })}
+                    >
+                      <span style={{ fontSize: 13 }}>{person.avatar || "👤"}</span>
+                      <span style={{ fontFamily: "var(--f-mono)", fontSize: 12, color: "var(--fg)", minWidth: 60 }}>{person.short || person.name}</span>
+                      <span style={{ fontSize: 11 }} title={dot === "🟢" ? "Editing now" : dot === "🟡" ? "CapCut open, idle" : "Not active"}>{dot}</span>
+                      {isLoading ? (
+                        <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)" }}>loading…</span>
+                      ) : hasActivity ? (
+                        <>
+                          <div style={{ flex: 1, height: 4, background: "var(--bg-3, #1a2335)", borderRadius: 2 }}>
+                            <div style={{ width: Math.round((a.totalMin / Math.max(...Object.values(memberData).map(x => x.analyzed?.totalMin || 0), 1)) * 100) + "%", height: "100%", background: "var(--c-cyan)", borderRadius: 2 }} />
+                          </div>
+                          <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--c-cyan)", minWidth: 42 }}>{fmtDuration(a.totalMin)}</span>
+                          <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)" }}>{fmtDuration(a.activeMin)} edit</span>
+                          <span style={{ fontSize: 10, color: "var(--fg-dim)" }}>{personExpanded ? "▾" : "▸"}</span>
+                        </>
+                      ) : (
+                        <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", opacity: 0.5 }}>No activity</span>
+                      )}
+                    </div>
+                    {personExpanded && hasActivity && (
+                      <div style={{ paddingLeft: 24, paddingTop: 4 }}>
+                        {a.projects.length > 0 && (
+                          <div style={{ marginBottom: 8 }}>
+                            {a.projects.map(([proj, min]) => (
+                              <div key={proj} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                                <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", minWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={proj}>{proj}</span>
+                                <div style={{ flex: 1, height: 4, background: "var(--bg-3, #1a2335)", borderRadius: 2 }}>
+                                  <div style={{ width: Math.round((min / (a.projects[0][1] || 1)) * 100) + "%", height: "100%", background: "var(--c-green)", borderRadius: 2 }} />
+                                </div>
+                                <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", minWidth: 36 }}>{fmtDuration(min)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {(!editingOnly ? a.sessions : a.sessions.filter(s => s.activeMs > 0)).slice(0, 5).map((s, i) => (
+                          <div key={i} style={{ display: "flex", gap: 8, fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", marginBottom: 2 }}>
+                            <span>{new Date(s.start).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })} – {new Date(s.end).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
+                            <span style={{ color: "var(--c-cyan)" }}>{fmtDuration(s.ms / 60000)}</span>
+                            <span style={{ color: "var(--fg-dim)" }}>{fmtDuration(s.activeMs / 60000)} editing</span>
                           </div>
                         ))}
                       </div>
                     )}
-                    {(!editingOnly ? a.sessions : a.sessions.filter(s => s.activeMs > 0)).slice(0, 5).map((s, i) => (
-                      <div key={i} style={{ display: "flex", gap: 8, fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", marginBottom: 2 }}>
-                        <span>{new Date(s.start).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })} – {new Date(s.end).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
-                        <span style={{ color: "var(--c-cyan)" }}>{fmtDuration(s.ms / 60000)}</span>
-                        <span style={{ color: "var(--fg-dim)" }}>{fmtDuration(s.activeMs / 60000)} editing</span>
-                      </div>
-                    ))}
                   </div>
-                )}
+                );
+              })}
+            </>
+          )}
+
+          {/* ── WEEK VIEW ── */}
+          {viewMode === "week" && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <button onClick={() => setWeekOffset(o => o - 1)} style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 3, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 8px", cursor: "pointer" }}>← Prev</button>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg)", flex: 1, textAlign: "center" }}>{weekLabel}</span>
+                <button onClick={() => setWeekOffset(o => Math.min(0, o + 1))} disabled={weekOffset >= 0} style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 3, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 8px", cursor: weekOffset >= 0 ? "default" : "pointer", opacity: weekOffset >= 0 ? 0.4 : 1 }}>Next →</button>
               </div>
-            );
-          })}
+              {calLoading && <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", marginBottom: 8 }}>Loading…</div>}
+              {/* Day columns header */}
+              <div style={{ display: "grid", gridTemplateColumns: `80px repeat(7, 1fr)`, gap: 2, marginBottom: 4 }}>
+                <div />
+                {weekDays.map(d => {
+                  const key = d.toISOString().slice(0, 10);
+                  const isToday = key === today;
+                  return (
+                    <div key={key} style={{ textAlign: "center", fontFamily: "var(--f-mono)", fontSize: 9, color: isToday ? "var(--c-cyan)" : "var(--fg-dim)" }}>
+                      {d.toLocaleDateString("en-US", { weekday: "short" })}
+                      <br />
+                      {d.getDate()}
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Team member rows */}
+              {teamMembers.map(person => (
+                <div key={person.id} style={{ display: "grid", gridTemplateColumns: `80px repeat(7, 1fr)`, gap: 2, marginBottom: 3 }}>
+                  <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11 }}>{person.avatar || "👤"}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{person.short || person.name}</span>
+                  </div>
+                  {weekDays.map(d => {
+                    const key = d.toISOString().slice(0, 10);
+                    const a = calData[key]?.[person.id];
+                    const min = a?.totalMin || 0;
+                    return (
+                      <div key={key} title={min > 0 ? `${fmtDuration(min)} (${fmtDuration(a?.activeMin || 0)} editing)` : "No activity"} style={{
+                        height: 28, borderRadius: 3,
+                        background: cellColor(min),
+                        border: "1px solid var(--line-hard)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        {min > 0 && <span style={{ fontFamily: "var(--f-mono)", fontSize: 8, color: min >= 30 ? "#fff" : "var(--fg-dim)" }}>{Math.round(min)}m</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+              {/* Total row */}
+              <div style={{ display: "grid", gridTemplateColumns: `80px repeat(7, 1fr)`, gap: 2, marginTop: 6, borderTop: "1px solid var(--line-hard)", paddingTop: 4 }}>
+                <div style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--fg-dim)", display: "flex", alignItems: "center" }}>Total</div>
+                {weekDays.map(d => {
+                  const key = d.toISOString().slice(0, 10);
+                  const tot = dayTotal(key);
+                  return (
+                    <div key={key} style={{ textAlign: "center", fontFamily: "var(--f-mono)", fontSize: 9, color: tot > 0 ? "var(--c-cyan)" : "var(--fg-dim)" }}>
+                      {tot > 0 ? fmtDuration(tot) : "—"}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* ── MONTH VIEW ── */}
+          {viewMode === "month" && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <button onClick={() => setMonthOffset(o => o - 1)} style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 3, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 8px", cursor: "pointer" }}>← Prev</button>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg)", flex: 1, textAlign: "center" }}>{monthLabel}</span>
+                <button onClick={() => setMonthOffset(o => Math.min(0, o + 1))} disabled={monthOffset >= 0} style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 3, color: "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 11, padding: "3px 8px", cursor: monthOffset >= 0 ? "default" : "pointer", opacity: monthOffset >= 0 ? 0.4 : 1 }}>Next →</button>
+              </div>
+              {calLoading && <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", marginBottom: 8 }}>Loading…</div>}
+              {/* Calendar grid: 7 columns (Mon–Sun), with day-of-week offset */}
+              {(() => {
+                const firstDow = monthDays[0]?.getDay() ?? 1; // 0=Sun
+                const padStart = firstDow === 0 ? 6 : firstDow - 1; // Mon-based offset
+                const cells = [...Array(padStart).fill(null), ...monthDays];
+                return (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+                      {["Mo","Tu","We","Th","Fr","Sa","Su"].map(d => (
+                        <div key={d} style={{ textAlign: "center", fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--fg-dim)" }}>{d}</div>
+                      ))}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                      {cells.map((d, i) => {
+                        if (!d) return <div key={"pad" + i} />;
+                        const key = d.toISOString().slice(0, 10);
+                        const isToday = key === today;
+                        const tot = dayTotal(key);
+                        const perPerson = calData[key] || {};
+                        const tooltip = Object.entries(perPerson)
+                          .map(([pid, a]) => {
+                            const p = teamMembers.find(m => m.id === pid);
+                            return `${p?.short || pid}: ${fmtDuration(a.totalMin)}`;
+                          }).join("\n") || "No activity";
+                        return (
+                          <div key={key} title={tooltip} style={{
+                            height: 34, borderRadius: 3, padding: "2px 3px",
+                            background: cellColor(tot),
+                            border: isToday ? "1px solid var(--c-cyan)" : "1px solid var(--line-hard)",
+                            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                            cursor: "default",
+                          }}>
+                            <span style={{ fontFamily: "var(--f-mono)", fontSize: 8, color: isToday ? "var(--c-cyan)" : "var(--fg-dim)", lineHeight: 1 }}>{d.getDate()}</span>
+                            {tot > 0 && <span style={{ fontFamily: "var(--f-mono)", fontSize: 7, color: tot >= 60 ? "#fff" : "var(--fg-dim)", marginTop: 1 }}>{Math.round(tot)}m</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Legend */}
+                    <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+                      {teamMembers.map(p => {
+                        const totalForMonth = monthDays.reduce((s, d) => s + (calData[d.toISOString().slice(0,10)]?.[p.id]?.totalMin || 0), 0);
+                        return totalForMonth > 0 ? (
+                          <span key={p.id} style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)" }}>
+                            {p.avatar} {p.short}: {fmtDuration(totalForMonth)}
+                          </span>
+                        ) : null;
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function OwnerDashboard({ me, onOpen, onNavigate }) {
+function OwnerQuickCards({ onNavigate, inReviewCount, reels }) {
+  const connections = useMemo(() => getConnections(), []);
+  const connectedCount = connections.filter(c => c.connected).length;
+  const totalFollowers = connections.reduce((s, c) => s + (c.connected ? (c.followers || 0) : 0), 0);
+
+  const activeReels = reels.filter(r => !r.archivedAt && r.stage !== "posted").length;
+  const postedReels = reels.filter(r => r.stage === "posted").length;
+
+  const fmtNum = (n) => {
+    if (!n) return "0";
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return String(n);
+  };
+
+  return (
+    <div className="ow-summary-grid">
+      <div
+        className="ow-card"
+        role="button" tabIndex={0}
+        onClick={() => onNavigate?.("analytics")}
+        onKeyDown={e => e.key === "Enter" && onNavigate?.("analytics")}
+      >
+        <div className="ow-card-label">Social Reach</div>
+        <div className="ow-card-big">{fmtNum(totalFollowers)}</div>
+        <div className="ow-card-sub">combined followers · {connectedCount}/{PLATFORMS.length} connected</div>
+        <div className="ow-card-platforms">
+          {connections.map(c => {
+            const p = PLATFORMS.find(pl => pl.key === c.platform);
+            return (
+              <span key={c.platform} className="ow-plat-glyph"
+                style={{ color: c.connected ? (p?.color || "var(--fg)") : "var(--fg-faint)" }}
+                title={p?.label + (c.connected ? " · connected" : " · not connected")}
+              >
+                {p?.glyph || "?"}
+              </span>
+            );
+          })}
+        </div>
+        <div className="ow-card-link">view analytics →</div>
+      </div>
+
+      <div
+        className={"ow-card" + (inReviewCount > 0 ? " is-warn" : "")}
+        role="button" tabIndex={0}
+        onClick={() => onNavigate?.("pipeline")}
+        onKeyDown={e => e.key === "Enter" && onNavigate?.("pipeline")}
+      >
+        <div className="ow-card-label">Pipeline</div>
+        <div className={"ow-card-big" + (inReviewCount > 0 ? " is-warn" : "")}>{inReviewCount}</div>
+        <div className="ow-card-sub">in review · {activeReels} active · {postedReels} posted</div>
+        <div className="ow-card-link">view pipeline →</div>
+      </div>
+
+      <div
+        className="ow-card"
+        role="button" tabIndex={0}
+        onClick={() => onNavigate?.("inbox")}
+        onKeyDown={e => e.key === "Enter" && onNavigate?.("inbox")}
+      >
+        <div className="ow-card-label">Inbox</div>
+        <div className="ow-card-big" style={{ fontSize: 20, color: "var(--fg-mute)", paddingTop: 6 }}>→</div>
+        <div className="ow-card-sub">messages &amp; comments</div>
+        <div className="ow-card-link">view inbox →</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Promoted insights from the AI Brain Workflow Intelligence Log ──────────────
+const INSIGHT_CAT_COLORS = {
+  code_change: "#ef4444", workflow_change: "#3b82f6", feature_request: "#10b981",
+  bug: "#f59e0b", process: "#8b5cf6",
+};
+const INSIGHT_CAT_LABELS = {
+  code_change: "Code change", workflow_change: "Workflow", feature_request: "Feature",
+  bug: "Bug", process: "Process",
+};
+
+function PromotedInsightsSection({ onNavigate }) {
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase
+      .from("workflow_insights")
+      .select("id, category, summary, tags, priority, promoted_at")
+      .eq("status", "promoted")
+      .order("promoted_at", { ascending: false })
+      .limit(20);
+    setItems(data || []);
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const clearOne = async (id) => {
+    setItems(prev => prev.filter(i => i.id !== id));
+    await supabase.from("workflow_insights").update({ status: "noted" }).eq("id", id);
+  };
+
+  const copyOne = async (text) => {
+    try { await navigator.clipboard.writeText(text); } catch { /* clipboard may be blocked */ }
+  };
+
+  // Hide the section entirely when there's nothing promoted (keeps the board clean).
+  if (loaded && items.length === 0) return null;
+
+  return (
+    <div id="ow-promoted-insights">
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        marginBottom: 10, borderBottom: "1px solid var(--line-hard)", paddingBottom: 8,
+      }}>
+        <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Promoted Insights
+        </span>
+        <span
+          style={{ fontSize: 11, fontFamily: "var(--f-mono)", color: "var(--c-cyan)", cursor: "pointer" }}
+          onClick={() => onNavigate?.("ai")}
+          title="Open the AI Brain Insights tab"
+        >
+          {items.length} pinned · open AI Brain →
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {items.map(it => {
+          const color = INSIGHT_CAT_COLORS[it.category] || "#6b7280";
+          return (
+            <div key={it.id} style={{
+              display: "flex", alignItems: "flex-start", gap: 10,
+              border: "1px solid var(--line-hard)", borderLeft: `3px solid ${color}`,
+              borderRadius: 6, padding: "10px 12px",
+            }}>
+              <span style={{
+                background: color + "22", color, border: `1px solid ${color}55`,
+                borderRadius: 4, padding: "1px 7px", fontSize: 11, fontWeight: 600,
+                whiteSpace: "nowrap", marginTop: 1,
+              }}>{INSIGHT_CAT_LABELS[it.category] || it.category}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, lineHeight: 1.5 }}>{it.summary}</div>
+                {it.tags?.length > 0 && (
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 5 }}>
+                    {it.tags.map(t => (
+                      <span key={t} style={{ fontSize: 10, fontFamily: "var(--f-mono)", color: "var(--fg-dim)", background: "var(--surface2, #1a1a22)", padding: "1px 6px", borderRadius: 3, border: "1px solid var(--line-hard)" }}>{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button onClick={() => copyOne(it.summary)} title="Copy"
+                  style={{ background: "transparent", border: "1px solid var(--line-hard)", color: "var(--fg-dim)", borderRadius: 4, fontSize: 11, padding: "2px 8px", cursor: "pointer" }}>
+                  Copy
+                </button>
+                <button onClick={() => clearOne(it.id)} title="Done — remove from board"
+                  style={{ background: "transparent", border: "1px solid var(--c-green, #34d399)", color: "var(--c-green, #34d399)", borderRadius: 4, fontSize: 11, padding: "2px 8px", cursor: "pointer" }}>
+                  Clear
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
   const { reels } = useWorkflow();
   const { person } = useAuth();
   const { peopleList, peopleById } = useRoster();
@@ -644,7 +1222,9 @@ function OwnerDashboard({ me, onOpen, onNavigate }) {
       </div>
 
       <div style={{ padding: "0 22px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+        <OwnerQuickCards onNavigate={onNavigate} inReviewCount={attentionCount} reels={reels} />
         <CapCutTeamWidget teamMembers={peopleList.filter(p => p.role !== "owner")} />
+        <PromotedInsightsSection onNavigate={onNavigate} />
 
         {teamStatus.length > 0 && (
           <div className="ow-team-section">
@@ -663,8 +1243,8 @@ function OwnerDashboard({ me, onOpen, onNavigate }) {
                 return (
                   <div key={p.id}
                        className={`ow-team-card${hasBlock ? " is-warn" : ""}`}
-                       onClick={() => onNavigate?.("pipeline")}
-                       title={`View ${p.name || p.short}'s reels on pipeline`}>
+                       onClick={() => { onSetPerson?.(p.id); onNavigate?.("mywork"); }}
+                       title={`View ${p.name || p.short}'s My Work dashboard`}>
                     <div className="ow-team-name">
                       <span className={"avatar-chip " + (p.role || "")} style={{ fontSize: 13 }}>
                         {p.avatar}

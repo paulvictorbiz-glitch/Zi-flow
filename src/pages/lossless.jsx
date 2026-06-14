@@ -164,7 +164,13 @@ function LosslessCut() {
           }
         });
 
+        // workerURL MUST be a same-origin blob: URL. @ffmpeg/ffmpeg otherwise
+        // constructs its internal Worker straight from the esm.sh CDN URL,
+        // which the browser blocks as a cross-origin Worker script. Wrapping
+        // it through toBlobURL makes it same-origin and fixes the
+        // "Failed to construct 'Worker'" error.
         await ffmpeg.load({
+          workerURL: await toBlobURL(`${CDN.ffmpeg}/es2022/worker.js`, "text/javascript"),
           coreURL: await toBlobURL(`${CDN.coreBase}/ffmpeg-core.js`, "text/javascript"),
           wasmURL: await toBlobURL(`${CDN.coreBase}/ffmpeg-core.wasm`, "application/wasm"),
         });

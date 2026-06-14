@@ -7,8 +7,8 @@
    tasks, attached footage) is read live from Supabase via the
    workflow store — this file is no longer a seed source.
 
-   CAL_WEEK / CAL_ITEMS remain as calendar scaffolding consumed
-   by calendar-view.jsx until that view is moved onto `reels.dueAt`.
+   (The old CAL_WEEK / CAL_ITEMS calendar fixtures are gone —
+   calendar-view.jsx now derives items from live reels.)
    ========================================================= */
 
 /* ---------- Roles ----------
@@ -96,37 +96,8 @@ function stageOwnerPersonId(stage) {
 /* Pipeline-board lanes are built live from the roster in pipeline.jsx
    (one row per non-reviewer member + the shared "review" lane). */
 
-/* ---------- Calendar seed (week of May 13–19, 2026) ---------- */
-const CAL_WEEK = [
-  { date: "Mon May 13", label: "Mon", n: 13 },
-  { date: "Tue May 14", label: "Tue", n: 14 },
-  { date: "Wed May 15", label: "Wed", n: 15 },
-  { date: "Thu May 16", label: "Thu", n: 16 },
-  { date: "Fri May 17", label: "Fri", n: 17 },
-  { date: "Sat May 18", label: "Sat", n: 18 },
-  { date: "Sun May 19", label: "Sun", n: 19 },
-];
-
-/* Calendar items: each is anchored to a day-of-week (0=Mon) */
-const CAL_ITEMS = [
-  { dow: 0, t: "14:00", kind: "decision", reel: "REEL-201", title: "Hook A/B decision",       owner: "paul",  tone: "warn"  },
-  { dow: 0, t: "17:00", kind: "review",   reel: "REEL-195", title: "Review · prayer flags",    owner: "paul",  tone: "warn"  },
-  { dow: 0, t: "18:00", kind: "post",     reel: "REEL-188", title: "Post · Lalitpur dusk",      owner: "paul",  tone: "ok"    },
-  { dow: 0, t: "22:00", kind: "post",     reel: "REEL-170", title: "Post · Boudha drone",       owner: "sam",   tone: "ok"    },
-  { dow: 1, t: "09:00", kind: "post",     reel: "REEL-178", title: "Post · Annapurna teaser",   owner: "paul",  tone: "cyan"  },
-  { dow: 1, t: "12:00", kind: "review",   reel: "REEL-206", title: "Review · street food",      owner: "paul",  tone: "cyan"  },
-  { dow: 1, t: "17:00", kind: "handoff",  reel: "REEL-201", title: "Handoff · variant brief",   owner: "paul",  tone: "cyan"  },
-  { dow: 2, t: "10:00", kind: "variant",  reel: "REEL-201", title: "Variants begin",            owner: "sam",   tone: "cyan"  },
-  { dow: 2, t: "15:00", kind: "review",   reel: "REEL-192", title: "Re-review · Patan alleys",  owner: "paul",  tone: "block" },
-  { dow: 3, t: "12:00", kind: "variant",  reel: "REEL-180", title: "Variants due · flyover",    owner: "sam",   tone: "warn"  },
-  { dow: 3, t: "18:00", kind: "post",     reel: "REEL-180", title: "Post · Himalaya flyover",   owner: "paul",  tone: "cyan"  },
-  { dow: 4, t: "11:00", kind: "post",     reel: "REEL-204", title: "Post · Kathmandu chaos",    owner: "paul",  tone: "cyan"  },
-  { dow: 5, t: "18:00", kind: "variant",  reel: "REEL-175", title: "Variants due · Pashupati",  owner: "sam",   tone: "warn"  },
-];
-
 export {
   ROLES,
   STAGES, STAGE_LABEL, STAGE_TONE, normalizeStage,
   STAGE_ROLE, stageOwnerPersonId,
-  CAL_WEEK, CAL_ITEMS,
 };

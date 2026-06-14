@@ -5,6 +5,19 @@ Live at **footagebrain.com** (Vercel). Backend at **api.footagebrain.com** (Hetz
 
 ---
 
+## Resuming a session ("continue")
+
+When the user says **"continue"** (or `/continue`, "resume", "pick up where we left off") at the start of a session, FIRST load the handoff context before doing anything else — invoke the **`continue`** skill, or if unavailable, manually read in this order:
+1. `HANDOFF.md` (project root) — current snapshot: where we left off, blockers, next steps.
+2. Top entries of `CHANGELOG.md` (project root) — recent changes, the path taken, and lessons learned.
+3. Memory folder `current-state.md` + any relevant memory (see `MEMORY.md` index).
+
+Then give a short orientation and wait for direction. Do not start edits/deploys until the user confirms what to tackle.
+
+**Ending a session:** when the user says **"wrap up"** (or `/wrap-up`), invoke the **`wrap-up`** skill — it refreshes `HANDOFF.md`, appends per-change entries to `CHANGELOG.md`, syncs memory, and updates this file if a durable rule changed. (Supersedes the older `/session-close`.)
+
+---
+
 ## Stack
 
 | Layer | Tech |
@@ -34,6 +47,7 @@ Live at **footagebrain.com** (Vercel). Backend at **api.footagebrain.com** (Hetz
 - **RLS blocks service_role on `people` table.** The RLS policy uses `auth.role() = 'authenticated'`; service_role returns `'service_role'` which fails it. Workaround in `api/admin/_auth.js`: use the caller's JWT with the service role key as apikey so PostgREST sees `'authenticated'`.
 - **`auth.admin.createUser()` requires a valid service role key** sent to Supabase Auth API. If this call returns "User not allowed", the most likely cause is the key stored in Vercel being truncated.
 - **`api/admin/activate-slot.js`** links an existing unclaimed `people` slot to a new auth user. Requires migration 0018 to be run so the service role can read/write the `people` table.
+- **Vercel Hobby plan caps at 12 Serverless Functions.** Every non-`_`-prefixed `.js` under `api/` is one function; a 13th fails `vercel --prod` at the deploy step (the build still passes first). For new owner-only mutations, prefer a **direct RLS-gated Supabase write** (the "owner write app_settings" policy) over a new `api/*` route, or fold logic into an existing route via `?action=`. See memory `vercel-function-cap.md`.
 
 ---
 

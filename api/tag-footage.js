@@ -143,7 +143,10 @@ async function callOpenRouterVision(key, dataUrl, filename) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const _allowedOrigins = new Set(["https://footagebrain.com", "https://www.footagebrain.com"]);
+  const _origin = req.headers.origin || "";
+  res.setHeader("Access-Control-Allow-Origin", _allowedOrigins.has(_origin) ? _origin : "https://footagebrain.com");
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") { res.status(200).end(); return; }

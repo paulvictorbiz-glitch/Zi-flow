@@ -831,8 +831,13 @@ function ListView({ role, onOpen }) {
                   )}
                 </td>
 
-                {/* Due */}
-                <td className="mono">{formatDue(reel, now) || <span className="dim">—</span>}</td>
+                {/* Due — posted reels show their scheduled post date instead
+                    (set by the Move-to-Posted modal; dueAt is the older field) */}
+                <td className="mono">
+                  {reel.stage === "posted" && reel.scheduledPostDate
+                    ? <span style={{ color: "var(--c-cyan)" }} title="Scheduled post date">📅 {reel.scheduledPostDate}</span>
+                    : (formatDue(reel, now) || <span className="dim">—</span>)}
+                </td>
 
                 {/* Aging */}
                 <td className={"mono " + (reel.state === "block" ? "neg" : reel.state === "warn" ? "warn-txt" : "")}>

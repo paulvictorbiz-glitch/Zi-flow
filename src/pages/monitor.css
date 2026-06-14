@@ -121,7 +121,62 @@
 .mon-unconfigured { color: var(--fg-faint); }
 .mon-unconfigured code { color: var(--c-cyan); font-size: 10.5px; }
 .mon-hint         { color: var(--fg-faint); }
+.mon-vercel-link {
+  display: inline-block;
+  padding: 7px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--c-cyan, #6bd6e0);
+  color: var(--c-cyan, #6bd6e0);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background .15s;
+}
+.mon-vercel-link:hover { background: rgba(107,214,224,0.1); }
 .mon-hint code    { color: var(--c-cyan); font-size: 10.5px; }
+
+/* ── Kill switch row (Anthropic card) ───────────────────────── */
+.mon-killrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+}
+.mon-killrow-text   { min-width: 0; }
+.mon-killrow-title  { font-size: 12.5px; font-weight: 600; color: var(--fg, #e8e8ea); }
+.mon-killrow-sub    { font-size: 10.5px; color: var(--fg-faint); margin-top: 2px; }
+.mon-killrow-err    { margin-top: 8px; font-size: 11px; color: var(--c-amber, #f5a524); }
+
+/* Sliding toggle */
+.mon-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 44px; height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.16);
+  cursor: pointer;
+  transition: background .18s ease;
+}
+.mon-switch:disabled { opacity: .55; cursor: default; }
+.mon-switch--on      { background: var(--c-green, #34d399); }
+.mon-switch-knob {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+  transition: transform .18s ease;
+}
+.mon-switch--on .mon-switch-knob { transform: translateX(20px); }
+.mon-switch:focus-visible { outline: 2px solid var(--c-cyan, #6bd6e0); outline-offset: 2px; }
 
 /* ── Toast notification (bottom-right, z above nav drawer) ─ */
 .mon-toast {
@@ -247,3 +302,41 @@
     display: none;
   }
 }
+
+/* ── Migration health check (pink button + log) ─────────── */
+.mon-migcheck { margin-top: 14px; border-top: 1px solid var(--line, rgba(255,255,255,0.08)); padding-top: 12px; }
+.mon-migcheck-btn {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid #ec4899;
+  background: rgba(236, 72, 153, 0.14);
+  color: #f9a8d4;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.05s;
+}
+.mon-migcheck-btn:hover:not(:disabled) { background: rgba(236, 72, 153, 0.26); }
+.mon-migcheck-btn:active:not(:disabled) { transform: translateY(1px); }
+.mon-migcheck-btn:disabled { opacity: 0.6; cursor: default; }
+
+.mon-migcheck-log {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-family: var(--f-mono, monospace);
+  white-space: pre-wrap;
+  border: 1px solid transparent;
+}
+.mon-migcheck-log--ok   { background: rgba(34,197,94,0.10);  border-color: rgba(34,197,94,0.35);  color: #86efac; }
+.mon-migcheck-log--warn { background: rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.40); color: #fcd34d; }
+.mon-migcheck-log--err  { background: rgba(239,68,68,0.10);  border-color: rgba(239,68,68,0.40);  color: #fca5a5; }
+.mon-migcheck-sub  { opacity: 0.7; }
+.mon-migcheck-head { margin-bottom: 8px; font-weight: 600; }
+.mon-migcheck-block { margin-bottom: 8px; }
+.mon-migcheck-item  { margin-left: 6px; }
+.mon-migcheck-fix   { margin-top: 3px; opacity: 0.85; font-style: italic; }
+.mon-migcheck-fix code,
+.mon-migcheck-head code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 4px; }

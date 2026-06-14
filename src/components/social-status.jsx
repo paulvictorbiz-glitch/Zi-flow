@@ -17,26 +17,23 @@ import { supabase } from "../lib/supabase-client.js";
 import {
   PLATFORMS,
   PLATFORM_BY_KEY,
+  CONNECT_URLS,
   fetchConnections,
   invalidateConnectionsCache,
   deriveStatus,
 } from "../lib/social-client.js";
 
-/* OAuth entry points. Reconnect re-runs the same flow as Connect.
-   Facebook re-auths through the Login endpoint; the others use their
-   own connect routes (same paths the Analytics tab already uses). */
-const CONNECT_PATHS = {
-  facebook:  "/fb/api/auth/facebook/login",
-  instagram: "/fb/api/auth/instagram",
-  youtube:   "/fb/api/auth/youtube",
-  tiktok:    "/fb/api/auth/tiktok",
-};
+/* OAuth entry points come from the shared CONNECT_URLS (social-client.js),
+   which point directly at api.footagebrain.com so the OAuth CSRF state cookie
+   stays same-host through the Google round-trip. */
+const CONNECT_PATHS = CONNECT_URLS;
 
 const STATUS_META = {
   connected:    { dot: "●", color: "var(--c-green)",        label: "Connected" },
   expiring:     { dot: "⚠", color: "var(--c-amber)",        label: "Token expiring" },
   error:        { dot: "●", color: "var(--c-red, #f87171)", label: "Error" },
   disconnected: { dot: "○", color: "var(--fg-mute)",        label: "Not connected" },
+  initializing: { dot: "○", color: "var(--fg-faint)",       label: "Checking…" },
 };
 
 function fmtFollowers(n) {

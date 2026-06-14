@@ -9,10 +9,14 @@
      Description,Scheduled
      "caption text","2026-05-13 18:00"
 
-   Description is taken from the reel's `logline` (the post pitch
-   line), falling back to title if no logline is set. Scheduled
-   is the reel's `dueAt`, formatted as "YYYY-MM-DD HH:mm" in the
-   viewer's local timezone — Planable's CSV import accepts this.
+   Description prefers the AI publish pack's IG caption
+   (detail.aiDraft.seo.ig_caption + hashtags — the text you'd
+   actually paste into Planable), falling back to `logline`,
+   then title. Scheduled is the reel's `scheduledPostDate` (set
+   by the Move-to-Posted modal — date only, exported as
+   "YYYY-MM-DD"), falling back to `dueAt`, formatted as
+   "YYYY-MM-DD HH:mm" in the viewer's local timezone —
+   Planable's CSV import accepts both.
    ========================================================= */
 
 import React, { useMemo } from "react";
@@ -20,10 +24,13 @@ import { DPill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 
 /* Local-time "YYYY-MM-DD HH:mm" for the Scheduled column. Returns
-   empty string when dueAt is unset so the row still exports but
-   the operator can see at a glance which times are missing. */
+   empty string when unset so the row still exports but the operator
+   can see at a glance which times are missing. Date-only values
+   (scheduledPostDate from the posting modal) pass through unchanged —
+   inventing a time of day would be worse than omitting it. */
 function formatPlanable(iso) {
   if (!iso) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const yyyy = d.getFullYear();
@@ -70,18 +77,34 @@ function ExportView({ onOpen }) {
   const rows = useMemo(() => {
     const posted = reels
       .filter(r => r.stage === "posted" && !r.archivedAt)
-      .map(r => ({
-        id: r.id,
-        title: r.title || "",
-        description: (r.logline && r.logline.trim()) || r.title || "",
-        dueAt: r.dueAt || null,
-        scheduled: formatPlanable(r.dueAt),
-      }));
+      .map(r => {
+        // The Move-to-Posted modal saves scheduledPostDate (date only);
+        // dueAt is the older datetime field. Prefer the posting date.
+        const schedRaw = r.scheduledPostDate || r.dueAt || null;
+        // Publish-pack caption beats the logline: it's the text that
+        // actually gets posted, and the generator already wrote it.
+        const seo = r.detail?.aiDraft?.seo || null;
+        const caption = (seo?.ig_caption || "").trim();
+        const hashtags = (seo?.hashtags || [])
+          .map(h => (String(h).startsWith("#") ? h : "#" + h))
+          .join(" ");
+        const description = caption
+          ? (hashtags ? caption + "\n\n" + hashtags : caption)
+          : ((r.logline && r.logline.trim()) || r.title || "");
+        return {
+          id: r.id,
+          title: r.title || "",
+          description,
+          fromPack: !!caption,
+          schedRaw,
+          scheduled: formatPlanable(schedRaw),
+        };
+      });
     posted.sort((a, b) => {
-      if (!a.dueAt && !b.dueAt) return 0;
-      if (!a.dueAt) return 1;
-      if (!b.dueAt) return -1;
-      return a.dueAt.localeCompare(b.dueAt);
+      if (!a.schedRaw && !b.schedRaw) return 0;
+      if (!a.schedRaw) return 1;
+      if (!b.schedRaw) return -1;
+      return a.schedRaw.localeCompare(b.schedRaw);
     });
     return posted;
   }, [reels]);
@@ -100,7 +123,8 @@ function ExportView({ onOpen }) {
           <h1>Export · posted reels</h1>
           <div className="sub">
             Every reel in the Posted stage. Download as Planable-ready CSV
-            (Description, Scheduled).
+            (Description, Scheduled). Descriptions use the AI publish-pack
+            caption when the reel has one, else the logline.
           </div>
         </div>
         <div className="actions">
@@ -143,7 +167,17 @@ function ExportView({ onOpen }) {
                     style={{ cursor: "pointer" }}>{r.id}</td>
                 <td className="serif-i" style={{ color: "#eef3fb" }}>{r.title}</td>
                 <td style={{ whiteSpace: "pre-wrap", color: "var(--fg-mute)" }}>
-                  {r.description || <span className="dim">— no logline set —</span>}
+                  {r.description
+                    ? <>
+                        {r.fromPack && (
+                          <span className="mono" style={{ fontSize: 9.5, color: "var(--c-violet, #a78bfa)", marginRight: 6 }}
+                                title="From the AI publish pack (detail.aiDraft.seo)">
+                            PACK
+                          </span>
+                        )}
+                        {r.description}
+                      </>
+                    : <span className="dim">— no caption or logline set —</span>}
                 </td>
                 <td className="mono">
                   {r.scheduled

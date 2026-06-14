@@ -1,0 +1,185 @@
+{
+  "generated": "2026-06-14T04:07:55.238Z",
+  "migrations": [
+    {
+      "version": "0001_init.sql",
+      "checksum": "ecf565775919932be153aa13a5d5bb2e70582f9b1e818aefc4361f2c8e23063d"
+    },
+    {
+      "version": "0002_auth_and_people.sql",
+      "checksum": "90baee70b17190f7042bbcb9988c64652e90767c1d46db1c9bb60a8abb5ea4d0"
+    },
+    {
+      "version": "0003_realtime.sql",
+      "checksum": "a066ddf829121111f49246fecd9aa93b6d4c94c200253470360191df9046591a"
+    },
+    {
+      "version": "0004_reel_blueprint.sql",
+      "checksum": "f87bd041575bc4639c541c1f797462d374a5a8fe96c9364de08fb5f70d7853a9"
+    },
+    {
+      "version": "0005_reel_detail_blob.sql",
+      "checksum": "7d7c74859109c5b8f03e48eddc9c93ae82b039ba22d0a76fbafbf26c0f2fc2c6"
+    },
+    {
+      "version": "0006_sla_timestamps.sql",
+      "checksum": "883d7cca4a1dbcd8bb938ef2962150aeadfa0857f3b64008a4ed933e7fa9b14d"
+    },
+    {
+      "version": "0007_rename_people.sql",
+      "checksum": "1c72cc0ebbac0dba53c48d7eb99456a5b8d2179e13c13d887fed2b9289588a93"
+    },
+    {
+      "version": "0008_archive.sql",
+      "checksum": "3a0d90581765310adb7f2b9226f3005ff3a086adca79db0d8a11c1ff28c21080"
+    },
+    {
+      "version": "0009_attached_footage.sql",
+      "checksum": "debb9a2b87168a3e6db08c570a56741df1620c979132cca33a7c156794895e3a"
+    },
+    {
+      "version": "0010_stage_canonicalize.sql",
+      "checksum": "682d127ce0d70356861f4a7f91b2b9611d1ad07bc033258afa5c7bacf30fac66"
+    },
+    {
+      "version": "0011_reset_reels.sql",
+      "checksum": "62a0ddbd50bb9edb04cef95ef0d15d32a3bef40bf903ce1832f4dc0d0c762f2a"
+    },
+    {
+      "version": "0012_delete_stuck_seed_reels.sql",
+      "checksum": "c6096447d78c647b8e1aa1e833e601b1a14fe3138a197d3c194f5a25ba4cbdc1"
+    },
+    {
+      "version": "0013_generated_drafts.sql",
+      "checksum": "e4406a0cb4161a1d047412b3817fb05f4ec2c620da4a9fd86b0924f738791aa9"
+    },
+    {
+      "version": "0014_app_settings.sql",
+      "checksum": "de9e7eea834daee34427e5b5010f8ec3195bcd7d128c31e641499292d445a302"
+    },
+    {
+      "version": "0015_fix_jay_email.sql",
+      "checksum": "babb9d8e8177499dd53ee984cde357fa6b12f1d302b189199d05ec560f7d8964"
+    },
+    {
+      "version": "0015_update_jay_email.sql",
+      "checksum": "819c0aebc1b0f381c6a2b7aa3352aa54a6c07d012f841fa7c6ff3a3fcd07ffef"
+    },
+    {
+      "version": "0016_clear_stale_user_ids.sql",
+      "checksum": "ca8d59aca77e5b67cd519f6206734062cefa232cbc253619300a7df8c2b828b2"
+    },
+    {
+      "version": "0017_sync_canonical_people.sql",
+      "checksum": "b0a3ab47d4dc10747bc8d20841925a49cf6db2e6cee0c87943ae8d8a1dd44083"
+    },
+    {
+      "version": "0018_service_role_people_access.sql",
+      "checksum": "e86a404410f03944778b3a67e05c519150e25a9aee532cf5866ade71ccd6f0f1"
+    },
+    {
+      "version": "0019_capcut_activity.sql",
+      "checksum": "87b2f8630d9692fb6602b73fe0ab2f295bc7284e3ec0d1b88b88b8f5e9585284"
+    },
+    {
+      "version": "0020_reel_extensions.sql",
+      "checksum": "56c19a31e58ad7a12d660c29bd584945410e1e0f584c6630fc4358671d825f90"
+    },
+    {
+      "version": "0021_daily_tasks.sql",
+      "checksum": "453c8d945ea4539117cd17c7d5cf6432e6cdb498a0d00e00b739cb041cea943f"
+    },
+    {
+      "version": "0022_resources.sql",
+      "checksum": "436ce5a3573f1e489428354815ea72438a5a167982d2f217b5c8bfaebd786040"
+    },
+    {
+      "version": "0023_footage_framerate.sql",
+      "checksum": "bd66242d49aed2438c7ab1b8bf7172eacd7972b9eadc0a405068434b7ff82f85"
+    },
+    {
+      "version": "0024_footage_transcripts.sql",
+      "checksum": "9c01d45da36f08e66ad053039fbf231db7b76968e508879e5c257415999e2b84"
+    },
+    {
+      "version": "0025_edit_sessions.sql",
+      "checksum": "2aded3c560efd56e6f1ce305d0a3b8f05fde2500a7e008e492928e458ff15dbf"
+    },
+    {
+      "version": "0026_vision_tags.sql",
+      "checksum": "48671e713b328c856da1c08ee7cbeaa4fba78871d58194550e906d86ca2bb894"
+    },
+    {
+      "version": "0027_social_connections.sql",
+      "checksum": "d4a472fa630ddd573366fbad92eb8d76c0add02faec36413960950076410e119"
+    },
+    {
+      "version": "0028_social_connection_health.sql",
+      "checksum": "7cde96ff9214cabbb7b3703d3affda275564798d89dc7433a796a63e8a2c7149"
+    },
+    {
+      "version": "0029_locations.sql",
+      "checksum": "47f8cb5db61b5aba6f834f92bfd3b6aeba511e3a3aef902f5f8c4a02d5e8afee"
+    },
+    {
+      "version": "0030_youtube_oauth_note.sql",
+      "checksum": "73db89d8d959f17036d89aa4981adae773e0343cc51c6c99e53f00ea1fffe651"
+    },
+    {
+      "version": "0031_whatsapp_messages.sql",
+      "checksum": "36354fb8ed406399b4d200bb733b92a15146336dad747f98d18d925114d7c8a3"
+    },
+    {
+      "version": "0032_whatsapp_social_connection.sql",
+      "checksum": "2e2bf83b658c4e1aaca875a9362efc75986d52be2a458157e4592f6e47bc88da"
+    },
+    {
+      "version": "0033_locations_row_color.sql",
+      "checksum": "4b2e60a464955111f97a736a9091235c5c4767e42194fa6759202d5ed9b706e2"
+    },
+    {
+      "version": "0034_resource_row_color.sql",
+      "checksum": "960b6336aad51c3134ab6af0231a02fd730415d2347e4fd18f0176f18567a277"
+    },
+    {
+      "version": "0035_location_reel_links.sql",
+      "checksum": "3317e6f6e4d6684da7a483023a4d920822a41a4b0cfbd03ef6f80c5e367ad0ba"
+    },
+    {
+      "version": "0036_daily_tasks_notes.sql",
+      "checksum": "125edac2f8b34600824259604bbe7e441d92ea69b9a48b3db0938beb037687f0"
+    },
+    {
+      "version": "0036_location_photos.sql",
+      "checksum": "3ada0101fa84014ab73454ece8d7086e8cd10421f104bd2c408dab100c2d7bdc"
+    },
+    {
+      "version": "0037_processing_jobs.sql",
+      "checksum": "71621d11dfc0579b21286c65b64e92f94b40c5a3288daace843d169706ce7908"
+    },
+    {
+      "version": "0038_resource_row_hidden.sql",
+      "checksum": "6d99ee5ac8174f0e29736f45e2244cfe8e5b330dc7f1b103d5a0d6339edee01e"
+    },
+    {
+      "version": "0039_ai_brain.sql",
+      "checksum": "dadd2c8dbed5b1cb0293f6bb0559f7e5060a72acec01385af44a66876c88dc54"
+    },
+    {
+      "version": "0040_match_faq_pairs_rpc.sql",
+      "checksum": "6256b558bf0c298f7fcb70a162e8a0aebae23ca3e91470c1ad64aebe52c6ea66"
+    },
+    {
+      "version": "0041_faq_vector_1024.sql",
+      "checksum": "3d5c7f40ff34f03e6867b29a0fc14803732fb106dbb55dfee39249c95e7fc135"
+    },
+    {
+      "version": "0042_workflow_insights.sql",
+      "checksum": "80c13c1fcea228060f7f6095c8f60dc1a9529ac301c57022d59c47a00572d033"
+    },
+    {
+      "version": "0043_anthropic_killswitch.sql",
+      "checksum": "8c8543dee4f4be3b06d5cbd97f639b6e64386a8d7014adc65b0795b67107895a"
+    }
+  ]
+}

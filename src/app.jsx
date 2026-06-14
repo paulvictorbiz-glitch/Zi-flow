@@ -31,12 +31,13 @@ import { Inbox } from "./pages/inbox.jsx";
 import { TeamChat } from "./pages/team-chat.jsx";
 import { LosslessCut } from "./pages/lossless.jsx";
 import { Monitor } from "./pages/monitor.jsx";
+import { AIBrain } from "./pages/ai-brain.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
 
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "monitor"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "monitor", "ai"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -58,6 +59,7 @@ const TABS = [
   { key: "activity",  label: "Activity" },
   { key: "resources", label: "Resources" },
   { key: "monitor",   label: "Monitor" },
+  { key: "ai",        label: "AI Brain" },
 ];
 
 const DEFAULT_TAB_GROUPS = [
@@ -65,6 +67,7 @@ const DEFAULT_TAB_GROUPS = [
   { key: "pipeline_group",  label: "Pipeline",                tabs: ["pipeline", "generate"] },
   { key: "footage_group",   label: "Footage",                 tabs: ["footage", "coverage", "editor", "lossless", "export"] },
   { key: "analytics_group", label: "Analytics & Monitoring",  tabs: ["analytics", "monitor"] },
+  { key: "ai_group",        label: "AI Brain",                tabs: ["ai"] },
   { key: "comms_group",     label: "Communications",          tabs: ["inbox", "team"] },
   { key: "activity_group",  label: "Activity",                tabs: ["activity"] },
   { key: "locations_group", label: "Locations",               tabs: ["locations"] },
@@ -95,8 +98,14 @@ function AppShell() {
   }, [navOpen, view]);
 
   const [groupOrder, setGroupOrder] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("nav_group_order") || "null") || DEFAULT_TAB_GROUPS.map(g => g.key); }
-    catch { return DEFAULT_TAB_GROUPS.map(g => g.key); }
+    try {
+      const saved = JSON.parse(localStorage.getItem("nav_group_order") || "null");
+      if (!saved) return DEFAULT_TAB_GROUPS.map(g => g.key);
+      // Merge in any new groups added since the user last saved their order
+      const knownKeys = new Set(saved);
+      const missing = DEFAULT_TAB_GROUPS.map(g => g.key).filter(k => !knownKeys.has(k));
+      return [...saved, ...missing];
+    } catch { return DEFAULT_TAB_GROUPS.map(g => g.key); }
   });
   const [groupsOpen, setGroupsOpen] = useState(() => {
     try { return JSON.parse(localStorage.getItem("nav_groups_open") || "{}"); }
@@ -532,7 +541,7 @@ function AppShell() {
       )}
 
       {/* Body */}
-      {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} onNavigate={goView} />}
+      {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} onNavigate={goView} onSetPerson={setRole} />}
       {view === "pipeline"  && pipelineMode === "board"    && <Pipeline    onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
@@ -551,6 +560,7 @@ function AppShell() {
       {view === "activity"  && <Activity />}
       {view === "resources" && <Resources />}
       {view === "monitor"   && isOwner && <Monitor />}
+      {view === "ai"        && isOwner && <AIBrain />}
       {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
 
       {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}

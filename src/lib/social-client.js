@@ -773,6 +773,34 @@ export async function fetchLiveTikTokInbox() {
   return []; // comments not available via this RapidAPI endpoint
 }
 
+/* ── AI classification for inbox threads ───────────────────────────────── */
+// Fire-and-forget: called after threads load. Returns {[threadId]: {topic, tags, severity}}.
+// Uses classify_only=true so no DB writes happen on every inbox refresh.
+export async function classifyInboxThreads(threads, accessToken) {
+  if (!Array.isArray(threads) || !threads.length) return {};
+  const messages = threads.slice(0, 50).map(t => ({
+    id: t.id,
+    source: t.platform || "inbox",
+    channel: t.postTitle || t.platform || "social",
+    author: t.author?.handle || t.author?.name || "unknown",
+    body: (t.text || "").slice(0, 500),
+  }));
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+    const r = await fetch("/api/ai/monitor", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ messages, classify_only: true }),
+    });
+    if (!r.ok) return {};
+    const d = await r.json();
+    return d.classifications || {};
+  } catch {
+    return {};
+  }
+}
+
 /* ── util ───────────────────────────────────────────────────────────────── */
 function relTime(mins) {
   if (mins < 1) return "now";

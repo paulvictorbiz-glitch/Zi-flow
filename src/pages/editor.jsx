@@ -118,7 +118,7 @@ function ClipRow({ clip }) {
 
 /* ========================================================= */
 export function VideoEditor({ reel: initialReel, onOpen }) {
-  const { reels, attachedFootage } = useWorkflow();
+  const { reels, attachedFootage, actions } = useWorkflow();
   const { person: me } = useAuth();
 
   /* Reel selection — default to the reel passed in (e.g. the one open in
@@ -293,6 +293,25 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
     }
     setSession(result.data);
     setSavedAt(new Date());
+
+    /* edit_sessions is a private tracker — the pipeline card is what the
+       reviewer actually sees. Saving an Exported session with a link offers
+       to push it onto the card: attachUrl feeds the review queue's
+       "Current reel state" link, and the stage move puts it in that queue. */
+    if (status === "exported" && exportUrl.trim() && reel) {
+      const url = exportUrl.trim();
+      const needsUrl = reel.attachUrl !== url;
+      const canSubmit = reel.stage === "not_started" || reel.stage === "in_progress";
+      if (needsUrl || canSubmit) {
+        const q = canSubmit
+          ? "Also set this link as the reel's \"Current reel state\" and submit it for review?"
+          : "Also set this link as the reel's \"Current reel state\"?";
+        if (window.confirm(q)) {
+          if (needsUrl) actions.updateReel(reel.id, { attachUrl: url });
+          if (canSubmit) actions.moveStage(reel.id, { stage: "review" });
+        }
+      }
+    }
   };
 
   const statusMeta = STATUS_OPTIONS.find(s => s.value === status) || STATUS_OPTIONS[0];

@@ -7,7 +7,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { DPill } from "../components/components.jsx";
 import { footageBrainThumbnailUrl, getFootageBrainCoverageTree } from "../lib/footage-brain-client.js";
-import { useWorkflow } from "../store/store.jsx";
+import { useWorkflow, nextReelId } from "../store/store.jsx";
+import { useRoster } from "../lib/roster.jsx";
 import { supabase } from "../lib/supabase-client.js";
 
 const MAX_HISTORY = 20;
@@ -120,14 +121,6 @@ async function saveHistoryToDB(prompt, draft, reelId = null) {
 
 async function deleteHistoryFromDB(id) {
   await supabase.from("generated_drafts").delete().eq("id", id);
-}
-
-function nextReelId(reels) {
-  const nums = (reels || [])
-    .map(r => { const m = /^REEL-(\d+)$/.exec(r?.id || ""); return m ? parseInt(m[1], 10) : -1; })
-    .filter(n => n >= 0);
-  const next = nums.length ? Math.max(...nums) + 1 : 0;
-  return "REEL-" + String(next).padStart(3, "0");
 }
 
 /* Render the AI draft into the plain-text shot plan that the Reel detail
@@ -353,6 +346,16 @@ export function IdeaGenerator() {
   }, []);
 
   const { actions, reels } = useWorkflow();
+  const { peopleList, canonicalPersonId } = useRoster();
+
+  /* Who the new reel is assigned to. Defaults to the skilled editor so a
+     generated reel lands straight in their Not-started column instead of
+     waiting in the owner's lane for a manual triage drag. */
+  const [assignTo, setAssignTo] = useState("");
+  useEffect(() => {
+    if (!assignTo) setAssignTo(canonicalPersonId("skilled") || canonicalPersonId("owner") || "paul");
+  }, [assignTo, canonicalPersonId]);
+  const assignOptions = peopleList.filter(p => p.role !== "reviewer");
 
   const draft = result?.draft;
   const meta  = result?.meta;
@@ -461,6 +464,7 @@ export function IdeaGenerator() {
   const createReelFromDraft = () => {
     if (!draft) return;
     const newId = nextReelId(reels);
+    const who = assignTo || "paul";
 
     // Build a readable shot-plan / blueprint for the reel's `script` field
     // (this is what the Reel detail "Script / shot plan" tab renders).
@@ -468,10 +472,13 @@ export function IdeaGenerator() {
 
     const reel = {
       id: newId,
+      // List view shows display_number as the reel's number — set it at
+      // creation so new reels don't fall back to raw id tails.
+      displayNumber: parseInt(newId.slice(5), 10),
       title: draft.title || `Reel: ${(prompt || "").slice(0, 50)}`,
       stage: "not_started",
-      owner: "paul",
-      lane: "paul",
+      owner: who,
+      lane: who,
       state: "ok",
       age: "just now",
       due: null,
@@ -751,11 +758,26 @@ export function IdeaGenerator() {
 
           <div style={{ paddingTop: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {!created ? (
-              <DPill primary onClick={createReelFromDraft}>+ Add to Pipeline</DPill>
+              <>
+                <DPill primary onClick={createReelFromDraft}>+ Add to Pipeline</DPill>
+                <label className="gen-model-pick">
+                  <span className="mono dim" style={{ fontSize: 10 }}>assign to</span>
+                  <select
+                    className="gen-model-select"
+                    value={assignTo}
+                    onChange={e => setAssignTo(e.target.value)}
+                    title="Who gets this reel — it lands in their Not-started column, no triage drag needed"
+                  >
+                    {assignOptions.map(p => (
+                      <option key={p.id} value={p.id}>{p.short || p.name}</option>
+                    ))}
+                  </select>
+                </label>
+              </>
             ) : (
               <>
                 <span className="mono" style={{ fontSize: 11, color: "var(--c-cyan)" }}>
-                  ✓ {created.id} added
+                  ✓ {created.id} added · assigned to {assignOptions.find(p => p.id === created.reel.owner)?.short || created.reel.owner}
                 </span>
                 <DPill onClick={() => {
                   if (window.__openReel) window.__openReel(created.reel);

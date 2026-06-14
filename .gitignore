@@ -17,3 +17,10 @@ footage_brain.db
 footage_brain.db-shm
 footage_brain.db-wal
 machine_id.json
+
+# Google Cloud service account keys — never commit
+api/footage-brain-sa.json
+tools/credentials/
+*.json.key
+# Service-account JSON dropped in the repo root (project_id-keyid.json pattern)
+footage-brain-database-*.json

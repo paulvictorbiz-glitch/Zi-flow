@@ -4,31 +4,19 @@
    Seeds a structured reel skeleton: title, logline, owner,
    stage, audio/inspiration links, voiceover, shot plan, and
    any footage clips queued from a Footage Brain search.
-   On submit, calls actions.createReel and then attaches each
-   queued footage row with the new reel's id.
+   On submit, calls actions.createReelWithFootage so the reel
+   row is persisted BEFORE its footage rows — the footage table
+   has a reel_id FK, and firing both concurrently let footage
+   inserts race ahead of the reel and fail the FK silently.
    ========================================================= */
 
 import React, { useState, useMemo } from "react";
 import { DPill } from "../components.jsx";
-import { useWorkflow } from "../../store/store.jsx";
+import { useWorkflow, nextReelId } from "../../store/store.jsx";
 import { useRoster } from "../../lib/roster.jsx";
 import { ROLES } from "../../lib/shared-data.jsx";
 import { FootageBrainSearch } from "../FootageBrainSearch.jsx";
 import { Modal, Field, SegRow } from "./Modal.jsx";
-
-/* Compute the next sequential REEL id from the current store.
-   Format: REEL-NNN (zero-padded to 3 digits, expands to 4+ if needed).
-   The first reel after a clean wipe gets REEL-000. */
-function nextReelId(reels) {
-  const nums = (reels || [])
-    .map((r) => {
-      const m = /^REEL-(\d+)$/.exec(r?.id || "");
-      return m ? parseInt(m[1], 10) : -1;
-    })
-    .filter((n) => n >= 0);
-  const next = nums.length ? Math.max(...nums) + 1 : 0;
-  return "REEL-" + String(next).padStart(3, "0");
-}
 
 export function ReelModal({ onClose }) {
   const { actions, reels } = useWorkflow();
@@ -78,6 +66,9 @@ export function ReelModal({ onClose }) {
     });
     const r = {
       id: newId,
+      // List view shows display_number as the reel's number — set it at
+      // creation so new reels don't fall back to raw id tails.
+      displayNumber: parseInt(newId.slice(5), 10),
       title: title || "Untitled reel",
       stage, owner, lane: owner, state: "ok",
       age: "just now", due: null,
@@ -93,9 +84,9 @@ export function ReelModal({ onClose }) {
       logline, vo, audio, inspo, script: plan,
       ...(Object.keys(footageDrive).length ? { detail: { footageDrive } } : {}),
     };
-    actions.createReel(r);
-    // Persist queued footage attachments now that we have the reel id.
-    pending.forEach((p) => actions.addAttachedFootage({ ...p, reel_id: newId }));
+    // Single action that persists the reel FIRST, then the footage rows —
+    // same FK-safe path the Idea Generator uses.
+    actions.createReelWithFootage(r, pending.map((p) => ({ ...p, reel_id: newId })));
     if (typeof window !== "undefined" && window.__openReel) window.__openReel(r);
     onClose();
   };

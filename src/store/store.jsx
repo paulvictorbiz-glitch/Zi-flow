@@ -104,6 +104,7 @@ function dailyTaskFromDb(row) {
     taskText: task_text ?? undefined,
     taskDate: task_date ?? undefined,
     completedAt: completed_at ?? undefined,
+    notes: rest.notes ?? undefined,
   };
 }
 
@@ -117,6 +118,18 @@ function appendRevisionEntry(detail, entry) {
          by: detail.revisionBy || null, note: detail.revisionNote }]
     : [];
   return [...legacy, ...existing, entry];
+}
+
+/* Next sequential REEL id from the current reels list. Format REEL-NNN
+   (zero-padded to 3 digits, expands naturally past 999). Shared by every
+   create-reel surface (ReelModal, Idea Generator) so the numbering logic
+   lives in one place. */
+function nextReelId(reels) {
+  const nums = (reels || [])
+    .map(r => { const m = /^REEL-(\d+)$/.exec(r?.id || ""); return m ? parseInt(m[1], 10) : -1; })
+    .filter(n => n >= 0);
+  const next = nums.length ? Math.max(...nums) + 1 : 0;
+  return "REEL-" + String(next).padStart(3, "0");
 }
 
 /* Build a system-authored comment entry. Used on stage transitions
@@ -572,6 +585,7 @@ function WorkflowProvider({ children }) {
         if (cardsRes.error) throw cardsRes.error;
         if (tasksRes.error) throw tasksRes.error;
         if (footageRes.error) throw footageRes.error;
+        if (dailyTasksRes.error) throw dailyTasksRes.error;
         if (cancelled) return;
         dispatch({ type: "HYDRATE", payload: {
           reels: (reelsRes.data || []).map(reelFromDb),
@@ -897,6 +911,20 @@ function WorkflowProvider({ children }) {
           }
         });
       },
+
+      updateDailyTask: async (id, patch) => {
+        // patch can include: { taskText, notes }
+        const dbPatch = {};
+        if (patch.taskText !== undefined) dbPatch.task_text = patch.taskText;
+        if (patch.notes     !== undefined) dbPatch.notes     = patch.notes;
+        dispatch({ type: "UPSERT_DAILY_TASK", item: { id, ...patch } });
+        await supabase.from("daily_tasks").update(dbPatch).eq("id", id).then(({ error }) => {
+          if (error) {
+            console.error("updateDailyTask persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
     },
   }), [state, wrap]);
 
@@ -956,4 +984,4 @@ if (typeof window !== "undefined") {
   };
 }
 
-export { WorkflowProvider, useWorkflow, WorkflowContext };
+export { WorkflowProvider, useWorkflow, WorkflowContext, nextReelId };

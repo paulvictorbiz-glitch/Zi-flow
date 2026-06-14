@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "../lib/supabase-client.js";
 import { useAuth } from "../auth.jsx";
 
@@ -14,6 +14,8 @@ export function Resources() {
   const [editingValue, setEditingValue] = useState("");
   const [newColLabel, setNewColLabel] = useState("");
   const [addingCol, setAddingCol] = useState(false);
+  const dragRowId = useRef(null);
+  const dragOverRowId = useRef(null);
 
   const visibleRows = useMemo(() => isOwner ? rows : rows.filter(r => !r.hidden), [rows, isOwner]);
 
@@ -54,6 +56,41 @@ export function Resources() {
     const next = !row.hidden;
     setRows(prev => prev.map(r => r.id === row.id ? { ...r, hidden: next } : r));
     await supabase.from("resource_rows").update({ hidden: next }).eq("id", row.id);
+  };
+
+  const setRowColor = async (row, color) => {
+    setRows(prev => prev.map(r => r.id === row.id ? { ...r, row_color: color || null } : r));
+    await supabase.from("resource_rows").update({ row_color: color || null }).eq("id", row.id);
+  };
+
+  const handleDragStart = (e, rowId) => {
+    dragRowId.current = rowId;
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e, rowId) => {
+    e.preventDefault();
+    dragOverRowId.current = rowId;
+  };
+
+  const handleDrop = async (e, targetRowId) => {
+    e.preventDefault();
+    const srcId = dragRowId.current;
+    if (!srcId || srcId === targetRowId) return;
+    dragRowId.current = null;
+    dragOverRowId.current = null;
+
+    setRows(prev => {
+      const next = [...prev];
+      const srcIdx = next.findIndex(r => r.id === srcId);
+      const tgtIdx = next.findIndex(r => r.id === targetRowId);
+      const [moved] = next.splice(srcIdx, 1);
+      next.splice(tgtIdx, 0, moved);
+      const reindexed = next.map((r, i) => ({ ...r, row_index: i }));
+      // persist new order
+      reindexed.forEach(r => supabase.from("resource_rows").update({ row_index: r.row_index }).eq("id", r.id));
+      return reindexed;
+    });
   };
 
   const addColumn = async () => {
@@ -128,7 +165,7 @@ export function Resources() {
         <table className="exp-table">
           <thead>
             <tr>
-              <th style={{ width: 32 }}></th>
+              <th style={{ width: 54 }}></th>
               {columns.map(col => (
                 <th key={col.col_key} style={{ minWidth: 180 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}>
@@ -155,28 +192,53 @@ export function Resources() {
               <tr
                 key={row.id}
                 className="exp-row"
-                style={row.hidden ? { opacity: 0.45, filter: "grayscale(0.4)" } : undefined}
+                draggable
+                onDragStart={e => handleDragStart(e, row.id)}
+                onDragOver={e => handleDragOver(e, row.id)}
+                onDrop={e => handleDrop(e, row.id)}
+                style={{
+                  ...(row.hidden ? { opacity: 0.45, filter: "grayscale(0.4)" } : {}),
+                  ...(row.row_color ? { borderLeft: "3px solid " + row.row_color } : {}),
+                }}
               >
                 <td>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <span
+                      title="Drag to reorder"
+                      style={{ cursor: "grab", color: "var(--fg-dim)", fontSize: 14, padding: "0 2px", lineHeight: 1, userSelect: "none" }}
+                    >⠿</span>
                     <button
                       onClick={() => { if (window.confirm("Delete this row?")) deleteRow(row.id); }}
                       style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 12, padding: "0 4px" }}
                       title="Delete row"
                     >×</button>
                     {isOwner && (
-                      <button
-                        onClick={() => toggleHideRow(row)}
-                        title={row.hidden ? "Show this row to all users" : "Hide this row from non-owners"}
-                        style={{
-                          background: "none", border: "none",
-                          color: row.hidden ? "var(--fg-dim)" : "var(--fg)",
-                          cursor: "pointer", fontSize: 13, padding: "2px 4px",
-                          opacity: row.hidden ? 0.5 : 1,
-                        }}
-                      >
-                        {row.hidden ? "🙈" : "👁"}
-                      </button>
+                      <>
+                        <button
+                          onClick={() => toggleHideRow(row)}
+                          title={row.hidden ? "Show this row to all users" : "Hide this row from non-owners"}
+                          style={{
+                            background: "none", border: "none",
+                            color: row.hidden ? "var(--fg-dim)" : "var(--fg)",
+                            cursor: "pointer", fontSize: 13, padding: "2px 4px",
+                            opacity: row.hidden ? 0.5 : 1,
+                          }}
+                        >
+                          {row.hidden ? "🙈" : "👁"}
+                        </button>
+                        <input
+                          type="color"
+                          value={row.row_color || "#0d1525"}
+                          onChange={e => setRowColor(row, e.target.value)}
+                          onDoubleClick={() => setRowColor(row, null)}
+                          title="Row color (double-click to clear)"
+                          style={{
+                            width: 18, height: 18, padding: 0, border: "none",
+                            borderRadius: 3, cursor: "pointer", background: "none",
+                            opacity: row.row_color ? 1 : 0.35,
+                          }}
+                        />
+                      </>
                     )}
                   </span>
                 </td>

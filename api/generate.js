@@ -22,6 +22,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { isAnthropicEnabled, ANTHROPIC_PAUSED } from "./admin/_auth.js";
 
 // Free OpenRouter models can be slow (search + LLM + a few clips). Give the
 // serverless function more headroom than the default so it doesn't 504 in
@@ -460,8 +461,10 @@ async function callOpenRouter(key, system, userMessage, maxTokens = 6000) {
 // Main handler
 // ---------------------------------------------------------------------------
 export default async function handler(req, res) {
-  // CORS for local dev
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const _allowedOrigins = new Set(["https://footagebrain.com", "https://www.footagebrain.com"]);
+  const _origin = req.headers.origin || "";
+  res.setHeader("Access-Control-Allow-Origin", _allowedOrigins.has(_origin) ? _origin : "https://footagebrain.com");
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") { res.status(200).end(); return; }
@@ -621,6 +624,7 @@ ${outputSchema(type, mode)}`;
       usage = or.usage;
       providerModel = or.model;
     } else { // anthropic (default)
+      if (!(await isAnthropicEnabled())) { res.status(503).json(ANTHROPIC_PAUSED); return; }
       const apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) { res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on this server" }); return; }
       const client = new Anthropic({ apiKey });

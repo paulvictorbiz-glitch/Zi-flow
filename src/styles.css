@@ -2022,21 +2022,18 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
 }
 .fab {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 12px 18px 12px 14px;
-  border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 48px; height: 48px; padding: 0;
+  border-radius: 50%;
   background: var(--c-cyan);
   color: #062028;
-  font-family: var(--f-mono); font-size: 11.5px;
-  letter-spacing: 0.06em; text-transform: uppercase;
   cursor: pointer;
   box-shadow: 0 12px 32px rgba(107,214,224,0.25), 0 1px 0 rgba(255,255,255,0.05) inset;
   transition: transform .15s, box-shadow .15s;
 }
-.fab:hover { transform: translateY(-1px); }
+.fab:hover { transform: translateY(-2px); }
 .fab.is-open { background: var(--bg-elev); color: var(--fg); box-shadow: 0 10px 28px rgba(0,0,0,0.45); }
-.fab .plus { font-size: 18px; font-weight: 700; }
-.fab .lbl  { font-weight: 600; }
+.fab .plus { font-size: 22px; font-weight: 700; line-height: 1; }
 
 .fab-menu {
   display: flex; flex-direction: column; gap: 8px;
@@ -2064,6 +2061,83 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .fab-opt .t { font-size: 13px; color: var(--fg); }
 .fab-opt .s { font-size: 11.5px; color: var(--fg-mute); margin-top: 3px; line-height: 1.4; }
+
+/* Slight orange hue to highlight the "Chat with AI bot" option */
+.fab-opt-bot { background: rgba(249, 115, 22, 0.07); }
+.fab-opt-bot:hover { background: rgba(249, 115, 22, 0.14); border-color: rgba(249, 115, 22, 0.4); }
+.fab-opt-bot .k { border-color: rgba(249, 115, 22, 0.5); color: var(--c-orange); }
+.fab-opt-bot .t { color: var(--c-orange); }
+
+/* ── Floating bot chat widget ────────────────────────── */
+.fab-bot-chat {
+  width: 320px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-hard);
+  border-radius: 10px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.55);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  max-height: 420px;
+}
+.fab-bot-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line-hard);
+  font-family: var(--f-mono); font-size: 12px; font-weight: 600;
+  color: var(--c-cyan);
+}
+.fab-bot-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--fg-mute); font-size: 18px; line-height: 1; padding: 0;
+}
+.fab-bot-close:hover { color: var(--fg); }
+.fab-bot-messages {
+  flex: 1; overflow-y: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.fab-bot-msg { display: flex; flex-direction: column; }
+.fab-bot-msg.user { align-items: flex-end; }
+.fab-bot-msg.bot  { align-items: flex-start; }
+.fab-bot-bubble {
+  max-width: 85%; padding: 8px 11px;
+  border-radius: 10px;
+  font-size: 12.5px; line-height: 1.5;
+}
+.fab-bot-msg.user .fab-bot-bubble {
+  background: var(--c-cyan); color: #062028;
+  border-bottom-right-radius: 3px;
+}
+.fab-bot-msg.bot .fab-bot-bubble {
+  background: var(--bg-3); color: var(--fg);
+  border-bottom-left-radius: 3px;
+}
+.fab-bot-typing { letter-spacing: 3px; opacity: .6; }
+.fab-bot-meta {
+  font-family: var(--f-mono); font-size: 9.5px;
+  color: var(--fg-faint); margin-top: 2px; padding-left: 2px;
+}
+.fab-bot-input-row {
+  display: flex; gap: 6px;
+  padding: 10px;
+  border-top: 1px solid var(--line-hard);
+  background: var(--bg-2);
+}
+.fab-bot-input {
+  flex: 1; background: var(--bg-3);
+  border: 1px solid var(--line-hard); border-radius: 6px;
+  padding: 6px 10px; color: var(--fg);
+  font-size: 12px; outline: none;
+}
+.fab-bot-input:focus { border-color: var(--c-cyan-soft); }
+.fab-bot-send {
+  width: 30px; height: 30px; border-radius: 6px;
+  background: var(--c-cyan); color: #062028;
+  border: none; cursor: pointer; font-size: 14px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.fab-bot-send:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ── Modal shell ─────────────────────────────────────── */
 
@@ -2505,8 +2579,6 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 
   .nav-item { min-height: 44px; }
   button, [role="button"] { min-height: 36px; }
-
-  .loc-trip-panel { display: none !important; }
 }
 
 @media (max-width: 768px) {
@@ -2521,8 +2593,6 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   .board .cell { min-width: 120px; }
 
   .topbar-actions input[type="text"] { width: 140px; }
-
-  .loc-trip-panel { display: none !important; }
 }
 
 /* ── Coverage tab rows ─────────────────────────────────────
@@ -2947,4 +3017,195 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   .gen-shot-thumb { width: 56px; height: 34px; }
   .gen-hist-panel { margin: 0 14px 12px; }
   .gen-hist-meta { display: none; }
+}
+
+/* =========================================================
+   Owner command-center dashboard (.ow-*)
+   ========================================================= */
+
+.ow-dashboard {
+  display: block;
+  padding-bottom: 48px;
+}
+
+.ow-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 0 22px;
+}
+@media (max-width: 1100px) { .ow-summary-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px)  { .ow-summary-grid { grid-template-columns: 1fr; } }
+
+.ow-card {
+  border: 1px dashed var(--line-hard);
+  border-radius: 8px;
+  background: var(--bg-1);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  outline: none;
+}
+.ow-card:hover  { border-color: var(--c-cyan-soft); }
+.ow-card:focus  { outline: 1px dashed var(--c-cyan); outline-offset: 3px; }
+.ow-card.is-warn { border-color: var(--c-amber-soft); }
+.ow-card.is-red  { border-color: var(--c-red-soft); }
+
+.ow-card-label {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin-bottom: 2px;
+}
+.ow-card-big {
+  font-family: var(--f-mono);
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--fg);
+  line-height: 1;
+}
+.ow-card-big.is-warn { color: var(--c-amber); }
+.ow-card-big.is-red  { color: var(--c-red); }
+
+.ow-card-sub {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+  line-height: 1.5;
+}
+.ow-card-health-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 4px 0 2px;
+}
+.ow-card-platforms {
+  display: flex;
+  gap: 10px;
+  margin: 6px 0 2px;
+}
+.ow-plat-glyph {
+  font-size: 14px;
+  font-family: var(--f-mono);
+  transition: color 0.2s;
+}
+.ow-card-link {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--c-cyan);
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.ow-team-section {
+  padding: 0 22px;
+  margin-top: 20px;
+}
+.ow-team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.ow-team-card {
+  border: 1px dashed var(--line-hard);
+  border-radius: 8px;
+  background: var(--bg-1);
+  padding: 13px 15px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.ow-team-card:hover  { border-color: var(--c-cyan-soft); }
+.ow-team-card.is-warn { border-color: var(--c-amber-soft); }
+.ow-team-name {
+  font-size: 13px;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ow-team-role {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  margin-top: 3px;
+}
+.ow-team-stat {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+.ow-team-stat strong {
+  color: var(--c-cyan);
+  font-weight: 600;
+}
+
+.ow-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-hard);
+  margin-bottom: 4px;
+}
+.ow-section-title {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.ow-full-section {
+  padding: 20px 22px 0;
+}
+
+/* =========================================================
+   Analytics page — content table thumbnail + platform badge
+   ========================================================= */
+
+.analytics .pb-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 4px;
+  font-size: 9px; font-weight: 700; color: #0a0e14;
+}
+.analytics .ct-thumb {
+  width: 48px; height: 27px;
+  object-fit: cover; border-radius: 3px;
+  display: block;
+}
+.analytics .content-table th,
+.analytics .content-table td {
+  padding: 6px 10px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.analytics .content-table th {
+  color: var(--fg-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.analytics .content-table th.sorted { color: var(--c-cyan); }
+.analytics .content-table { width: 100%; border-collapse: collapse; }
+.analytics .ct-title {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
