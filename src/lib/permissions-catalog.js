@@ -35,6 +35,7 @@ export const VIEW_CAPS = [
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate (AI · paid)" },
+  { key: "reeldna",   label: "Reel DNA (capture library)" },
   { key: "activity",  label: "Activity (CapCut tracker)" },
   { key: "resources", label: "Resources (link sheet)" },
   { key: "monitor",   label: "Monitor (infra usage)" },

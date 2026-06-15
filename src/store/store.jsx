@@ -108,6 +108,41 @@ function dailyTaskFromDb(row) {
   };
 }
 
+function reelDnaFromDb(row) {
+  if (!row) return row;
+  const { reel_url, genes_of_interest, quick_notes, captured_by,
+          external_ref, reel_id, archived_at,
+          created_at, updated_at, ...rest } = row;
+  return {
+    ...rest,
+    reelUrl: reel_url,
+    genesOfInterest: genes_of_interest ?? [],
+    quickNotes: quick_notes ?? undefined,
+    capturedBy: captured_by ?? undefined,
+    externalRef: external_ref ?? undefined,
+    reelId: reel_id ?? undefined,
+    archivedAt: archived_at ?? undefined,
+    createdAt: created_at ?? undefined,
+    updatedAt: updated_at ?? undefined,
+  };
+}
+function reelDnaToDb(item) {
+  // Only columns that exist in public.reel_dna; the per-gene jsonb fields
+  // (music/hook/font/story/sfx) pass through untouched.
+  const { reelUrl, genesOfInterest, quickNotes, capturedBy, externalRef,
+          reelId, archivedAt, id, platform, status, source,
+          music, hook, font, story, sfx } = item;
+  const out = { id, platform, status, source, music, hook, font, story, sfx,
+    reel_url: reelUrl,
+    genes_of_interest: genesOfInterest ?? [],
+    quick_notes: quickNotes ?? null,
+    captured_by: capturedBy ?? null,
+    external_ref: externalRef ?? null,
+    reel_id: reelId ?? null,
+    archived_at: archivedAt ?? null };
+  return out;
+}
+
 /* Build the next revisionHistory array. Folds the older single-field
    shape (`revisionNote` / `revisionAt` / `revisionBy`) into the head
    of the array on first append so nothing is lost on migration. */
@@ -329,6 +364,28 @@ function workflowReducer(state, action) {
       };
     }
 
+    /* Reel DNA — same optimistic + realtime shape as reels. */
+    case "CREATE_REEL_DNA":
+      return { ...state, reelDna: [action.item, ...state.reelDna] };
+
+    case "UPDATE_REEL_DNA": {
+      const apply = (d) => d.id === action.id ? { ...d, ...action.patch } : d;
+      return { ...state, reelDna: state.reelDna.map(apply) };
+    }
+
+    case "UPSERT_REEL_DNA": {
+      const exists = state.reelDna.some(d => d.id === action.item.id);
+      return {
+        ...state,
+        reelDna: exists
+          ? state.reelDna.map(d => d.id === action.item.id ? action.item : d)
+          : [action.item, ...state.reelDna],
+      };
+    }
+
+    case "DELETE_REEL_DNA_BY_ID":
+      return { ...state, reelDna: state.reelDna.filter(d => d.id !== action.id) };
+
     case "SET_DAILY_TASKS":
       return { ...state, dailyTasks: action.items };
 
@@ -545,6 +602,25 @@ async function persistRemoveAttachedFootage(id) {
   if (error) throw error;
 }
 
+async function persistCreateReelDna(item) {
+  const { error } = await supabase.from("reel_dna").insert(reelDnaToDb(item));
+  if (error) throw error;
+}
+
+async function persistUpdateReelDna(id, patch) {
+  // Remap camelCase patch keys to snake_case; jsonb gene fields pass through.
+  const dbPatch = { ...patch };
+  if ("reelUrl" in patch)         { dbPatch.reel_url = patch.reelUrl; delete dbPatch.reelUrl; }
+  if ("genesOfInterest" in patch) { dbPatch.genes_of_interest = patch.genesOfInterest; delete dbPatch.genesOfInterest; }
+  if ("quickNotes" in patch)      { dbPatch.quick_notes = patch.quickNotes; delete dbPatch.quickNotes; }
+  if ("capturedBy" in patch)      { dbPatch.captured_by = patch.capturedBy; delete dbPatch.capturedBy; }
+  if ("externalRef" in patch)     { dbPatch.external_ref = patch.externalRef; delete dbPatch.externalRef; }
+  if ("reelId" in patch)          { dbPatch.reel_id = patch.reelId; delete dbPatch.reelId; }
+  if ("archivedAt" in patch)      { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
+  const { error } = await supabase.from("reel_dna").update(dbPatch).eq("id", id);
+  if (error) throw error;
+}
+
 /* ---------- Context + provider ---------- */
 const WorkflowContext = React.createContext(null);
 
@@ -554,6 +630,7 @@ const INITIAL_STATE = {
   tasks: [],
   attachedFootage: [],
   dailyTasks: [],
+  reelDna: [],
   loaded: false,
   error: null,
 };
@@ -586,6 +663,22 @@ function WorkflowProvider({ children }) {
         if (tasksRes.error) throw tasksRes.error;
         if (footageRes.error) throw footageRes.error;
         if (dailyTasksRes.error) throw dailyTasksRes.error;
+
+        /* Reel DNA is fetched separately and degrades to [] if the table
+           hasn't been migrated yet. Hydrate is all-or-nothing — folding this
+           into the Promise.all above would brick the WHOLE app (the provider
+           gates render on `loaded`) on any DB where 0044 isn't applied. */
+        let reelDna = [];
+        try {
+          const reelDnaRes = await supabase
+            .from("reel_dna").select("*")
+            .order("created_at", { ascending: false });
+          if (reelDnaRes.error) throw reelDnaRes.error;
+          reelDna = (reelDnaRes.data || []).map(reelDnaFromDb);
+        } catch (e) {
+          console.warn("reel_dna not available (run migration 0044?):", e?.message || e);
+        }
+
         if (cancelled) return;
         dispatch({ type: "HYDRATE", payload: {
           reels: (reelsRes.data || []).map(reelFromDb),
@@ -593,6 +686,7 @@ function WorkflowProvider({ children }) {
           tasks: (tasksRes.data || []).map(taskFromDb),
           attachedFootage: footageRes.data || [],
           dailyTasks: (dailyTasksRes.data || []).map(dailyTaskFromDb),
+          reelDna,
         }});
       } catch (e) {
         if (cancelled) return;
@@ -662,6 +756,17 @@ function WorkflowProvider({ children }) {
               dispatch({ type: "UPSERT_DAILY_TASK", item: dailyTaskFromDb(payload.new) });
             }
           })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "reel_dna" },
+          (payload) => {
+            if (payload.eventType === "DELETE") {
+              dispatch({ type: "DELETE_REEL_DNA_BY_ID", id: payload.old?.id });
+            } else if (payload.new) {
+              // This is how IG-DM captures (inserted by the Hetzner webhook)
+              // appear in the tab live, with no refresh.
+              dispatch({ type: "UPSERT_REEL_DNA", item: reelDnaFromDb(payload.new) });
+            }
+          })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [state.loaded]);
@@ -687,6 +792,7 @@ function WorkflowProvider({ children }) {
     tasks: state.tasks,
     attachedFootage: state.attachedFootage,
     dailyTasks: state.dailyTasks,
+    reelDna: state.reelDna,
     loaded: state.loaded,
     error: state.error,
     dispatch,
@@ -925,6 +1031,47 @@ function WorkflowProvider({ children }) {
           }
         });
       },
+
+      /* ----- Reel DNA ----- */
+
+      /* Capture a reel from the manual form (or the share-target / bookmarklet,
+         which pass source='share_target'). Optimistic: the card shows instantly,
+         then persists. genesOfInterest is the set of genes the user flagged. */
+      createReelDnaCapture: ({ reelUrl, platform, genesOfInterest = [], quickNotes,
+                               capturedBy, source = "manual" }) => {
+        const item = {
+          id: crypto.randomUUID(),
+          reelUrl,
+          platform: platform || "ig",
+          genesOfInterest,
+          quickNotes: quickNotes || null,
+          status: "captured",
+          source,
+          capturedBy: capturedBy || null,
+          createdAt: new Date().toISOString(),
+        };
+        wrap(
+          { type: "CREATE_REEL_DNA", item },
+          () => persistCreateReelDna(item));
+        return item;
+      },
+
+      /* Patch any field: status changes, or per-gene jsonb edits like
+         updateReelDna(id, { hook: { startTs, endTs, downloadLink } }). */
+      updateReelDna: (id, patch) => wrap(
+        { type: "UPDATE_REEL_DNA", id, patch },
+        () => persistUpdateReelDna(id, patch)),
+
+      /* Soft-archive (restorable). */
+      archiveReelDna: (id) => {
+        const stamp = new Date().toISOString();
+        wrap(
+          { type: "UPDATE_REEL_DNA", id, patch: { archivedAt: stamp } },
+          () => persistUpdateReelDna(id, { archivedAt: stamp }));
+      },
+      restoreReelDna: (id) => wrap(
+        { type: "UPDATE_REEL_DNA", id, patch: { archivedAt: null } },
+        () => persistUpdateReelDna(id, { archivedAt: null })),
     },
   }), [state, wrap]);
 

@@ -290,11 +290,19 @@ function PersonRow({ person, token, onRefresh, onResult, trackerTs }) {
               >✕</IconBtn>
             </>
           ) : (
-            <IconBtn
-              title="Set up account (email + password)"
-              active={mode === "setup"}
-              onClick={() => { setEmail(person.email || ""); setPass(""); setMode(mode === "setup" ? null : "setup"); setErr(null); }}
-            >set up</IconBtn>
+            <>
+              <IconBtn
+                title="Set up account (email + password)"
+                active={mode === "setup"}
+                onClick={() => { setEmail(person.email || ""); setPass(""); setMode(mode === "setup" ? null : "setup"); setErr(null); }}
+              >set up</IconBtn>
+              <IconBtn
+                title="Delete slot"
+                danger
+                active={mode === "confirm-delete"}
+                onClick={() => { setMode(mode === "confirm-delete" ? null : "confirm-delete"); setErr(null); }}
+              >✕</IconBtn>
+            </>
           )}
         </div>
       </div>
@@ -420,8 +428,7 @@ function PersonRow({ person, token, onRefresh, onResult, trackerTs }) {
       {mode === "confirm-delete" && (
         <div style={{ ...expandStyle, border: "1px dashed var(--c-red, #f87171)", background: "rgba(248,113,113,0.04)" }}>
           <div style={{ fontSize: 11, color: "var(--fg-mute)", marginBottom: 6 }}>
-            Delete <b style={{ color: "var(--fg)" }}>{person.name}</b>'s account?
-            Their slot stays so they can be re-invited.
+            Delete <b style={{ color: "var(--fg)" }}>{person.name}</b>'s account and all their assignments? This cannot be undone.
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <ActionBtn danger busy={busy} onClick={() => run(

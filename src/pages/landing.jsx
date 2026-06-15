@@ -25,6 +25,9 @@ import { ReelPlayer } from "../components/reel-player.jsx";
 import { TeamSection } from "../components/team-section.jsx";
 import { AboutPage } from "../components/about-page.jsx";
 import { ProductPage } from "../components/product-page.jsx";
+import { ContentStudio } from "../components/content-studio.jsx";
+import { CreditsModal } from "../components/credits-modal.jsx";
+import { PlatformShowcase } from "../components/platform-showcase.jsx";
 import "./landing.css";
 
 const LOGO_SRC = "/brand/reel-dna-logo.png";
@@ -34,12 +37,20 @@ function scrollToBreakdown() {
   if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-/* Reusable wordmark lockup (top bar + footer). */
+/* Reusable logo lockup (top bar + HUD + footer). The PNG already
+   contains the "REEL DNA" wordmark, so no extra text is rendered.
+   Falls back to a text wordmark only if the image fails to load. */
 function Wordmark({ onClick }) {
+  const [imgOk, setImgOk] = React.useState(true);
   return (
-    <span className="lp-wordmark" onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}>
-      <span className="lp-wordmark-icon" aria-hidden="true">▶</span>
-      <span className="lp-wordmark-text">REEL<span> DNA</span></span>
+    <span className="lp-wordmark" onClick={onClick}
+          style={onClick ? { cursor: "pointer" } : undefined}>
+      {imgOk ? (
+        <img className="lp-logo-img" src={LOGO_SRC} alt="REEL DNA"
+             onError={() => setImgOk(false)} />
+      ) : (
+        <span className="lp-wordmark-text">REEL<span> DNA</span></span>
+      )}
     </span>
   );
 }
@@ -48,7 +59,6 @@ function Wordmark({ onClick }) {
 function HomeView({ onEnterApp }) {
   const [hoveredGene, setHoveredGene] = useState(null);
   const [reelUrl, setReelUrl] = useState(DEMO_REEL.sampleReel.sourceUrl);
-  const [logoOk, setLogoOk] = useState(true);
 
   const activeGene = useMemo(
     () => genes.find((g) => g.key === hoveredGene) || null,
@@ -61,14 +71,10 @@ function HomeView({ onEnterApp }) {
       <section className="lp-hero">
         <div className="lp-hero-glow" aria-hidden="true" />
         <div className="lp-hero-inner">
-          {logoOk ? (
-            <img className="lp-hero-logo" src={LOGO_SRC} alt="REEL DNA"
-                 onError={() => setLogoOk(false)} />
-          ) : (
-            <div className="lp-hero-logo-fallback">
-              <span className="lp-grad-strong">REEL DNA</span>
-            </div>
-          )}
+          <p className="lp-eyebrow">Reverse-engineer any reel</p>
+          <h1 className="lp-hero-title">
+            See the <span className="lp-grad-strong">DNA</span> of any reel.
+          </h1>
 
           <p className="lp-subhead">
             Paste any reel and we break the edit down to its genes — footage,
@@ -106,57 +112,54 @@ function HomeView({ onEnterApp }) {
           </div>
         </div>
 
-        <div className="lp-stage">
-          <div className="lp-stage-top">
-            <div className="lp-helix-col">
-              <span className="lp-stage-cap">GENETIC_STREAM.mp4</span>
-              <div className="lp-helix-wrap">
-                <HelixFlat genes={genes} hoveredGene={hoveredGene}
-                           onHoverGene={setHoveredGene} onSelectGene={setHoveredGene} />
+        <div className="lp-stage lp-stage--split">
+          {/* Left: the tall DNA helix (with the asset fan floating beside it) */}
+          <div className="lp-helix-col">
+            <span className="lp-stage-cap">GENETIC_STREAM.mp4</span>
+            <div className="lp-helix-wrap">
+              <HelixFlat genes={genes} hoveredGene={hoveredGene}
+                         onHoverGene={setHoveredGene} onSelectGene={setHoveredGene} />
+              {/* Asset fan floats over the helix area on hover */}
+              <div className="lp-fan-float">
+                {activeGene && <span className="lp-dispatch-line" aria-hidden="true" />}
+                <AssetFan gene={activeGene} onClose={() => setHoveredGene(null)} />
               </div>
-              {!activeGene && <div className="lp-helix-hint">Hover a gene node →</div>}
             </div>
-
-            <div className="lp-fan-col">
-              {activeGene && <span className="lp-dispatch-line" aria-hidden="true" />}
-              <AssetFan gene={activeGene} onClose={() => setHoveredGene(null)} />
-              {!activeGene && (
-                <div className="lp-fan-idle">
-                  <span className="lp-fan-idle-tag">RADIAL_FAN_DISPATCH</span>
-                  <p>Select a gene on the helix to load its assets.</p>
-                </div>
-              )}
-            </div>
-
-            <div className="lp-player-col">
-              <ReelPlayer sampleReel={DEMO_REEL.sampleReel} />
-            </div>
+            {!activeGene && <div className="lp-helix-hint">Hover a gene node →</div>}
           </div>
 
-          <div className="lp-dock">
-            <div className="lp-dock-transport">
-              <div className="lp-dock-controls">
-                <button className="lp-tbtn lp-tbtn--play" title="Play">▶</button>
-                <button className="lp-tbtn" title="Prev">⏮</button>
-                <button className="lp-tbtn" title="Next">⏭</button>
-                <span className="lp-tbar-sep" />
-                <button className="lp-tbtn lp-tbtn--ghost">✂ Split</button>
-                <button className="lp-tbtn lp-tbtn--ghost">🗑 Delete</button>
-                <button className="lp-tbtn lp-tbtn--ghost">✦ AI Crop</button>
-              </div>
-              <div className="lp-dock-tc"><b>00:00:14:02</b> <span>/ 00:00:28:00</span></div>
+          {/* Right: shorter sample reel stacked above the timeline dock so the
+              helix and the timeline are visible together (hover highlight reads). */}
+          <div className="lp-right-col">
+            <div className="lp-player-col lp-player-col--compact">
+              <ReelPlayer sampleReel={DEMO_REEL.sampleReel} />
             </div>
 
-            <TimelineView segments={DEMO_REEL.timeline} lanes={DEMO_REEL.LANES}
-                          totalSec={DEMO_REEL.totalSec} hoveredGene={hoveredGene} />
+            <div className="lp-dock">
+              <div className="lp-dock-transport">
+                <div className="lp-dock-controls">
+                  <button className="lp-tbtn lp-tbtn--play" title="Play">▶</button>
+                  <button className="lp-tbtn" title="Prev">⏮</button>
+                  <button className="lp-tbtn" title="Next">⏭</button>
+                  <span className="lp-tbar-sep" />
+                  <button className="lp-tbtn lp-tbtn--ghost">✂ Split</button>
+                  <button className="lp-tbtn lp-tbtn--ghost">🗑 Delete</button>
+                  <button className="lp-tbtn lp-tbtn--ghost">✦ AI Crop</button>
+                </div>
+                <div className="lp-dock-tc"><b>00:00:14:02</b> <span>/ 00:00:28:00</span></div>
+              </div>
 
-            <div className="lp-dock-foot">
-              <span className="lp-dock-foot-live">
-                <span className="lp-dock-dot" /> Timeline auto-syncing with Neural Cloud DNA
-              </span>
-              <span className="lp-dock-foot-id">
-                Active Segment ID: <b>{activeGene ? `DNA-${activeGene.key.toUpperCase()}` : "DNA-011402-WARP"}</b>
-              </span>
+              <TimelineView segments={DEMO_REEL.timeline} lanes={DEMO_REEL.LANES}
+                            totalSec={DEMO_REEL.totalSec} hoveredGene={hoveredGene} />
+
+              <div className="lp-dock-foot">
+                <span className="lp-dock-foot-live">
+                  <span className="lp-dock-dot" /> Timeline auto-syncing with Neural Cloud DNA
+                </span>
+                <span className="lp-dock-foot-id">
+                  Active Segment ID: <b>{activeGene ? `DNA-${activeGene.key.toUpperCase()}` : "DNA-011402-WARP"}</b>
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -175,10 +178,9 @@ function HomeView({ onEnterApp }) {
           <div className="lp-chips">
             {genes.map((g) => (
               <button key={g.key}
-                      className={"lp-chip" + (hoveredGene === g.key ? " is-on" : "")}
+                      type="button"
+                      className="lp-chip"
                       style={{ "--chip": g.color }}
-                      onMouseEnter={() => setHoveredGene(g.key)}
-                      onMouseLeave={() => setHoveredGene(null)}
                       onClick={() => { setHoveredGene(g.key); scrollToBreakdown(); }}>
                 <span className="lp-chip-dot" style={{ background: g.color }} />
                 {g.label}
@@ -202,6 +204,9 @@ function HomeView({ onEnterApp }) {
         </div>
       </section>
 
+      {/* ── Create Content / Analyze Video intake panel ── */}
+      <ContentStudio />
+
       {/* ── Founding team (also lives at bottom of Home) ── */}
       <TeamSection team={TEAM} mission={MISSION} compact />
     </>
@@ -210,6 +215,7 @@ function HomeView({ onEnterApp }) {
 
 export function Landing({ onEnterApp = () => {} }) {
   const [page, setPage] = useState("home");
+  const [creditsOpen, setCreditsOpen] = useState(false);
 
   // Reset scroll to top whenever the page view changes.
   useEffect(() => { window.scrollTo({ top: 0, behavior: "auto" }); }, [page]);
@@ -230,14 +236,28 @@ export function Landing({ onEnterApp = () => {} }) {
             </button>
           ))}
         </nav>
-        <button className="lp-login" onClick={onEnterApp}>Log in / Sign up</button>
+        <div className="lp-topbar-actions">
+          <button className="lp-credits" onClick={() => setCreditsOpen(true)}>
+            <span aria-hidden="true">✦</span> Get Credits
+          </button>
+          <button className="lp-login" onClick={onEnterApp}>Log in / Sign up</button>
+        </div>
       </header>
 
       {/* ── Active page ── */}
       {page === "home" && <HomeView onEnterApp={onEnterApp} />}
-      {page === "product" && <ProductPage product={PRODUCT} onEnterApp={onEnterApp} />}
+      {page === "product" && (
+        <>
+          <ProductPage product={PRODUCT} onEnterApp={onEnterApp} />
+          <PlatformShowcase />
+          <ContentStudio defaultTab="analyze" />
+        </>
+      )}
       {page === "about" && <AboutPage about={ABOUT} mission={MISSION} />}
       {page === "team" && <TeamSection team={TEAM} mission={MISSION} />}
+
+      {/* ── Get Credits payment modal (mockup) ── */}
+      <CreditsModal open={creditsOpen} onClose={() => setCreditsOpen(false)} />
 
       {/* ── Footer ── */}
       <footer className="lp-footer">

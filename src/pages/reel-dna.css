@@ -1,0 +1,221 @@
+/* =========================================================
+   Reel DNA tab. Scoped under .reel-dna so nothing leaks.
+   Reuses the global design tokens (--bg-*, --fg-*, --c-*, --f-*).
+   ========================================================= */
+
+.reel-dna { display: block; }
+
+.rd-body {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 12px 22px 48px;
+}
+
+.rd-error {
+  margin: 0 22px;
+  padding: 8px 12px;
+  border: 1px dashed var(--c-red);
+  border-radius: 6px;
+  color: var(--c-red);
+  font-family: var(--f-mono); font-size: 12px;
+}
+
+/* ── Capture form ──────────────────────────────────────── */
+.rd-capture { display: flex; flex-direction: column; gap: 10px; }
+.rd-capture-row {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+
+.rd-input {
+  flex: 1; min-width: 220px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: var(--f-mono); font-size: 13px;
+  padding: 8px 10px;
+}
+.rd-input.sm { font-size: 12px; padding: 6px 8px; min-width: 0; }
+.rd-input:focus { outline: none; border-color: var(--c-cyan); }
+
+.rd-platform-pick { display: flex; gap: 6px; }
+
+.rd-genes-pick {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.rd-genes-label {
+  font-family: var(--f-mono); font-size: 10.5px;
+  color: var(--fg-dim); text-transform: uppercase; letter-spacing: .08em;
+  margin-right: 4px;
+}
+.rd-gene-chip {
+  background: transparent;
+  border: 1px dashed var(--dash);
+  border-radius: 999px;
+  color: var(--fg-mute);
+  font-family: var(--f-mono); font-size: 11.5px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all .12s ease;
+}
+.rd-gene-chip:hover { color: var(--fg); border-color: var(--line-hard); }
+.rd-gene-chip.is-on {
+  color: var(--bg-0);
+  background: var(--c-cyan);
+  border-color: var(--c-cyan);
+  font-weight: 600;
+}
+
+.rd-notes {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: var(--f-sans); font-size: 13px;
+  padding: 8px 10px; resize: vertical;
+}
+.rd-notes.sm { font-size: 12px; }
+.rd-notes:focus { outline: none; border-color: var(--c-cyan); }
+
+.rd-capture-actions { display: flex; justify-content: flex-end; }
+
+/* ── Filter bar ────────────────────────────────────────── */
+.rd-filterbar {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  padding: 2px 0;
+}
+.rd-filterbar .mono { font-family: var(--f-mono); font-size: 10.5px; }
+.rd-filterbar .dim  { color: var(--fg-dim); text-transform: uppercase; letter-spacing: .08em; }
+
+/* ── Library grid ──────────────────────────────────────── */
+.rd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 720px) { .rd-grid { grid-template-columns: 1fr; } }
+
+.rd-empty {
+  padding: 36px 16px; text-align: center;
+  color: var(--fg-dim);
+  font-family: var(--f-mono); font-size: 12.5px;
+  border: 1px dashed var(--dash); border-radius: 8px;
+}
+
+/* ── A captured-reel card ──────────────────────────────── */
+.rd-card {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-hard);
+  border-radius: 8px;
+  background: var(--bg-2);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.rd-status--captured    { border-left-color: var(--c-blue); }
+.rd-status--in_progress { border-left-color: var(--c-amber); }
+.rd-status--done        { border-left-color: var(--c-green); }
+
+.rd-card-head {
+  display: flex; justify-content: space-between; gap: 10px; align-items: flex-start;
+}
+.rd-card-title { min-width: 0; flex: 1; }
+.rd-card-url {
+  display: block;
+  color: var(--c-cyan);
+  font-family: var(--f-mono); font-size: 12px;
+  text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rd-card-url:hover { text-decoration: underline; }
+
+.rd-card-meta {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  margin-top: 4px;
+}
+.rd-tag {
+  font-family: var(--f-mono); font-size: 10px;
+  color: var(--fg-mute);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 1px 6px;
+}
+.rd-tag.dim { color: var(--fg-dim); border-color: var(--line-soft); }
+.rd-source--violet { color: var(--c-violet); border-color: var(--c-violet); }
+.rd-source--blue   { color: var(--c-blue);   border-color: var(--c-blue); }
+
+/* status picker (top-right of card) */
+.rd-status-pick, .rd-platform-pick { display: flex; gap: 4px; flex-shrink: 0; }
+.rd-status-chip {
+  background: transparent;
+  border: 1px dashed var(--dash); border-radius: 4px;
+  color: var(--fg-dim);
+  font-family: var(--f-mono); font-size: 10px;
+  padding: 2px 7px; cursor: pointer;
+}
+.rd-status-chip:hover { color: var(--fg-mute); }
+.rd-status-chip.is-on {
+  color: var(--bg-0); background: var(--fg-mute); border-color: var(--fg-mute);
+  font-weight: 600;
+}
+
+.rd-card-genes { display: flex; gap: 5px; flex-wrap: wrap; }
+.rd-gene-tag {
+  font-family: var(--f-mono); font-size: 10px;
+  color: var(--c-cyan);
+  background: color-mix(in srgb, var(--c-cyan) 12%, transparent);
+  border-radius: 4px; padding: 1px 7px;
+}
+
+.rd-card-notes {
+  font-family: var(--f-sans); font-size: 12.5px;
+  color: var(--fg-mute); line-height: 1.4;
+}
+
+/* ── Per-gene editor ───────────────────────────────────── */
+.rd-editor {
+  display: flex; flex-direction: column; gap: 10px;
+  border-top: 1px dashed var(--line); padding-top: 10px;
+}
+.rd-editor-block { display: flex; flex-direction: column; gap: 5px; }
+.rd-editor-label {
+  font-family: var(--f-mono); font-size: 10px;
+  color: var(--fg-dim); text-transform: uppercase; letter-spacing: .08em;
+}
+.rd-gene-fields { display: flex; flex-direction: column; gap: 6px; }
+.rd-gene-fields--row { flex-direction: row; flex-wrap: wrap; }
+.rd-gene-fields--row .rd-input { flex: 1; }
+
+.rd-card-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  border-top: 1px dashed var(--line-soft); padding-top: 8px;
+}
+.rd-card-foot-left { display: flex; gap: 12px; align-items: center; }
+.rd-collapse, .rd-archive, .rd-deconstruct {
+  font-family: var(--f-mono); font-size: 10.5px;
+  color: var(--fg-dim); cursor: pointer;
+}
+.rd-collapse:hover    { color: var(--c-cyan); }
+.rd-archive:hover     { color: var(--c-red); }
+.rd-deconstruct {
+  color: var(--c-violet);
+  border: 1px solid color-mix(in srgb, var(--c-violet) 35%, transparent);
+  border-radius: 4px; padding: 1px 8px;
+}
+.rd-deconstruct:hover { background: color-mix(in srgb, var(--c-violet) 12%, transparent); }
+
+/* ── Bookmarklet footer ────────────────────────────────── */
+.rd-bookmarklet {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin-top: 6px; padding-top: 12px;
+  border-top: 1px dashed var(--line-soft);
+}
+.rd-bookmarklet .mono { font-family: var(--f-mono); font-size: 11px; }
+.rd-bookmarklet .dim  { color: var(--fg-dim); }
+.rd-bm-link {
+  display: inline-block;
+  border: 1px dashed var(--c-cyan); border-radius: 6px;
+  color: var(--c-cyan);
+  font-family: var(--f-mono); font-size: 11.5px; font-weight: 600;
+  padding: 3px 12px; text-decoration: none;
+  cursor: grab;
+}
+.rd-bm-link:active { cursor: grabbing; }

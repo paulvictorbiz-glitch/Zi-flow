@@ -1,0 +1,423 @@
+/* =========================================================
+   Reel Deconstructor modal — CapCut-style multi-track timeline.
+   Scoped under .rdc-*. Reuses design tokens from styles.css.
+   ========================================================= */
+
+/* ── Overlay ─────────────────────────────────────────────── */
+.rdc-overlay {
+  position: fixed; inset: 0; z-index: 900;
+  background: rgba(0,0,0,.78);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  animation: rdc-fade-in .14s ease;
+}
+@keyframes rdc-fade-in { from { opacity: 0 } to { opacity: 1 } }
+
+/* ── Modal shell ─────────────────────────────────────────── */
+.rdc-modal {
+  background: var(--bg-1);
+  border: 1px solid var(--line-hard);
+  border-radius: 12px;
+  width: 100%; max-width: 900px;
+  max-height: 92vh;
+  display: flex; flex-direction: column;
+  animation: rdc-slide-up .16s ease;
+  overflow: hidden;
+}
+@keyframes rdc-slide-up {
+  from { transform: translateY(20px); opacity: 0 }
+  to   { transform: translateY(0);    opacity: 1 }
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+.rdc-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.rdc-header-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rdc-label {
+  font-family: var(--f-mono); font-size: 10px;
+  color: var(--fg-dim); text-transform: uppercase; letter-spacing: .1em;
+}
+.rdc-url {
+  font-family: var(--f-mono); font-size: 12px;
+  color: var(--c-cyan); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 380px; display: block;
+}
+.rdc-url:hover { text-decoration: underline; }
+
+.rdc-header-actions {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.rdc-duration-set {
+  display: flex; align-items: center; gap: 5px;
+}
+.rdc-dim {
+  font-family: var(--f-mono); font-size: 10.5px; color: var(--fg-dim);
+}
+.rdc-close {
+  background: transparent; border: none;
+  color: var(--fg-dim); font-size: 16px;
+  cursor: pointer; padding: 4px 6px; line-height: 1;
+  border-radius: 4px;
+}
+.rdc-close:hover { color: var(--fg); background: var(--bg-3); }
+
+/* ── Track grid ──────────────────────────────────────────── */
+.rdc-track-grid {
+  flex-shrink: 0;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+/* Ruler */
+.rdc-ruler {
+  position: relative;
+  height: 20px;
+  margin-left: 72px; /* align with track area */
+  border-bottom: 1px solid var(--line-soft);
+}
+.rdc-ruler-tick {
+  position: absolute;
+  top: 0; bottom: 0;
+  display: flex; flex-direction: column;
+  align-items: flex-start;
+}
+.rdc-ruler-tick::before {
+  content: "";
+  display: block;
+  width: 1px; height: 6px;
+  background: var(--line-hard);
+}
+.rdc-ruler-tick-label {
+  font-family: var(--f-mono); font-size: 9px;
+  color: var(--fg-dim);
+  margin-left: 2px;
+  white-space: nowrap;
+}
+
+/* Lane row */
+.rdc-lane {
+  display: flex; align-items: stretch;
+  border-bottom: 1px solid var(--line-soft);
+  min-height: 36px;
+}
+.rdc-lane:last-child { border-bottom: none; }
+
+.rdc-lane-label {
+  width: 70px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 4px;
+  padding-right: 8px;
+  font-family: var(--f-mono); font-size: 8.5px; font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  border-right: 1px solid var(--line-soft);
+  user-select: none;
+}
+
+/* Lane "+" add button — hidden until hover */
+.rdc-lane-add {
+  display: none;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: 11px; line-height: 1;
+  padding: 1px 4px;
+  cursor: pointer;
+  opacity: .65;
+  flex-shrink: 0;
+}
+.rdc-lane:hover .rdc-lane-add { display: inline-block; }
+.rdc-lane-add:hover { opacity: 1; }
+
+.rdc-lane-track {
+  flex: 1;
+  position: relative;
+  height: 36px;
+  background: var(--bg-0);
+  cursor: default;
+}
+.rdc-lane-track:hover {
+  background: color-mix(in srgb, var(--bg-3) 30%, transparent);
+}
+.rdc-lane-track.drag-over {
+  background: color-mix(in srgb, var(--c-cyan) 8%, var(--bg-0));
+  outline: 1px dashed color-mix(in srgb, var(--c-cyan) 60%, transparent);
+  outline-offset: -1px;
+}
+
+/* Clip block */
+.rdc-clip {
+  position: absolute;
+  top: 4px; bottom: 4px;
+  border-radius: 3px;
+  overflow: visible; /* handles extend outside */
+  cursor: grab;
+  opacity: .75;
+  transition: opacity .1s, box-shadow .1s;
+  min-width: 6px;
+  display: flex; align-items: center;
+  user-select: none;
+}
+.rdc-clip:hover { opacity: .92; }
+.rdc-clip.selected {
+  opacity: 1;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(255,255,255,.22);
+  z-index: 2;
+}
+.rdc-clip.dragging {
+  opacity: 1;
+  cursor: grabbing;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+}
+
+/* Resize handles — 8px zones on each edge */
+.rdc-clip-handle {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 4;
+  border-radius: 3px;
+  background: transparent;
+  transition: background .1s;
+}
+.rdc-clip-handle--left  { left: 0; }
+.rdc-clip-handle--right { right: 0; }
+.rdc-clip-handle:hover  { background: rgba(255,255,255,.28); }
+
+.rdc-clip-label {
+  font-family: var(--f-mono); font-size: 9.5px; font-weight: 600;
+  color: rgba(0,0,0,.85);
+  padding: 0 10px; /* leave room for handles */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Lane track list panel ───────────────────────────────── */
+.rdc-lane-list {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-2);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.rdc-lane-list-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 18px 4px;
+  font-family: var(--f-mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: .08em;
+  border-bottom: 1px solid var(--line-soft);
+  position: sticky; top: 0; background: var(--bg-2); z-index: 1;
+}
+.rdc-lane-list-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 18px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line-soft);
+  transition: background .1s;
+}
+.rdc-lane-list-row:last-child { border-bottom: none; }
+.rdc-lane-list-row:hover { background: var(--bg-3); }
+.rdc-lane-list-row.selected { background: color-mix(in srgb, var(--c-cyan) 8%, var(--bg-3)); }
+.rdc-lane-list-dot {
+  width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
+}
+.rdc-lane-list-label {
+  font-family: var(--f-sans); font-size: 12.5px; color: var(--fg); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rdc-lane-list-ts {
+  font-family: var(--f-mono); font-size: 10.5px; color: var(--fg-mute); flex-shrink: 0;
+}
+
+/* ── Inspector panel ─────────────────────────────────────── */
+.rdc-inspector {
+  flex-shrink: 0;
+  min-height: 68px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-2);
+}
+.rdc-inspector--editing {
+  padding: 10px 18px;
+}
+
+.rdc-inspector-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 68px;
+  font-family: var(--f-mono); font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.rdc-inspector-seg {
+  padding: 10px 18px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.rdc-inspector-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.rdc-inspector-title {
+  font-family: var(--f-sans); font-size: 13.5px; font-weight: 600;
+  color: var(--fg); flex: 1; min-width: 0;
+}
+.rdc-inspector-gene {
+  font-family: var(--f-mono); font-size: 9.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .07em;
+  border: 1px solid; border-radius: 3px;
+  padding: 1px 7px; flex-shrink: 0;
+}
+.rdc-inspector-ts {
+  font-family: var(--f-mono); font-size: 11px;
+  color: var(--fg-mute); flex-shrink: 0;
+}
+.rdc-inspector-dur { color: var(--fg-dim); }
+
+.rdc-inspector-notes {
+  font-family: var(--f-sans); font-size: 12px;
+  color: var(--fg-mute); line-height: 1.45;
+}
+.rdc-inspector-actions {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.rdc-inspector-close {
+  font-size: 13px; margin-left: auto;
+}
+
+/* ── Scrollable body (add button / form) ─────────────────── */
+.rdc-body {
+  flex: 1; overflow-y: auto;
+  padding: 10px 18px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 56px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────── */
+.rdc-btn {
+  font-family: var(--f-mono); font-size: 11.5px;
+  padding: 5px 13px; border-radius: 6px;
+  cursor: pointer; border: 1px solid transparent;
+  transition: all .12s ease;
+}
+.rdc-btn:disabled { opacity: .4; pointer-events: none; }
+.rdc-btn--primary {
+  background: var(--c-cyan);
+  color: var(--bg-0); border-color: var(--c-cyan);
+  font-weight: 600;
+}
+.rdc-btn--primary:hover { opacity: .88; }
+.rdc-btn--ghost {
+  background: transparent; color: var(--fg-mute);
+  border-color: var(--line);
+}
+.rdc-btn--ghost:hover { color: var(--fg); border-color: var(--line-hard); }
+.rdc-btn--danger {
+  background: transparent; color: var(--c-red);
+  border-color: color-mix(in srgb, var(--c-red) 40%, transparent);
+}
+.rdc-btn--danger:hover {
+  background: color-mix(in srgb, var(--c-red) 12%, transparent);
+}
+
+.rdc-icon-btn {
+  background: transparent; border: none;
+  color: var(--fg-dim); font-size: 13px;
+  cursor: pointer; padding: 2px 5px;
+  border-radius: 4px; line-height: 1;
+}
+.rdc-icon-btn:hover { color: var(--fg); background: var(--bg-3); }
+.rdc-icon-btn.danger:hover { color: var(--c-red); }
+
+.rdc-dl-btn {
+  font-family: var(--f-mono); font-size: 10.5px;
+  padding: 4px 11px; border-radius: 5px;
+  border: 1px solid var(--c-green); color: var(--c-green);
+  text-decoration: none; flex-shrink: 0;
+  line-height: 1.4;
+}
+.rdc-dl-btn:hover { background: color-mix(in srgb, var(--c-green) 15%, transparent); }
+
+.rdc-add-btn {
+  background: transparent;
+  border: 1px dashed var(--dash); border-radius: 7px;
+  color: var(--fg-dim); font-family: var(--f-mono); font-size: 12px;
+  padding: 10px; width: 100%; cursor: pointer;
+  transition: all .12s ease;
+}
+.rdc-add-btn:hover { color: var(--c-cyan); border-color: var(--c-cyan); }
+
+/* ── Segment form ────────────────────────────────────────── */
+.rdc-seg-form {
+  border: 1px solid var(--c-cyan);
+  border-radius: 8px;
+  background: var(--bg-2);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.rdc-seg-form-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.rdc-seg-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.rdc-input {
+  flex: 1; min-width: 140px;
+  background: var(--bg-3);
+  border: 1px solid var(--line); border-radius: 6px;
+  color: var(--fg); font-family: var(--f-mono); font-size: 12.5px;
+  padding: 7px 10px;
+}
+.rdc-input.sm { font-size: 12px; padding: 6px 8px; min-width: 0; }
+.rdc-input:focus { outline: none; border-color: var(--c-cyan); }
+
+.rdc-select {
+  background: var(--bg-3);
+  border: 1px solid var(--line); border-radius: 6px;
+  color: var(--fg); font-family: var(--f-mono); font-size: 12px;
+  padding: 7px 8px; cursor: pointer; flex-shrink: 0;
+}
+.rdc-select:focus { outline: none; border-color: var(--c-cyan); }
+
+.rdc-notes {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-3);
+  border: 1px solid var(--line); border-radius: 6px;
+  color: var(--fg); font-family: var(--f-sans); font-size: 12.5px;
+  padding: 7px 10px; resize: vertical;
+}
+.rdc-notes:focus { outline: none; border-color: var(--c-cyan); }
+
+/* ── Footer: gene legend ─────────────────────────────────── */
+.rdc-footer {
+  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  padding: 8px 18px;
+  border-top: 1px solid var(--line-soft);
+  flex-shrink: 0;
+}
+.rdc-legend-item {
+  display: flex; align-items: center; gap: 5px;
+  font-family: var(--f-mono); font-size: 9.5px; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.rdc-legend-dot {
+  width: 8px; height: 8px; border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ── Mobile ──────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .rdc-modal { max-height: 95vh; border-radius: 8px; }
+  .rdc-header { flex-direction: column; gap: 10px; }
+  .rdc-header-actions { flex-wrap: wrap; }
+  .rdc-url { max-width: 100%; }
+  .rdc-lane-label { width: 40px; font-size: 7.5px; padding-right: 5px; }
+  .rdc-lane-add { display: none !important; } /* too cramped on mobile */
+  .rdc-ruler { margin-left: 42px; }
+  .rdc-inspector-head { flex-direction: column; align-items: flex-start; gap: 5px; }
+}

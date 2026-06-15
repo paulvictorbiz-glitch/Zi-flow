@@ -12,7 +12,7 @@ export const TEAM = [
     id: "paul",
     name: "Paul Victor",
     title: "Co-Founder & CEO",
-    photo: "/team/paul-victor.jpg",
+    photo: "/team/paul-victor.jpeg",
     initials: "PV",
     accent: "#56e6ff",
     bio: "Builds the product and the business. Paul turns the messy reality of short-form production into systems creators can actually use — from the pipeline that runs the studio to the engine that reverse-engineers a reel into its genes.",

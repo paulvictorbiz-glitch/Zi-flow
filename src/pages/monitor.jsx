@@ -383,6 +383,79 @@ function MemDonut({ containers = [], totalGb }) {
   );
 }
 
+/* ── DiskDonut ────────────────────────────────────────────── */
+// Fixed palette keyed by category so colours stay stable across refreshes.
+const DISK_COLORS = {
+  "Container images": "#06b6d4",
+  "Docker data":      "#22c55e",
+  "App data (/srv)":  "#a78bfa",
+  "Swapfile":         "#f5a524",
+  "System (/usr)":    "#38bdf8",
+  "Logs (/var/log)":  "#f472b6",
+};
+const DISK_OTHER_LABEL = "Other / system";
+
+function DiskDonut({ breakdown = [], totalGb, usedGb }) {
+  // Backend already appends an "Other / system" remainder, so slices sum to used.
+  const slices = breakdown
+    .filter(s => (s.gb || 0) > 0)
+    .map(s => ({
+      label: s.label,
+      gb: s.gb,
+      color: s.label === DISK_OTHER_LABEL ? "var(--bg-3)" : (DISK_COLORS[s.label] || "var(--bg-3)"),
+    }));
+
+  const sliceTotal = slices.reduce((s, x) => s + x.gb, 0);
+  // Draw against actual used space (matches the centre label).
+  const denom = usedGb || sliceTotal || 1;
+
+  const cx = 60, cy = 60, r = 44, strokeW = 14;
+  const circ = 2 * Math.PI * r;
+  let offset = 0;
+  const segments = slices.map(s => {
+    const dash = (s.gb / denom) * circ;
+    const seg = { ...s, dash, offset };
+    offset += dash;
+    return seg;
+  });
+
+  const fmtGb = gb => gb >= 1 ? gb.toFixed(2) + " GB" : (gb * 1000).toFixed(0) + " MB";
+
+  return (
+    <div className="mon-mem-donut-wrap">
+      <svg className="mon-mem-donut" viewBox="0 0 120 120">
+        {segments.map((seg, i) => (
+          <circle key={i}
+            cx={cx} cy={cy} r={r}
+            fill="none"
+            stroke={seg.color}
+            strokeWidth={strokeW}
+            strokeDasharray={`${seg.dash} ${circ - seg.dash}`}
+            strokeDashoffset={-seg.offset + circ / 4}
+          />
+        ))}
+        <text x={cx} y={cy - 6} textAnchor="middle" className="mon-donut-val">
+          {usedGb != null ? usedGb.toFixed(1) : "—"}
+        </text>
+        <text x={cx} y={cy + 10} textAnchor="middle" className="mon-donut-sub">
+          {totalGb ? `/ ${Math.round(totalGb)} GB` : "GB used"}
+        </text>
+      </svg>
+      <div className="mon-mem-legend">
+        {slices.map((s, i) => (
+          <div key={i} className={"mon-mem-legend-row" + (s.label === DISK_OTHER_LABEL ? " mon-mem-legend-row--other" : "")}>
+            <span className="mon-mem-legend-dot" style={s.label === DISK_OTHER_LABEL
+              ? { background: "var(--bg-3)", border: "1px solid var(--line-hard)" }
+              : { background: s.color }} />
+            <span className="mon-mem-legend-name">{s.label}</span>
+            <span className="mon-mem-legend-val">{fmtGb(s.gb)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ── OS metrics section ──────────────────────────────────── */
 function OsSection({ data }) {
   if (!data) return <div className="mon-loading">Loading…</div>;
@@ -395,11 +468,25 @@ function OsSection({ data }) {
 
   const loadTone = data.load1 > 3 ? "red" : data.load1 > 1.5 ? "amber" : "ok";
   const hasContainers = Array.isArray(data.containers) && data.containers.length > 0;
+  const hasDiskBreakdown = Array.isArray(data.diskBreakdown) && data.diskBreakdown.length > 0;
 
   return (
     <div className="mon-section-body">
       {hasContainers && (
-        <MemDonut containers={data.containers} totalGb={data.memTotalGb} />
+        <>
+          <div className="mon-donut-label">Memory by container</div>
+          <MemDonut containers={data.containers} totalGb={data.memTotalGb} />
+        </>
+      )}
+      {hasDiskBreakdown && (
+        <>
+          <div className="mon-donut-label">Disk by category</div>
+          <DiskDonut
+            breakdown={data.diskBreakdown}
+            totalGb={data.diskTotalGb}
+            usedGb={data.diskUsedGb}
+          />
+        </>
       )}
       <div className="mon-bars-group">
         <UsageBar
