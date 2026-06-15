@@ -1,0 +1,78 @@
+/* HelixFlat — flat 2D neon double-helix (v3 look) */
+
+.hx {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+}
+
+.hx-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+/* Strands */
+.hx-strand {
+  fill: none;
+  stroke-width: 7;
+  stroke-linecap: round;
+  filter: url(#hx-glow);
+}
+
+/* Rungs */
+.hx-rung {
+  transition: opacity 0.18s ease, stroke-width 0.18s ease;
+}
+
+/* Nodes */
+.hx-node-core {
+  transition: r 0.18s ease;
+}
+.hx-node-ring {
+  animation: hx-pulse 1.6s ease-in-out infinite;
+  transform-origin: center;
+}
+@keyframes hx-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50%      { transform: scale(1.35); opacity: 0.1; }
+}
+
+/* HTML labels overlaid on the SVG node coords */
+.hx-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.hx-label {
+  position: absolute;
+  transform: translate(14px, -50%);
+  pointer-events: auto;
+  background: rgba(10, 14, 22, 0.55);
+  border: 1px solid color-mix(in srgb, var(--gene) 45%, transparent);
+  color: var(--gene);
+  font-family: var(--f-mono, "JetBrains Mono", monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: all 0.16s ease;
+  box-shadow: 0 0 0 transparent;
+}
+.hx-label:hover,
+.hx-label.is-active {
+  background: color-mix(in srgb, var(--gene) 22%, rgba(10, 14, 22, 0.7));
+  box-shadow: 0 0 16px color-mix(in srgb, var(--gene) 55%, transparent);
+  color: #fff;
+}
+
+@media (max-width: 720px) {
+  .hx { min-height: 340px; }
+  .hx-label { font-size: 9px; padding: 1px 6px; }
+}

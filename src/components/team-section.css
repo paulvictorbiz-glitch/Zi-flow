@@ -1,0 +1,127 @@
+/* TeamSection — premium black + neon, interactive-studio style */
+
+.tm {
+  padding: 80px 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(70% 50% at 50% 0%, rgba(155, 140, 255, 0.06), transparent 70%),
+    #06070d;
+}
+.tm--compact { padding: 64px 22px; }
+.tm-inner { max-width: 980px; margin: 0 auto; }
+
+.tm-head { text-align: center; margin-bottom: 44px; }
+.tm-eyebrow {
+  font-family: var(--lp-mono, ui-monospace, "JetBrains Mono", monospace);
+  font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: #56e6ff; margin: 0 0 12px;
+}
+.tm-h2 {
+  font-size: clamp(24px, 4vw, 36px); font-weight: 800;
+  letter-spacing: -0.015em; margin: 0; color: #eef1f8;
+}
+
+/* Two founders side by side */
+.tm-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+
+.tm-card {
+  display: flex; flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(16, 20, 34, 0.7), rgba(9, 11, 20, 0.9));
+  overflow: hidden;
+  transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s;
+}
+.tm-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  box-shadow: 0 24px 60px -24px color-mix(in srgb, var(--accent) 60%, transparent);
+  transform: translateY(-3px);
+}
+
+.tm-photo-wrap { position: relative; aspect-ratio: 1 / 1; overflow: hidden; }
+.tm-photo {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  filter: saturate(1.02) contrast(1.02);
+}
+.tm-photo--fallback {
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--lp-mono, ui-monospace, monospace);
+  font-size: 64px; font-weight: 800; letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--accent) 80%, #fff);
+  background:
+    radial-gradient(60% 60% at 50% 40%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 70%),
+    #0c1020;
+}
+/* subtle gradient scrim at the bottom of the photo */
+.tm-photo-wrap::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(180deg, transparent 55%, rgba(6, 7, 13, 0.85));
+  pointer-events: none;
+}
+
+.tm-social {
+  position: absolute; right: 14px; bottom: 14px; z-index: 2;
+  width: 40px; height: 40px; border-radius: 11px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 26%, rgba(10, 14, 24, 0.7));
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  backdrop-filter: blur(6px);
+  transition: background 0.16s, box-shadow 0.16s, transform 0.16s;
+}
+.tm-social:hover {
+  background: var(--accent); color: #05101a;
+  box-shadow: 0 0 22px -2px var(--accent);
+  transform: scale(1.06);
+}
+
+.tm-meta { padding: 20px 22px 24px; }
+.tm-name {
+  margin: 0; font-size: 21px; font-weight: 800; color: #f3f6ff;
+  letter-spacing: -0.01em;
+}
+.tm-title {
+  margin: 5px 0 0;
+  font-family: var(--lp-mono, ui-monospace, monospace);
+  font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 85%, #fff);
+}
+.tm-bio { margin: 14px 0 0; font-size: 14px; line-height: 1.6; color: rgba(238,241,248,0.66); }
+.tm-link {
+  display: inline-block; margin-top: 16px;
+  font-family: var(--lp-mono, ui-monospace, monospace);
+  font-size: 12px; color: var(--accent); text-decoration: none;
+  border-bottom: 1px solid transparent; transition: border-color 0.15s;
+}
+.tm-link:hover { border-bottom-color: var(--accent); }
+
+.tm-card--compact .tm-meta { padding: 16px 18px 18px; }
+
+/* Mission ("why we're doing this") */
+.tm-mission {
+  margin-top: 56px; max-width: 780px; margin-left: auto; margin-right: auto;
+  text-align: center;
+  padding: 38px 32px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background:
+    radial-gradient(80% 80% at 50% 0%, rgba(86, 230, 255, 0.07), transparent 70%),
+    rgba(10, 12, 22, 0.6);
+}
+.tm-mission-h {
+  margin: 8px 0 0; font-size: clamp(22px, 3.4vw, 30px); font-weight: 800;
+  letter-spacing: -0.015em; color: #eef1f8;
+}
+.tm-mission-body {
+  margin: 18px auto 0; max-width: 640px;
+  font-size: 15.5px; line-height: 1.7; color: rgba(238,241,248,0.7);
+}
+
+@media (max-width: 720px) {
+  .tm-grid { grid-template-columns: 1fr; gap: 20px; }
+  .tm-mission { padding: 28px 20px; }
+}

@@ -1,0 +1,152 @@
+/* =========================================================
+   TimelineView — read-only multi-lane timeline (landing page).
+   Premium black + neon glow. Scoped under .tlv-*.
+
+   IMPORTANT: the reused <TimelineRuler/> renders with class
+   .rdc-ruler { margin-left: 72px }, so the lane-label column MUST be
+   72px wide for the ruler ticks to line up with the tracks.
+   ========================================================= */
+
+.tlv {
+  --tlv-label-w: 72px;
+  background: #06070d;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.tlv-scroll {
+  overflow-x: auto;
+}
+
+/* The reused ruler is .rdc-ruler (margin-left:72px). Give its ticks a
+   readable color on our darker background. */
+.tlv .rdc-ruler {
+  margin-left: var(--tlv-label-w);
+  height: 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.tlv .rdc-ruler-tick::before {
+  background: rgba(255, 255, 255, 0.28);
+}
+.tlv .rdc-ruler-tick-label {
+  color: rgba(255, 255, 255, 0.45);
+  font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+  font-size: 9px;
+}
+
+/* ── Lanes ───────────────────────────────────────────────── */
+.tlv-lanes {
+  display: flex;
+  flex-direction: column;
+}
+
+.tlv-lane {
+  display: flex;
+  align-items: stretch;
+  min-height: 30px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: opacity 0.18s ease, filter 0.18s ease, background 0.18s ease;
+}
+.tlv-lane:last-child {
+  border-bottom: none;
+}
+
+/* Highlight state: active lane pops, others dim. */
+.tlv-lane.is-active {
+  background: rgba(255, 255, 255, 0.035);
+}
+.tlv-lane.is-dim {
+  opacity: 0.32;
+  filter: saturate(0.5);
+}
+
+.tlv-lane-label {
+  width: var(--tlv-label-w);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  padding-right: 9px;
+  font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  user-select: none;
+}
+.tlv-lane-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.tlv-lane-track {
+  flex: 1;
+  position: relative;
+  height: 30px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(20% - 1px),
+      rgba(255, 255, 255, 0.04) calc(20% - 1px),
+      rgba(255, 255, 255, 0.04) 20%
+    );
+}
+
+/* ── Read-only clips ─────────────────────────────────────── */
+.tlv-clip {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 3px;
+  min-width: 6px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  opacity: 0.82;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  transition: opacity 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+}
+
+/* Active lane's clips glow. */
+.tlv-lane.is-active .tlv-clip {
+  opacity: 1;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    0 0 10px -1px currentColor;
+}
+
+.tlv-clip-label {
+  font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.82);
+  padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* ── Mobile ──────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .tlv {
+    --tlv-label-w: 52px;
+  }
+  .tlv .rdc-ruler {
+    margin-left: 52px;
+  }
+  .tlv-lane-label {
+    font-size: 7.5px;
+    padding-right: 6px;
+  }
+  .tlv-clip-label {
+    display: none;
+  }
+}

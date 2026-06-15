@@ -80,7 +80,13 @@ function AuthProvider({ children }) {
     person,
     /* Returns { error?: { message } } on failure. */
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
-    signOut: () => supabase.auth.signOut(),
+    /* Clear the session, then send the user to the public landing page (/)
+       rather than dropping them on the bare sign-in screen. The hard
+       navigation also guarantees the app tree fully resets. */
+    signOut: async () => {
+      try { await supabase.auth.signOut(); }
+      finally { window.location.assign("/"); }
+    },
   }), [session, authLoaded, personLoaded, person]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

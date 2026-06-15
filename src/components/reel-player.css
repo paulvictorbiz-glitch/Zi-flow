@@ -1,0 +1,220 @@
+/* =========================================================
+   ReelPlayer — vertical 9:16 reel player. Premium black + neon.
+   Scoped under .rpl-*.
+   ========================================================= */
+
+.rpl {
+  --rpl-accent: #36e0c8;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 280px;
+  margin: 0 auto;
+}
+
+/* 9:16 framed stage */
+.rpl-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(54, 224, 200, 0.12),
+    0 12px 40px -12px rgba(54, 224, 200, 0.25);
+}
+
+.rpl-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+  cursor: pointer;
+}
+
+/* Placeholder when the sample mp4 is missing (404 until owner drops it) */
+.rpl-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 18px;
+  background:
+    radial-gradient(120% 80% at 50% 30%, rgba(54, 224, 200, 0.1), transparent 70%),
+    #07080f;
+}
+.rpl-placeholder-glyph {
+  font-size: 30px;
+  color: var(--rpl-accent);
+  opacity: 0.8;
+  text-shadow: 0 0 18px rgba(54, 224, 200, 0.6);
+  margin-bottom: 4px;
+}
+.rpl-placeholder-title {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: #e8ecf5;
+}
+.rpl-placeholder-sub {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Big center play button */
+.rpl-bigplay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.42);
+  color: #fff;
+  font-size: 18px;
+  padding-left: 3px;
+  cursor: pointer;
+  backdrop-filter: blur(3px);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.rpl-bigplay:hover {
+  background: rgba(54, 224, 200, 0.28);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+/* Controls row */
+.rpl-controls {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.rpl-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: #e8ecf5;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.rpl-btn:hover:not(:disabled) {
+  border-color: var(--rpl-accent);
+  color: var(--rpl-accent);
+}
+.rpl-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rpl-time {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+  flex-shrink: 0;
+  min-width: 30px;
+}
+.rpl-time--total {
+  text-align: right;
+}
+
+/* Scrubber */
+.rpl-scrub {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  outline: none;
+  cursor: pointer;
+}
+.rpl-scrub:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.rpl-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--rpl-accent);
+  box-shadow: 0 0 8px rgba(54, 224, 200, 0.7);
+  cursor: pointer;
+}
+.rpl-scrub::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: none;
+  border-radius: 50%;
+  background: var(--rpl-accent);
+  box-shadow: 0 0 8px rgba(54, 224, 200, 0.7);
+  cursor: pointer;
+}
+
+/* Footer: upload-to-unlock + source link */
+.rpl-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+.rpl-upload {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px dashed rgba(54, 224, 200, 0.5);
+  background: rgba(54, 224, 200, 0.06);
+  color: var(--rpl-accent);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.rpl-upload:hover {
+  background: rgba(54, 224, 200, 0.12);
+  border-color: var(--rpl-accent);
+}
+.rpl-upload input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.rpl-source {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.4);
+  text-decoration: none;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rpl-source:hover {
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: underline;
+}

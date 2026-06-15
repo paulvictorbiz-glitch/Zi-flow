@@ -32,12 +32,14 @@ import { TeamChat } from "./pages/team-chat.jsx";
 import { LosslessCut } from "./pages/lossless.jsx";
 import { Monitor } from "./pages/monitor.jsx";
 import { AIBrain } from "./pages/ai-brain.jsx";
+import { ReelDna } from "./pages/reel-dna.jsx";
+import { extractUrl } from "./lib/reel-dna.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
 
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "monitor", "ai"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "monitor", "ai"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -56,6 +58,7 @@ const TABS = [
   { key: "locations", label: "Locations" },
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate" },
+  { key: "reeldna",   label: "Reel DNA" },
   { key: "activity",  label: "Activity" },
   { key: "resources", label: "Resources" },
   { key: "monitor",   label: "Monitor" },
@@ -65,6 +68,7 @@ const TABS = [
 const DEFAULT_TAB_GROUPS = [
   { key: "mywork_group",    label: "My Work",                 tabs: ["mywork"] },
   { key: "pipeline_group",  label: "Pipeline",                tabs: ["pipeline", "generate"] },
+  { key: "reeldna_group",   label: "Reel DNA",                tabs: ["reeldna"] },
   { key: "footage_group",   label: "Footage",                 tabs: ["footage", "coverage", "editor", "lossless", "export"] },
   { key: "analytics_group", label: "Analytics & Monitoring",  tabs: ["analytics", "monitor"] },
   { key: "ai_group",        label: "AI Brain",                tabs: ["ai"] },
@@ -87,6 +91,7 @@ function AppShell() {
   const [roleMenu, setRoleMenu]         = useState(false);
   const [navOpen, setNavOpen]           = useState(false);   // left slide-in drawer
   const [globalSearch, setGlobalSearch] = useState("");
+  const [capturePrefill, setCapturePrefill] = useState(null);   // Reel DNA share-target/bookmarklet
   const searchRef                       = useRef(null);
 
   /* Inbox unread badge — count of unreplied comments/DMs across
@@ -223,6 +228,25 @@ function AppShell() {
     setViewStack(s => s.slice(0, -1));
     setView(prev);
   };
+
+  /* Reel DNA capture deep-link. The PWA share-target (manifest action
+     /?capture=1) and the bookmarklet both land here with the reel URL in
+     ?url= (or ?text=). Switch to the Reel DNA tab, prefill the form, then
+     strip the query so a refresh doesn't re-trigger. Runs once on mount. */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    // Fires for the bookmarklet (?capture=1) AND a native PWA share, which
+    // appends ?url=/?text= per the manifest share_target but no `capture` flag.
+    const isCapture = params.get("capture") != null;
+    const shared = params.get("url") || params.get("text");
+    if (!isCapture && !shared) return;
+    const url = extractUrl(params.get("url"), params.get("text"), params.get("title"));
+    if (!url) return;
+    setCapturePrefill({ url, nonce: Date.now() });
+    setView("reeldna");
+    const clean = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, "", clean);
+  }, []);
 
   /* Prevent Backspace from navigating the browser back when the
      user isn't typing in a field. Some browsers / embedded
@@ -557,6 +581,7 @@ function AppShell() {
       {view === "locations" && <Locations />}
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
+      {view === "reeldna"   && <ReelDna prefill={capturePrefill} />}
       {view === "activity"  && <Activity />}
       {view === "resources" && <Resources />}
       {view === "monitor"   && isOwner && <Monitor />}
@@ -592,7 +617,32 @@ class AppErrorBoundary extends React.Component {
   }
 }
 
+/* Public landing page — heavy 3D bundle, so load it lazily and keep it
+   entirely outside the AuthGate. */
+const Landing = React.lazy(() =>
+  import("./pages/landing.jsx").then(m => ({ default: m.Landing }))
+);
+
 function App() {
+  // Root path "/" is the fully public landing page (no auth). Anything else
+  // (e.g. "/app") renders the existing authed tree exactly as before.
+  const isLanding = window.location.pathname === "/";
+
+  if (isLanding) {
+    const onEnterApp = () => window.location.assign("/app");
+    return (
+      <AppErrorBoundary>
+        <React.Suspense
+          fallback={
+            <div style={{ minHeight: "100vh", background: "#06070d" }} />
+          }
+        >
+          <Landing onEnterApp={onEnterApp} />
+        </React.Suspense>
+      </AppErrorBoundary>
+    );
+  }
+
   return (
     <AppErrorBoundary>
       <TimeProvider>
