@@ -14,6 +14,8 @@
  * Uses OPENROUTER_API_KEY (already configured for /api/generate). No new key.
  */
 
+import { classifyCaller } from "./admin/_auth.js";
+
 // FootageBrain origin to fetch the raw thumbnail from (server-side, so we hit
 // the API subdomain directly — the /fb proxy is a browser-only convenience).
 const FB_ORIGIN = process.env.FB_PROXY_TARGET || "https://api.footagebrain.com";
@@ -148,9 +150,19 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", _allowedOrigins.has(_origin) ? _origin : "https://footagebrain.com");
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") { res.status(200).end(); return; }
   if (req.method !== "POST") { res.status(405).json({ error: "POST only" }); return; }
+
+  // Footage tagging burns the shared OpenRouter free quota — fully off-limits
+  // to demo accounts (there's no free path here, so block them outright).
+  {
+    const caller = await classifyCaller(req);
+    if (caller.isDemo) {
+      res.status(403).json({ error: "Footage tagging is disabled for demo accounts.", demo: true });
+      return;
+    }
+  }
 
   const { thumbnail_url, filename } = req.body || {};
   if (!thumbnail_url || typeof thumbnail_url !== "string") {

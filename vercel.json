@@ -1,4 +1,13 @@
 {
+  "headers": [
+    {
+      "source": "/capcut-agent/:file*",
+      "headers": [
+        { "key": "Content-Type", "value": "application/octet-stream" },
+        { "key": "Content-Disposition", "value": "attachment" }
+      ]
+    }
+  ],
   "rewrites": [
     { "source": "/fb/:path*", "destination": "https://api.footagebrain.com/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }

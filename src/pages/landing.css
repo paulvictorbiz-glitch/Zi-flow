@@ -239,6 +239,9 @@
 /* Compact reel: cap the player narrow so the 9:16 frame is short enough to
    leave room for the timeline directly beneath it in the same column. */
 .lp-player-col--compact .rpl { max-width: 210px; }
+/* The Instagram embed iframe won't render below ~326px, so widen the
+   player when it's showing the real reel embed (overrides the compact cap). */
+.lp-player-col--compact .rpl.rpl--embed { max-width: 340px; }
 
 /* ── Docked timeline ────────────────────────────────────── */
 .lp-dock {

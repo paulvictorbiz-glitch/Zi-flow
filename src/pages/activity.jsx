@@ -16,6 +16,7 @@ import { useRoster } from "../lib/roster.jsx";
 import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { NOMINAL_POLL_SEC, GAP_CAP_MS, ONLINE_WINDOW_MS, SESSION_GAP_MIN, startOfDayLocal, analyzeDay, fmtDuration, fmtClock, loadDayRows } from "../lib/capcut-utils.js";
+import JSZip from "jszip";
 
 const REFRESH_MS = 12 * 1000;
 
@@ -42,37 +43,48 @@ async function loadDailyMinutes(worker, days = 7, baseDate) {
   return Promise.all(reqs);
 }
 
-function downloadAgentFiles(personId) {
-  const cfg = { WORKER: personId, POLL_SECONDS: 15 };
-  const cfgBlob = new Blob([JSON.stringify(cfg, null, 2)], { type: "application/json" });
-  const cfgUrl = URL.createObjectURL(cfgBlob);
-  const a1 = document.createElement("a");
-  a1.href = cfgUrl; a1.download = "capcut_config.json"; a1.click();
-  URL.revokeObjectURL(cfgUrl);
+async function downloadAgentFiles(personId) {
+  const zip = new JSZip();
 
-  setTimeout(() => {
-    const bat = [
-      "@echo off",
-      "REM Adds capcut_agent.exe (in this folder) to Windows Startup so it",
-      "REM runs automatically at every logon. Run once per machine.",
-      "setlocal",
-      `set WORKER=${personId}`,
-      "set EXE=%~dp0capcut_agent.exe",
-      "set STARTUP=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
-      "set LNK=%STARTUP%\\CapCutActivityAgent.lnk",
-      "if not exist \"%EXE%\" ( echo ERROR: capcut_agent.exe not found. & pause & exit /b 1 )",
-      "powershell -NoProfile -Command \"$sh=New-Object -ComObject WScript.Shell;$lnk=$sh.CreateShortcut('%LNK%');$lnk.TargetPath='%EXE%';$lnk.WorkingDirectory='%~dp0';$lnk.WindowStyle=7;$lnk.Save()\"",
-      "echo Startup shortcut created. Starting agent now...",
-      "start \"\" \"%EXE%\"",
-      "echo Done. Agent is running and will auto-start at every logon.",
-      "pause",
-    ].join("\r\n");
-    const batBlob = new Blob([bat], { type: "text/plain" });
-    const batUrl = URL.createObjectURL(batBlob);
-    const a2 = document.createElement("a");
-    a2.href = batUrl; a2.download = "capcut_install.bat"; a2.click();
-    URL.revokeObjectURL(batUrl);
-  }, 300);
+  zip.file("capcut_config.json", JSON.stringify({ WORKER: personId, POLL_SECONDS: 15 }, null, 2));
+
+  const bat = [
+    "@echo off",
+    "REM CapCut activity tracker — one-time install. Run from the folder you unzipped into.",
+    "setlocal",
+    "set TASK=CapCutActivityAgent",
+    "set EXE=%~dp0capcut_agent.exe",
+    "",
+    "if not exist \"%EXE%\" (",
+    "  echo ERROR: capcut_agent.exe not found in this folder.",
+    "  pause & exit /b 1",
+    ")",
+    "",
+    "schtasks /Create /TN \"%TASK%\" /TR \"\\\"%EXE%\\\"\" /SC ONLOGON /RL LIMITED /F",
+    "if errorlevel 1 ( echo Failed to create scheduled task. & pause & exit /b 1 )",
+    "",
+    "echo Installed. Starting agent now...",
+    "schtasks /Run /TN \"%TASK%\"",
+    "echo Done. The agent is running and will auto-start at every logon.",
+    "pause",
+  ].join("\r\n");
+  zip.file("install.bat", bat);
+
+  try {
+    const resp = await fetch("/capcut-agent/capcut_agent.exe");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const exeBytes = await resp.arrayBuffer();
+    zip.file("capcut_agent.exe", exeBytes);
+  } catch (e) {
+    alert("Could not fetch capcut_agent.exe — check that it's deployed under /capcut-agent/.\n\n" + e.message);
+    return;
+  }
+
+  const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `CapCutTracker-${personId}.zip`; a.click();
+  URL.revokeObjectURL(url);
 }
 
 function primaryProject(projects) {
@@ -212,19 +224,18 @@ export function Activity({ workerId = "paul" }) {
                 Each team member runs it on their own PC.
               </div>
               <div style={{ fontSize: 11.5, color: "var(--fg)", lineHeight: 1.7 }}>
-                <b>Setup:</b> 1) Download the agent .exe and place it somewhere permanent.
-                2) Download the config for the right person and put it in the same folder.
-                3) Double-click the .exe — it runs silently in the background.
-                To auto-start, add a shortcut to <code>shell:startup</code>.
+                <b>Setup:</b> Click the button below to download a zip pre-configured for {name}.
+                Unzip it anywhere permanent, then double-click <code>install.bat</code> — the agent
+                installs and starts automatically. No other files needed.
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
                 <button
                   onClick={() => downloadAgentFiles(worker)}
                   style={{ padding: "5px 12px", border: "1px dashed var(--c-cyan)", borderRadius: 3, background: "rgba(107,214,224,0.08)", color: "var(--c-cyan)", fontFamily: "var(--f-mono)", fontSize: 10.5, cursor: "pointer" }}>
-                  ↓ Download config for {name}
+                  ↓ Download CapCutTracker-{name}.zip
                 </button>
                 <span className="mono dim" style={{ fontSize: 10, alignSelf: "center" }}>
-                  · place <code>capcut_config.json</code> next to the .exe
+                  · includes the agent, config, and install script
                 </span>
               </div>
             </div>

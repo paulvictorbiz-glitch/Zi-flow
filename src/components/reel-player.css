@@ -38,6 +38,39 @@
   cursor: pointer;
 }
 
+/* Instagram embed variant — the official embed.js iframe brings its own
+   chrome and a fixed min-width, so we drop the forced 9:16 box and let the
+   frame size to the embed. Keep the rounded/neon shell for continuity. */
+.rpl-frame--embed {
+  aspect-ratio: auto;
+  background: #0b0c14;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+/* embed.js rewrites .instagram-media with inline width styles; override so
+   it fills our (narrow) column instead of its default 326px+ min-width. */
+.rpl-embed.instagram-media {
+  margin: 0 !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  border: none !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+.rpl-embed.instagram-media a {
+  color: var(--rpl-accent);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  text-decoration: none;
+  display: block;
+  padding: 18px;
+  text-align: center;
+}
+
 /* Placeholder when the sample mp4 is missing (404 until owner drops it) */
 .rpl-placeholder {
   position: absolute;

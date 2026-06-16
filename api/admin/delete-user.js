@@ -27,14 +27,27 @@ export default async function handler(req, res) {
     .maybeSingle();
 
   if (fetchErr || !person) return res.status(404).json({ error: "Person not found" });
-  if (!person.user_id) return res.status(400).json({ error: "No linked account to delete" });
 
-  // Delete the auth user
-  const { error: deleteErr } = await supabase.auth.admin.deleteUser(person.user_id);
-  if (deleteErr) return res.status(400).json({ error: deleteErr.message });
+  // Only delete auth user if one is linked (unclaimed slots have no auth user)
+  if (person.user_id) {
+    const { error: deleteErr } = await supabase.auth.admin.deleteUser(person.user_id);
+    if (deleteErr) return res.status(400).json({ error: deleteErr.message });
+  }
 
-  // Unlink the people slot (keep name/email so it can be re-invited)
-  await supabase.from("people").update({ user_id: null }).eq("id", peopleId);
+  // Null out all references to this person across work records (preserve the records, just unassign)
+  await supabase.from("reels").update({ owner: null }).eq("owner", peopleId);
+  await supabase.from("reels").update({ prev_owner: null }).eq("prev_owner", peopleId);
+  await supabase.from("review_lane_cards").update({ owner: null }).eq("owner", peopleId);
+  await supabase.from("tasks").update({ from_person: null }).eq("from_person", peopleId);
+  await supabase.from("tasks").update({ to_person: null }).eq("to_person", peopleId);
+  await supabase.from("daily_tasks").update({ created_by: null }).eq("created_by", peopleId);
+  await supabase.from("locations").update({ created_by: null }).eq("created_by", peopleId);
+  await supabase.from("edit_sessions").update({ editor_id: null }).eq("editor_id", peopleId);
+  await supabase.from("capcut_activity").update({ worker: null }).eq("worker", peopleId);
+  // daily_tasks.assigned_to has ON DELETE CASCADE — auto-cleared when people row is deleted
+
+  // Delete the people row entirely (removes them from roster, dropdowns, and all pickers)
+  await supabase.from("people").delete().eq("id", peopleId);
 
   return res.status(200).json({ success: true });
 }

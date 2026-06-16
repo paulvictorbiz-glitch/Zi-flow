@@ -33,6 +33,8 @@
    TikTok   → TikTok Display API / Business API (video.list, comment.list).
    ========================================================= */
 
+import { supabase } from "./supabase-client.js";
+
 export const PLATFORMS = [
   { key: "facebook",  label: "Facebook",  color: "#1877F2", glyph: "f"  },
   { key: "instagram", label: "Instagram", color: "#E1306C", glyph: "◉"  },
@@ -137,6 +139,40 @@ export async function fetchConnections(supabaseClient) {
  *  Call after a connect or disconnect action completes. */
 export function invalidateConnectionsCache() {
   _connectionsCache = null;
+}
+
+/* ── Team-chat notify preference ─────────────────────────────────────────────
+   Mirrors the app_settings read/upsert pattern used for "social_connections"
+   above. The value is a per-user map: { [userId]: boolean }.
+
+   NOTE: real-time new-message detection comes from Rocket.Chat itself (the
+   chat is an iframe embed — the app can't read messages). This pref only
+   records who opted in + drives the browser Notification permission prompt.
+   True in-app new-message badges would require the full Rocket.Chat API. */
+export async function getChatNotifyPref(supabaseClient = supabase) {
+  try {
+    const { data, error } = await supabaseClient
+      .from("app_settings")
+      .select("value")
+      .eq("key", "chat_notify_prefs")
+      .maybeSingle();
+    if (error || !data) return {};
+    return (data.value && typeof data.value === "object") ? data.value : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function setChatNotifyPref(userId, enabled, supabaseClient = supabase) {
+  if (!userId) return;
+  const current = await getChatNotifyPref(supabaseClient);
+  const value = { ...current, [userId]: !!enabled };
+  try {
+    await supabaseClient
+      .from("app_settings")
+      .upsert({ key: "chat_notify_prefs", value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  } catch { /* non-fatal — RLS may block non-owner writes */ }
+  return value;
 }
 
 /**
@@ -798,6 +834,32 @@ export async function classifyInboxThreads(threads, accessToken) {
     return d.classifications || {};
   } catch {
     return {};
+  }
+}
+
+/* ── Reel → team chat (single source of truth) ──────────────────────────────
+   Both the Team-chat "Share a reel" picker and the reel card's "Discuss"
+   popover call this so they behave identically: post a pink reel-reference
+   card into a Rocket.Chat channel AND save the feedback as a comment on the
+   reel. Auth is the caller's Supabase JWT (the backend verifies it); the
+   shared slash secret never reaches the browser. Returns
+   { ok, message_url, saved_comment, error }. */
+export async function shareReelToChannel({ reelId, feedback = "", channel = "pipeline" }) {
+  if (!reelId) return { ok: false, error: "No reel selected." };
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return { ok: false, error: "Not signed in." };
+    const res = await fetch("/fb/api/rocketchat/dashboard/reel-feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ reel_id: reelId, feedback: (feedback || "").trim(), channel }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) return { ok: false, error: j.error || "Send failed." };
+    return { ok: true, message_url: j.message_url, saved_comment: j.saved_comment };
+  } catch (_) {
+    return { ok: false, error: "Network error." };
   }
 }
 

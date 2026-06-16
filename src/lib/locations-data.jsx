@@ -44,6 +44,13 @@ function myMapsEmbedUrl(map = MY_MAPS) {
   );
 }
 
+/* Full-page (non-embed) viewer URL for the same My Maps map, for
+   opening in a new tab — a reliable fallback when the embed iframe
+   misbehaves. */
+function myMapsViewUrl(map = MY_MAPS) {
+  return "https://www.google.com/maps/d/u/0/viewer?mid=" + encodeURIComponent(map.mid);
+}
+
 /* ---------- Location record schema ----------
    Stable shape every consumer can rely on. `linkedReelIds` /
    `linkedNoteIds` are the forward hooks for connecting a place to
@@ -613,6 +620,7 @@ async function geocode(address) {
 export {
   MY_MAPS,
   myMapsEmbedUrl,
+  myMapsViewUrl,
   makeLocation,
   parseKml,
   parseGeoJson,

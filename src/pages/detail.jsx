@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Card, DPill } from "../components/components.jsx";
+import { ReelPlayer } from "../components/reel-player.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
@@ -17,6 +18,8 @@ import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
 import { getFootageFileMetadata, driveDownloadUrl } from "../lib/footage-brain-client.js";
 import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
+import { SKILLS } from "../lib/training-data.jsx";
+import GamifyRubricSheet from "../components/GamifyRubricSheet.jsx";
 
 /* Blueprint fields start empty for every reel — operators fill them in. */
 const DEFAULT_LOGLINE = "";
@@ -195,7 +198,17 @@ function ReelDetail({ reel, onBack }) {
   const canEditScript    = can("editScript");
   const canEditVoiceover = can("editVoiceover");
   const canRemoveFootage = can("removeFootage");
+  const canTagSkills     = can("tagReelSkills");
   const stored = reels.find(r => r.id === current.id);
+  const skillTags = stored?.skill_tags || [];
+
+  /* Toggle one syllabus skill tag on this reel (writes reels.skill_tags). */
+  const toggleSkillTag = (key) => {
+    if (!stored) return;
+    const cur = stored.skill_tags || [];
+    const next = cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key];
+    actions.updateReel(current.id, { skill_tags: next });
+  };
 
   const [blueprintTab, setBlueprintTab] = useState("script");
   const [logline, setLogline]     = useState(stored?.logline ?? DEFAULT_LOGLINE);
@@ -205,6 +218,9 @@ function ReelDetail({ reel, onBack }) {
   const [vo, setVo]               = useState(stored?.vo ?? DEFAULT_VO);
   const [titleVal, setTitleVal]   = useState(stored?.title ?? current.title ?? "");
   const [editingTitle, setEditingTitle] = useState(false);
+  // "Keep in mind while editing" — one bullet per line, stored in detail.editNotes.
+  const [editNotes, setEditNotes] = useState(stored?.detail?.editNotes ?? "");
+  const [editNotesEditing, setEditNotesEditing] = useState(false);
 
   /* Seed the editable fields from `stored` ONCE per reel id, the first time
      that record is available. A ref guards against re-seeding on every `stored`
@@ -219,6 +235,7 @@ function ReelDetail({ reel, onBack }) {
       setScript(stored.script ?? stored.plan ?? DEFAULT_SCRIPT);
       setVo(stored.vo ?? DEFAULT_VO);
       setTitleVal(stored.title ?? current.title ?? "");
+      setEditNotes(stored.detail?.editNotes ?? "");
       seededIdRef.current = current.id;       // seeded — stop here until id changes
     } else {
       // Record not in the store yet: clear to defaults (don't show the prior
@@ -227,6 +244,7 @@ function ReelDetail({ reel, onBack }) {
       setScript(DEFAULT_SCRIPT);
       setVo(DEFAULT_VO);
       setTitleVal(current.title ?? "");
+      setEditNotes("");
     }
   }, [current.id, stored]);
 
@@ -282,14 +300,34 @@ function ReelDetail({ reel, onBack }) {
     return () => clearTimeout(t);
   }, [detail, stored]);
 
-  /* Only the comments slice is rendered now — legacy slices (checks,
-     variants, handoff package, etc.) stay untouched in the jsonb. */
-  const comments = detail.comments || DEFAULT_COMMENTS;
+  /* Comments render from a LIVE union of the store (realtime — so a comment
+     posted from team chat or another session shows immediately without
+     reopening) and the local optimistic slice (so a just-typed comment shows
+     instantly with no debounce flicker). Deduped by id; once a local comment
+     is persisted+echoed it exists in `stored` and the local dupe drops. The
+     rest of `detail` (blueprint slices) stays local/debounced so realtime
+     echoes never clobber in-flight edits. */
+  const comments = useMemo(() => {
+    const live = stored?.detail?.comments;
+    const local = detail.comments;
+    const liveArr = Array.isArray(live) ? live : [];
+    const localArr = Array.isArray(local) ? local : [];
+    if (!liveArr.length && !localArr.length) return DEFAULT_COMMENTS;
+    const seen = new Set(liveArr.map(c => c.id));
+    return [...liveArr, ...localArr.filter(c => !seen.has(c.id))];
+  }, [stored?.detail?.comments, detail.comments]);
 
   /* updateSlice mutates one key without touching the others, so
      legacy slices ride through the debounced save unchanged. */
   const updateSlice = (key) => (next) =>
     setDetail(d => ({ ...d, [key]: typeof next === "function" ? next(d[key] ?? []) : next }));
+
+  /* "Keep in mind while editing" notes → detail.editNotes (debounced save). */
+  const saveEditNotes = () => {
+    setEditNotesEditing(false);
+    if ((stored?.detail?.editNotes ?? "") === editNotes) return;
+    updateSlice("editNotes")(editNotes);
+  };
 
   const { person: me } = useAuth();
   const [draftComment, setDraftComment] = useState("");
@@ -658,6 +696,48 @@ function ReelDetail({ reel, onBack }) {
               })}
             </span>
             )}
+            {/* Skill tags — which Training-syllabus skills this reel practices.
+                Editable only when the owner grants tagReelSkills; otherwise a
+                read-only list so editors see what a project teaches. */}
+            {(canTagSkills || skillTags.length > 0) && (
+            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span className="mono dim" style={{ fontSize: 10, userSelect: "none" }}>skills</span>
+              {canTagSkills
+                ? SKILLS.map(s => {
+                    const active = skillTags.includes(s.key);
+                    return (
+                      <span
+                        key={s.key}
+                        onClick={() => toggleSkillTag(s.key)}
+                        title={`W${s.week} · ${s.moduleTitle}`}
+                        style={{
+                          fontFamily: "var(--f-mono)", fontSize: 10.5,
+                          padding: "2px 7px", borderRadius: 11, cursor: "pointer",
+                          border: "1px solid " + (active ? "var(--c-violet)" : "var(--line-hard)"),
+                          color: active ? "var(--c-violet)" : "var(--fg-dim)",
+                          background: active ? "rgba(169,155,255,0.10)" : "transparent",
+                          userSelect: "none",
+                        }}
+                      >
+                        {active ? "✓ " : ""}{s.label}
+                      </span>
+                    );
+                  })
+                : skillTags.map(key => {
+                    const s = SKILLS.find(x => x.key === key);
+                    return (
+                      <span key={key} style={{
+                        fontFamily: "var(--f-mono)", fontSize: 10.5,
+                        padding: "2px 7px", borderRadius: 11,
+                        border: "1px solid var(--c-violet)", color: "var(--c-violet)",
+                        background: "rgba(169,155,255,0.10)",
+                      }}>
+                        {s?.label || key}
+                      </span>
+                    );
+                  })}
+            </span>
+            )}
           </div>
         </div>
         <div className="actions" style={{ alignItems: "center", gap: 8 }}>
@@ -853,7 +933,7 @@ function ReelDetail({ reel, onBack }) {
                   No comments yet — leave the first note below.
                 </div>
               )}
-              {comments.map((c) => {
+              {(() => { let _hi = -1; return comments.map((c) => {
                 const mine = me && c.authorId && c.authorId === me.id;
                 if (c.system) {
                   /* System-authored audit entry (e.g. a stage
@@ -867,12 +947,21 @@ function ReelDetail({ reel, onBack }) {
                     </div>
                   );
                 }
+                /* Alternating row shade (Excel-style) across human comments so
+                   successive messages are easy to tell apart. */
+                _hi += 1;
+                const zebra = _hi % 2 === 1 ? "rgba(255,255,255,0.035)" : "transparent";
                 return (
                   <div className="comment" key={c.id}
-                       style={{ position: "relative" }}>
+                       style={{ position: "relative", background: zebra,
+                                borderRadius: 6, padding: "6px 8px", margin: "0 -8px" }}>
                     <div className={"avatar " + String(c.who || "").toLowerCase()}>{c.who}</div>
                     <div>
                       <div className="who">
+                        {String(c.id || "").startsWith("c-rc-") && (
+                          <span title="Posted from team chat"
+                                style={{ color: "var(--c-cyan)", fontSize: 10, marginRight: 4 }}>💬</span>
+                        )}
                         <b>{c.role}</b>
                         <span className="ts">{formatCommentTs(c.ts)}</span>
                         {mine && (
@@ -893,7 +982,7 @@ function ReelDetail({ reel, onBack }) {
                     </div>
                   </div>
                 );
-              })}
+              }); })()}
               <div style={{
                 marginTop: 10,
                 border: "1px dashed var(--line-hard)",
@@ -943,6 +1032,58 @@ function ReelDetail({ reel, onBack }) {
                 </div>
               </div>
             </Card>
+
+            {/* 3) Gamify — skills tagging + rubric grading (hidden when gamify is off) */}
+            <GamifyRubricSheet reel={stored || current} />
+        </div>
+
+        {/* ===== RIGHT — inspiration embed + edit notes ===== */}
+        <div className="detail-col detail-col--ref">
+          {/* Inspiration reel preview (reuses the existing ✦ Inspiration link). */}
+          <div className="ref-card">
+            <div className="ref-label">Inspiration reel</div>
+            {inspoUrl ? (
+              <div className="ref-embed">
+                <ReelPlayer sampleReel={{ sourceUrl: inspoUrl }} preferEmbed={true} />
+              </div>
+            ) : (
+              <div
+                className="ref-embed-empty"
+                onClick={() => editRefLink("inspo", inspoUrl, "Inspiration")}
+                title="Add an inspiration link to preview it here"
+              >
+                + Add an inspiration link to preview the reference reel here
+              </div>
+            )}
+          </div>
+
+          {/* Keep-in-mind-while-editing — yellow bullet notes, saved per reel. */}
+          <div className="editnotes ref-card">
+            <div className="en-head">Keep in mind while editing</div>
+            {editNotesEditing || !editNotes.trim() ? (
+              <>
+                <textarea
+                  value={editNotes}
+                  onChange={e => setEditNotes(e.target.value)}
+                  onFocus={() => setEditNotesEditing(true)}
+                  onBlur={saveEditNotes}
+                  readOnly={!canEditScript}
+                  placeholder={canEditScript
+                    ? "One thing to keep in mind per line…\ne.g. captions match the lyrics\ne.g. sleek font, reposition each caption"
+                    : "No edit notes yet."}
+                />
+                {canEditScript && <span className="en-hint">one item per line · saves on blur</span>}
+              </>
+            ) : (
+              <ul onClick={() => canEditScript && setEditNotesEditing(true)}
+                  title={canEditScript ? "Click to edit" : undefined}
+                  style={{ cursor: canEditScript ? "text" : "default" }}>
+                {editNotes.split("\n").map(l => l.trim()).filter(Boolean).map((line, i) => (
+                  <li key={i}>{line.replace(/^[-•*]\s*/, "")}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </div>
     </div>

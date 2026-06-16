@@ -1,0 +1,152 @@
+/* =========================================================
+   ReelDnaView — full-screen overlay that hosts the landing-page
+   DNA breakdown (helix + asset fan + highlighted timeline) for a
+   real captured reel. Styled with the app's own tokens (--bg-*,
+   --c-*, --fg-*) rather than the landing page's --lp-* scope, so it
+   sits natively inside the internal Reel DNA page.
+   ========================================================= */
+
+.rdv-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(5, 8, 14, 0.78);
+  backdrop-filter: blur(6px);
+  animation: rdv-fade 0.16s ease;
+}
+@keyframes rdv-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.rdv-modal {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line-hard);
+  border-radius: 16px;
+  background:
+    radial-gradient(70% 50% at 30% 0%, rgba(107, 214, 224, 0.06), transparent 70%),
+    var(--bg-1);
+  box-shadow: 0 30px 90px -30px rgba(0, 0, 0, 0.85);
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.rdv-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.rdv-header-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.rdv-label {
+  font-family: var(--f-mono); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--c-cyan);
+}
+.rdv-url {
+  font-family: var(--f-mono); font-size: 12px; color: var(--fg-mute);
+  text-decoration: none; max-width: 360px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.rdv-url:hover { color: var(--c-cyan); }
+.rdv-tag {
+  font-family: var(--f-mono); font-size: 10.5px; color: var(--fg-dim);
+  border: 1px solid var(--line-hard); border-radius: 5px; padding: 2px 7px;
+}
+.rdv-header-actions { display: flex; align-items: center; gap: 8px; }
+.rdv-btn {
+  height: 32px; padding: 0 12px; border-radius: 8px; cursor: pointer;
+  font-family: var(--f-mono); font-size: 11.5px;
+  border: 1px solid var(--line-hard); background: var(--bg-3); color: var(--fg);
+  transition: background 0.14s, border-color 0.14s, color 0.14s;
+}
+.rdv-btn:hover { border-color: var(--c-cyan-soft); color: var(--c-cyan); }
+.rdv-close {
+  width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line-hard); background: var(--bg-3); color: var(--fg-mute);
+  font-size: 14px; line-height: 1;
+}
+.rdv-close:hover { color: var(--c-red); border-color: var(--c-red-soft); }
+
+/* ── Stage ── */
+.rdv-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.18fr);
+  gap: 20px; align-items: start;
+  padding: 20px; overflow: auto;
+}
+
+.rdv-stage-cap {
+  display: block; font-family: var(--f-mono);
+  font-size: 11px; letter-spacing: 0.06em; color: var(--fg-mute);
+  font-weight: 700; margin: 0 0 8px;
+}
+
+/* Helix column */
+.rdv-helix-col { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.rdv-helix-wrap {
+  position: relative; flex: 1; min-height: 520px;
+  border: 1px solid var(--line); border-radius: 14px;
+  background:
+    radial-gradient(60% 60% at 40% 40%, rgba(107, 214, 224, 0.06), transparent 70%),
+    var(--bg-2);
+  overflow: visible;
+}
+.rdv-helix-hint {
+  margin-top: 10px; font-family: var(--f-mono);
+  font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* Asset fan floats over the right edge of the helix on hover */
+.rdv-fan-float {
+  position: absolute; top: 8px; right: -8px; z-index: 6;
+  width: 300px; max-width: 78%;
+  pointer-events: none;
+}
+.rdv-fan-float > * { pointer-events: auto; }
+
+/* Right column: reel above, timeline dock below */
+.rdv-right-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.rdv-player-col { display: flex; align-items: flex-start; justify-content: center; }
+.rdv-player-col .rpl { max-width: 240px; }
+.rdv-player-col .rpl.rpl--embed { max-width: 340px; }
+
+.rdv-dock {
+  border: 1px solid var(--line); border-radius: 14px;
+  background: linear-gradient(180deg, rgba(13, 16, 32, 0.7), rgba(8, 10, 20, 0.9));
+  padding: 14px 16px 12px;
+}
+.rdv-dock-empty {
+  font-family: var(--f-mono); font-size: 12px; color: var(--fg-mute);
+  padding: 28px 8px; text-align: center; line-height: 1.6;
+}
+.rdv-link {
+  background: none; border: none; cursor: pointer; padding: 0;
+  color: var(--c-cyan); font-family: var(--f-mono); font-size: 12px;
+}
+.rdv-link:hover { text-decoration: underline; }
+
+.rdv-dock-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-top: 10px;
+  font-family: var(--f-mono); font-size: 10.5px; color: var(--fg-dim);
+}
+.rdv-dock-foot-id b { color: var(--c-cyan); }
+.rdv-dock-foot-live { display: inline-flex; align-items: center; gap: 7px; }
+.rdv-dock-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--c-green); box-shadow: 0 0 8px var(--c-green);
+  animation: rdv-blink 1.6s ease-in-out infinite;
+}
+@keyframes rdv-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* ── Responsive ── */
+@media (max-width: 860px) {
+  .rdv-overlay { padding: 0; }
+  .rdv-modal { max-height: 100vh; border-radius: 0; width: 100%; }
+  .rdv-stage { grid-template-columns: 1fr; }
+  .rdv-helix-wrap { min-height: 420px; }
+  .rdv-fan-float {
+    position: static; width: 100%; max-width: 100%; margin-top: 12px;
+  }
+  .rdv-url { max-width: 180px; }
+}

@@ -64,6 +64,47 @@ export function parseBody(req) {
 }
 
 /**
+ * Lightweight, NON-throwing caller classifier for quota-sensitive routes
+ * (api/generate, api/tag-footage). Unlike verifyOwner() this never throws —
+ * it just reports who's calling so the route can decide.
+ *
+ * Returns: { isDemo, role, anon }
+ *   · anon=true  → no/invalid token (anonymous caller)
+ *   · isDemo=true → the signed-in user's people.role === 'demo'
+ *
+ * Uses the verifyOwner JWT-as-apikey workaround so the `people` RLS
+ * (auth.role() = 'authenticated') is satisfied.
+ */
+export async function classifyCaller(req) {
+  try {
+    const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) return { isDemo: false, role: null, anon: true };
+
+    const { data: { user }, error } = await adminClient().auth.getUser(token);
+    if (error || !user) return { isDemo: false, role: null, anon: true };
+
+    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const userClient = createClient(url, svcKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    const { data: person } = await userClient
+      .from("people")
+      .select("role")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    return { isDemo: person?.role === "demo", role: person?.role || null, anon: false };
+  } catch {
+    // Fail-safe: treat as anonymous (no special demo handling). The route's
+    // own auth/quota logic still applies.
+    return { isDemo: false, role: null, anon: true };
+  }
+}
+
+/**
  * Reads the `anthropic_enabled` kill switch from app_settings.
  * Returns true (fail-open) when the flag row is missing or unreadable so a
  * transient DB hiccup never silently breaks every AI feature. Only an explicit

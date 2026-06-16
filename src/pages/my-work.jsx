@@ -26,6 +26,12 @@ import { useRoster } from "../lib/roster.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { startOfDayLocal, analyzeDay, fmtDuration, ONLINE_WINDOW_MS, loadDayRows } from "../lib/capcut-utils.js";
 import { getConnections, PLATFORMS } from "../lib/social-client.js";
+import JSZip from "jszip";
+import SpiderChart from "../components/SpiderChart.jsx";
+import GamifyPanel from "../components/GamifyPanel.jsx";
+import OwnerSkillOverlay from "../components/OwnerSkillOverlay.jsx";
+import { maxXpForSkills } from "../lib/gamify-data.jsx";
+import "../components/gamify.css";
 
 /* Build the revision history array, folding the older single-field
    shape into one entry so display code only handles one schema. */
@@ -73,43 +79,51 @@ function whoseWork(role, person, personId) {
   return ROLES[role]?.person || null;
 }
 
-function downloadAgentFiles(personId) {
-  const cfg = { WORKER: personId, POLL_SECONDS: 15 };
-  const cfgBlob = new Blob([JSON.stringify(cfg, null, 2)], { type: "application/json" });
-  const cfgUrl = URL.createObjectURL(cfgBlob);
-  const a1 = document.createElement("a");
-  a1.href = cfgUrl; a1.download = "capcut_config.json"; a1.click();
-  URL.revokeObjectURL(cfgUrl);
+async function downloadAgentFiles(personId) {
+  const zip = new JSZip();
 
-  setTimeout(() => {
-    const bat = [
-      "@echo off",
-      "REM Adds capcut_agent.exe (in this folder) to Windows Startup so it",
-      "REM runs automatically at every logon. Run once per machine.",
-      "setlocal",
-      `set WORKER=${personId}`,
-      "set EXE=%~dp0capcut_agent.exe",
-      "set STARTUP=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
-      "set LNK=%STARTUP%\\CapCutActivityAgent.lnk",
-      "",
-      "if not exist \"%EXE%\" (",
-      "  echo ERROR: capcut_agent.exe not found in this folder.",
-      "  pause & exit /b 1",
-      ")",
-      "",
-      "powershell -NoProfile -Command \"$sh=New-Object -ComObject WScript.Shell;$lnk=$sh.CreateShortcut('%LNK%');$lnk.TargetPath='%EXE%';$lnk.WorkingDirectory='%~dp0';$lnk.WindowStyle=7;$lnk.Save()\"",
-      "",
-      "echo Startup shortcut created. Starting agent now...",
-      "start \"\" \"%EXE%\"",
-      "echo Done. Agent is running and will auto-start at every logon.",
-      "pause",
-    ].join("\r\n");
-    const batBlob = new Blob([bat], { type: "text/plain" });
-    const batUrl = URL.createObjectURL(batBlob);
-    const a2 = document.createElement("a");
-    a2.href = batUrl; a2.download = "capcut_install.bat"; a2.click();
-    URL.revokeObjectURL(batUrl);
-  }, 300);
+  // Per-user config — bakes the worker id in
+  zip.file("capcut_config.json", JSON.stringify({ WORKER: personId, POLL_SECONDS: 15 }, null, 2));
+
+  // Install script — registers a logon scheduled task and starts the agent
+  const bat = [
+    "@echo off",
+    "REM CapCut activity tracker — one-time install. Run from the folder you unzipped into.",
+    "setlocal",
+    "set TASK=CapCutActivityAgent",
+    "set EXE=%~dp0capcut_agent.exe",
+    "",
+    "if not exist \"%EXE%\" (",
+    "  echo ERROR: capcut_agent.exe not found in this folder.",
+    "  pause & exit /b 1",
+    ")",
+    "",
+    "schtasks /Create /TN \"%TASK%\" /TR \"\\\"%EXE%\\\"\" /SC ONLOGON /RL LIMITED /F",
+    "if errorlevel 1 ( echo Failed to create scheduled task. & pause & exit /b 1 )",
+    "",
+    "echo Installed. Starting agent now...",
+    "schtasks /Run /TN \"%TASK%\"",
+    "echo Done. The agent is running and will auto-start at every logon.",
+    "pause",
+  ].join("\r\n");
+  zip.file("install.bat", bat);
+
+  // Fetch the shared agent binary from the public folder
+  try {
+    const resp = await fetch("/capcut-agent/capcut_agent.exe");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const exeBytes = await resp.arrayBuffer();
+    zip.file("capcut_agent.exe", exeBytes);
+  } catch (e) {
+    alert("Could not fetch capcut_agent.exe — check that it's deployed under /capcut-agent/.\n\n" + e.message);
+    return;
+  }
+
+  const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `CapCutTracker-${personId}.zip`; a.click();
+  URL.revokeObjectURL(url);
 }
 
 function MyWork({ role, personId, onOpen, onNavigate, onSetPerson }) {
@@ -130,6 +144,7 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
   const [notesOpen, setNotesOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState(task.notes || "");
   const [noteSaving, setNoteSaving] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const commitEdit = () => {
     const trimmed = editText.trim();
@@ -142,11 +157,38 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
   };
 
   const commitNote = async () => {
-    if (noteDraft === (task.notes || "")) { setNotesOpen(false); return; }
+    if (noteDraft === (task.notes || "")) { setNotesOpen(false); setExpanded(false); return; }
     setNoteSaving(true);
     await onUpdate(task.id, { notes: noteDraft });
     setNoteSaving(false);
     setNotesOpen(false);
+    setExpanded(false);
+  };
+
+  const cancelNote = () => { setNoteDraft(task.notes || ""); setNotesOpen(false); setExpanded(false); };
+
+  // Shared keyboard handling for both the inline and expanded textareas
+  const handleNoteKeyDown = e => {
+    if (e.key === "Enter") {
+      if (e.shiftKey) {
+        // Shift+Enter: insert newline at cursor position manually
+        e.preventDefault();
+        const el = e.target;
+        const start = el.selectionStart;
+        const end = el.selectionEnd;
+        const next = noteDraft.slice(0, start) + "\n" + noteDraft.slice(end);
+        setNoteDraft(next);
+        // restore cursor after the inserted newline
+        requestAnimationFrame(() => {
+          el.selectionStart = start + 1;
+          el.selectionEnd   = start + 1;
+        });
+      } else if (isOwner) {
+        // Enter alone: save
+        e.preventDefault();
+        commitNote();
+      }
+    }
   };
 
   // Keep local draft in sync when task.notes changes externally
@@ -164,6 +206,18 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
           onChange={e => onComplete(task.id, e.target.checked)}
           style={{ marginTop: 3, cursor: "pointer", accentColor: "var(--c-ok, #22c55e)", flexShrink: 0 }}
         />
+
+        <button
+          onClick={() => setNotesOpen(o => !o)}
+          title={task.notes ? "Has notes — click to view/edit" : "Add a note"}
+          style={{
+            background: "none", border: "none", cursor: "pointer",
+            color: task.notes ? "var(--c-cyan)" : "var(--fg-dim)",
+            fontSize: 13, padding: "0 3px", lineHeight: 1, flexShrink: 0,
+          }}
+        >
+          {notesOpen ? "▾" : (task.notes ? "📝" : "▸")}
+        </button>
 
         {editing && isOwner ? (
           <input
@@ -194,18 +248,6 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
           </span>
         )}
 
-        <button
-          onClick={() => setNotesOpen(o => !o)}
-          title={task.notes ? "Has notes — click to view/edit" : "Add a note"}
-          style={{
-            background: "none", border: "none", cursor: "pointer",
-            color: task.notes ? "var(--c-cyan)" : "var(--fg-dim)",
-            fontSize: 13, padding: "0 3px", lineHeight: 1, flexShrink: 0,
-          }}
-        >
-          {notesOpen ? "▾" : (task.notes ? "📝" : "▸")}
-        </button>
-
         {isOwner && (
           <button
             onClick={() => onDelete(task.id)}
@@ -217,34 +259,22 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
 
       {notesOpen && (
         <div style={{ paddingLeft: 26, paddingBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 3 }}>
+            <button
+              onClick={() => setExpanded(true)}
+              title="Expand note to a larger view"
+              style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg-dim)", cursor: "pointer", fontSize: 11, padding: "2px 8px", lineHeight: 1 }}
+            >
+              Expand ⤢
+            </button>
+          </div>
           <textarea
             value={noteDraft}
             onChange={e => setNoteDraft(e.target.value)}
             placeholder="Add a note… (Shift+Enter for new line, Ctrl+Enter to save)"
             readOnly={!isOwner}
             rows={3}
-            onKeyDown={e => {
-              if (e.key === "Enter") {
-                if (e.shiftKey) {
-                  // Shift+Enter: insert newline at cursor position manually
-                  e.preventDefault();
-                  const el = e.target;
-                  const start = el.selectionStart;
-                  const end = el.selectionEnd;
-                  const next = noteDraft.slice(0, start) + "\n" + noteDraft.slice(end);
-                  setNoteDraft(next);
-                  // restore cursor after the inserted newline
-                  requestAnimationFrame(() => {
-                    el.selectionStart = start + 1;
-                    el.selectionEnd   = start + 1;
-                  });
-                } else if (isOwner) {
-                  // Enter alone: save
-                  e.preventDefault();
-                  commitNote();
-                }
-              }
-            }}
+            onKeyDown={handleNoteKeyDown}
             style={{
               width: "100%", boxSizing: "border-box",
               background: "var(--bg-2)",
@@ -270,13 +300,97 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
                 {noteSaving ? "Saving…" : "Save note"}
               </button>
               <button
-                onClick={() => { setNoteDraft(task.notes || ""); setNotesOpen(false); }}
+                onClick={cancelNote}
                 style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg-dim)", cursor: "pointer", fontSize: 11, padding: "3px 10px" }}
               >
                 Cancel
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {expanded && (
+        <div
+          onClick={() => setExpanded(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: "min(720px, 100%)", maxHeight: "85vh",
+              display: "flex", flexDirection: "column", gap: 10,
+              background: "var(--bg-2)",
+              border: "1px solid var(--line-hard)",
+              borderRadius: 8,
+              padding: 16,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 13, color: "var(--fg)", fontFamily: "var(--f-sans, var(--f-mono))" }}>
+                {isOwner ? "Edit note" : "Note"}
+              </span>
+              <button
+                onClick={() => setExpanded(false)}
+                title="Close"
+                style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px" }}
+              >×</button>
+            </div>
+            <textarea
+              autoFocus
+              value={noteDraft}
+              onChange={e => setNoteDraft(e.target.value)}
+              placeholder="Add a note… (Shift+Enter for new line, Enter to save)"
+              readOnly={!isOwner}
+              onKeyDown={handleNoteKeyDown}
+              style={{
+                flex: 1, minHeight: "50vh", width: "100%", boxSizing: "border-box",
+                background: "var(--bg-1, var(--bg-2))",
+                border: "1px solid var(--line-hard)",
+                borderRadius: 4,
+                color: "var(--fg)",
+                fontFamily: "var(--f-sans, var(--f-mono))",
+                fontSize: 14,
+                padding: "12px 14px",
+                resize: "vertical",
+                outline: "none",
+                whiteSpace: "pre-wrap",
+              }}
+            />
+            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+              {isOwner && (
+                <button
+                  className="btn-primary"
+                  onClick={commitNote}
+                  disabled={noteSaving}
+                  style={{ fontSize: 12, padding: "5px 14px" }}
+                >
+                  {noteSaving ? "Saving…" : "Save note"}
+                </button>
+              )}
+              {isOwner ? (
+                <button
+                  onClick={cancelNote}
+                  style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg-dim)", cursor: "pointer", fontSize: 12, padding: "5px 14px" }}
+                >
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  onClick={() => setExpanded(false)}
+                  style={{ background: "none", border: "1px solid var(--line-hard)", borderRadius: 4, color: "var(--fg-dim)", cursor: "pointer", fontSize: 12, padding: "5px 14px" }}
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </li>
@@ -390,9 +504,10 @@ const SKILLED_COLS = [
 ];
 
 function SkilledWork({ me, onOpen, role }) {
-  const { reels, actions, attachedFootage } = useWorkflow();
+  const { reels, actions, attachedFootage, gamifyEnabled } = useWorkflow();
   const { person } = useAuth();
   const { peopleById } = useRoster();
+  const [gamifyOpen, setGamifyOpen] = useState(true);
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
   const whoLabel = peopleById[me]?.short || "Editor";
   const roleLabel = ROLES[role]?.short?.toLowerCase() || role || "editor";
@@ -419,11 +534,19 @@ function SkilledWork({ me, onOpen, role }) {
           </div>
         </div>
         <div className="actions">
-          <DPill onClick={() => downloadAgentFiles(me)} title="Download the CapCut tracker config for this person">
+          {gamifyEnabled && (
+            <DPill onClick={() => setGamifyOpen(o => !o)}
+                   title="Toggle your skill progress panel">
+              🎮 {gamifyOpen ? "Hide" : "Show"} progress
+            </DPill>
+          )}
+          <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
             ↓ CapCut tracker setup
           </DPill>
         </div>
       </div>
+
+      <GamifyPanel personId={me} open={gamifyOpen} />
 
       <div className="mywork-grid">
         {SKILLED_COLS.map(col => {
@@ -499,7 +622,7 @@ function VariantWork({ me, onOpen }) {
           <div className="sub">Reels assigned to you.</div>
         </div>
         <div className="actions">
-          <DPill onClick={() => downloadAgentFiles(me)} title="Download the CapCut tracker config for this person">
+          <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
             ↓ CapCut tracker setup
           </DPill>
         </div>
@@ -529,7 +652,7 @@ function VariantWork({ me, onOpen }) {
             )}
             <div className="vslot-block">
               <div className="h-sub">Deadline</div>
-              <div className="mono" style={{ color: "var(--c-amber)" }}>{formatDue(r, now) || "—"}</div>
+              <div className="mono" style={{ color: "var(--c-amber)" }}>{(formatDue(r, now) || "—").replace(/\s+\d{1,2}:\d{2}$/, "")}</div>
             </div>
           </div>
         ))}
@@ -1214,7 +1337,7 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
         </div>
         <div className="actions">
           {me && (
-            <DPill onClick={() => downloadAgentFiles(me)} title="Download the CapCut tracker config">
+            <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
               ↓ CapCut tracker setup
             </DPill>
           )}
@@ -1225,6 +1348,7 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
         <OwnerQuickCards onNavigate={onNavigate} inReviewCount={attentionCount} reels={reels} />
         <CapCutTeamWidget teamMembers={peopleList.filter(p => p.role !== "owner")} />
         <PromotedInsightsSection onNavigate={onNavigate} />
+        <OwnerSkillOverlay />
 
         {teamStatus.length > 0 && (
           <div className="ow-team-section">
@@ -1397,7 +1521,7 @@ function ReviewQueueWork({ me, onOpen }) {
         </div>
         <div className="actions">
           {me && (
-            <DPill onClick={() => downloadAgentFiles(me)} title="Download the CapCut tracker config for this person">
+            <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
               ↓ CapCut tracker setup
             </DPill>
           )}
@@ -1674,6 +1798,22 @@ function fromDatetimeLocalValue(v) {
 
 function WorkCard({ reel, onOpen, clipCount, onDueChange }) {
   const { peopleById } = useRoster();
+  const { gamifyEnabled, gamifyProgress, gamifyRubrics } = useWorkflow();
+
+  // Gamify: XP this reel awards + a mini chart of the skills it practices.
+  const skillTags = reel.skill_tags || [];
+  const earnedXp = gamifyEnabled
+    ? skillTags.reduce((sum, k) => {
+        const row = gamifyRubrics.find(r =>
+          r.reelId === reel.id && r.personId === reel.owner && r.skillKey === k);
+        return sum + (row?.xpAwarded || 0);
+      }, 0)
+    : 0;
+  const previewXp = maxXpForSkills(skillTags);
+  // Mini chart shows the owner's overall scores, masked to this reel's skills.
+  const ownerScores = gamifyProgress.find(p => p.personId === reel.owner)?.skillScores || {};
+  const miniScores = {};
+  for (const k of skillTags) miniScores[k] = ownerScores[k] || 0;
   // Most recent "sent_back" entry — only renders the orange badge if
   // it's the latest history event (i.e. no later approval).
   const history = getRevisionHistory(reel.detail);
@@ -1691,13 +1831,18 @@ function WorkCard({ reel, onOpen, clipCount, onDueChange }) {
     <div className="work-card"
          onClick={() => onOpen({ id: reel.id, title: reel.title })}
          style={{ cursor: "pointer" }}>
-      <div className="wc-head">
+      <div className="wc-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
         <div>
           <div className="mono dim">{reel.id}</div>
           <div className="serif-i" style={{ fontSize: 17, color: "#eef3fb", marginTop: 2 }}>
             {reel.title}
           </div>
         </div>
+        {gamifyEnabled && skillTags.length > 0 && (
+          <span className="gf-exp-badge" title={earnedXp > 0 ? "XP earned on this reel" : "XP available if completed"}>
+            {earnedXp > 0 ? `${earnedXp} XP` : `+${previewXp}`}
+          </span>
+        )}
       </div>
 
       {revisionNote && (
@@ -1801,6 +1946,17 @@ function WorkCard({ reel, onOpen, clipCount, onDueChange }) {
           }}
         />
       </div>
+
+      {gamifyEnabled && skillTags.length > 0 && (
+        <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}
+             onClick={stop}>
+          <div className="gf-mini-chart">
+            <SpiderChart scores={miniScores} size={84} rings={5}
+                         labelMode="none" showLabels={false}
+                         fillColor="var(--c-cyan)" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

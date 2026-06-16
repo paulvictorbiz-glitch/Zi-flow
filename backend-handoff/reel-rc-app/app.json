@@ -1,0 +1,16 @@
+{
+    "id": "9d0576f7-bd3e-446e-8ef0-d4b80273bcf8",
+    "version": "1.0.0",
+    "requiredApiVersion": "1.58.1",
+    "iconFile": "icon.png",
+    "author": {
+        "name": "FootageBrain",
+        "homepage": "https://footagebrain.com",
+        "support": "https://footagebrain.com"
+    },
+    "name": "Reel Command",
+    "nameSlug": "reel-command",
+    "classFile": "ReelCommandApp.ts",
+    "description": "Type /reel to pick a pipeline reel from a dropdown and attach feedback that saves to that reel in the FootageBrain dashboard.",
+    "implements": []
+}

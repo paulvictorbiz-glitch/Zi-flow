@@ -1,0 +1,321 @@
+/* Training tab — editor course / playbook.
+   Dark mono aesthetic, matches the dashboard's CSS vars (styles.css). */
+
+.tr-wrap { padding-bottom: 80px; }
+
+/* ── Sticky EXP / level header ─────────────────────────────────── */
+.tr-exp {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: linear-gradient(180deg, var(--bg) 70%, transparent);
+  padding: 14px 0 16px;
+  margin-bottom: 8px;
+}
+.tr-exp-card {
+  border: 1px solid var(--line-hard);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #161f31 0%, #131a2a 100%);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tr-exp-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tr-level {
+  font-family: var(--f-mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--c-violet);
+  letter-spacing: 0.5px;
+}
+.tr-level-blurb { font-size: 12px; color: var(--fg-dim); margin-top: 2px; }
+.tr-count {
+  font-family: var(--f-mono);
+  font-size: 12.5px;
+  color: var(--fg-mute);
+}
+.tr-count b { color: var(--c-cyan); }
+
+.tr-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 7px;
+  background: #0d1525;
+  border: 1px solid var(--line-hard);
+  overflow: hidden;
+}
+.tr-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, var(--c-violet), var(--c-cyan));
+  border-radius: 7px;
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 0 14px rgba(169, 155, 255, 0.45);
+}
+.tr-next {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* ── Jump rail (module chips) ──────────────────────────────────── */
+.tr-rail {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 2px 0 4px;
+}
+.tr-chip {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  border: 1px solid var(--line-hard);
+  background: var(--bg-2);
+  color: var(--fg-mute);
+  border-radius: 20px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.tr-chip:hover { border-color: var(--c-cyan-soft); color: var(--fg); }
+.tr-chip.is-done { border-color: var(--c-green-soft); color: var(--c-green); }
+.tr-chip-dot { opacity: 0.6; }
+
+/* ── Month section ─────────────────────────────────────────────── */
+.tr-month { margin-top: 26px; scroll-margin-top: 140px; }
+.tr-month-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--line-hard);
+}
+.tr-month-title {
+  font-family: var(--f-mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.tr-month-hint { font-size: 12px; color: var(--fg-dim); }
+
+/* ── Module card ───────────────────────────────────────────────── */
+.tr-mod {
+  border: 1px solid var(--line-hard);
+  border-radius: 10px;
+  background: var(--bg-2);
+  margin-bottom: 12px;
+  overflow: hidden;
+  scroll-margin-top: 150px;
+}
+.tr-mod.is-done { border-color: var(--c-green-soft); }
+.tr-mod.is-final { border-color: var(--c-amber-soft); }
+
+.tr-mod-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.tr-mod-head:hover { background: rgba(255, 255, 255, 0.02); }
+.tr-week {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  border: 1px solid var(--line-hard);
+  border-radius: 5px;
+  padding: 3px 7px;
+  flex-shrink: 0;
+}
+.tr-mod-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--f-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.tr-mod-final-badge {
+  font-size: 10px;
+  font-family: var(--f-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--c-amber);
+  border: 1px solid var(--c-amber-soft);
+  border-radius: 5px;
+  padding: 2px 6px;
+  margin-left: 6px;
+}
+
+/* Completion ring */
+.tr-ring { flex-shrink: 0; width: 34px; height: 34px; }
+.tr-ring text {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  fill: var(--fg-mute);
+}
+.tr-caret { color: var(--fg-dim); font-size: 12px; flex-shrink: 0; width: 14px; text-align: center; }
+
+.tr-mod-body {
+  padding: 4px 16px 18px;
+  border-top: 1px solid var(--line-hard);
+}
+
+/* Lessons checklist */
+.tr-block-label {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--c-cyan);
+  margin: 16px 0 8px;
+}
+.tr-lesson {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.45;
+}
+.tr-lesson input { margin-top: 3px; accent-color: var(--c-violet); cursor: pointer; flex-shrink: 0; }
+.tr-lesson.is-checked span { color: var(--fg-dim); text-decoration: line-through; }
+
+.tr-list { margin: 0; padding-left: 18px; }
+.tr-list li { font-size: 13px; color: var(--fg-mute); padding: 3px 0; line-height: 1.45; }
+
+.tr-callout {
+  border-left: 3px solid var(--c-amber-soft);
+  background: rgba(245, 194, 102, 0.05);
+  border-radius: 0 6px 6px 0;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+.tr-callout.is-milestone { border-left-color: var(--c-green-soft); background: rgba(127, 212, 154, 0.05); }
+.tr-callout-tag {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--fg-dim);
+  display: block;
+  margin-bottom: 3px;
+}
+
+/* Videos */
+.tr-videos { display: flex; flex-direction: column; gap: 12px; }
+.tr-embed {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line-hard);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+.tr-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.tr-vid-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 12.5px;
+  color: var(--c-cyan);
+  border: 1px solid var(--line-hard);
+  border-radius: 6px;
+  padding: 7px 12px;
+  text-decoration: none;
+  width: fit-content;
+}
+.tr-vid-link:hover { border-color: var(--c-cyan-soft); }
+.tr-vid-empty { font-size: 12px; color: var(--fg-dim); font-style: italic; }
+
+/* Practice reels */
+.tr-reels { display: flex; flex-direction: column; gap: 5px; }
+.tr-reel-link {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-3);
+  border: 1px solid var(--line-hard);
+  border-radius: 6px;
+  padding: 7px 11px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.tr-reel-link:hover { border-color: var(--c-cyan-soft); }
+.tr-reel-num { color: var(--fg-dim); flex-shrink: 0; }
+.tr-reel-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-reels-empty { font-size: 12px; color: var(--fg-dim); font-style: italic; }
+
+/* ── Checkpoint card ───────────────────────────────────────────── */
+.tr-checkpoint {
+  border: 1px solid var(--c-violet);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(169, 155, 255, 0.08), rgba(107, 214, 224, 0.04));
+  padding: 14px 18px;
+  margin: 6px 0 4px;
+}
+.tr-checkpoint-title {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-violet);
+  margin-bottom: 6px;
+}
+.tr-checkpoint-body { font-size: 13px; color: var(--fg-mute); line-height: 1.5; }
+
+/* ── Rubric table ──────────────────────────────────────────────── */
+.tr-rubric { margin-top: 34px; }
+.tr-rubric-scroll { overflow-x: auto; border: 1px solid var(--line-hard); border-radius: 8px; }
+.tr-rubric table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tr-rubric th, .tr-rubric td {
+  text-align: left;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line-hard);
+  vertical-align: top;
+}
+.tr-rubric th {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--fg-mute);
+  background: var(--bg-3);
+}
+.tr-rubric td:first-child { color: var(--fg); font-weight: 600; white-space: nowrap; }
+.tr-rubric td { color: var(--fg-dim); }
+
+/* Owner perspective banner */
+.tr-perspective {
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  color: var(--c-amber);
+  border: 1px solid var(--c-amber-soft);
+  background: rgba(245, 194, 102, 0.06);
+  border-radius: 6px;
+  padding: 6px 11px;
+  margin-bottom: 10px;
+  display: inline-block;
+}

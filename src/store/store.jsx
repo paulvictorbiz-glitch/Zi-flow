@@ -22,6 +22,11 @@ import React from "react";
 import { ROLES, normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "../lib/shared-data.jsx";
 import { isKnownPerson, personName } from "../lib/roster.jsx";
 import { supabase } from "../lib/supabase-client.js";
+import { isDemoMode, setDemoMode } from "../lib/demo-sandbox.jsx";
+import { useAuth } from "../auth.jsx";
+import { XP_PER_GRADE, scoreForSkillXp, medalForScores,
+         SKILL_KEYS, REWARDS, levelForXp, xpForSkillGrades,
+         xpForSkillGradesWithDifficulty, isReelLocked } from "../lib/gamify-data.jsx";
 
 /* ---------- camelCase ↔ snake_case mappers ---------- */
 function reelFromDb(row) {
@@ -29,6 +34,7 @@ function reelFromDb(row) {
   const { blocker_role, prev_owner, variant_progress, fb_query,
           attach_url, due_at, stage_entered_at, archived_at,
           display_number, status_color, scheduled_post_date,
+          gamify_difficulty,
           created_at, updated_at, stage, ...rest } = row;
   return {
     ...rest,
@@ -44,6 +50,7 @@ function reelFromDb(row) {
     displayNumber: display_number ?? undefined,
     statusColor: status_color ?? undefined,
     scheduledPostDate: scheduled_post_date ?? undefined,
+    gamifyDifficulty: gamify_difficulty ?? {},
   };
 }
 function reelToDb(reel) {
@@ -51,13 +58,16 @@ function reelToDb(reel) {
   // foreign (e.g. ephemeral _idx) is dropped.
   const { blockerRole, prevOwner, variantProgress, fbQuery, attachUrl,
           dueAt, stageEnteredAt, displayNumber, statusColor, scheduledPostDate,
+          gamifyDifficulty,
           lane, owner, stage, state, age, due, fb, refs,
           blocker, next, downstream, grouping, note, foot,
           tone, links, status, logline, script, vo, audio, inspo, plan,
-          detail, title, id } = reel;
+          detail, skill_tags, title, id } = reel;
   const out = { id, title, stage, owner, lane, state, age, due,
     fb, refs, blocker, next, downstream, grouping, note, foot,
     tone, links, status, logline, script, vo, audio, inspo, plan, detail,
+    skill_tags: skill_tags ?? [],
+    gamify_difficulty: gamifyDifficulty ?? {},
     blocker_role: blockerRole ?? null,
     prev_owner: prevOwner ?? null,
     variant_progress: variantProgress ?? null,
@@ -141,6 +151,52 @@ function reelDnaToDb(item) {
     reel_id: reelId ?? null,
     archived_at: archivedAt ?? null };
   return out;
+}
+
+function reelChatRefsFromDb(row) {
+  if (!row) return row;
+  const { reel_id, message_url, created_by, created_at, ...rest } = row;
+  return {
+    ...rest,
+    reelId: reel_id,
+    messageUrl: message_url ?? undefined,
+    createdBy: created_by ?? undefined,
+    createdAt: created_at ?? undefined,
+  };
+}
+
+function gamifyProgressFromDb(row) {
+  if (!row) return row;
+  const { person_id, total_xp, skill_scores, unlocked_rewards,
+          created_at, updated_at, ...rest } = row;
+  return {
+    ...rest,
+    personId: person_id,
+    totalXp: total_xp ?? 0,
+    skillScores: skill_scores ?? {},
+    unlockedRewards: unlocked_rewards ?? [],
+    updatedAt: updated_at ?? undefined,
+  };
+}
+
+function gamifyRubricFromDb(row) {
+  if (!row) return row;
+  const { reel_id, person_id, skill_key, editor_checked,
+          reviewer_grade, reviewer_grades, xp_awarded, graded_at,
+          created_at, updated_at, ...rest } = row;
+  return {
+    ...rest,
+    reelId: reel_id,
+    personId: person_id,
+    skillKey: skill_key,
+    editorChecked: editor_checked ?? [],
+    // Per-sub-skill grade map { subId: grade }. Falls back to wrapping a
+    // legacy single grade if an old row still carries one.
+    reviewerGrades: reviewer_grades ?? {},
+    xpAwarded: xp_awarded ?? 0,
+    gradedAt: graded_at ?? undefined,
+    updatedAt: updated_at ?? undefined,
+  };
 }
 
 /* Build the next revisionHistory array. Folds the older single-field
@@ -386,6 +442,56 @@ function workflowReducer(state, action) {
     case "DELETE_REEL_DNA_BY_ID":
       return { ...state, reelDna: state.reelDna.filter(d => d.id !== action.id) };
 
+    /* Reel ↔ chat refs — same optimistic + realtime shape as reel_dna. */
+    case "CREATE_REEL_CHAT_REF":
+      return { ...state, reelChatRefs: [action.item, ...state.reelChatRefs] };
+
+    case "UPSERT_REEL_CHAT_REF": {
+      const exists = state.reelChatRefs.some(r => r.id === action.item.id);
+      return {
+        ...state,
+        reelChatRefs: exists
+          ? state.reelChatRefs.map(r => r.id === action.item.id ? action.item : r)
+          : [action.item, ...state.reelChatRefs],
+      };
+    }
+
+    case "DELETE_REEL_CHAT_REF_BY_ID":
+      return { ...state, reelChatRefs: state.reelChatRefs.filter(r => r.id !== action.id) };
+
+    /* ----- Gamify ----- */
+    case "SET_GAMIFY_ENABLED":
+      return { ...state, gamifyEnabled: action.enabled };
+
+    case "SET_GAMIFY_GRADING_MODE":
+      return { ...state, gamifyGradingMode: action.mode };
+
+    case "UPSERT_GAMIFY_PROGRESS": {
+      const exists = state.gamifyProgress.some(p => p.personId === action.item.personId);
+      return {
+        ...state,
+        gamifyProgress: exists
+          ? state.gamifyProgress.map(p => p.personId === action.item.personId
+              ? { ...p, ...action.item } : p)
+          : [action.item, ...state.gamifyProgress],
+      };
+    }
+
+    case "UPSERT_GAMIFY_RUBRIC": {
+      const key = (r) => `${r.reelId}|${r.personId}|${r.skillKey}`;
+      const k = key(action.item);
+      const exists = state.gamifyRubrics.some(r => key(r) === k);
+      return {
+        ...state,
+        gamifyRubrics: exists
+          ? state.gamifyRubrics.map(r => key(r) === k ? { ...r, ...action.item } : r)
+          : [action.item, ...state.gamifyRubrics],
+      };
+    }
+
+    case "DELETE_GAMIFY_RUBRIC_BY_ID":
+      return { ...state, gamifyRubrics: state.gamifyRubrics.filter(r => r.id !== action.id) };
+
     case "SET_DAILY_TASKS":
       return { ...state, dailyTasks: action.items };
 
@@ -484,6 +590,7 @@ function workflowReducer(state, action) {
    prototype. */
 
 async function persistMoveStage(state, id, { lane, stage, systemComment, scheduledPostDate }) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const isCard = state.reviewLaneCards.some(c => c.id === id);
   const table = isCard ? "review_lane_cards" : "reels";
   const reel = (isCard ? state.reviewLaneCards : state.reels).find(r => r.id === id);
@@ -526,6 +633,7 @@ async function persistMoveStage(state, id, { lane, stage, systemComment, schedul
 }
 
 async function persistUpdateReel(state, id, patch) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const isCard = state.reviewLaneCards.some(c => c.id === id);
   const table = isCard ? "review_lane_cards" : "reels";
   // Remap camelCase patch keys to snake_case where applicable
@@ -539,15 +647,16 @@ async function persistUpdateReel(state, id, patch) {
   if ("stageEnteredAt" in patch) { dbPatch.stage_entered_at = patch.stageEnteredAt; delete dbPatch.stageEnteredAt; }
   if ("archivedAt" in patch)  { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
   if ("parentId" in patch)    { dbPatch.parent_id = patch.parentId; delete dbPatch.parentId; }
+  if ("gamifyDifficulty" in patch) { dbPatch.gamify_difficulty = patch.gamifyDifficulty; delete dbPatch.gamifyDifficulty; }
   // Keep `lane` in sync when owner changes — board derives column as lane || owner,
   // so a stale lane from a prior board drag would otherwise override the new owner.
   if ("owner" in patch && !("lane" in patch)) { dbPatch.lane = patch.owner; }
   let { error } = await supabase.from(table).update(dbPatch).eq("id", id);
-  // board_order may not be migrated yet — if PostgREST rejects it, drop it and
-  // retry (the reorder still shows locally; it just won't persist until the
-  // `board_order` column is added).
-  if (error && "board_order" in dbPatch && /board_order|column|PGRST204/i.test(error.message || "")) {
-    const { board_order, ...rest } = dbPatch;
+  // board_order / gamify_difficulty may not be migrated yet — if PostgREST
+  // rejects an unknown column, drop it and retry (the change still shows
+  // locally; it just won't persist until the column is added).
+  if (error && /board_order|gamify_difficulty|column|PGRST204/i.test(error.message || "")) {
+    const { board_order, gamify_difficulty, ...rest } = dbPatch;
     error = Object.keys(rest).length
       ? (await supabase.from(table).update(rest).eq("id", id)).error
       : null;
@@ -556,22 +665,26 @@ async function persistUpdateReel(state, id, patch) {
 }
 
 async function persistCreateReel(reel) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const { error } = await supabase.from("reels").insert(reelToDb(reel));
   if (error) throw error;
 }
 
 async function persistDeleteReel(id) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   // review_lane_cards rows with this as parent_id cascade via FK
   const { error } = await supabase.from("reels").delete().eq("id", id);
   if (error) throw error;
 }
 
 async function persistCreateTask(task) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const { error } = await supabase.from("tasks").insert(taskToDb(task));
   if (error) throw error;
 }
 
 async function persistUpdateTask(id, patch) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const dbPatch = { ...patch };
   if ("from" in patch) { dbPatch.from_person = patch.from; delete dbPatch.from; }
   if ("to" in patch)   { dbPatch.to_person = patch.to; delete dbPatch.to; }
@@ -581,11 +694,13 @@ async function persistUpdateTask(id, patch) {
 }
 
 async function persistDeleteTask(id) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const { error } = await supabase.from("tasks").delete().eq("id", id);
   if (error) throw error;
 }
 
 async function persistAddAttachedFootage(item) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   let { error } = await supabase.from("attached_footage_items").insert(item);
   // Graceful fallback: if a new column (drive_url, drive_folder_url, frame_rate)
   // hasn't been migrated yet, retry without the offending field so attaching
@@ -598,16 +713,19 @@ async function persistAddAttachedFootage(item) {
 }
 
 async function persistRemoveAttachedFootage(id) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const { error } = await supabase.from("attached_footage_items").delete().eq("id", id);
   if (error) throw error;
 }
 
 async function persistCreateReelDna(item) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const { error } = await supabase.from("reel_dna").insert(reelDnaToDb(item));
   if (error) throw error;
 }
 
 async function persistUpdateReelDna(id, patch) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   // Remap camelCase patch keys to snake_case; jsonb gene fields pass through.
   const dbPatch = { ...patch };
   if ("reelUrl" in patch)         { dbPatch.reel_url = patch.reelUrl; delete dbPatch.reelUrl; }
@@ -621,6 +739,87 @@ async function persistUpdateReelDna(id, patch) {
   if (error) throw error;
 }
 
+async function persistCreateReelChatRef(item) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { id, reelId, channel, note, messageUrl, createdBy } = item;
+  const row = {
+    id, channel: channel ?? null, note: note ?? null,
+    reel_id: reelId,
+    message_url: messageUrl ?? null,
+    created_by: createdBy ?? null,
+  };
+  const { error } = await supabase.from("reel_chat_refs").insert(row);
+  if (error) throw error;
+}
+
+/* ---------- Gamify persistence ----------
+   gamify_progress is upserted on person_id; gamify_rubric on the
+   (reel_id, person_id, skill_key) composite. Both short-circuit in
+   demo mode (optimistic-only). */
+async function persistGamifyProgress(item) {
+  if (isDemoMode()) return;
+  const row = {
+    person_id: item.personId,
+    total_xp: item.totalXp ?? 0,
+    skill_scores: item.skillScores ?? {},
+    medal: item.medal ?? "none",
+    unlocked_rewards: item.unlockedRewards ?? [],
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from("gamify_progress")
+    .upsert(row, { onConflict: "person_id" });
+  if (error) throw error;
+}
+
+async function persistGamifyRubric(item) {
+  if (isDemoMode()) return;
+  const row = {
+    reel_id: item.reelId,
+    person_id: item.personId,
+    skill_key: item.skillKey,
+    editor_checked: item.editorChecked ?? [],
+    reviewer_grades: item.reviewerGrades ?? {},
+    xp_awarded: item.xpAwarded ?? 0,
+    graded_at: item.gradedAt ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  let { error } = await supabase
+    .from("gamify_rubric")
+    .upsert(row, { onConflict: "reel_id,person_id,skill_key" });
+  // Graceful fallback if migration 0051 (reviewer_grades) hasn't run yet.
+  if (error && /reviewer_grades|column|PGRST204/i.test(error.message || "")) {
+    const { reviewer_grades, ...rest } = row;
+    ({ error } = await supabase
+      .from("gamify_rubric")
+      .upsert(rest, { onConflict: "reel_id,person_id,skill_key" }));
+  }
+  if (error) throw error;
+}
+
+/* Recompute a person's aggregate progress (skill scores, total XP,
+   medal, unlocked rewards) from the full set of their graded rubric
+   rows. Pure — returns the gamify_progress shape. */
+function computeProgress(personId, rubricRows) {
+  const xpBySkill = {};
+  for (const k of SKILL_KEYS) xpBySkill[k] = 0;
+  for (const r of rubricRows) {
+    if (r.personId !== personId) continue;
+    if (!(r.skillKey in xpBySkill)) continue;
+    xpBySkill[r.skillKey] += (r.xpAwarded || 0);
+  }
+  const skillScores = {};
+  let totalXp = 0;
+  for (const k of SKILL_KEYS) {
+    skillScores[k] = scoreForSkillXp(xpBySkill[k]);
+    totalXp += xpBySkill[k];
+  }
+  const medal = medalForScores(skillScores);
+  const { current } = levelForXp(totalXp);
+  const unlockedRewards = REWARDS.filter(r => current.level >= r.level).map(r => r.id);
+  return { personId, totalXp, skillScores, medal, unlockedRewards };
+}
+
 /* ---------- Context + provider ---------- */
 const WorkflowContext = React.createContext(null);
 
@@ -631,12 +830,26 @@ const INITIAL_STATE = {
   attachedFootage: [],
   dailyTasks: [],
   reelDna: [],
+  reelChatRefs: [],
+  gamifyProgress: [],
+  gamifyRubrics: [],
+  gamifyEnabled: false,
+  gamifyGradingMode: "editor+reviewer",
   loaded: false,
   error: null,
 };
 
 function WorkflowProvider({ children }) {
   const [state, dispatch] = React.useReducer(workflowReducer, INITIAL_STATE);
+
+  /* Demo sandbox: when the signed-in person is the demo account, flip the
+     module-level flag so every persist* short-circuits (optimistic-only).
+     Set synchronously before any mutation can fire. RLS (migration 0046)
+     is the hard backstop; this is the UX layer. */
+  const { person: _authPerson } = useAuth();
+  const _isDemo = _authPerson?.role === "demo";
+  setDemoMode(_isDemo);
+  React.useEffect(() => { setDemoMode(_isDemo); }, [_isDemo]);
 
   // One-time legacy cleanup — old step 1.5 / step 2 caches.
   React.useEffect(() => {
@@ -679,6 +892,44 @@ function WorkflowProvider({ children }) {
           console.warn("reel_dna not available (run migration 0044?):", e?.message || e);
         }
 
+        /* Reel ↔ chat refs degrade to [] if migration 0046 hasn't run yet —
+           same all-or-nothing reasoning as reel_dna above. */
+        let reelChatRefs = [];
+        try {
+          const refsRes = await supabase
+            .from("reel_chat_refs").select("*")
+            .order("created_at", { ascending: false });
+          if (refsRes.error) throw refsRes.error;
+          reelChatRefs = (refsRes.data || []).map(reelChatRefsFromDb);
+        } catch (e) {
+          console.warn("reel_chat_refs not available (run migration 0046?):", e?.message || e);
+        }
+
+        /* Gamify progress + rubric rows + the two app_settings toggles —
+           all degrade gracefully if migration 0050 hasn't run yet. */
+        let gamifyProgress = [];
+        let gamifyRubrics = [];
+        let gamifyEnabled = false;
+        let gamifyGradingMode = "editor+reviewer";
+        try {
+          const [gpRes, grRes, gsRes] = await Promise.all([
+            supabase.from("gamify_progress").select("*"),
+            supabase.from("gamify_rubric").select("*"),
+            supabase.from("app_settings").select("key,value")
+              .in("key", ["gamify_enabled", "gamify_grading_mode"]),
+          ]);
+          if (gpRes.error) throw gpRes.error;
+          if (grRes.error) throw grRes.error;
+          gamifyProgress = (gpRes.data || []).map(gamifyProgressFromDb);
+          gamifyRubrics = (grRes.data || []).map(gamifyRubricFromDb);
+          for (const s of (gsRes.data || [])) {
+            if (s.key === "gamify_enabled") gamifyEnabled = !!s.value?.enabled;
+            if (s.key === "gamify_grading_mode" && s.value?.mode) gamifyGradingMode = s.value.mode;
+          }
+        } catch (e) {
+          console.warn("gamify not available (run migration 0050?):", e?.message || e);
+        }
+
         if (cancelled) return;
         dispatch({ type: "HYDRATE", payload: {
           reels: (reelsRes.data || []).map(reelFromDb),
@@ -687,6 +938,11 @@ function WorkflowProvider({ children }) {
           attachedFootage: footageRes.data || [],
           dailyTasks: (dailyTasksRes.data || []).map(dailyTaskFromDb),
           reelDna,
+          reelChatRefs,
+          gamifyProgress,
+          gamifyRubrics,
+          gamifyEnabled,
+          gamifyGradingMode,
         }});
       } catch (e) {
         if (cancelled) return;
@@ -709,6 +965,10 @@ function WorkflowProvider({ children }) {
      filtering them out. */
   React.useEffect(() => {
     if (!state.loaded) return;
+    // Demo sessions stay purely local after the initial hydrate so concurrent
+    // friends on the same login never see each other's changes (and a reset_demo
+    // re-seed by the owner doesn't yank their in-progress sandbox out from under them).
+    if (_isDemo) return;
     const channel = supabase
       .channel("workflow-realtime")
       .on("postgres_changes",
@@ -767,14 +1027,80 @@ function WorkflowProvider({ children }) {
               dispatch({ type: "UPSERT_REEL_DNA", item: reelDnaFromDb(payload.new) });
             }
           })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "reel_chat_refs" },
+          (payload) => {
+            if (payload.eventType === "DELETE") {
+              dispatch({ type: "DELETE_REEL_CHAT_REF_BY_ID", id: payload.old?.id });
+            } else if (payload.new) {
+              // A teammate's "Discuss" link appears live on the reel card.
+              dispatch({ type: "UPSERT_REEL_CHAT_REF", item: reelChatRefsFromDb(payload.new) });
+            }
+          })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "gamify_progress" },
+          (payload) => {
+            if (payload.new) {
+              dispatch({ type: "UPSERT_GAMIFY_PROGRESS", item: gamifyProgressFromDb(payload.new) });
+            }
+          })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "gamify_rubric" },
+          (payload) => {
+            if (payload.eventType === "DELETE") {
+              dispatch({ type: "DELETE_GAMIFY_RUBRIC_BY_ID", id: payload.old?.id });
+            } else if (payload.new) {
+              dispatch({ type: "UPSERT_GAMIFY_RUBRIC", item: gamifyRubricFromDb(payload.new) });
+            }
+          })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "app_settings", filter: "key=eq.gamify_enabled" },
+          (payload) => {
+            if (payload.new) dispatch({ type: "SET_GAMIFY_ENABLED", enabled: !!payload.new.value?.enabled });
+          })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "app_settings", filter: "key=eq.gamify_grading_mode" },
+          (payload) => {
+            if (payload.new?.value?.mode) dispatch({ type: "SET_GAMIFY_GRADING_MODE", mode: payload.new.value.mode });
+          })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [state.loaded]);
+  }, [state.loaded, _isDemo]);
 
   // Helper: dispatch locally, then persist. If persist fails,
   // log and surface — local state stays optimistic.
   const stateRef = React.useRef(state);
   React.useEffect(() => { stateRef.current = state; }, [state]);
+
+  // Current user's role, for the gamify editor-lock guard (owner can override).
+  const authRoleRef = React.useRef(_authPerson?.role);
+  React.useEffect(() => { authRoleRef.current = _authPerson?.role; }, [_authPerson?.role]);
+
+  /* Gamify editor-lock guard. Returns true if a reassignment of `reel` to
+     `toOwner` should be BLOCKED for the current caller. A reel locks once
+     work has started (stage past not_started) or any XP is graded.
+       · non-owner → hard-blocked (returns true)
+       · owner     → asked to confirm; blocked only if they decline
+     A no-op move (same owner) is never blocked. */
+  const blockLockedReassign = React.useCallback((reel, toOwner) => {
+    if (!reel) return false;
+    if (toOwner === undefined || toOwner === reel.owner) return false; // not a reassignment
+    const cur = stateRef.current;
+    if (!cur.gamifyEnabled) return false;            // lock only matters when gamify is on
+    if (!isReelLocked(reel, cur.gamifyRubrics)) return false; // not locked
+
+    if (authRoleRef.current === "owner") {
+      // Owner override — confirm, since XP stays with the original editor.
+      const toName = (typeof personName === "function" && personName(toOwner)) || toOwner;
+      const ok = typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm(
+            `${reel.id} is locked to its current editor.\n\n` +
+            `Reassign to ${toName} anyway? Any XP already earned stays with the original editor.`)
+        : true;
+      return !ok; // block if they declined
+    }
+    return true; // non-owner: hard block
+  }, []);
 
   const wrap = React.useCallback((dispatchAction, persistFn) => {
     dispatch(dispatchAction);
@@ -793,6 +1119,18 @@ function WorkflowProvider({ children }) {
     attachedFootage: state.attachedFootage,
     dailyTasks: state.dailyTasks,
     reelDna: state.reelDna,
+    reelChatRefs: state.reelChatRefs,
+    gamifyProgress: state.gamifyProgress,
+    gamifyRubrics: state.gamifyRubrics,
+    gamifyEnabled: state.gamifyEnabled,
+    gamifyGradingMode: state.gamifyGradingMode,
+    /* Is this reel locked to its editor? (gamify on + work started or graded).
+       UI uses this to disable assign controls / show an owner confirm. */
+    isReelLocked: (reelId) => {
+      if (!state.gamifyEnabled) return false;
+      const reel = state.reels.find(r => r.id === reelId);
+      return isReelLocked(reel, state.gamifyRubrics);
+    },
     loaded: state.loaded,
     error: state.error,
     dispatch,
@@ -805,6 +1143,16 @@ function WorkflowProvider({ children }) {
         const reel = current.reels.find(r => r.id === id) ||
                      current.reviewLaneCards.find(c => c.id === id);
         const isCard = !!reel?.parentId;
+
+        /* Editor lock: a board drag onto a DIFFERENT person's lane is a
+           reassignment. Block it if the reel is locked (and caller isn't
+           owner). Moving between stage columns in the same lane is fine. */
+        if (!isCard && lane !== undefined && lane !== "review" &&
+            isKnownPerson(lane) && blockLockedReassign(reel, lane)) {
+          dispatch({ type: "SET_ERROR",
+            error: "Reel is locked to its editor — reassign from Not Started, or ask the owner." });
+          return;
+        }
         let systemComment = null;
         if (reel && !isCard && reel.stage !== stage) {
           const explicit = lane !== undefined && lane !== "review" && isKnownPerson(lane) && lane !== reel.owner;
@@ -821,9 +1169,21 @@ function WorkflowProvider({ children }) {
           (s) => persistMoveStage(s, id, { lane, stage, scheduledPostDate, systemComment }));
       },
 
-      updateReel: (id, patch) => wrap(
-        { type: "UPDATE_REEL", id, patch },
-        (s) => persistUpdateReel(s, id, patch)),
+      updateReel: (id, patch) => {
+        // Editor lock: block an owner-reassignment of a locked reel for
+        // non-owner callers. Other field edits pass through untouched.
+        if ("owner" in patch) {
+          const reel = stateRef.current.reels.find(r => r.id === id);
+          if (blockLockedReassign(reel, patch.owner)) {
+            dispatch({ type: "SET_ERROR",
+              error: "Reel is locked to its editor — reassign from Not Started, or ask the owner." });
+            return;
+          }
+        }
+        wrap(
+          { type: "UPDATE_REEL", id, patch },
+          (s) => persistUpdateReel(s, id, patch));
+      },
 
       createReel: (reel) => wrap(
         { type: "CREATE_REEL", reel },
@@ -870,6 +1230,7 @@ function WorkflowProvider({ children }) {
          optimistic rollback needed; the user can just re-analyze. */
       setFootageTags: (footageFileId, tags) => {
         dispatch({ type: "SET_FOOTAGE_TAGS", footageFileId, tags });
+        if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
         supabase.from("attached_footage_items")
           .update({ vision_tags: tags })
           .eq("footage_file_id", footageFileId)
@@ -989,6 +1350,7 @@ function WorkflowProvider({ children }) {
           taskText: row.task_text,
           taskDate: row.task_date,
         }});
+        if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
         await supabase.from("daily_tasks").insert(row).then(({ error }) => {
           if (error) {
             console.error("createDailyTask persist failed:", error);
@@ -1000,6 +1362,7 @@ function WorkflowProvider({ children }) {
       completeDailyTask: async (id, completed) => {
         const patch = { completed, completed_at: completed ? new Date().toISOString() : null };
         dispatch({ type: "UPSERT_DAILY_TASK", item: { id, completed, completedAt: patch.completed_at } });
+        if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
         await supabase.from("daily_tasks").update(patch).eq("id", id).then(({ error }) => {
           if (error) {
             console.error("completeDailyTask persist failed:", error);
@@ -1010,6 +1373,7 @@ function WorkflowProvider({ children }) {
 
       deleteDailyTask: async (id) => {
         dispatch({ type: "DELETE_DAILY_TASK", id });
+        if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
         await supabase.from("daily_tasks").delete().eq("id", id).then(({ error }) => {
           if (error) {
             console.error("deleteDailyTask persist failed:", error);
@@ -1024,6 +1388,7 @@ function WorkflowProvider({ children }) {
         if (patch.taskText !== undefined) dbPatch.task_text = patch.taskText;
         if (patch.notes     !== undefined) dbPatch.notes     = patch.notes;
         dispatch({ type: "UPSERT_DAILY_TASK", item: { id, ...patch } });
+        if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
         await supabase.from("daily_tasks").update(dbPatch).eq("id", id).then(({ error }) => {
           if (error) {
             console.error("updateDailyTask persist failed:", error);
@@ -1072,6 +1437,184 @@ function WorkflowProvider({ children }) {
       restoreReelDna: (id) => wrap(
         { type: "UPDATE_REEL_DNA", id, patch: { archivedAt: null } },
         () => persistUpdateReelDna(id, { archivedAt: null })),
+
+      /* ----- Reel ↔ team chat refs ----- */
+
+      /* Record that a reel was taken to a Rocket.Chat channel for discussion.
+         The app can't read chat messages (chat is an iframe embed), so this is
+         the lightweight link layer: it lets the reel card badge + deep-link back
+         to the conversation. messageUrl is optional (we usually don't know the
+         exact message URL up front; channel deep-link is the fallback).
+         createdBy is passed by the caller (like createReelDnaCapture's
+         capturedBy) since the store has no auth context. Optimistic. */
+      addReelChatRef: ({ reelId, channel, note, messageUrl, createdBy }) => {
+        const item = {
+          id: crypto.randomUUID(),
+          reelId,
+          channel: channel || null,
+          note: note || null,
+          messageUrl: messageUrl || null,
+          createdBy: createdBy || null,
+          createdAt: new Date().toISOString(),
+        };
+        wrap(
+          { type: "CREATE_REEL_CHAT_REF", item },
+          () => persistCreateReelChatRef(item));
+        return item;
+      },
+
+      /* ----- Gamify ----- */
+
+      /* Owner toggles. Persist directly to app_settings (RLS "owner write
+         app_settings" policy) — no new serverless function, mirrors the
+         anthropic_enabled kill-switch pattern. */
+      setGamifyEnabled: (enabled) => {
+        dispatch({ type: "SET_GAMIFY_ENABLED", enabled });
+        if (isDemoMode()) return;
+        supabase.from("app_settings").upsert({
+          key: "gamify_enabled",
+          value: { enabled },
+          updated_at: new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) {
+            console.error("setGamifyEnabled persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
+
+      setGamifyGradingMode: (mode) => {
+        dispatch({ type: "SET_GAMIFY_GRADING_MODE", mode });
+        if (isDemoMode()) return;
+        supabase.from("app_settings").upsert({
+          key: "gamify_grading_mode",
+          value: { mode },
+          updated_at: new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) {
+            console.error("setGamifyGradingMode persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
+
+      /* Editor self-assessment: store the set of checked sub-item ids for
+         one (reel, person, skill). Does NOT award XP — only the reviewer
+         grade does. Optimistic upsert keyed on the composite. */
+      saveEditorRubric: (reelId, personId, skillKey, checkedItems) => {
+        const existing = stateRef.current.gamifyRubrics.find(r =>
+          r.reelId === reelId && r.personId === personId && r.skillKey === skillKey);
+        const item = {
+          id: existing?.id || crypto.randomUUID(),
+          reelId, personId, skillKey,
+          editorChecked: checkedItems,
+          reviewerGrades: existing?.reviewerGrades ?? {},
+          xpAwarded: existing?.xpAwarded ?? 0,
+          gradedAt: existing?.gradedAt ?? undefined,
+        };
+        wrap(
+          { type: "UPSERT_GAMIFY_RUBRIC", item },
+          () => persistGamifyRubric(item));
+      },
+
+      /* Reviewer grade: sets Average/Decent/Excellent for ONE sub-skill row
+         (subId) of a skill on a reel. The skill's XP is the average of its
+         graded sub-skills, then the editor's aggregate progress is recomputed
+         and both the rubric row and progress row are persisted.
+         Pass grade=null to clear that one row. */
+      saveReviewerGrade: (reelId, personId, skillKey, subId, grade) => {
+        const cur = stateRef.current;
+        const existing = cur.gamifyRubrics.find(r =>
+          r.reelId === reelId && r.personId === personId && r.skillKey === skillKey);
+
+        // Merge this sub-skill's grade into the per-row map.
+        const grades = { ...(existing?.reviewerGrades || {}) };
+        if (grade) grades[subId] = grade;
+        else delete grades[subId];
+
+        // Difficulty multiplier set by dragging the reel's spider point.
+        const reel = cur.reels.find(r => r.id === reelId);
+        const difficulty = reel?.gamifyDifficulty?.[skillKey];
+        const xpAwarded = xpForSkillGradesWithDifficulty(grades, difficulty);
+        const rubricItem = {
+          id: existing?.id || crypto.randomUUID(),
+          reelId, personId, skillKey,
+          editorChecked: existing?.editorChecked ?? [],
+          reviewerGrades: grades,
+          xpAwarded,
+          gradedAt: new Date().toISOString(),
+        };
+
+        // Build the next full rubric set (with this row updated) to recompute
+        // the person's aggregate progress.
+        const nextRubrics = (() => {
+          const k = (r) => `${r.reelId}|${r.personId}|${r.skillKey}`;
+          const target = k(rubricItem);
+          const found = cur.gamifyRubrics.some(r => k(r) === target);
+          return found
+            ? cur.gamifyRubrics.map(r => k(r) === target ? rubricItem : r)
+            : [rubricItem, ...cur.gamifyRubrics];
+        })();
+        const progress = computeProgress(personId, nextRubrics);
+
+        dispatch({ type: "UPSERT_GAMIFY_RUBRIC", item: rubricItem });
+        dispatch({ type: "UPSERT_GAMIFY_PROGRESS", item: progress });
+
+        Promise.all([
+          persistGamifyRubric(rubricItem),
+          persistGamifyProgress(progress),
+        ]).catch(e => {
+          console.error("saveReviewerGrade persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+        });
+      },
+
+      /* Set the drag-adjusted difficulty (0..100) for one skill on a reel,
+         persist it onto the reel's detail blob, and re-apply the new XP
+         multiplier to any ALREADY-graded rubric rows for that skill so the
+         leaderboard reflects the difficulty change immediately. */
+      setReelDifficulty: (reelId, skillKey, difficulty) => {
+        const cur = stateRef.current;
+        const reel = cur.reels.find(r => r.id === reelId);
+        if (!reel) return;
+
+        // 1) Save difficulty in the reel's dedicated gamify_difficulty column
+        //    (NOT the shared `detail` blob — the detail page owns a debounced
+        //    writer for `detail` that would otherwise clobber this on save).
+        const nextDifficulty = {
+          ...(reel.gamifyDifficulty || {}),
+          [skillKey]: Math.max(0, Math.min(100, Math.round(difficulty))),
+        };
+        wrap(
+          { type: "UPDATE_REEL", id: reelId, patch: { gamifyDifficulty: nextDifficulty } },
+          (s) => persistUpdateReel(s, reelId, { gamifyDifficulty: nextDifficulty }));
+
+        // 2) Re-apply the multiplier to graded rows for this reel+skill.
+        const affected = cur.gamifyRubrics.filter(r =>
+          r.reelId === reelId && r.skillKey === skillKey &&
+          Object.keys(r.reviewerGrades || {}).length > 0);
+        if (!affected.length) return;
+
+        const byPerson = {};
+        for (const r of affected) {
+          const xp = xpForSkillGradesWithDifficulty(r.reviewerGrades, difficulty);
+          const updated = { ...r, xpAwarded: xp };
+          dispatch({ type: "UPSERT_GAMIFY_RUBRIC", item: updated });
+          persistGamifyRubric(updated).catch(e => console.error(e));
+          byPerson[r.personId] = true;
+        }
+        // Recompute aggregate progress for each affected person.
+        const allRubrics = cur.gamifyRubrics.map(r =>
+          (r.reelId === reelId && r.skillKey === skillKey &&
+           Object.keys(r.reviewerGrades || {}).length > 0)
+            ? { ...r, xpAwarded: xpForSkillGradesWithDifficulty(r.reviewerGrades, difficulty) }
+            : r);
+        for (const pid of Object.keys(byPerson)) {
+          const prog = computeProgress(pid, allRubrics);
+          dispatch({ type: "UPSERT_GAMIFY_PROGRESS", item: prog });
+          persistGamifyProgress(prog).catch(e => console.error(e));
+        }
+      },
     },
   }), [state, wrap]);
 

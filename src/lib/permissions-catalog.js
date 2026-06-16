@@ -36,6 +36,7 @@ export const VIEW_CAPS = [
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate (AI · paid)" },
   { key: "reeldna",   label: "Reel DNA (capture library)" },
+  { key: "training",  label: "Training (editor course)" },
   { key: "activity",  label: "Activity (CapCut tracker)" },
   { key: "resources", label: "Resources (link sheet)" },
   { key: "monitor",   label: "Monitor (infra usage)" },
@@ -58,6 +59,9 @@ export const ACTION_CAPS = [
   { key: "moveToCompleted", label: "Move cards to Completed",  hint: "Drag/drop or dropdown to move a card into the Completed stage" },
   { key: "editReelId",      label: "Edit Reel ID (display number)", hint: "Inline-edit the display number of a reel in list view" },
   { key: "bulkMoveReels",   label: "Bulk move / assign reels", hint: "Select multiple reels and move/assign them at once in list view" },
+  { key: "tagReelSkills",   label: "Tag reels with syllabus skills", hint: "The skill-tag picker on a reel's detail page (links a reel to a Training module)" },
+  { key: "selfAssessRubric", label: "Self-assess Gamify rubric", hint: "Editor checks off rubric sub-items on a reel (their own self-assessment)" },
+  { key: "gradeRubric",     label: "Grade Gamify rubric",     hint: "Set Average/Decent/Excellent per skill on a reel — awards XP" },
 ];
 
 /* Roles the owner can configure. `owner` is excluded — always full. */
@@ -66,6 +70,33 @@ export const EDITABLE_ROLES = [
   { key: "variant",  label: "Variant Editor" },
   { key: "reviewer", label: "Reviewer" },
 ];
+
+/* =========================================================
+   DEMO role — the shared testuser@gmail.com feedback account.
+
+   Unlike the editable roles, demo is NOT configured from the admin
+   matrix and is FAIL-CLOSED: anything not explicitly allowed below
+   is denied. It is enforced directly in permissions.jsx (not merged
+   into the stored config) so it can't be loosened by accident.
+
+   Friends should be able to browse the core dashboard and *try*
+   editing (their changes live only in the per-session sandbox, never
+   the DB), but owner/infra/AI-cost surfaces stay hidden.
+   ========================================================= */
+export const DEMO_VIEWS = new Set([
+  "mywork", "pipeline", "detail", "footage", "editor", "lossless",
+  "export", "analytics", "inbox", "locations", "coverage", "reeldna",
+  // hidden on purpose: generate (paid AI), training, activity,
+  // resources, monitor, ai, settings
+]);
+
+export const DEMO_ACTIONS = new Set([
+  "createReel", "archiveReel", "approveReview", "attachFootage",
+  "changeCardColor", "editLogline", "editScript", "editVoiceover",
+  "removeFootage", "moveToCompleted", "selfAssessRubric",
+  // hidden on purpose: deleteReel, editReelId, bulkMoveReels, tagReelSkills,
+  // gradeRubric (grading is owner/reviewer authority)
+]);
 
 /* Default permission set for one role — mirrors current behavior:
      · every tab visible
@@ -89,6 +120,10 @@ export function defaultPermsForRole(roleKey) {
   actions.editReelId = false;      // owner only
   actions.bulkMoveReels = false;   // owner only by default
 
+  /* Gamify rubric grading mirrors review authority: only the reviewer
+     role grades (Average/Decent/Excellent → XP). Editors self-assess. */
+  actions.gradeRubric = roleKey === "reviewer";
+
   /* Editors (skilled + variant) are READ-ONLY on creative fields and card
      styling by default — they execute the edit; the owner shapes the brief.
      These are new keys (editLogline/editScript/editVoiceover/removeFootage)
@@ -100,6 +135,7 @@ export function defaultPermsForRole(roleKey) {
     actions.editScript      = false;
     actions.editVoiceover   = false;
     actions.removeFootage   = false;
+    actions.tagReelSkills   = false;   // owner curates which skills a reel teaches
   }
 
   return { views, actions };

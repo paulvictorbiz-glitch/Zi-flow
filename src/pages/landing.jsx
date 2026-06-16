@@ -15,7 +15,7 @@
    Props:
      onEnterApp() — called by the top-right auth button (navigates to /app).
    ========================================================= */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import DEMO_REEL, { genes } from "../lib/reel-dna-demo.jsx";
 import { TEAM, MISSION, ABOUT, PRODUCT, NAV } from "../lib/site-content.jsx";
 import { HelixFlat } from "../components/helix-flat.jsx";
@@ -59,6 +59,31 @@ function Wordmark({ onClick }) {
 function HomeView({ onEnterApp }) {
   const [hoveredGene, setHoveredGene] = useState(null);
   const [reelUrl, setReelUrl] = useState(DEMO_REEL.sampleReel.sourceUrl);
+
+  // Deferred, cancelable hover-clear. For the top genes the asset fan renders
+  // directly over the hovered node, so the cursor crossing node→fan fires the
+  // node's mouseleave → onHoverGene(null). Scheduling the clear (instead of
+  // clearing immediately) lets the fan's mouseenter cancel it, so state holds.
+  const clearTimer = useRef(null);
+  const cancelClear = () => {
+    if (clearTimer.current) { clearTimeout(clearTimer.current); clearTimer.current = null; }
+  };
+  const clearNow = () => { cancelClear(); setHoveredGene(null); };
+  const scheduleClear = () => {
+    cancelClear();
+    clearTimer.current = setTimeout(() => { setHoveredGene(null); clearTimer.current = null; }, 120);
+  };
+  // Set immediately and cancel any pending clear (hover-in, select, click).
+  const setGeneNow = (key) => {
+    cancelClear();
+    if (key == null) setHoveredGene(null);
+    else setHoveredGene(key);
+  };
+  // onHoverGene from HelixFlat: a key sets immediately; null defers the clear.
+  const onHoverGene = (key) => { if (key == null) scheduleClear(); else setGeneNow(key); };
+
+  // Clear the pending timeout on unmount (avoid setState after unmount).
+  useEffect(() => () => cancelClear(), []);
 
   const activeGene = useMemo(
     () => genes.find((g) => g.key === hoveredGene) || null,
@@ -105,11 +130,6 @@ function HomeView({ onEnterApp }) {
             <Wordmark />
             <span className="lp-hud-tag">AI VIDEO SYNTHESIS CORE</span>
           </div>
-          <div className="lp-hud-right">
-            <div className="lp-hud-stat"><span>SYS_STATUS:</span> <b className="ok">READY</b></div>
-            <div className="lp-hud-stat"><span>RENDER_ENGINE:</span> <b className="cy">NEURAL_STREAM v2.8</b></div>
-            <div className="lp-hud-stat"><span>LATENCY:</span> <b>0.02ms</b></div>
-          </div>
         </div>
 
         <div className="lp-stage lp-stage--split">
@@ -118,11 +138,14 @@ function HomeView({ onEnterApp }) {
             <span className="lp-stage-cap">GENETIC_STREAM.mp4</span>
             <div className="lp-helix-wrap">
               <HelixFlat genes={genes} hoveredGene={hoveredGene}
-                         onHoverGene={setHoveredGene} onSelectGene={setHoveredGene} />
-              {/* Asset fan floats over the helix area on hover */}
-              <div className="lp-fan-float">
+                         onHoverGene={onHoverGene} onSelectGene={setGeneNow} />
+              {/* Asset fan floats over the helix area on hover. Keep it open
+                  while the cursor is over it (the top genes' fan overlaps the
+                  hovered node, so node→fan would otherwise drop the state). */}
+              <div className="lp-fan-float"
+                   onMouseEnter={cancelClear} onMouseLeave={scheduleClear}>
                 {activeGene && <span className="lp-dispatch-line" aria-hidden="true" />}
-                <AssetFan gene={activeGene} onClose={() => setHoveredGene(null)} />
+                <AssetFan gene={activeGene} onClose={clearNow} />
               </div>
             </div>
             {!activeGene && <div className="lp-helix-hint">Hover a gene node →</div>}
@@ -132,7 +155,7 @@ function HomeView({ onEnterApp }) {
               helix and the timeline are visible together (hover highlight reads). */}
           <div className="lp-right-col">
             <div className="lp-player-col lp-player-col--compact">
-              <ReelPlayer sampleReel={DEMO_REEL.sampleReel} />
+              <ReelPlayer sampleReel={DEMO_REEL.sampleReel} preferEmbed={false} />
             </div>
 
             <div className="lp-dock">
@@ -181,7 +204,7 @@ function HomeView({ onEnterApp }) {
                       type="button"
                       className="lp-chip"
                       style={{ "--chip": g.color }}
-                      onClick={() => { setHoveredGene(g.key); scrollToBreakdown(); }}>
+                      onClick={() => { setGeneNow(g.key); scrollToBreakdown(); }}>
                 <span className="lp-chip-dot" style={{ background: g.color }} />
                 {g.label}
               </button>

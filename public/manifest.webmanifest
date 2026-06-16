@@ -1,0 +1,19 @@
+{
+  "name": "FootageBrain — Workflow",
+  "short_name": "FootageBrain",
+  "description": "Owner-controlled video production pipeline dashboard.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0f17",
+  "theme_color": "#0a0f17",
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
+}

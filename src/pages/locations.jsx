@@ -21,6 +21,7 @@ import { useWorkflow } from "../store/store.jsx";
 import {
   MY_MAPS,
   myMapsEmbedUrl,
+  myMapsViewUrl,
   parseAny,
   geocode,
   useLocations,
@@ -568,6 +569,16 @@ function Locations() {
   const [selectedMarker, setSelectedMarker] = useState(null);
   const [geocoding, setGeocoding] = useState({});
   const [editingPin, setEditingPin] = useState(null);
+  const [mapsAuthFailed, setMapsAuthFailed] = useState(false);
+
+  /* Google fires window.gm_authFailure() when the Maps JS API rejects the
+     key (bad key, referrer/HTTP-restriction mismatch, API not enabled, or
+     billing/quota). Surface a useful message instead of a blank box. */
+  useEffect(() => {
+    const prev = window.gm_authFailure;
+    window.gm_authFailure = () => setMapsAuthFailed(true);
+    return () => { window.gm_authFailure = prev; };
+  }, []);
 
   const handleGeocode = useCallback(async (l) => {
     const addr = l.address || l.notes;
@@ -658,9 +669,19 @@ function Locations() {
               }}
             />
           </div>
-          <div className="mono dim" style={{ fontSize: 11, marginTop: 8 }}>
-            Live embed of the shared Google My&nbsp;Maps map · edits made in
-            My&nbsp;Maps appear here automatically.
+          <div className="mono dim" style={{ fontSize: 11, marginTop: 8, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <span>
+              Live embed of the shared Google My&nbsp;Maps map · edits made in
+              My&nbsp;Maps appear here automatically.
+            </span>
+            <a
+              href={myMapsViewUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--c-cyan, #06b6d4)", textDecoration: "none", whiteSpace: "nowrap" }}
+            >
+              Open in Google My&nbsp;Maps ↗
+            </a>
           </div>
           <RoutePlanner locations={sorted} />
         </div>
@@ -689,6 +710,32 @@ function Locations() {
                   ))}
                 </Map>
               </APIProvider>
+              {mapsAuthFailed && (
+                <div style={{
+                  position: "absolute", inset: 0, zIndex: 5,
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  gap: 10, padding: "24px", textAlign: "center",
+                  background: "rgba(8,12,22,0.92)", backdropFilter: "blur(2px)",
+                  color: "var(--fg)", fontFamily: "var(--f-mono)",
+                }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--c-amber, #f59e0b)" }}>
+                    Google Maps rejected the API key
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--fg-mute)", maxWidth: 440, lineHeight: 1.55 }}>
+                    The map couldn’t authenticate. Open the browser console — Google
+                    prints the exact reason (e.g. <code>RefererNotAllowedMapError</code>,
+                    {" "}<code>ApiNotActivatedMapError</code>, <code>BillingNotEnabledMapError</code>,
+                    {" "}<code>OverQuotaMapError</code>). The fix lives in the{" "}
+                    <a href="https://console.cloud.google.com/google/maps-apis/credentials" target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-cyan, #06b6d4)" }}>
+                      Google Cloud Console
+                    </a> — most often add this site’s URL to the key’s HTTP-referrer restrictions.
+                  </div>
+                  <a href={myMapsViewUrl()} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 11, color: "var(--c-cyan, #06b6d4)" }}>
+                    Use the My&nbsp;Maps map instead ↗
+                  </a>
+                </div>
+              )}
             </div>
           ) : (
             <div style={{
@@ -724,6 +771,7 @@ function Locations() {
               {showImport ? "Hide import" : "Import map data"}
             </DPill>
             <DPill onClick={addManual}>+ Add place</DPill>
+            <DPill onClick={() => window.open("https://www.google.com/maps", "_blank", "noopener")}>Open Google Maps ↗</DPill>
             <DPill
               onClick={exportJson}
               style={{

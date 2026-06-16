@@ -22,7 +22,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { isAnthropicEnabled, ANTHROPIC_PAUSED } from "./admin/_auth.js";
+import { isAnthropicEnabled, ANTHROPIC_PAUSED, classifyCaller } from "./admin/_auth.js";
 
 // Free OpenRouter models can be slow (search + LLM + a few clips). Give the
 // serverless function more headroom than the default so it doesn't 504 in
@@ -466,7 +466,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", _allowedOrigins.has(_origin) ? _origin : "https://footagebrain.com");
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") { res.status(200).end(); return; }
 
   if (req.method !== "POST") {
@@ -487,6 +487,21 @@ export default async function handler(req, res) {
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
     res.status(400).json({ error: "prompt is required" });
     return;
+  }
+
+  // Demo-account quota guard. The free Puter path (prepare_only) only does
+  // footage search + prompt assembly — no paid/quota LLM — so demo users keep
+  // that. Any server-side provider call (anthropic = paid, openrouter = shared
+  // free tier) is blocked for demo accounts so friends can't burn quota.
+  {
+    const caller = await classifyCaller(req);
+    if (caller.isDemo && !prepare_only) {
+      res.status(403).json({
+        error: "Demo accounts use the free in-browser model only.",
+        demo: true,
+      });
+      return;
+    }
   }
 
   // Optional exact clip count (clamped 1–10). null => let the model decide.

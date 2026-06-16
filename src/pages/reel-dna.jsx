@@ -29,6 +29,7 @@ import {
   platformFromUrl,
 } from "../lib/reel-dna.jsx";
 import { ReelDeconstructor } from "./reel-deconstructor.jsx";
+import { ReelDnaView } from "../components/reel-dna-view.jsx";
 
 /* The bookmarklet shown in the page footer. Navigates to our own origin with
    the current page URL prefilled — no CORS, no API call (the form does the
@@ -181,6 +182,7 @@ function GeneEditor({ gene, value, onChange }) {
 function DnaCard({ item, now, actions }) {
   const [open, setOpen] = useState(false);
   const [deconstructing, setDeconstructing] = useState(false);
+  const [viewing, setViewing] = useState(false);
   const genes = item.genesOfInterest || [];
   const sourceTone = item.source === "ig_dm" ? "violet" : item.source === "share_target" ? "blue" : undefined;
   const hasTimeline = item.timeline && item.timeline.length > 0;
@@ -193,7 +195,11 @@ function DnaCard({ item, now, actions }) {
     <>
       <div className={"rd-card rd-status--" + item.status}>
         <div className="rd-card-head">
-          <div className="rd-card-title">
+          <div className="rd-card-title rd-card-title--open"
+               role="button" tabIndex={0}
+               title="Open the DNA breakdown"
+               onClick={() => setViewing(true)}
+               onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setViewing(true); } }}>
             <a className="rd-card-url" href={item.reelUrl} target="_blank" rel="noreferrer"
                onClick={e => e.stopPropagation()}>
               {item.reelUrl}
@@ -244,6 +250,9 @@ function DnaCard({ item, now, actions }) {
 
         <div className="rd-card-foot">
           <div className="rd-card-foot-left">
+            <span className="rd-deconstruct" onClick={() => setViewing(true)}>
+              View DNA
+            </span>
             <span className="rd-collapse" onClick={() => setOpen(o => !o)}>
               {open ? "Hide genes" : "Edit genes"}
             </span>
@@ -254,6 +263,14 @@ function DnaCard({ item, now, actions }) {
           <span className="rd-archive" onClick={() => actions.archiveReelDna(item.id)}>Archive</span>
         </div>
       </div>
+
+      {viewing && (
+        <ReelDnaView
+          item={item}
+          onClose={() => setViewing(false)}
+          onDeconstruct={() => { setViewing(false); setDeconstructing(true); }}
+        />
+      )}
 
       {deconstructing && (
         <ReelDeconstructor

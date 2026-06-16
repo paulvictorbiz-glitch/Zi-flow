@@ -7,7 +7,8 @@
       "Glob(**)",
       "Grep(**)",
       "Bash(*)",
-      "PowerShell(*)"
+      "PowerShell(*)",
+      "Bash(node scripts/gen-migration-manifest.mjs)"
     ]
   }
 }

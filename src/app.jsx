@@ -21,11 +21,13 @@ import { Coverage } from "./pages/coverage.jsx";
 import { IdeaGenerator } from "./pages/idea-generator.jsx";
 import { Activity } from "./pages/activity.jsx";
 import { Resources } from "./pages/resources.jsx";
+import { Training } from "./pages/training.jsx";
 import { VideoEditor } from "./pages/editor.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider } from "./components/notifications.jsx";
 import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
+import GamifyWelcomePopup from "./components/GamifyWelcomePopup.jsx";
 import { RolesAdmin } from "./pages/roles-admin.jsx";
 import { Inbox } from "./pages/inbox.jsx";
 import { TeamChat } from "./pages/team-chat.jsx";
@@ -36,10 +38,16 @@ import { ReelDna } from "./pages/reel-dna.jsx";
 import { extractUrl } from "./lib/reel-dna.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
 
+/* External feedback form for demo testers. Create a Google Form / Tally form
+   and paste its URL here (or set VITE_FEEDBACK_FORM_URL in the env). When empty,
+   the demo banner still shows but without the "Leave feedback" link. */
+const FEEDBACK_FORM_URL =
+  import.meta.env.VITE_FEEDBACK_FORM_URL || "";
+
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "monitor", "ai"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor", "ai"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -59,6 +67,7 @@ const TABS = [
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate" },
   { key: "reeldna",   label: "Reel DNA" },
+  { key: "training",  label: "Training" },
   { key: "activity",  label: "Activity" },
   { key: "resources", label: "Resources" },
   { key: "monitor",   label: "Monitor" },
@@ -66,16 +75,17 @@ const TABS = [
 ];
 
 const DEFAULT_TAB_GROUPS = [
-  { key: "mywork_group",    label: "My Work",                 tabs: ["mywork"] },
-  { key: "pipeline_group",  label: "Pipeline",                tabs: ["pipeline", "generate"] },
-  { key: "reeldna_group",   label: "Reel DNA",                tabs: ["reeldna"] },
-  { key: "footage_group",   label: "Footage",                 tabs: ["footage", "coverage", "editor", "lossless", "export"] },
-  { key: "analytics_group", label: "Analytics & Monitoring",  tabs: ["analytics", "monitor"] },
-  { key: "ai_group",        label: "AI Brain",                tabs: ["ai"] },
-  { key: "comms_group",     label: "Communications",          tabs: ["inbox", "team"] },
-  { key: "activity_group",  label: "Activity",                tabs: ["activity"] },
-  { key: "locations_group", label: "Locations",               tabs: ["locations"] },
-  { key: "resources_group", label: "Resources",               tabs: ["resources"] },
+  { key: "mywork_group",    label: "My Work",                 tone: "cyan",   tabs: ["mywork"] },
+  { key: "pipeline_group",  label: "Pipeline",                tone: "amber",  tabs: ["pipeline", "generate"] },
+  { key: "reeldna_group",   label: "Reel DNA",                tone: "violet", tabs: ["reeldna"] },
+  { key: "training_group",  label: "Training",                tone: "violet", tabs: ["training"] },
+  { key: "footage_group",   label: "Footage",                 tone: "green",  tabs: ["footage", "coverage", "editor", "lossless", "export"] },
+  { key: "analytics_group", label: "Analytics & Monitoring",  tone: "blue",   tabs: ["analytics", "monitor"] },
+  { key: "ai_group",        label: "AI Brain",                tone: "pink",   tabs: ["ai"] },
+  { key: "comms_group",     label: "Communications",          tone: "orange", tabs: ["inbox", "team"] },
+  { key: "activity_group",  label: "Activity",                tone: "red",    tabs: ["activity"] },
+  { key: "locations_group", label: "Locations",               tone: "green",  tabs: ["locations"] },
+  { key: "resources_group", label: "Resources",               tone: "blue",   tabs: ["resources"] },
 ];
 
 function AppShell() {
@@ -89,10 +99,21 @@ function AppShell() {
   const [selectedReel, setSelectedReel] = useState(null);
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
+  const roleSwitchRef                   = useRef(null);
   const [navOpen, setNavOpen]           = useState(false);   // left slide-in drawer
   const [globalSearch, setGlobalSearch] = useState("");
   const [capturePrefill, setCapturePrefill] = useState(null);   // Reel DNA share-target/bookmarklet
   const searchRef                       = useRef(null);
+
+  /* Close perspective dropdown on outside click */
+  useEffect(() => {
+    if (!roleMenu) return;
+    const handler = (e) => {
+      if (roleSwitchRef.current && !roleSwitchRef.current.contains(e.target)) setRoleMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [roleMenu]);
 
   /* Inbox unread badge — count of unreplied comments/DMs across
      connected social platforms. Cheap, synchronous read from the
@@ -248,6 +269,23 @@ function AppShell() {
     window.history.replaceState({}, "", clean);
   }, []);
 
+  /* Reel deep-link. A Rocket.Chat "open reel" link (/?reel=REEL-301) lands
+     here — open that reel's detail card directly. Reels load async from the
+     store, so we wait until they're present, fire once, then strip the query
+     so a refresh doesn't re-open it. */
+  const reelDeepLinkDone = useRef(false);
+  useEffect(() => {
+    if (reelDeepLinkDone.current) return;
+    const wantId = new URLSearchParams(window.location.search).get("reel");
+    if (!wantId) { reelDeepLinkDone.current = true; return; }
+    if (!reels || reels.length === 0) return; // wait for the store to hydrate
+    const match = reels.find(r => String(r.id).toLowerCase() === wantId.toLowerCase());
+    reelDeepLinkDone.current = true;
+    if (match) openReel(match);
+    const clean = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, "", clean);
+  }, [reels]);
+
   /* Prevent Backspace from navigating the browser back when the
      user isn't typing in a field. Some browsers / embedded
      webviews still treat Backspace as "history.back" outside of
@@ -335,7 +373,8 @@ function AppShell() {
 
         {/* Identity / perspective. Owners can switch perspectives (dropdown);
             everyone else just sees their own icon. Clicking opens the menu. */}
-        <div className={"role-switch" + (isOwner ? "" : " icon-only")}
+        <div ref={roleSwitchRef}
+             className={"role-switch" + (isOwner ? "" : " icon-only")}
              onClick={() => setRoleMenu(o => !o)}
              title={shownPerson?.name || me?.name || ""}>
           <span className={"avatar-chip " + (shownPerson?.role || "")}>{shownPerson?.avatar}</span>
@@ -510,11 +549,11 @@ function AppShell() {
                 {!isSingle && (
                   <button
                     className={"nav-group-header" + (isActive ? " is-active" : "")}
+                    data-tone={group.tone || "cyan"}
                     onClick={toggleGroup}
                     style={{
                       display: "flex", alignItems: "center", gap: 8,
-                      width: "100%", background: "none", border: "none",
-                      color: isActive ? "var(--c-cyan)" : "var(--fg-dim)",
+                      width: "100%", background: "none",
                       fontFamily: "var(--f-mono)", fontSize: 10.5,
                       textTransform: "uppercase", letterSpacing: 0.8,
                       padding: "8px 14px 4px",
@@ -550,6 +589,25 @@ function AppShell() {
         </div>
       </nav>
 
+      {/* Demo-account banner — shown only to the shared testuser feedback
+          account. Links to the external feedback form. Reassures testers that
+          their changes are sandboxed (per-session, never saved). */}
+      {me?.role === "demo" && (
+        <div className="demo-banner">
+          <span className="demo-banner-tag">DEMO</span>
+          <span className="demo-banner-text">
+            You're in a sandbox — explore freely, nothing you change is saved and
+            it resets each visit.
+          </span>
+          {FEEDBACK_FORM_URL && (
+            <a className="demo-banner-cta" href={FEEDBACK_FORM_URL}
+               target="_blank" rel="noopener noreferrer">
+              Leave feedback →
+            </a>
+          )}
+        </div>
+      )}
+
       {/* Pipeline sub-mode bar — thin row under the topbar, only on Pipeline.
           The main tab nav now lives in the slide-in drawer. */}
       {view === "pipeline" && (
@@ -582,6 +640,7 @@ function AppShell() {
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
       {view === "reeldna"   && <ReelDna prefill={capturePrefill} />}
+      {view === "training"  && <Training onOpen={openReel} personId={shownPerson?.id} />}
       {view === "activity"  && <Activity />}
       {view === "resources" && <Resources />}
       {view === "monitor"   && isOwner && <Monitor />}
@@ -655,6 +714,7 @@ function App() {
                     <NotificationsProvider>
                       <PermissionsProvider>
                         <AppShell />
+                        <GamifyWelcomePopup />
                       </PermissionsProvider>
                     </NotificationsProvider>
                   </LocationsProvider>

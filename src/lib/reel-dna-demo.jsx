@@ -237,7 +237,7 @@ export const LANES = genes.map((g, i) => ({
    Agent A drops the real files in; until then these paths 404 gracefully
    and the player shows its upload affordance. */
 export const sampleReel = {
-  sourceUrl: "https://www.instagram.com/reels/DW63eqkCMMN/",
+  sourceUrl: "https://www.instagram.com/reel/DZc3EQqtNj8/",
   mp4: "/demo/sample-reel.mp4",
   poster: "/demo/sample-reel-poster.jpg",
   durationLabel: "0:28",

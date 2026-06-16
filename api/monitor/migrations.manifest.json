@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-14T04:07:55.238Z",
+  "generated": "2026-06-16T00:41:30.764Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -180,6 +180,42 @@
     {
       "version": "0043_anthropic_killswitch.sql",
       "checksum": "8c8543dee4f4be3b06d5cbd97f639b6e64386a8d7014adc65b0795b67107895a"
+    },
+    {
+      "version": "0044_reel_dna.sql",
+      "checksum": "fc61ecbc579b701ec963aa6b8891787898c97e8c9098cbebe177c3522f007c47"
+    },
+    {
+      "version": "0045_reel_dna_timeline.sql",
+      "checksum": "64373417e2dd3edd919243d832f2ce5423d6032bf7da39ca248c494e06152239"
+    },
+    {
+      "version": "0046_reel_chat_refs.sql",
+      "checksum": "15c5e5db0741177a2f17ee4bad5089fbc04118713f990e97177fa011dca845d6"
+    },
+    {
+      "version": "0047_training_progress.sql",
+      "checksum": "6e56951502b6185ad96c1342e57ef901de1c8dbadc03f7dce31d5bdb35507cbe"
+    },
+    {
+      "version": "0048_reel_skill_tags.sql",
+      "checksum": "1783944b2796df29e93e3509459715555837143e5299e3326839d2333206b011"
+    },
+    {
+      "version": "0049_demo_sandbox.sql",
+      "checksum": "9470cf178c3303d0b597c32e19df50e2eb004b7396663407cf75ad1d57f46ae6"
+    },
+    {
+      "version": "0050_gamify.sql",
+      "checksum": "be960ef27c9bb3db6c2686ed707f24438c0779c29efc6b51abde4c1ab692b0b7"
+    },
+    {
+      "version": "0051_gamify_rubric_per_row.sql",
+      "checksum": "3d9eaf2f0c88da645a88913a88e3733eda9cac21a166fee046a3028420163b90"
+    },
+    {
+      "version": "0052_reel_gamify_difficulty.sql",
+      "checksum": "7c8e4cd2c4796a24f375750345ad62540e7965e86591b6630c82a4049b3bba30"
     }
   ]
 }

@@ -9,6 +9,7 @@ import { DPill } from "../components/components.jsx";
 import { footageBrainThumbnailUrl, getFootageBrainCoverageTree } from "../lib/footage-brain-client.js";
 import { useWorkflow, nextReelId } from "../store/store.jsx";
 import { useRoster } from "../lib/roster.jsx";
+import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
 
 const MAX_HISTORY = 20;
@@ -347,6 +348,18 @@ export function IdeaGenerator() {
 
   const { actions, reels } = useWorkflow();
   const { peopleList, canonicalPersonId } = useRoster();
+  const { person: me } = useAuth();
+  const isDemo = me?.role === "demo";
+
+  // Demo accounts may only use the free in-browser model (Puter). Force the
+  // picker to it so the server-side paid/quota providers are never requested.
+  useEffect(() => {
+    if (isDemo && model !== "puter") setModel("puter");
+  }, [isDemo, model]);
+
+  const modelOptions = isDemo
+    ? MODEL_OPTIONS.filter(o => o.k === "puter")
+    : MODEL_OPTIONS;
 
   /* Who the new reel is assigned to. Defaults to the skilled editor so a
      generated reel lands straight in their Not-started column instead of
@@ -372,6 +385,12 @@ export function IdeaGenerator() {
     const q = prompt.trim();
     const endpoint = isLocal ? "http://localhost:3001/api/generate" : "/api/generate";
     const headers = { "Content-Type": "application/json" };
+    // Attach the signed-in user's JWT so the server can classify the caller
+    // (e.g. block paid providers for demo accounts).
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+    } catch { /* no session → server treats as anonymous */ }
     try {
       let data;
       if (model === "puter") {
@@ -633,7 +652,7 @@ export function IdeaGenerator() {
               onChange={e => setModel(e.target.value)}
               disabled={loading}
             >
-              {MODEL_OPTIONS.map(m => (
+              {modelOptions.map(m => (
                 <option key={m.k} value={m.k}>{m.l}</option>
               ))}
             </select>

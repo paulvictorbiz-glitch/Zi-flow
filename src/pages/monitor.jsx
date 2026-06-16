@@ -11,6 +11,14 @@ import "./monitor.css";
 import { Card, DPill } from "../components/components.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { PLATFORMS, CONNECT_URLS, fetchConnections, runHealthChecks, deriveStatus, invalidateConnectionsCache } from "../lib/social-client.js";
+import { useWorkflow } from "../store/store.jsx";
+import { useRoster } from "../lib/roster.jsx";
+import SpiderChart from "../components/SpiderChart.jsx";
+import { MEDAL_TIERS } from "../lib/gamify-data.jsx";
+import "../components/gamify.css";
+
+/* Distinct overlay colors for the team spider chart (one per person). */
+const GF_SERIES_COLORS = ["#6fd6ff", "#a99bff", "#5ad17a", "#f0c060", "#ff6f91", "#ff9f5a"];
 
 const POLL_MS   = 60 * 60 * 1000;   // 60 min — these provider APIs are rate-limited
 const WARN_PCT  = 80;
@@ -822,6 +830,178 @@ function AnthropicSection() {
   );
 }
 
+/* ── DemoSection — owner control to re-seed the demo baseline ─────────────────
+   Demo testers (testuser@gmail.com) run in a per-session sandbox, so they can't
+   actually corrupt the shared demo rows. This button is a manual backstop that
+   restores the demo=true baseline via the owner-gated reset_demo() RPC
+   (migration 0049) — useful if you tweak the baseline or want a clean slate. */
+function DemoSection() {
+  const [state, setState] = useState("idle"); // idle | running | done | error
+  const [err, setErr]     = useState(null);
+
+  async function reset() {
+    if (state === "running") return;
+    setState("running");
+    setErr(null);
+    try {
+      const { error } = await supabase.rpc("reset_demo");
+      if (error) throw error;
+      setState("done");
+      setTimeout(() => setState("idle"), 4000);
+    } catch (e) {
+      setErr(e.message || "Reset failed — owner access required");
+      setState("error");
+    }
+  }
+
+  return (
+    <div className="mon-section-body">
+      <div className="mon-hint" style={{ marginBottom: 10 }}>
+        The shared demo account (testuser@gmail.com) runs in a per-session
+        sandbox — each visitor gets a fresh copy and nothing they do is saved.
+        Use this only to rebuild the demo baseline itself.
+      </div>
+      <div className="mon-killrow">
+        <div className="mon-killrow-text">
+          <div className="mon-killrow-title">Demo baseline</div>
+          <div className="mon-killrow-sub">
+            {state === "running" ? "Re-seeding…"
+              : state === "done" ? "Baseline restored ✓"
+              : "Deletes all demo rows and re-seeds the sample reels/cards/tasks"}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="mon-migcheck-btn"
+          onClick={reset}
+          disabled={state === "running"}
+        >
+          {state === "running" ? "Resetting…" : "Reset demo data"}
+        </button>
+      </div>
+      {err && <div className="mon-killrow-err">{err}</div>}
+    </div>
+  );
+}
+
+/* ── GamifySection — owner toggles + team overlay chart + leaderboard ─────────
+   Two toggles persisted to app_settings (via the store actions, which mirror
+   the anthropic kill-switch RLS-write pattern). The team spider chart overlays
+   every person's scores; the leaderboard ranks by total XP. */
+function GfSwitch({ on, onToggle, label, disabled }) {
+  return (
+    <button type="button" className="gf-switch" onClick={onToggle} disabled={disabled}
+            role="switch" aria-checked={on}>
+      <span className={`gf-switch-track${on ? " on" : ""}`}><span className="gf-switch-knob" /></span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function GamifySection() {
+  const { gamifyEnabled, gamifyGradingMode, gamifyProgress, actions } = useWorkflow();
+  const { setGamifyEnabled, setGamifyGradingMode } = actions;
+  const { peopleList } = useRoster();
+
+  // People who have any gamify progress, joined with their roster name.
+  const rows = (peopleList || [])
+    .map((p, i) => {
+      const prog = gamifyProgress.find(g => g.personId === p.id);
+      return {
+        id: p.id, name: p.name || p.id,
+        totalXp: prog?.totalXp || 0,
+        medal: prog?.medal || "none",
+        scores: prog?.skillScores || {},
+        color: GF_SERIES_COLORS[i % GF_SERIES_COLORS.length],
+      };
+    })
+    .sort((a, b) => b.totalXp - a.totalXp);
+
+  const series = rows
+    .filter(r => Object.keys(r.scores).length)
+    .map(r => ({ label: r.name, color: r.color, scores: r.scores }));
+
+  const editorReviewer = gamifyGradingMode !== "reviewer_only";
+
+  return (
+    <div className="mon-section-body">
+      <div className="mon-hint" style={{ marginBottom: 12 }}>
+        Turn skill development into a game: XP, spider charts, medals, and rubric
+        grading. Toggle off if it gets in the way.
+      </div>
+
+      {/* Toggle 1 — master on/off */}
+      <div className="mon-killrow">
+        <div className="mon-killrow-text">
+          <div className="mon-killrow-title">Gamify system</div>
+          <div className="mon-killrow-sub">
+            {gamifyEnabled
+              ? "Active — popup, spider charts & rubric grading are live"
+              : "Disabled — all gamify UI is hidden across the app"}
+          </div>
+        </div>
+        <GfSwitch on={gamifyEnabled} onToggle={() => setGamifyEnabled(!gamifyEnabled)}
+                  label={gamifyEnabled ? "On" : "Off"} />
+      </div>
+
+      {/* Toggle 2 — grading mode */}
+      <div className="mon-killrow">
+        <div className="mon-killrow-text">
+          <div className="mon-killrow-title">Grading mode</div>
+          <div className="mon-killrow-sub">
+            {editorReviewer
+              ? "Editor self-assesses, then you give the revised grade"
+              : "Reviewer only — editors don't self-assess; you fill the rubric"}
+          </div>
+        </div>
+        <GfSwitch on={editorReviewer}
+                  onToggle={() => setGamifyGradingMode(editorReviewer ? "reviewer_only" : "editor+reviewer")}
+                  label={editorReviewer ? "Editor + Reviewer" : "Reviewer only"}
+                  disabled={!gamifyEnabled} />
+      </div>
+
+      {/* Team overlay chart */}
+      <div style={{ marginTop: 16 }}>
+        <div className="gf-sidebar-title" style={{ marginBottom: 8 }}>Team skill overlay</div>
+        {series.length ? (
+          <>
+            <SpiderChart series={series} size={260} labelMode="short" />
+            <div className="gf-legend">
+              {rows.filter(r => Object.keys(r.scores).length).map(r => (
+                <span key={r.id} className="gf-legend-item">
+                  <span className="gf-legend-dot" style={{ background: r.color }} />
+                  {r.name}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="mon-hint">No skill data yet — grade a reel's rubric to populate the chart.</div>
+        )}
+      </div>
+
+      {/* Leaderboard */}
+      <div style={{ marginTop: 18 }}>
+        <div className="gf-sidebar-title" style={{ marginBottom: 8 }}>XP leaderboard</div>
+        <div className="gf-leaderboard">
+          {rows.map(r => {
+            const tier = MEDAL_TIERS.find(t => t.id === r.medal);
+            return (
+              <div key={r.id} className="gf-lb-row">
+                <span>{r.name}</span>
+                <span className="gf-lb-xp">{r.totalXp.toLocaleString()} XP</span>
+                <span className="gf-lb-medal" style={{ color: tier?.color || "var(--fg-mute)" }}>
+                  {tier ? tier.id : "—"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AiCreditsSection() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1069,6 +1249,14 @@ export function Monitor() {
 
         <Card title="Anthropic (Claude)" footLeft="Generate · AI Brain · FAQ bot">
           <AnthropicSection />
+        </Card>
+
+        <Card title="Demo sandbox" footLeft="testuser@gmail.com · per-session">
+          <DemoSection />
+        </Card>
+
+        <Card title="🎮 Gamify" footLeft="Skill XP · Spider charts · Rubrics">
+          <GamifySection />
         </Card>
       </div>
 

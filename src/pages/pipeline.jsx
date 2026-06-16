@@ -98,7 +98,9 @@ function Pipeline({ onOpen }) {
     const personLanes = peopleList
       .filter(p => p.role !== "reviewer")
       .slice()
-      .sort((a, b) => (LANE_ROLE_ORDER[a.role] ?? 9) - (LANE_ROLE_ORDER[b.role] ?? 9))
+      .sort((a, b) =>
+        (a.role === "owner" ? 0 : 1) - (b.role === "owner" ? 0 : 1) ||
+        (LANE_ROLE_ORDER[a.role] ?? 9) - (LANE_ROLE_ORDER[b.role] ?? 9))
       .map(p => ({ id: p.id, name: p.name }));
     const reviewer = peopleList.find(p => p.role === "reviewer");
     personLanes.push({ id: "review", name: reviewer?.name || "Reviewer" });

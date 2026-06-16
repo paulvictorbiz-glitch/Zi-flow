@@ -80,12 +80,16 @@ function AuthProvider({ children }) {
     person,
     /* Returns { error?: { message } } on failure. */
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
-    /* Clear the session, then send the user to the public landing page (/)
-       rather than dropping them on the bare sign-in screen. The hard
-       navigation also guarantees the app tree fully resets. */
-    signOut: async () => {
-      try { await supabase.auth.signOut(); }
-      finally { window.location.assign("/"); }
+    /* Send the user to the public landing page (/) FIRST, then clear the
+       session. Navigating before sign-out avoids the flash of the bare
+       SignInScreen: if we awaited signOut() first, clearing the session
+       would re-render AuthGate (session=null → SignInScreen) for the moment
+       between the auth call resolving and the navigation firing. The hard
+       navigation also guarantees the app tree fully resets, and the
+       sign-out request still completes (it's already in flight). */
+    signOut: () => {
+      supabase.auth.signOut().catch(() => {});
+      window.location.assign("/");
     },
   }), [session, authLoaded, personLoaded, person]);
 

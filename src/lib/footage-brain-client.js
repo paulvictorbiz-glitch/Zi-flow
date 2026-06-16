@@ -5,6 +5,8 @@
  * Runs on localhost:8765 in dev mode.
  */
 
+import { supabase } from "./supabase-client.js";
+
 // Resolve the FootageBrain origin at RUNTIME from the page hostname, not at
 // build time. (Vercel builds this project in development mode, so
 // import.meta.env.DEV is unreliable here — a hostname check is not.)
@@ -346,9 +348,17 @@ export function driveDownloadUrl(driveUrl) {
  * @returns {Promise<object>} the tags object
  */
 export async function tagFootage(footageFileId, thumbnailUrl, filename) {
+  // Attach the signed-in user's JWT so the server can block demo accounts
+  // (which would otherwise burn the shared OpenRouter free quota).
+  const headers = { "Content-Type": "application/json" };
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+  } catch { /* anonymous → server applies its own policy */ }
+
   const res = await fetch("/api/tag-footage", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       footage_file_id: footageFileId,
       thumbnail_url: thumbnailUrl,

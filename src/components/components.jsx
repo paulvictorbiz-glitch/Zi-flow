@@ -8,6 +8,7 @@ import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { useNotifications } from "./notifications.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
+import { shareReelToChannel } from "../lib/social-client.js";
 
 /* ---------- Status pill ---------- */
 function Pill({ tone, dashed, children }) {
@@ -63,6 +64,18 @@ function Card({ title, right, footLeft, children, defaultOpen = true, tone, soli
 // and the --c-* tokens in styles.css). Default is cyan.
 const CARD_COLORS = ["cyan", "violet", "green", "amber", "red", "blue", "orange", "pink"];
 
+// Native-looking input chrome for the inline Discuss popover (no shared input
+// class exists in styles.css, so the tokens are referenced inline).
+const inputStyle = {
+  fontSize: 11,
+  background: "var(--bg-0)",
+  border: "1px solid var(--line)",
+  borderRadius: 4,
+  color: "var(--fg)",
+  padding: "4px 6px",
+  fontFamily: "var(--f-mono)",
+};
+
 function ReelCard({ reel, onOpen, state, isSelected }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'
   const [collapsed, setCollapsed] = useState(false);
@@ -91,10 +104,59 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
   const pillText = reel.status || liveAge;
 
   /* Per-card action menu (archive / delete) — gated by role permissions. */
-  const { actions } = useWorkflow();
+  const { actions, reelChatRefs } = useWorkflow();
+  const { person: me } = useAuth();
   const { can } = usePermissions();
   const { unreadByReel } = useNotifications();
   const unreadCount = unreadByReel[reel.id] || 0;
+
+  /* Reel ↔ team-chat links. The app can't read Rocket.Chat messages (chat is an
+     iframe embed); these refs are the lightweight app-side layer that lets the
+     card deep-link back to the conversation. */
+  const chatRefs = useMemo(
+    () => (reelChatRefs || []).filter(r => (r.reelId ?? r.reel_id) === reel.id),
+    [reelChatRefs, reel.id]);
+
+  /* Inline "Discuss" popover state. */
+  const [discussOpen, setDiscussOpen] = useState(false);
+  const [discussChannel, setDiscussChannel] = useState("pipeline");
+  const [discussNote, setDiscussNote] = useState("");
+  const [discussBusy, setDiscussBusy] = useState(false);
+  const [discussErr, setDiscussErr] = useState(null);
+  const discussRef = useRef(null);
+  useEffect(() => {
+    if (!discussOpen) return;
+    const close = (e) => { if (discussRef.current && !discussRef.current.contains(e.target)) setDiscussOpen(false); };
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [discussOpen]);
+
+  /* Same shared path as the Team-chat picker: posts a pink reel card into the
+     channel AND saves the feedback as a comment on the reel. */
+  const submitDiscuss = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (discussBusy) return;
+    const channel = (discussChannel || "pipeline").trim() || "pipeline";
+    const note = discussNote.trim();
+    setDiscussBusy(true);
+    setDiscussErr(null);
+    const r = await shareReelToChannel({ reelId: reel.id, feedback: note, channel });
+    setDiscussBusy(false);
+    if (!r.ok) { setDiscussErr(r.error || "Send failed."); return; }
+    actions.addReelChatRef({
+      reelId: reel.id, channel, note, messageUrl: r.message_url, createdBy: me?.id,
+    });
+    setDiscussNote("");
+    setDiscussOpen(false);
+  };
+
+  const openChatRef = (e, ref) => {
+    e.stopPropagation();
+    const url = ref.messageUrl
+      || `https://chat.footagebrain.com/channel/${encodeURIComponent(ref.channel || "team")}`;
+    window.open(url, "_blank", "noopener");
+  };
   const canArchive = can("archiveReel");
   const canDelete = can("deleteReel");
   const showMenu = canArchive || canDelete;
@@ -132,6 +194,14 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
                 {unreadCount}
               </span>
             )}
+            {chatRefs.length > 0 && (
+              <span className="unread-dot"
+                    title={"Discussed in team chat — open the latest conversation"}
+                    style={{ cursor: "pointer" }}
+                    onClick={e => openChatRef(e, chatRefs[0])}>
+                💬 {chatRefs.length}
+              </span>
+            )}
           </div>
           <div className="title">{reel.title}</div>
           {/* Posted cards carry their scheduled post date (from the
@@ -144,10 +214,46 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
           )}
         </div>
         {pillText && <Pill tone={pillTone}>{pillText}</Pill>}
+        <button
+          className="reel-menu-btn reel-discuss-btn"
+          onClick={e => { e.stopPropagation(); setMenuOpen(false); setDiscussOpen(o => !o); }}
+          aria-label="Discuss in team chat"
+          title="Discuss in team chat"
+        >💬</button>
+        {discussOpen && (
+          <div ref={discussRef} className="reel-menu" onClick={e => e.stopPropagation()}
+               style={{ padding: 8, width: 200 }}>
+            <form onSubmit={submitDiscuss} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <input
+                value={discussChannel}
+                onChange={e => setDiscussChannel(e.target.value)}
+                placeholder="channel (e.g. pipeline)"
+                onClick={e => e.stopPropagation()}
+                style={inputStyle}
+              />
+              <input
+                value={discussNote}
+                onChange={e => setDiscussNote(e.target.value)}
+                placeholder="feedback (saved to reel)"
+                onClick={e => e.stopPropagation()}
+                style={inputStyle}
+              />
+              <button type="submit" className="dpill is-primary" style={{ fontSize: 11 }}
+                      disabled={discussBusy}>
+                {discussBusy ? "Sharing…" : "Share to chat ↗"}
+              </button>
+              {discussErr && (
+                <span style={{ fontSize: 10, color: "var(--c-red, #ff7373)", fontFamily: "var(--f-mono)" }}>
+                  {discussErr}
+                </span>
+              )}
+            </form>
+          </div>
+        )}
         {showMenu && (
           <button
             className="reel-menu-btn"
-            onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
+            onClick={e => { e.stopPropagation(); setDiscussOpen(false); setMenuOpen(o => !o); }}
             aria-label="Card actions"
           >⋯</button>
         )}

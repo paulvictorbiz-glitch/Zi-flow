@@ -119,6 +119,9 @@
   display: flex; justify-content: space-between; gap: 10px; align-items: flex-start;
 }
 .rd-card-title { min-width: 0; flex: 1; }
+.rd-card-title--open { cursor: pointer; border-radius: 8px; transition: background 0.14s; }
+.rd-card-title--open:hover { background: rgba(107, 214, 224, 0.05); }
+.rd-card-title--open:focus-visible { outline: 1px solid var(--c-cyan-soft); outline-offset: 2px; }
 .rd-card-url {
   display: block;
   color: var(--c-cyan);

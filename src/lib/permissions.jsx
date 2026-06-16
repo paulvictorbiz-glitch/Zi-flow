@@ -34,7 +34,7 @@
    ========================================================= */
 
 import React from "react";
-import { defaultConfig, defaultPermsForRole, EDITABLE_ROLES } from "./permissions-catalog.js";
+import { defaultConfig, defaultPermsForRole, EDITABLE_ROLES, DEMO_VIEWS, DEMO_ACTIONS } from "./permissions-catalog.js";
 import { supabase } from "./supabase-client.js";
 
 const PermissionsContext = React.createContext(null);
@@ -146,6 +146,9 @@ function PermissionsProvider({ children }) {
   const canView = React.useCallback((viewKey, roleOverride) => {
     const r = roleOverride || effectiveRole;
     if (r === "owner") return true;
+    // Demo account: fail-CLOSED against an explicit allowlist (cannot be
+    // loosened by the stored config). See DEMO_VIEWS in permissions-catalog.
+    if (r === "demo") return DEMO_VIEWS.has(viewKey);
     // Person-level override takes precedence over role-level
     if (effectivePersonId && config[effectivePersonId]?.views?.[viewKey] !== undefined) {
       return !!config[effectivePersonId].views[viewKey];
@@ -157,6 +160,10 @@ function PermissionsProvider({ children }) {
   const can = React.useCallback((actionKey, roleOverride) => {
     const r = roleOverride || effectiveRole;
     if (r === "owner") return true;
+    // Demo account: fail-CLOSED against an explicit allowlist. Demo writes
+    // never persist (per-session sandbox) but we still hide owner-only/
+    // destructive affordances. See DEMO_ACTIONS in permissions-catalog.
+    if (r === "demo") return DEMO_ACTIONS.has(actionKey);
     // Person-level override takes precedence over role-level
     if (effectivePersonId && config[effectivePersonId]?.actions?.[actionKey] !== undefined) {
       return !!config[effectivePersonId].actions[actionKey];

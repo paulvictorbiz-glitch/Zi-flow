@@ -1,0 +1,5 @@
+{
+    "reel_command_desc": "Pick a pipeline reel and attach feedback to it",
+    "reel_command_params": "[id or title] [feedback]",
+    "reel_preview_title": "Pipeline reels"
+}

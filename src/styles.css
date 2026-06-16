@@ -380,6 +380,29 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .nav-item.is-active .nav-item-n { color: var(--c-cyan); opacity: .6; }
 .nav-item-label { flex: 1; }
 
+/* Color-coded nav group headers — subtle left-border accent + tinted
+   label. Tone is set via data-tone; defaults to cyan. */
+.nav-group-header {
+  --tone: var(--c-cyan);
+  border: none;
+  border-left: 2px solid color-mix(in srgb, var(--tone) 35%, transparent);
+  color: color-mix(in srgb, var(--tone) 55%, var(--fg-dim));
+  transition: color .14s, border-color .14s;
+}
+.nav-group-header[data-tone="cyan"]   { --tone: var(--c-cyan); }
+.nav-group-header[data-tone="amber"]  { --tone: var(--c-amber); }
+.nav-group-header[data-tone="green"]  { --tone: var(--c-green); }
+.nav-group-header[data-tone="red"]    { --tone: var(--c-red); }
+.nav-group-header[data-tone="blue"]   { --tone: var(--c-blue); }
+.nav-group-header[data-tone="violet"] { --tone: var(--c-violet); }
+.nav-group-header[data-tone="orange"] { --tone: var(--c-orange); }
+.nav-group-header[data-tone="pink"]   { --tone: var(--c-pink); }
+.nav-group-header:hover { color: var(--tone); }
+.nav-group-header.is-active {
+  color: var(--tone);
+  border-left-color: var(--tone);
+}
+
 .nav-drawer-foot {
   padding: 12px 18px;
   border-top: 1px solid var(--line-soft);
@@ -408,6 +431,39 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   background: var(--bg-0);
 }
 
+/* ── Demo-account banner ──────────────────────────────── */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 22px;
+  background: color-mix(in srgb, var(--accent, #06b6d4) 14%, var(--bg-0));
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+.demo-banner-tag {
+  font: 600 10px/1 ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--accent, #06b6d4);
+  color: #001016;
+  flex: 0 0 auto;
+}
+.demo-banner-text { color: var(--text-1, #cbd5e1); }
+.demo-banner-cta {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--accent, #06b6d4);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.demo-banner-cta:hover { text-decoration: underline; }
+@media (max-width: 640px) {
+  .demo-banner { padding: 8px 14px; font-size: 12px; flex-wrap: wrap; }
+}
+
 /* ── Page heading ─────────────────────────────────────── */
 
 .page-head {
@@ -419,17 +475,18 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .page-head .titles { flex: 1; min-width: 0; }
 .page-head h1 {
-  margin: 0 0 4px 0;
+  margin: 0 0 5px 0;
   font-family: var(--f-serif);
   font-style: italic;
-  font-weight: 500;
-  font-size: 32px;
+  font-weight: 600;
+  font-size: 36px;
   letter-spacing: 0.2px;
   color: #f1f6ff;
 }
 .page-head .sub {
   color: var(--fg-mute);
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 450;
   max-width: 720px;
 }
 .page-head .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
@@ -709,9 +766,20 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 
 .detail-grid {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 300px 1fr 320px;
   gap: 0;
   border-top: 1px solid var(--line-soft);
+}
+/* Mid widths: drop the right reference column under the rest before the full
+   single-column stack kicks in at the smaller breakpoints below. */
+@media (max-width: 1280px) {
+  .detail-grid { grid-template-columns: 300px 1fr; }
+  .detail-col--ref {
+    grid-column: 1 / -1;
+    border-right: 0;
+    border-top: 1px dashed var(--line);
+    flex-direction: row; flex-wrap: wrap; align-items: flex-start;
+  }
 }
 .detail-col {
   border-right: 1px dashed var(--line);
@@ -721,6 +789,45 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .detail-col:last-child { border-right: 0; }
 .detail-col.center { background: var(--bg-1); }
+
+/* ── Right reference column: inspiration embed + edit notes ── */
+.ref-card { display: flex; flex-direction: column; gap: 8px; }
+.ref-card .ref-label {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--fg-dim);
+}
+.ref-embed {
+  border: 1px solid var(--line-hard); border-radius: 8px; overflow: hidden;
+  background: #0b0c14;
+}
+.ref-embed-empty {
+  border: 1px dashed var(--line-hard); border-radius: 8px;
+  padding: 18px 14px; text-align: center; cursor: pointer;
+  font-family: var(--f-mono); font-size: 11px; color: var(--fg-mute);
+  background: var(--bg-2);
+}
+.ref-embed-empty:hover { border-color: var(--c-amber); color: var(--c-amber); }
+/* Yellow "keep in mind while editing" notes box */
+.editnotes {
+  border: 1px solid var(--c-amber);
+  background: var(--c-amber-soft);
+  border-radius: 8px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.editnotes .en-head {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--c-amber);
+}
+.editnotes textarea {
+  width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical;
+  background: var(--bg-2); border: 1px dashed var(--c-amber);
+  border-radius: 6px; color: var(--fg);
+  font-family: var(--f-sans, var(--f-mono)); font-size: 12.5px; line-height: 1.5;
+  padding: 8px 10px; outline: none;
+}
+.editnotes .en-hint { font-family: var(--f-mono); font-size: 9.5px; color: var(--fg-dim); }
+.editnotes ul { margin: 0; padding-left: 18px; }
+.editnotes li { font-size: 12.5px; color: var(--fg); line-height: 1.5; }
 
 /* ── Footage list ────────────────────────────────────── */
 
@@ -811,7 +918,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .blueprint-body textarea {
   width: 100%;
-  min-height: 110px;
+  min-height: 90px;
   background: var(--bg-2);
   border: 1px dashed var(--line-hard);
   border-radius: 6px;
@@ -828,7 +935,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   background: var(--bg-1);
 }
 .blueprint-body textarea.script {
-  min-height: 200px;
+  min-height: 120px;
   font-family: var(--f-sans);
   font-style: normal;
   font-size: 13px;
@@ -1149,7 +1256,8 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   display: flex; gap: 8px; align-items: baseline;
 }
 .comment .who .ts { font-family: var(--f-mono); font-size: 10px; color: var(--fg-dim); }
-.comment .txt { font-size: 12px; color: var(--fg-mute); line-height: 1.4; margin-top: 2px; }
+.comment .who b { font-size: 12px; }
+.comment .txt { font-size: 13.5px; color: var(--fg); line-height: 1.5; margin-top: 3px; }
 
 /* System-authored audit lines (stage transitions, etc.). Sits in
    the same comments list but renders as a single dim row. */
@@ -1950,7 +2058,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .exp-pill .warn  { color: var(--c-amber); }
 .exp-pill .block { color: var(--c-red); }
 
-.exp-scroll { overflow: auto; max-height: calc(100vh - 320px); }
+.exp-scroll { overflow-x: auto; }
 .exp-table {
   width: 100%;
   border-collapse: collapse;
@@ -2451,6 +2559,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .reel:hover .reel-menu-btn { opacity: 1; }
 .reel-menu-btn:hover { border-color: var(--line-hard); color: var(--fg); }
+/* Discuss is a primary action — always visible (not hover-gated like the
+   ⋯ archive/delete menu), so it's discoverable on touch + at a glance. */
+.reel-discuss-btn { opacity: 1; color: var(--c-cyan); }
 .reel-menu {
   position: absolute;
   top: 100%;
