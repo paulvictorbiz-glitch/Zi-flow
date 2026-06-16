@@ -2,14 +2,15 @@
    GamifyRubricSheet — the Skills & Rubric card on a reel's detail.
 
    Flow:
-     1. Skill tag buttons (10 canonical skills). Toggling a skill adds
+     1. Skill tag buttons (9 canonical skills). Toggling a skill adds
         it to the reel's skill_tags AND activates that skill's rubric
         section below (un-greys it).
      2. For each active skill, a rubric sheet:
-          · Average / Decent / Excellent column headers
-          · one row per sub-skill
+          · Junior Editor / Skilled Editor / Professional column headers
+          · one row per sub-skill (with optional grade-band descriptions,
+            visibility controlled by the owner's rubricDescMode toggle)
           · editor self-assessment checkboxes per checklist item
-          · reviewer grade radios (Average/Decent/Excellent) per sub-skill
+          · reviewer grade radios per sub-skill
      3. XP preview: "+N XP if completed".
 
    Grading-mode aware:
@@ -35,13 +36,27 @@ import {
 } from "../lib/gamify-data.jsx";
 import "./gamify.css";
 
-const GRADES = ["average", "decent", "excellent"];
+const GRADES = ["junior-editor", "skilled-editor", "professional"];
+
+/* Resolve a hidden-row key "skillKey:subId" to readable "Skill › Sub-skill". */
+function labelForHiddenKey(key) {
+  const [skillKey, subId] = key.split(":");
+  const def = RUBRIC[skillKey];
+  const skill = SKILL_BY_KEY[skillKey];
+  const sub = def?.subskills?.find(s => s.id === subId);
+  return {
+    skill: def?.label || skillKey,
+    sub: sub?.label || subId,
+    icon: skill?.icon || "",
+  };
+}
 
 export default function GamifyRubricSheet({ reel }) {
-  const { gamifyEnabled, gamifyGradingMode, gamifyRubrics,
-          actions } = useWorkflow();
+  const { gamifyEnabled, gamifyGradingMode, rubricDescMode, gamifyRubrics,
+          gamifyHiddenSubskills, actions } = useWorkflow();
   const { person: me } = useAuth();
   const { can } = usePermissions();
+  const [showArchive, setShowArchive] = React.useState(false);
 
   if (!gamifyEnabled || !reel?.id) return null;
 
@@ -64,6 +79,23 @@ export default function GamifyRubricSheet({ reel }) {
   const canGrade  = isOwner || myRole === "reviewer" || can("gradeRubric");
   const canSelf   = isOwner || can("selfAssessRubric");
   const reviewerOnly = gamifyGradingMode === "reviewer_only";
+
+  /* Owner-archived rubric rows. A row is identified globally by
+     "skillKey:subId" so hiding it removes it from every reel. Only the owner
+     can archive/restore; everyone else just never sees hidden rows. */
+  const hidden = gamifyHiddenSubskills || [];
+  const hiddenSet = new Set(hidden);
+  const rowKey = (skillKey, subId) => `${skillKey}:${subId}`;
+  const isHidden = (skillKey, subId) => hiddenSet.has(rowKey(skillKey, subId));
+
+  const hideSubskill = (skillKey, subId) => {
+    if (!isOwner) return;
+    actions.setGamifyHiddenSubskills([...hidden, rowKey(skillKey, subId)]);
+  };
+  const restoreSubskill = (key) => {
+    if (!isOwner) return;
+    actions.setGamifyHiddenSubskills(hidden.filter(k => k !== key));
+  };
 
   // Rubric rows for this reel+editor, keyed by skill.
   const rowFor = (skillKey) => gamifyRubrics.find(r =>
@@ -110,13 +142,46 @@ export default function GamifyRubricSheet({ reel }) {
   return (
     <Card
       title="🎮 Skills & Rubric"
-      right={<span className="gf-exp-badge">
-        {earnedXp > 0 ? `${earnedXp} XP earned` : `+${xpPreview} XP`}
+      right={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+        {isOwner && hidden.length > 0 && (
+          <button
+            type="button"
+            className="gf-archive-btn"
+            onClick={() => setShowArchive(v => !v)}
+            title="Restore hidden sub-skill rows"
+          >
+            🗄 Archive · {hidden.length}
+          </button>
+        )}
+        <span className="gf-exp-badge">
+          {earnedXp > 0 ? `${earnedXp} XP earned` : `+${xpPreview} XP`}
+        </span>
       </span>}
       footLeft={reviewerOnly
         ? "Reviewer fills the rubric · editor sees the grade"
         : "Editor self-assesses · you give the revised grade"}
     >
+      {/* Archive panel — restore owner-hidden rubric rows. */}
+      {isOwner && showArchive && hidden.length > 0 && (
+        <div className="gf-archive-panel">
+          <div className="gf-archive-panel-head">
+            Archived sub-skills — hidden from every reel's rubric
+          </div>
+          {hidden.map(key => {
+            const l = labelForHiddenKey(key);
+            return (
+              <div key={key} className="gf-archive-row">
+                <span><span className="gf-skill-icon">{l.icon}</span>{l.skill} <span style={{ color: "var(--fg-mute)" }}>›</span> {l.sub}</span>
+                <button type="button" className="gf-archive-restore"
+                        onClick={() => restoreSubskill(key)}>
+                  Restore
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Skill tag buttons */}
       <div className="gf-skill-toggles">
         {GAMIFY_SKILLS.map(s => {
@@ -181,8 +246,17 @@ export default function GamifyRubricSheet({ reel }) {
           const skillXp = row?.xpAwarded || 0;
           const mult = difficultyMultiplier(reelProfile[skillKey]);
 
+          // Hidden rows are archived globally — drop them from the sheet.
+          const visibleSubs = def.subskills.filter(s => !isHidden(skillKey, s.id));
+          if (visibleSubs.length === 0) return null;
+
+          // When descriptions are on, each band's text lives UNDER its own
+          // column (above the radio), so the redundant per-row level labels and
+          // the separate description block are gone.
+          const showDescs = rubricDescMode !== "off";
+
           return (
-            <div key={skillKey} className="gf-rubric-skill">
+            <div key={skillKey} className={`gf-rubric-skill${showDescs ? " desc-mode" : ""}`}>
               <div className="gf-rubric-skill-head">
                 <span>
                   <span className="gf-skill-icon">{skill?.icon}</span>{def.label}
@@ -195,7 +269,7 @@ export default function GamifyRubricSheet({ reel }) {
                 <span style={{ fontFamily: "var(--f-mono)", fontSize: 11,
                                color: gradedCount ? "var(--c-green)" : "var(--fg-mute)" }}>
                   {gradedCount
-                    ? `${gradedCount}/${def.subskills.length} graded · +${skillXp} XP`
+                    ? `${gradedCount}/${visibleSubs.length} graded · +${skillXp} XP`
                     : "ungraded"}
                 </span>
               </div>
@@ -205,13 +279,25 @@ export default function GamifyRubricSheet({ reel }) {
                 {RUBRIC_COLUMNS.map(c => <span key={c}>{c}</span>)}
               </div>
 
-              {def.subskills.map(sub => {
+              {visibleSubs.map(sub => {
                 const rowGrade = grades[sub.id] || null;   // this row's grade
                 const rowGraded = !!rowGrade;
                 return (
                   <div key={sub.id} className="gf-subskill">
                     <div>
-                      <div className="gf-subskill-label">{sub.label}</div>
+                      <div className="gf-subskill-label">
+                        {/* Owner-only hide checkbox — archives this row globally. */}
+                        {isOwner && (
+                          <input
+                            type="checkbox"
+                            className="gf-hide-check"
+                            checked={false}
+                            onChange={() => hideSubskill(skillKey, sub.id)}
+                            title="Hide this sub-skill from all reels (restorable from Archive)"
+                          />
+                        )}
+                        {sub.label}
+                      </div>
                       {/* Editor self-assessment checklist (hidden in reviewer-only mode) */}
                       {!reviewerOnly && (
                         <div className="gf-subskill-items">
@@ -238,21 +324,46 @@ export default function GamifyRubricSheet({ reel }) {
                       )}
                     </div>
 
-                    {/* Reviewer grade radios — one per band, scoped to THIS row.
-                        Clicking the active grade again clears it. */}
-                    {GRADES.map(g => (
-                      <div key={g} className="gf-grade-radio">
-                        <input
-                          type="radio"
-                          name={`${skillKey}-${sub.id}`}
-                          checked={rowGrade === g}
-                          disabled={!canGrade}
-                          onClick={() => { if (rowGrade === g) setGrade(skillKey, sub.id, null); }}
-                          onChange={() => setGrade(skillKey, sub.id, g)}
-                          title={canGrade ? `Grade ${sub.label}: ${g}` : "Reviewer grades this row"}
-                        />
-                      </div>
-                    ))}
+                    {/* One cell per grade band: the band description (when descs
+                        are on) sits above its clickable radio. Clicking either
+                        the description or the radio grades that band; clicking
+                        the active band again clears it.
+                        active-only: show only the graded band's description, but
+                        fall back to all three while still ungraded so the toggle
+                        visibly differs from "off". */}
+                    {GRADES.map((g, i) => {
+                      const showThisDesc = showDescs && sub.grades && (
+                        rubricDescMode === "all" || !rowGraded || rowGrade === g);
+                      const setThis = () => {
+                        if (!canGrade) return;
+                        setGrade(skillKey, sub.id, rowGrade === g ? null : g);
+                      };
+                      return (
+                        <div key={g}
+                             className={`gf-grade-cell${rowGrade === g ? " active" : ""}${canGrade ? " gradeable" : ""}`}
+                             title={canGrade ? `Grade ${sub.label}: ${RUBRIC_COLUMNS[i]}` : undefined}>
+                          {showThisDesc && (
+                            // Clicking the description grades (or clears) this band,
+                            // same as clicking the radio below it.
+                            <div className="gf-grade-cell-desc"
+                                 onClick={canGrade ? setThis : undefined}>
+                              {sub.grades[g]}
+                            </div>
+                          )}
+                          <div className="gf-grade-radio">
+                            <input
+                              type="radio"
+                              name={`${skillKey}-${sub.id}`}
+                              checked={rowGrade === g}
+                              disabled={!canGrade}
+                              onClick={() => { if (rowGrade === g) setGrade(skillKey, sub.id, null); }}
+                              onChange={() => setGrade(skillKey, sub.id, g)}
+                              title={canGrade ? `Grade ${sub.label}: ${RUBRIC_COLUMNS[i]}` : "Reviewer grades this row"}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}

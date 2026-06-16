@@ -898,9 +898,17 @@ function GfSwitch({ on, onToggle, label, disabled }) {
   );
 }
 
+const DESC_MODE_LABEL = { off: "Off", "active-only": "Active", all: "All" };
+const DESC_MODE_NEXT  = { off: "active-only", "active-only": "all", all: "off" };
+const DESC_MODE_SUB   = {
+  off:           "Hidden — rubric shows sub-skill names and the checklist only",
+  "active-only": "Active grade — descriptions sit under each column; once graded, only the chosen band stays",
+  all:           "All three — every band's description sits under its column; the active one highlighted",
+};
+
 function GamifySection() {
-  const { gamifyEnabled, gamifyGradingMode, gamifyProgress, actions } = useWorkflow();
-  const { setGamifyEnabled, setGamifyGradingMode } = actions;
+  const { gamifyEnabled, gamifyGradingMode, rubricDescMode, gamifyProgress, actions } = useWorkflow();
+  const { setGamifyEnabled, setGamifyGradingMode, setRubricDescMode } = actions;
   const { peopleList } = useRoster();
 
   // People who have any gamify progress, joined with their roster name.
@@ -957,6 +965,18 @@ function GamifySection() {
         <GfSwitch on={editorReviewer}
                   onToggle={() => setGamifyGradingMode(editorReviewer ? "reviewer_only" : "editor+reviewer")}
                   label={editorReviewer ? "Editor + Reviewer" : "Reviewer only"}
+                  disabled={!gamifyEnabled} />
+      </div>
+
+      {/* Toggle 3 — rubric grade-description visibility (cycles off → active → all) */}
+      <div className="mon-killrow">
+        <div className="mon-killrow-text">
+          <div className="mon-killrow-title">Grade descriptions</div>
+          <div className="mon-killrow-sub">{DESC_MODE_SUB[rubricDescMode] || DESC_MODE_SUB.all}</div>
+        </div>
+        <GfSwitch on={rubricDescMode !== "off"}
+                  onToggle={() => setRubricDescMode(DESC_MODE_NEXT[rubricDescMode] || "off")}
+                  label={DESC_MODE_LABEL[rubricDescMode] || "All"}
                   disabled={!gamifyEnabled} />
       </div>
 

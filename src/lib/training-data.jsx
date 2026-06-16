@@ -242,27 +242,30 @@ export const CHECKPOINTS = {
   },
 };
 
-/* Map each curriculum module onto one of the 10 canonical Gamify skills.
+/* Map each curriculum module onto one of the 9 canonical Gamify skills.
    The 3-month course keeps its 12 pedagogical modules, but every reel
-   tag, spider-chart axis, and rubric keys off the SAME 10 skills so the
+   tag, spider-chart axis, and rubric keys off the SAME 9 skills so the
    gamify layer and the training tab stay consistent. */
+/* NOTE: training modules are NOT 1:1 with the rubric pillars — they map to
+   the nearest canonical skill so reel tags / spider chart / rubric stay on
+   one skill set. The training curriculum will be rebuilt separately. */
 export const MODULE_TO_GAMIFY_SKILL = {
-  m1:  "cutting-pacing",        // Interface & basic editing → cutting
-  m2:  "storytelling",          // Story structure & pacing
-  m3:  "audio-engineering",     // Audio basics & J/L cuts
-  m4:  "special-effects",       // Transitions, stabilization & speed
-  m5:  "cutting-pacing",        // B-roll, coverage & J/L mastery
-  m6:  "color-grading",         // Color correction & grading
-  m7:  "audio-engineering",     // Sound design & layering
-  m8:  "motion-graphics",       // Motion graphics, text animation & masking
-  m9:  "reels-retention",       // Cinematic IG reels — retention
-  m10: "storytelling",          // Documentary structure & pacing
-  m11: "workflow-organization", // Long-form workflow & organization
-  m12: "workflow-organization", // Final project — long-form
+  m1:  "cutting-pacing",   // Interface & basic editing → cutting
+  m2:  "story-creative",   // Story structure & pacing
+  m3:  "audio-engineering",// Audio basics & J/L cuts
+  m4:  "special-effects",  // Transitions, stabilization & speed
+  m5:  "cutting-pacing",   // B-roll, coverage & J/L mastery
+  m6:  "color-visual",     // Color correction & grading
+  m7:  "audio-engineering",// Sound design & layering
+  m8:  "motion-graphics",  // Motion graphics, text animation & masking
+  m9:  "story-creative",   // Cinematic IG reels — retention/hook
+  m10: "story-creative",   // Documentary structure & pacing
+  m11: "revisions-time",   // Long-form workflow & organization
+  m12: "revisions-time",   // Final project — long-form
 };
 
 /* Skill catalog — the single source the reel skill-tag picker and the
-   Training tab both read. Re-exports the 10 canonical Gamify skills so
+   Training tab both read. Re-exports the 9 canonical Gamify skills so
    the whole app shares one consistent skill set. Each entry keeps the
    `module`/`moduleTitle`/`week` of its FIRST representative curriculum
    module for the tooltip in the skill-tag picker. */

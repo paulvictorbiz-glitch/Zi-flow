@@ -61,7 +61,7 @@ export const ACTION_CAPS = [
   { key: "bulkMoveReels",   label: "Bulk move / assign reels", hint: "Select multiple reels and move/assign them at once in list view" },
   { key: "tagReelSkills",   label: "Tag reels with syllabus skills", hint: "The skill-tag picker on a reel's detail page (links a reel to a Training module)" },
   { key: "selfAssessRubric", label: "Self-assess Gamify rubric", hint: "Editor checks off rubric sub-items on a reel (their own self-assessment)" },
-  { key: "gradeRubric",     label: "Grade Gamify rubric",     hint: "Set Average/Decent/Excellent per skill on a reel — awards XP" },
+  { key: "gradeRubric",     label: "Grade Gamify rubric",     hint: "Set Junior Editor/Skilled Editor/Professional per skill on a reel — awards XP" },
 ];
 
 /* Roles the owner can configure. `owner` is excluded — always full. */
@@ -121,7 +121,7 @@ export function defaultPermsForRole(roleKey) {
   actions.bulkMoveReels = false;   // owner only by default
 
   /* Gamify rubric grading mirrors review authority: only the reviewer
-     role grades (Average/Decent/Excellent → XP). Editors self-assess. */
+     role grades (Junior Editor/Skilled Editor/Professional → XP). Editors self-assess. */
   actions.gradeRubric = roleKey === "reviewer";
 
   /* Editors (skilled + variant) are READ-ONLY on creative fields and card

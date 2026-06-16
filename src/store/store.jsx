@@ -466,6 +466,12 @@ function workflowReducer(state, action) {
     case "SET_GAMIFY_GRADING_MODE":
       return { ...state, gamifyGradingMode: action.mode };
 
+    case "SET_RUBRIC_DESC_MODE":
+      return { ...state, rubricDescMode: action.mode };
+
+    case "SET_GAMIFY_HIDDEN_SUBSKILLS":
+      return { ...state, gamifyHiddenSubskills: action.keys || [] };
+
     case "UPSERT_GAMIFY_PROGRESS": {
       const exists = state.gamifyProgress.some(p => p.personId === action.item.personId);
       return {
@@ -835,6 +841,8 @@ const INITIAL_STATE = {
   gamifyRubrics: [],
   gamifyEnabled: false,
   gamifyGradingMode: "editor+reviewer",
+  rubricDescMode: "all",   // "off" | "active-only" | "all"
+  gamifyHiddenSubskills: [],   // ["skillKey:subId", ...] — owner-archived rubric rows
   loaded: false,
   error: null,
 };
@@ -911,12 +919,14 @@ function WorkflowProvider({ children }) {
         let gamifyRubrics = [];
         let gamifyEnabled = false;
         let gamifyGradingMode = "editor+reviewer";
+        let rubricDescMode = "all";
+        let gamifyHiddenSubskills = [];
         try {
           const [gpRes, grRes, gsRes] = await Promise.all([
             supabase.from("gamify_progress").select("*"),
             supabase.from("gamify_rubric").select("*"),
             supabase.from("app_settings").select("key,value")
-              .in("key", ["gamify_enabled", "gamify_grading_mode"]),
+              .in("key", ["gamify_enabled", "gamify_grading_mode", "gamify_rubric_desc_mode", "gamify_hidden_subskills"]),
           ]);
           if (gpRes.error) throw gpRes.error;
           if (grRes.error) throw grRes.error;
@@ -925,6 +935,8 @@ function WorkflowProvider({ children }) {
           for (const s of (gsRes.data || [])) {
             if (s.key === "gamify_enabled") gamifyEnabled = !!s.value?.enabled;
             if (s.key === "gamify_grading_mode" && s.value?.mode) gamifyGradingMode = s.value.mode;
+            if (s.key === "gamify_rubric_desc_mode" && s.value?.mode) rubricDescMode = s.value.mode;
+            if (s.key === "gamify_hidden_subskills" && Array.isArray(s.value?.keys)) gamifyHiddenSubskills = s.value.keys;
           }
         } catch (e) {
           console.warn("gamify not available (run migration 0050?):", e?.message || e);
@@ -943,6 +955,8 @@ function WorkflowProvider({ children }) {
           gamifyRubrics,
           gamifyEnabled,
           gamifyGradingMode,
+          rubricDescMode,
+          gamifyHiddenSubskills,
         }});
       } catch (e) {
         if (cancelled) return;
@@ -1063,6 +1077,16 @@ function WorkflowProvider({ children }) {
           (payload) => {
             if (payload.new?.value?.mode) dispatch({ type: "SET_GAMIFY_GRADING_MODE", mode: payload.new.value.mode });
           })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "app_settings", filter: "key=eq.gamify_rubric_desc_mode" },
+          (payload) => {
+            if (payload.new?.value?.mode) dispatch({ type: "SET_RUBRIC_DESC_MODE", mode: payload.new.value.mode });
+          })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "app_settings", filter: "key=eq.gamify_hidden_subskills" },
+          (payload) => {
+            if (Array.isArray(payload.new?.value?.keys)) dispatch({ type: "SET_GAMIFY_HIDDEN_SUBSKILLS", keys: payload.new.value.keys });
+          })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [state.loaded, _isDemo]);
@@ -1124,6 +1148,8 @@ function WorkflowProvider({ children }) {
     gamifyRubrics: state.gamifyRubrics,
     gamifyEnabled: state.gamifyEnabled,
     gamifyGradingMode: state.gamifyGradingMode,
+    rubricDescMode: state.rubricDescMode,
+    gamifyHiddenSubskills: state.gamifyHiddenSubskills,
     /* Is this reel locked to its editor? (gamify on + work started or graded).
        UI uses this to disable assign controls / show an owner confirm. */
     isReelLocked: (reelId) => {
@@ -1493,6 +1519,44 @@ function WorkflowProvider({ children }) {
         }).then(({ error }) => {
           if (error) {
             console.error("setGamifyGradingMode persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
+
+      /* Owner toggle: how grade-band descriptions render in the rubric sheet.
+         "off" | "active-only" | "all". Persists to app_settings, same RLS
+         pattern as the other gamify toggles. */
+      setRubricDescMode: (mode) => {
+        dispatch({ type: "SET_RUBRIC_DESC_MODE", mode });
+        if (isDemoMode()) return;
+        supabase.from("app_settings").upsert({
+          key: "gamify_rubric_desc_mode",
+          value: { mode },
+          updated_at: new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) {
+            console.error("setRubricDescMode persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
+
+      /* Owner-archive of individual rubric rows. `keys` is the full next set of
+         hidden "skillKey:subId" ids. Hiding completely removes the row from the
+         rubric sheet (with no trace); it stays restorable from the archive panel.
+         Persists to app_settings, same RLS pattern as the other gamify toggles. */
+      setGamifyHiddenSubskills: (keys) => {
+        const next = Array.from(new Set(keys || []));
+        dispatch({ type: "SET_GAMIFY_HIDDEN_SUBSKILLS", keys: next });
+        if (isDemoMode()) return;
+        supabase.from("app_settings").upsert({
+          key: "gamify_hidden_subskills",
+          value: { keys: next },
+          updated_at: new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) {
+            console.error("setGamifyHiddenSubskills persist failed:", error);
             dispatch({ type: "SET_ERROR", error: error.message || String(error) });
           }
         });

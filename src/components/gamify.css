@@ -184,14 +184,51 @@
 
 .gf-subskill {
   display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr;
-  align-items: center; padding: 8px 12px;
+  align-items: start; padding: 8px 12px;
   border-bottom: 1px solid var(--line, rgba(255,255,255,0.05));
 }
 .gf-subskill:last-child { border-bottom: none; }
-.gf-subskill-label { font-size: 12px; color: var(--fg-dim, #ccc); }
+.gf-subskill-label {
+  font-size: 12px; color: var(--fg-dim, #ccc);
+  display: flex; align-items: center; gap: 6px;
+}
 .gf-subskill-items {
   margin-top: 3px; display: flex; flex-direction: column; gap: 2px;
 }
+
+/* Owner-only "hide this row" checkbox, left of the sub-skill name. */
+.gf-hide-check {
+  flex: 0 0 auto; margin: 0; cursor: pointer;
+  accent-color: var(--fg-mute, #888);
+  opacity: 0.4; transition: opacity 0.12s;
+}
+.gf-hide-check:hover { opacity: 1; }
+
+/* Per-band grade cells. With descriptions on, each band's text sits above
+   its radio inside its own column; the whole cell is clickable to grade. */
+.gf-grade-cell {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 0 6px;
+}
+.gf-rubric-skill.desc-mode .gf-subskill { align-items: stretch; }
+.gf-grade-cell-desc {
+  font-size: 10px; line-height: 1.4; color: var(--fg-mute, #888);
+  text-align: left; width: 100%;
+  padding: 4px 7px; border-radius: 6px;
+  border: 1px solid transparent;
+}
+.gf-grade-cell.gradeable .gf-grade-cell-desc { cursor: pointer; }
+.gf-grade-cell.gradeable .gf-grade-cell-desc:hover {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--line, rgba(255,255,255,0.08));
+  color: var(--fg-dim, #bbb);
+}
+.gf-grade-cell.active .gf-grade-cell-desc {
+  color: var(--fg, #e8e8e8);
+  background: rgba(111, 214, 255, 0.07);
+  border-color: var(--c-cyan, #6fd6ff);
+}
+.gf-grade-cell .gf-grade-radio { margin-top: auto; }
 .gf-check {
   display: flex; align-items: center; gap: 6px; cursor: pointer;
   font-size: 10.5px; color: var(--fg-mute, #888);
@@ -217,6 +254,42 @@
 }
 .gf-rubric-btn:hover { background: rgba(169,155,255,0.2); }
 .gf-rubric-btn.saved { color: var(--c-green, #5ad17a); border-color: var(--c-green, #5ad17a); background: rgba(90,209,122,0.1); }
+
+/* ---------- Archive (hidden sub-skill rows) ---------- */
+.gf-archive-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 9px; border-radius: 10px; cursor: pointer;
+  font-family: var(--f-mono, monospace); font-size: 10px;
+  color: var(--fg-dim, #aaa); background: transparent;
+  border: 1px solid var(--line-hard, #2a2a35);
+  transition: all 0.12s;
+}
+.gf-archive-btn:hover { color: var(--fg, #fff); border-color: var(--fg-mute, #888); }
+
+.gf-archive-panel {
+  margin: 0 0 12px; padding: 10px 12px;
+  border: 1px dashed var(--line-hard, #2a2a35); border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.gf-archive-panel-head {
+  font-family: var(--f-mono, monospace); font-size: 9.5px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--fg-mute, #888); margin-bottom: 8px;
+}
+.gf-archive-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 4px 0; font-size: 12px; color: var(--fg-dim, #ccc);
+  border-bottom: 1px solid var(--line, rgba(255,255,255,0.05));
+}
+.gf-archive-row:last-child { border-bottom: none; }
+.gf-archive-restore {
+  flex: 0 0 auto; padding: 3px 11px; border-radius: 7px; cursor: pointer;
+  font-family: var(--f-mono, monospace); font-size: 10.5px;
+  border: 1px solid var(--c-cyan, #6fd6ff);
+  color: var(--c-cyan, #6fd6ff); background: rgba(111, 214, 255, 0.08);
+  transition: background 0.12s;
+}
+.gf-archive-restore:hover { background: rgba(111, 214, 255, 0.18); }
 
 /* ---------- My Work gamify sidebar ---------- */
 .gf-sidebar {

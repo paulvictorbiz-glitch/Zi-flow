@@ -577,7 +577,6 @@ function SkilledWork({ me, onOpen, role }) {
                       reel={r}
                       onOpen={onOpen}
                       clipCount={attachedFootage.filter(f => f.reel_id === r.id).length}
-                      onDueChange={(iso) => actions.updateReel(r.id, { dueAt: iso })}
                     />
                   </div>
                 ))}
@@ -1778,25 +1777,7 @@ function ReviewRow({ reel, onOpen }) {
 /* Shared sub-pieces                                       */
 /* ─────────────────────────────────────────────────────── */
 
-/* Convert a Date / ISO string to the `YYYY-MM-DDTHH:MM` format
-   required by <input type="datetime-local">. */
-function toDatetimeLocalValue(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n) => String(n).padStart(2, "0");
-  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
-       + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
-}
-
-function fromDatetimeLocalValue(v) {
-  if (!v) return null;
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
-}
-
-function WorkCard({ reel, onOpen, clipCount, onDueChange }) {
+function WorkCard({ reel, onOpen, clipCount }) {
   const { peopleById } = useRoster();
   const { gamifyEnabled, gamifyProgress, gamifyRubrics } = useWorkflow();
 
@@ -1913,38 +1894,6 @@ function WorkCard({ reel, onOpen, clipCount, onDueChange }) {
             ↗ Current state
           </a>
         )}
-      </div>
-
-      <div style={{
-        marginTop: 8,
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: 11,
-        color: "var(--fg-dim)",
-        fontFamily: "var(--f-mono)",
-      }}>
-        <span>Due:</span>
-        <input
-          type="datetime-local"
-          value={toDatetimeLocalValue(reel.dueAt)}
-          onClick={stop}
-          onMouseDown={stop}
-          onChange={e => {
-            stop(e);
-            onDueChange(fromDatetimeLocalValue(e.target.value));
-          }}
-          style={{
-            background: "var(--bg-2)",
-            border: "1px dashed var(--line-hard)",
-            borderRadius: 3,
-            color: "var(--fg)",
-            fontFamily: "var(--f-mono)",
-            fontSize: 11,
-            padding: "3px 6px",
-            outline: "none",
-          }}
-        />
       </div>
 
       {gamifyEnabled && skillTags.length > 0 && (
