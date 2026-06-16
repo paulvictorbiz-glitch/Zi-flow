@@ -50,9 +50,19 @@ export default function GamifyRubricSheet({ reel }) {
   const editorId = reel.owner;
   const skillTags = reel.skill_tags || [];
 
-  const canTag    = can("tagReelSkills");
-  const canSelf   = can("selfAssessRubric");
-  const canGrade  = can("gradeRubric");
+  /* Authority follows the REAL logged-in user, NOT the previewed perspective.
+     When the owner previews "Jay's view", the permissions system swaps
+     effectiveRole to variant — which would (wrongly) strip the owner's ability
+     to grade. Gamify authority is about who you actually are:
+       · owner    → can tag, grade, and set difficulty (full control)
+       · reviewer → can grade
+       · others   → can self-assess
+     `me` is the real signed-in person from useAuth (perspective-independent). */
+  const myRole = me?.role;
+  const isOwner = myRole === "owner";
+  const canTag    = isOwner || can("tagReelSkills");
+  const canGrade  = isOwner || myRole === "reviewer" || can("gradeRubric");
+  const canSelf   = isOwner || can("selfAssessRubric");
   const reviewerOnly = gamifyGradingMode === "reviewer_only";
 
   // Rubric rows for this reel+editor, keyed by skill.
