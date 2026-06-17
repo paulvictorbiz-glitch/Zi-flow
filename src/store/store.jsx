@@ -27,6 +27,7 @@ import { useAuth } from "../auth.jsx";
 import { XP_PER_GRADE, scoreForSkillXp, medalForScores,
          SKILL_KEYS, REWARDS, levelForXp, xpForSkillGrades,
          xpForSkillGradesWithDifficulty, isReelLocked } from "../lib/gamify-data.jsx";
+import { reelDnaToPipelineFields } from "../lib/reel-dna.jsx";
 
 /* ---------- camelCase ↔ snake_case mappers ---------- */
 function reelFromDb(row) {
@@ -137,7 +138,7 @@ function normalizeHiddenSubskills(value) {
 function reelDnaFromDb(row) {
   if (!row) return row;
   const { reel_url, genes_of_interest, quick_notes, captured_by,
-          external_ref, reel_id, archived_at, location,
+          external_ref, reel_id, archived_at, deleted_at, location,
           created_at, updated_at, ...rest } = row;
   return {
     ...rest,
@@ -148,6 +149,7 @@ function reelDnaFromDb(row) {
     externalRef: external_ref ?? undefined,
     reelId: reel_id ?? undefined,
     archivedAt: archived_at ?? undefined,
+    deletedAt: deleted_at ?? undefined,
     location: location ?? undefined,
     createdAt: created_at ?? undefined,
     updatedAt: updated_at ?? undefined,
@@ -157,7 +159,7 @@ function reelDnaToDb(item) {
   // Only columns that exist in public.reel_dna; the per-gene jsonb fields
   // (music/hook/font/story/sfx) pass through untouched.
   const { reelUrl, genesOfInterest, quickNotes, capturedBy, externalRef,
-          reelId, archivedAt, location, id, platform, status, source,
+          reelId, archivedAt, deletedAt, location, id, platform, status, source,
           music, hook, font, story, sfx } = item;
   const out = { id, platform, status, source, music, hook, font, story, sfx,
     reel_url: reelUrl,
@@ -167,6 +169,7 @@ function reelDnaToDb(item) {
     external_ref: externalRef ?? null,
     reel_id: reelId ?? null,
     archived_at: archivedAt ?? null,
+    deleted_at: deletedAt ?? null,
     location: location ?? null };
   return out;
 }
@@ -540,6 +543,9 @@ function workflowReducer(state, action) {
     case "DELETE_REEL_DNA_BY_ID":
       return { ...state, reelDna: state.reelDna.filter(d => d.id !== action.id) };
 
+    case "SET_REEL_DNA":   // full replace — used by the Refresh button's reload
+      return { ...state, reelDna: action.items };
+
     /* Pulse Monitor events — same optimistic + realtime shape as reel_dna. */
     case "CREATE_MONITOR_EVENT":
       return { ...state, monitorEvents: [action.item, ...state.monitorEvents] };
@@ -904,7 +910,14 @@ async function persistUpdateReelDna(id, patch) {
   if ("externalRef" in patch)     { dbPatch.external_ref = patch.externalRef; delete dbPatch.externalRef; }
   if ("reelId" in patch)          { dbPatch.reel_id = patch.reelId; delete dbPatch.reelId; }
   if ("archivedAt" in patch)      { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
+  if ("deletedAt" in patch)       { dbPatch.deleted_at = patch.deletedAt; delete dbPatch.deletedAt; }
   const { error } = await supabase.from("reel_dna").update(dbPatch).eq("id", id);
+  if (error) throw error;
+}
+
+async function persistDeleteReelDna(id) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase.from("reel_dna").delete().eq("id", id);
   if (error) throw error;
 }
 
@@ -1123,6 +1136,7 @@ function WorkflowProvider({ children }) {
         try {
           const reelDnaRes = await supabase
             .from("reel_dna").select("*")
+            .is("deleted_at", null)
             .order("created_at", { ascending: false });
           if (reelDnaRes.error) throw reelDnaRes.error;
           reelDna = (reelDnaRes.data || []).map(reelDnaFromDb);
@@ -1310,6 +1324,10 @@ function WorkflowProvider({ children }) {
           (payload) => {
             if (payload.eventType === "DELETE") {
               dispatch({ type: "DELETE_REEL_DNA_BY_ID", id: payload.old?.id });
+            } else if (payload.new?.deleted_at) {
+              // Soft-delete arrives as an UPDATE — drop it from the view (and
+              // keep it out across other tabs) rather than re-adding it.
+              dispatch({ type: "DELETE_REEL_DNA_BY_ID", id: payload.new.id });
             } else if (payload.new) {
               // This is how IG-DM captures (inserted by the Hetzner webhook)
               // appear in the tab live, with no refresh.
@@ -1886,6 +1904,110 @@ function WorkflowProvider({ children }) {
         { type: "UPDATE_REEL_DNA", id, patch: { archivedAt: null } },
         () => persistUpdateReelDna(id, { archivedAt: null })),
 
+      /* Permanent delete — gone from every view, not restorable in the UI
+         (unlike archiveReelDna). Implemented as a SOFT delete: we stamp
+         deleted_at and KEEP the row so its external_ref stays in the IG
+         poller's "already captured" set — a hard row delete made the next
+         poll (cron or Refresh) re-insert the same DM'd reel, so deleted cards
+         kept coming back. Optimistically removed from local state so the card
+         disappears instantly. */
+      deleteReelDna: (id) => {
+        const stamp = new Date().toISOString();
+        wrap(
+          { type: "DELETE_REEL_DNA_BY_ID", id },
+          () => persistUpdateReelDna(id, { deletedAt: stamp }));
+      },
+
+      /* Re-fetch reel_dna from Supabase. The realtime subscription can miss
+         inserts (tab asleep, dropped socket), so this is the manual catch-up
+         behind the Refresh button. Returns the row count. */
+      reloadReelDna: async () => {
+        if (isDemoMode()) return (stateRef.current.reelDna || []).length;
+        const { data, error } = await supabase
+          .from("reel_dna").select("*")
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        const items = (data || []).map(reelDnaFromDb);
+        dispatch({ type: "SET_REEL_DNA", items });
+        return items.length;
+      },
+
+      /* Force the Hetzner IG-DM poller to run NOW instead of waiting for the
+         15-min cron, so a reel you just DM'd shows up in seconds. The
+         IG_SYNC_SECRET stays server-side in the /api/ai/suggest route; we auth
+         with the owner's Supabase JWT. Returns { ok, conversations, reels_seen,
+         inserted }. Caller should reloadReelDna() after to pull the new rows. */
+      triggerIgSync: async () => {
+        if (isDemoMode()) return { ok: false, demo: true };
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) throw new Error("Not signed in");
+        const res = await fetch("/api/ai/suggest?action=ig-sync", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || `IG sync failed (${res.status})`);
+        return body;
+      },
+
+      /* Promote a captured reel into the production pipeline: create a `reels`
+         row from the card's genes (mapped 1:1 to the editor's fields via
+         reelDnaToPipelineFields), link it back via reel_id, and flip the card to
+         in_progress. Returns the new reel id. Idempotent: a card already linked
+         to a reel returns that id without creating a duplicate. */
+      sendReelDnaToPipeline: (id, { owner } = {}) => {
+        const cur = stateRef.current;
+        const card = (cur.reelDna || []).find(d => d.id === id);
+        if (!card) throw new Error("Reel not found");
+        if (card.reelId) return card.reelId;   // already in the pipeline
+
+        const who = owner || card.capturedBy || "paul";
+        const newId = nextReelId(cur.reels);
+        const fields = reelDnaToPipelineFields(card);
+        const reel = {
+          id: newId,
+          displayNumber: parseInt(newId.slice(5), 10),
+          title: fields.title,
+          stage: "not_started",
+          owner: who,
+          lane: who,
+          state: "ok",
+          age: "just now",
+          due: null,
+          stageEnteredAt: new Date().toISOString(),
+          fb: 0,
+          refs: 0,
+          blocker: null,
+          next: "Match the reference reel — see brief",
+          downstream: null,
+          grouping: "not_started",
+          logline: fields.logline,
+          note: fields.note,
+          audio: fields.audio,
+          inspo: fields.inspo,
+          vo: null, plan: null, script: null,
+          detail: { fromReelDna: card.id },
+        };
+        // Dispatch both optimistically, then persist SEQUENTIALLY: the reel row
+        // MUST exist in Supabase before we set reel_dna.reel_id, or the
+        // reel_dna_reel_id_fkey foreign key rejects the update (the two persists
+        // raced when fired via wrap() concurrently).
+        dispatch({ type: "CREATE_REEL", reel });
+        dispatch({ type: "UPDATE_REEL_DNA", id, patch: { reelId: newId, status: "in_progress" } });
+        (async () => {
+          try {
+            await persistCreateReel(reel);
+            await persistUpdateReelDna(id, { reelId: newId, status: "in_progress" });
+          } catch (e) {
+            console.error("sendReelDnaToPipeline persist failed:", e);
+            dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          }
+        })();
+        return newId;
+      },
+
       /* ----- Pulse Monitor events -----
          Same optimistic + realtime + Promise-returning shape as Reel DNA, but
          pre-migration (0059 not yet applied) the persist will reject — the
@@ -2016,6 +2138,25 @@ function WorkflowProvider({ children }) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.error || `Ingest failed (${res.status})`);
         return body; // { ok, sources, inserted, errors }
+      },
+
+      /* Pre-flight a feed URL before adding it as a monitor source (the "Add
+         source" / "Check feed" diagnostics). Server-side because the browser
+         can't fetch arbitrary cross-origin feeds. Returns the validateFeedUrl()
+         shape: { ok:true, itemCount, kind } | { ok:false, reason, suggestions }. */
+      validateMonitorFeed: async (feedUrl) => {
+        if (isDemoMode()) return { ok: true, demo: true };
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) throw new Error("Not signed in");
+        const res = await fetch("/api/ai/suggest?action=validate-feed", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ url: feedUrl }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.reason || body?.error || `Validation failed (${res.status})`);
+        return body;
       },
 
       /* ----- Reel ↔ team chat refs ----- */

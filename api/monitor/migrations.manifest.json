@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-17T21:28:46.437Z",
+  "generated": "2026-06-17T22:49:04.288Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -252,6 +252,10 @@
     {
       "version": "0061_monitor_events_dedup_full_index.sql",
       "checksum": "2556f550213e8066b3ffb31c5b3ad9244d4b8c66cea0cbf3e881b85bd508f3e1"
+    },
+    {
+      "version": "0062_reel_dna_deleted_at.sql",
+      "checksum": "1ba5f262774dc350f95db134429c5cbac7cd74818fc45a762133537a301b981a"
     }
   ]
 }
