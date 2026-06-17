@@ -3,7 +3,7 @@
 Living inventory of every feature and change built. Grouped by pillar, newest first within each section.
 
 **Legend:** `[LIVE]` = deployed to prod · `[STAGED]` = built, not yet deployed · `[LOCAL]` = uncommitted / in progress  
-**Counts:** ~50 commits · 55 DB migrations · 7 feature pillars
+**Counts:** ~50 commits · 56 DB migrations · 7 feature pillars
 
 ---
 
@@ -21,6 +21,7 @@ Living inventory of every feature and change built. Grouped by pillar, newest fi
 
 | Date | Feature | Key Files / Migration | Status |
 |------|---------|----------------------|--------|
+| 2026-06-17 | **Per-reel rubric archive + removed redundant self-assess toggle** — Archiving a rubric sub-skill row is now scoped per-reel (was global across all reels); removed the duplicate `selfAssessRubric` toggle from the Roles matrix (kept in DEMO_ACTIONS), Monitor Gamify card is the single self-assess control | `GamifyRubricSheet.jsx`, `store.jsx`, `permissions-catalog.js` | `[LIVE]` |
 | 2026-06-16 | **Gold-standard rubric revamp + sheet UX** — Rebuilt rubric around a canonical quality standard; row-by-row grading sheet with UX fixes (collapse, scroll, submit) | `GamifyRubricSheet.jsx`, migration `0053_rubric_revamp.sql` | `[LIVE]` |
 | 2026-06-16 | **Grading authority follows real role** — Rubric grading permission derived from the user's actual DB role, not the previewed perspective | `src/pages/detail.jsx`, `src/components/GamifyRubricSheet.jsx` | `[LIVE]` |
 | 2026-06-16 | **Skill XP, spider charts, rubric grading, editor lock** — Full gamify system: XP per skill, radar/spider chart, per-row rubric grading, editor-role lock on grading panel | `SpiderChart.jsx`, `GamifyPanel.jsx`, `GamifyWelcomePopup.jsx`, `MedalBadge.jsx`, `gamify.css`, migrations `0050–0052` | `[LIVE]` |
@@ -43,6 +44,8 @@ Living inventory of every feature and change built. Grouped by pillar, newest fi
 
 | Date | Feature | Key Files / Migration | Status |
 |------|---------|----------------------|--------|
+| 2026-06-17 | **`/workflow` orchestrator skill** — Runs a `/qa-verified-plan` output by spinning up one Senior Architect agent per mission-critical component, each managing implementer subagents + exactly one dedicated QA agent, across parallel waves with inter-wave gates | `.claude/skills/workflow/SKILL.md` | `[LIVE]` |
+| 2026-06-17 | **Migration manifest auto-regen (prebuild)** — Monitor "Check migrations" no longer errors on a stale manifest; a `prebuild` npm hook regenerates `migrations.manifest.json` on every build (was stale 54/57) | `package.json`, `api/monitor/status.js`, `api/monitor/migrations.manifest.json`, `supabase/MIGRATIONS.md` | `[LIVE]` |
 | 2026-06-17 | **`/senior-architect` skill** — Executes an approved /qa-verified-plan output task-by-task with file ownership registry, per-task sub-agent teams (3–4 agents + QA), sequential layer execution, and cross-task contamination prevention | `.claude/skills/senior-architect/SKILL.md` | `[LIVE]` |
 | 2026-06-17 | **`/update-migrations` skill + schema_migrations sync** — Claude skill that auto-applies pending SQL migrations to Supabase without manual dashboard pasting; also synced 10 previously-missed migrations (0045–0053, 0055) that were applied manually | `.claude/skills/update-migrations/SKILL.md`, `scripts/migrate.mjs` | `[LIVE]` |
 | 2026-06-14 | **Anthropic (Claude) monitor card + kill switch** — Monitor page card showing Claude status with a sliding toggle that pauses all server-side Claude usage (Generate, FAQ bot, daily suggestions). Gate reads from `app_settings`; fails open so a DB hiccup never breaks AI features | `src/pages/monitor.jsx`, `src/pages/monitor.css`, `api/admin/_auth.js`, `api/generate.js`, `api/ai/ask.js`, `api/ai/suggest.js`, migration `0043_anthropic_killswitch.sql` | `[LIVE]` |
@@ -71,6 +74,8 @@ Living inventory of every feature and change built. Grouped by pillar, newest fi
 
 | Date | Feature | Key Files / Migration | Status |
 |------|---------|----------------------|--------|
+| 2026-06-17 | **Permission enforcement + My Work task drag-reorder** — New `moveReel` capability actually gates reel-card moves on Pipeline / My Work / List view (completed needs `moveReel && moveToCompleted`); My Work daily tasks are now drag-reorderable via a new `daily_tasks.sort_order` column + `reorderDailyTasks()` action | `permissions-catalog.js`, `pipeline.jsx`, `list-view.jsx`, `my-work.jsx`, `store.jsx`, migration `0056` | `[LIVE]` |
+| 2026-06-17 | **3D "Space" alternate homepage (`/space`)** — Owner-only interactive R3F Rubik's-cube map of the app: 6 category faces (drag-to-orbit, gold frame) → labelled column grid → per-box detail (summary + stat cards + bar graph + deep-link). ⚙ panel for cube color/style + background presets; nebula starfield + shooting stars. Fully isolated + lazy-loaded; reached via ▦ pill on owner My Work | `src/pages/space3d.jsx`, `src/pages/space3d.css`, `src/components/space/*` (RubikCube, StarWeb, SpaceMenu, DetailPanel, SpaceFallback, SpaceSettings, widgets), `src/lib/space-cube-config.jsx`, `src/app.jsx`, `src/pages/my-work.jsx`, `vite.config.js` | `[LOCAL]` |
 | 2026-06-14 | **Nav groups + back nav + coverage pills + footage status sheet** — Sidebar nav reorganized into logical groups; back navigation; coverage pills on reel cards; footage status overlay sheet; pipeline lane hide; resources row hide; mobile CSS | `src/app.jsx`, `src/pages/coverage.jsx`, `src/pages/footage-status.jsx`, `src/pages/training.css` | `[LIVE]` |
 | 2026-06-13 | **Owner My Work command-center** — Dedicated `/my-work` page for owner: task queue, pending reviews, pipeline health summary, quick-action buttons | `src/pages/my-work.jsx` | `[LIVE]` |
 | 2026-06-13 | **Remember last active tab** — `localStorage` persists the last-viewed tab so page reloads return to the same view | `src/app.jsx` | `[LIVE]` |
@@ -119,7 +124,7 @@ Living inventory of every feature and change built. Grouped by pillar, newest fi
 
 ---
 
-## Database Migrations (all 55)
+## Database Migrations (all 56)
 
 Schema history in order. All applied to the Supabase `kjruhbaahqkuajseoojn` project.
 
@@ -180,37 +185,29 @@ Schema history in order. All applied to the Supabase `kjruhbaahqkuajseoojn` proj
 | 0053 | `rubric_revamp.sql` | Gold-standard rubric schema |
 | 0054 | `attached_footage_realtime.sql` | Realtime on footage attachments |
 | 0055 | `training_module_content.sql` | Training module content blobs |
+| 0056 | `daily_tasks_sort_order.sql` | My Work task drag-reorder ordinal (APPLIED 2026-06-17) |
 
 ---
 
 ## In Progress / Uncommitted (as of 2026-06-17)
 
-These changes exist locally (staged, branch `training-pillar-modules`) but are not yet committed or deployed:
+**DEPLOYED this session — branch `bugfix-daily-use-batch`, commit `548c768`, live on www.footagebrain.com (`vercel --prod`, 2026-06-17):**
+The 7 daily-use bug fixes — permission enforcement (`moveReel`), per-reel rubric archive, task drag-reorder, migration-manifest prebuild, redundant-toggle removal. Migration 0056 applied. **Branch not yet merged to `main`** (deploy is from the working tree; merge for backup). Files: `permissions-catalog.js`, `pipeline.jsx`, `list-view.jsx`, `store.jsx`, `0056_daily_tasks_sort_order.sql`, `my-work.jsx`, `training.css`, `GamifyRubricSheet.jsx`, `package.json`, `api/monitor/{status.js,migrations.manifest.json}`, `supabase/MIGRATIONS.md`.
+
+**Still uncommitted (prior-session 3D Space revision round — deliberately kept OUT of the bug-fix commit):**
 
 | File | Change |
 |------|--------|
-| `src/pages/training.jsx` | Training pillar modules UI |
-| `src/pages/training.css` | Training page styles |
-| `src/lib/training-curriculum.jsx` | Training curriculum data/logic |
-| `src/components/TrainingProgressWidget.jsx` | Progress widget (NEW) |
-| `src/components/RubricQuickRef.jsx` | Rubric quick-reference panel (NEW) |
-| `src/components/EditableText.jsx` | Inline editable text component (NEW) |
-| `src/components/editable.css` | Editable text styles (NEW) |
-| `src/components/GamifyRubricSheet.jsx` | Rubric sheet updates |
-| `src/pages/activity.jsx` | Activity page updates |
-| `src/pages/detail.jsx` | Detail page updates |
-| `src/pages/my-work.jsx` | My Work updates |
-| `src/app.jsx` | App shell updates |
-| `src/store/store.jsx` | Store updates |
-| `tools/capcut-agent/capcut_agent.py` | CapCut agent updates |
-| `tools/capcut-agent/install.bat` | Install script updates |
-| `public/capcut-agent/capcut_agent.exe` | Compiled agent binary |
-| `supabase/migrations/0054_attached_footage_realtime.sql` | NEW: realtime on footage attachments |
-| `supabase/migrations/0055_training_module_content.sql` | NEW: training content schema |
-| `reel-editing-syllabus.md` | NEW: syllabus reference doc |
+| `src/components/space/SpaceSettings.jsx` | NEW: ⚙ customization panel (cube color/style + background presets) |
+| `src/components/space/RubikCube.jsx` | OrbitControls drag-orbit, 6 categorized faces, on-face topic labels, bigger boxes, column headers |
+| `src/components/space/StarWeb.jsx` | Shooting stars + nebula atmosphere |
+| `src/components/space/DetailPanel.jsx` | Summary + stat cards + mini bar graph |
+| `src/components/space/widgets.jsx` | `pageDetail()` stat/bar helper |
+| `src/pages/space3d.jsx` | Prefs/persistence, settings wiring, removed click-to-explode (so drag works) |
+| `src/pages/space3d.css` | Backgrounds, shooting stars, face labels, column headers, settings panel, detail stats |
 
-**Next step:** Commit the training pillar branch and deploy with `vercel --prod`.
+**Next step:** Verify the 7 bug fixes locally → deploy → merge; separately, owner smoke test `/space` → commit the revision round → deploy.
 
 ---
 
-*Last updated: 2026-06-17 (wrap-up #2) — update this file after each deploy or feature addition.*
+*Last updated: 2026-06-17 (wrap-up #4 — 7 daily-use bug fixes via /workflow) — update this file after each deploy or feature addition.*

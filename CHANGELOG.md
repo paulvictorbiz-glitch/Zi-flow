@@ -4,6 +4,54 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-17 — 7 daily-use bug fixes (multi-agent `/workflow` run)
+
+**What changed:** Fixed the 7 "do these first — daily use impact" bugs from the Obsidian backlog in one coordinated, file-ownership-isolated multi-agent run. (1) **Permission enforcement** — added a `moveReel` capability (default `true`) that actually gates reel-card moves on the Pipeline board, My Work, and List view; completed-stage moves require `moveReel && moveToCompleted`. (2) **Owner preview-role** — verified already consistent with the real editor (no change). (3) **Per-reel rubric archive** — `gamifyHiddenSubskills` is now a `{ [reelId]: string[] }` map instead of a global flat array, so hiding a sub-skill on one reel no longer hides it everywhere. (4) **Migration manifest** — a `prebuild` hook regenerates `migrations.manifest.json` on every build (it had gone stale at 54/57 entries), fixing the Monitor "Check migrations" error. (5) **My Work task reorder** — new `daily_tasks.sort_order` column (migration 0056) + `reorderDailyTasks()` action + HTML5 drag-and-drop on task rows + readability/contrast classes. (6) **Per-editor training widget** — verified working on the owner dashboard (no change). (7) **Redundant self-assess toggle** — removed `selfAssessRubric` from the roles matrix (kept in `DEMO_ACTIONS`); Monitor Gamify card stays the single control.
+
+**Where:** `src/lib/permissions-catalog.js`, `src/pages/pipeline.jsx`, `src/pages/list-view.jsx`, `src/store/store.jsx`, `supabase/migrations/0056_daily_tasks_sort_order.sql` (new), `src/pages/my-work.jsx`, `src/pages/training.css`, `src/components/GamifyRubricSheet.jsx`, `package.json`, `api/monitor/migrations.manifest.json`, `api/monitor/status.js`, `supabase/MIGRATIONS.md`. Committed as `548c768` on branch `bugfix-daily-use-batch`.
+
+**Path we took:** `/qa-verified-plan` (4 domain agents + 1 adversarial QA agent) produced a layered plan with a File Ownership Registry, frozen contracts, and 2 execution waves. The new `/workflow` skill then executed it: **Wave 1** spun up 3 Senior Architect agents in parallel (T-PERM, T-STORE, T-TOOL), each managing implementer subagents + exactly one dedicated QA agent in a disjoint file lane; migration 0056 was applied at the inter-wave gate; **Wave 2** ran 2 more (T-MYWORK, T-GAMIFY) consuming the published contracts (`moveReel`, `setGamifyHiddenSubskills(reelId,keys)`, `reorderDailyTasks(orderedIds)`).
+
+**What we learned:** (1) The QA pass corrected 3 triage assumptions before any code was written — #4 was never a 500 (status.js already returns a graceful 200; the bug was a stale manifest), and #2/#6 were already working. (2) `moveReel` must **default true** and `can()` must stay **fail-open**, or person-level permission overrides that predate the new cap would silently lock editors out. (3) The per-reel rubric map needs a backward-compatible read (`normalizeHiddenSubskills` buckets legacy flat arrays under a `__legacy_global__` sentinel) so existing hidden rows don't crash or vanish. (4) The file-ownership gate flagged the prior session's uncommitted space3d edits as "strays"; resolved by staging only the 12 owned bug-fix files explicitly, leaving space3d untouched.
+
+**Status:** **Committed on `bugfix-daily-use-batch` (`548c768`); build green; migration 0056 applied to Supabase. NOT deployed** — user chose to verify locally first (dev server on `http://localhost:8001`).
+
+## 2026-06-17 — `/workflow` orchestrator skill
+
+**What changed:** Created the `/workflow` skill — it executes an approved `/qa-verified-plan` output by spinning up **one Senior Architect agent per mission-critical component**, each managing 3–4 subagents (implementers + exactly one dedicated QA agent) inside a strict file-ownership boundary, with parallel waves, inter-wave gates (incl. migration application), deploy, and verification.
+
+**Where:** `.claude/skills/workflow/SKILL.md`.
+
+**Path we took:** The user wanted a runnable terminal command that layers on top of `/senior-architect` — but with one Senior Architect *per component* (rather than one for the whole plan), each running its own QA. Built it to read the plan's File Ownership Registry / contracts / waves generically, with a pinned component→wave mapping for the current bug-fix plan at the bottom.
+
+**What we learned:** Spawned `general-purpose` agents can themselves spawn subagents, enabling nested orchestration (main → per-component Senior Architect → implementers + QA). Ran the authoritative `npm run build` at each wave gate rather than inside each agent, to avoid concurrent writes to `dist/` racing on Windows.
+
+**Status:** Live locally (skill files are local to Claude Code; `.claude/` is gitignored).
+
+## 2026-06-17 — Obsidian vault in workspace + daily-use bug triage & plan
+
+**What changed:** Brought the FootageBrain Obsidian vault into the project via a directory junction `obsidian-vault/` → `C:\Users\Mi\Documents\FootageBrain Obsidian` (live link, not a copy; gitignored). Produced `bugfix-triage.md` categorizing the 7 daily-use bugs by subsystem + file ownership, and a QA-verified layered plan at `~/.claude/plans/categorize-my-bug-fixes-swift-fairy.md`.
+
+**Where:** `obsidian-vault/` (junction), `.gitignore`, `bugfix-triage.md`.
+
+**Path we took:** Located two vaults under `Documents/`; used the FootageBrain one. The bug list lives in `obsidian-vault/05 - Roadmap/TODO Backlog.md` under "🐛 Bug Fixes (do these first — daily use impact)". A junction keeps the vault editable from both Obsidian and the workspace without duplication.
+
+**What we learned:** A Windows directory junction (`New-Item -ItemType Junction`) gives read/write access to the vault from inside the repo with zero duplication; gitignoring `obsidian-vault/` keeps it out of version control. This is a lightweight step toward the backlog's "Obsidian two-way integration" item.
+
+**Status:** Live locally.
+
+## 2026-06-17 — 3D "Space" alternate homepage (`/space`, owner-only)
+
+**What changed:** Built a completely separate, toggle-able alternate homepage: an interactive 3D Rubik's cube (React Three Fiber) that acts as a living map of the whole app. Reached at `/space` from a new **▦ 3D Space** pill on the owner My Work dashboard. The cube has three scene states — **assembled** (six category faces, drag-to-orbit, gentle auto-rotate, gold-glow frame), **exploded** (one labelled column per category with headers), and **detail** (a picked box flies to the corner and a panel shows summary + key stat cards + a mini bar graph + an "Open full page in app →" link). Background is a customizable starfield/nebula with occasional shooting stars. A ⚙ panel lets the owner change cube edge color, style (glass/solid/wire), and background preset — all persisted to `localStorage`.
+
+**Where:** New `src/pages/space3d.jsx` + `space3d.css` (L2 state machine); new `src/components/space/` (RubikCube, StarWeb, SpaceMenu, DetailPanel, SpaceFallback, SpaceSettings, widgets); new `src/lib/space-cube-config.jsx` (L0 data). Two additive edits to existing files: `src/app.jsx` (one lazy import + one `/space` branch inside the authed provider tree) and `src/pages/my-work.jsx` (one owner-only toggle pill). Dev-only `vite.config.js` change (`optimizeDeps.include`). Initial build + the vite fix landed in checkpoint commit `2026-06-17 19:50`; the revision round (orbit, categorized faces, on-face labels, nebula+shooting stars, rich detail stats, customization panel) is **uncommitted**.
+
+**Path we took:** Planned via `/qa-verified-plan` → `/senior-architect`. Key architectural decision: because it needs **live owner data** but must not interfere with anything, it lives **inside** the authed provider tree (so it gets `useWorkflow()`/`useLocations()` read-only) at its own URL, rather than on the public `/`. Followed the existing L0–L3 layered pattern from the Reel DNA landing; reused the proven R3F v8 glow technique from `dna-helix.jsx` (instanced halos, `webglAvailable()` fallback, `THREE.MathUtils.damp` lerps). Lazy-loaded so the 837 kB three.js chunk never ships with the main app. After the first visual pass the user requested revisions (drag-orbit via `OrbitControls`, six categorized faces with per-box topic labels, bigger boxes, fixed column labels, column headers, rich detail stats, and a customization panel) — all delivered in the same isolated files.
+
+**What we learned:** (1) **Vite dev dynamic-import race** — the first visit to a lazy R3F route ("Failed to fetch dynamically imported module") happens because `three`/`@react-three/fiber`/`@react-three/drei` get optimized on-the-fly, triggering a reload that aborts the in-flight import. Fix: add them to `optimizeDeps.include` so they're pre-bundled at dev startup (also hardens the lazy landing page). (2) **drei `<Html center>` already applies `translate(-50%,-50%)`** — adding our own translate double-offset and mangled the column labels; removing it + dropping `distanceFactor` fixed the formatting. (3) Linking back into the classic app works by setting `localStorage.wb_view` then navigating to `/app` (AppShell reads `wb_view` on mount); all 15 link keys were verified against real AppShell `view ===` conditionals.
+
+**Status:** **Local only — build passes (`npm run build`, `space3d` is its own chunk, main bundle unchanged), dev smoke clean. NOT deployed.** Pending the owner's visual smoke test (drag feel + on-face label sizing are the two items most likely to need a tweak), then `vercel --prod`.
+
 ## 2026-06-17 — /senior-architect skill
 
 **What changed:** Created the `/senior-architect` Claude skill. After running `/qa-verified-plan` and approving a layered plan, invoking `/senior-architect` executes it task-by-task under a single Senior Architect (Claude itself). Each task gets 3–4 specialist sub-agents plus a dedicated QA agent per task. The Senior Architect builds a File Ownership Registry upfront so no task can write files belonging to another task, enforces CSS class prefixes and store key declarations as output contracts, and runs sequential task execution with auto-pause only on unresolved QA blockers.
