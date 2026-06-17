@@ -27,13 +27,13 @@
 import React from "react";
 import { Card } from "./components.jsx";
 import { useWorkflow } from "../store/store.jsx";
-import { useAuth } from "../auth.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
 import SpiderChart from "./SpiderChart.jsx";
 import {
   GAMIFY_SKILLS, SKILL_BY_KEY, RUBRIC, RUBRIC_COLUMNS,
   maxXpForSkills, XP_PER_GRADE, reelSkillProfile, difficultyMultiplier,
 } from "../lib/gamify-data.jsx";
+import { MODULE_BY_SKILL } from "../lib/training-curriculum.jsx";
 import "./gamify.css";
 
 const GRADES = ["junior-editor", "skilled-editor", "professional"];
@@ -51,11 +51,10 @@ function labelForHiddenKey(key) {
   };
 }
 
-export default function GamifyRubricSheet({ reel }) {
+export default function GamifyRubricSheet({ reel, onLearnSkill }) {
   const { gamifyEnabled, gamifyGradingMode, rubricDescMode, gamifyRubrics,
           gamifyHiddenSubskills, actions } = useWorkflow();
-  const { person: me } = useAuth();
-  const { can } = usePermissions();
+  const { can, effectiveRole } = usePermissions();
   const [showArchive, setShowArchive] = React.useState(false);
 
   if (!gamifyEnabled || !reel?.id) return null;
@@ -65,20 +64,26 @@ export default function GamifyRubricSheet({ reel }) {
   const editorId = reel.owner;
   const skillTags = reel.skill_tags || [];
 
-  /* Authority follows the REAL logged-in user, NOT the previewed perspective.
-     When the owner previews "Jay's view", the permissions system swaps
-     effectiveRole to variant — which would (wrongly) strip the owner's ability
-     to grade. Gamify authority is about who you actually are:
-       · owner    → can tag, grade, and set difficulty (full control)
-       · reviewer → can grade
-       · others   → can self-assess
-     `me` is the real signed-in person from useAuth (perspective-independent). */
-  const myRole = me?.role;
-  const isOwner = myRole === "owner";
-  const canTag    = isOwner || can("tagReelSkills");
-  const canGrade  = isOwner || myRole === "reviewer" || can("gradeRubric");
-  const canSelf   = isOwner || can("selfAssessRubric");
+  /* Authority follows the active PERSPECTIVE via can()/effectiveRole — the
+     same gate the rest of the app uses. This makes two things true at once:
+       · When the owner previews "Jay's view", they see exactly what Jay can
+         do — so the perspective switcher honestly QAs restricted access, and
+         the per-role/per-person toggles set on the admin page take effect.
+       · For a real non-owner, effectiveRole is locked to their own role, so
+         the same gates apply when they're actually signed in.
+     `can()` returns true for the owner perspective, so the owner (when viewing
+     as themselves) still has full control without a separate me.role bypass.
+     Owner-only admin tooling (archive / hide rows) keys off the owner
+     PERSPECTIVE so it disappears while previewing someone restricted. */
+  const isOwner = effectiveRole === "owner";
   const reviewerOnly = gamifyGradingMode === "reviewer_only";
+  const canTag    = can("tagReelSkills");
+  const canGrade  = can("gradeRubric");
+  /* The grading MODE is authoritative over self-assessment, above any
+     permission toggle: in "reviewer_only" the editor never self-assesses —
+     the reviewer fills the rubric — so canSelf is hard-forced off regardless
+     of what can("selfAssessRubric") (which can fail-open) would return. */
+  const canSelf   = !reviewerOnly && can("selfAssessRubric");
 
   /* Owner-archived rubric rows. A row is identified globally by
      "skillKey:subId" so hiding it removes it from every reel. Only the owner
@@ -266,11 +271,34 @@ export default function GamifyRubricSheet({ reel }) {
                     {mult.toFixed(2)}×
                   </span>
                 </span>
-                <span style={{ fontFamily: "var(--f-mono)", fontSize: 11,
-                               color: gradedCount ? "var(--c-green)" : "var(--fg-mute)" }}>
-                  {gradedCount
-                    ? `${gradedCount}/${visibleSubs.length} graded · +${skillXp} XP`
-                    : "ungraded"}
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Deep-link to the matching training module so a graded
+                      editor can click through to learn how to improve. Only
+                      shown for the 6 CORE pillars that have a module — bonus
+                      pillars (motion/fx/thumbnails) have no module, so the
+                      MODULE_BY_SKILL guard hides the link for them. Visible
+                      to everyone (editors most need it). */}
+                  {onLearnSkill && MODULE_BY_SKILL[skillKey] && (
+                    <button
+                      type="button"
+                      onClick={() => onLearnSkill(skillKey)}
+                      title="Open the training module for this skill"
+                      style={{
+                        background: "none", border: "none", cursor: "pointer",
+                        padding: 0, fontFamily: "var(--f-mono)", fontSize: 10,
+                        color: "var(--c-violet)", textDecoration: "underline",
+                        textUnderlineOffset: 2,
+                      }}
+                    >
+                      📖 Learn this skill
+                    </button>
+                  )}
+                  <span style={{ fontFamily: "var(--f-mono)", fontSize: 11,
+                                 color: gradedCount ? "var(--c-green)" : "var(--fg-mute)" }}>
+                    {gradedCount
+                      ? `${gradedCount}/${visibleSubs.length} graded · +${skillXp} XP`
+                      : "ungraded"}
+                  </span>
                 </span>
               </div>
 

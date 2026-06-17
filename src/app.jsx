@@ -22,6 +22,7 @@ import { IdeaGenerator } from "./pages/idea-generator.jsx";
 import { Activity } from "./pages/activity.jsx";
 import { Resources } from "./pages/resources.jsx";
 import { Training } from "./pages/training.jsx";
+import { MODULE_BY_SKILL } from "./lib/training-curriculum.jsx";
 import { VideoEditor } from "./pages/editor.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider } from "./components/notifications.jsx";
@@ -97,6 +98,7 @@ function AppShell() {
   const [viewStack, setViewStack]       = useState([]);
   const [pipelineMode, setPipelineMode] = useState(() => localStorage.getItem("wb_pipeline_mode") || "board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
+  const [focusModule, setFocusModule]   = useState(null);   // training skillKey to auto-expand/scroll
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
   const roleSwitchRef                   = useRef(null);
@@ -248,6 +250,19 @@ function AppShell() {
     const prev = viewStack[viewStack.length - 1];
     setViewStack(s => s.slice(0, -1));
     setView(prev);
+  };
+
+  /* Deep-link from the grading rubric (and anywhere else) into a training
+     module. Validates the skillKey against the real curriculum (ignores
+     unknown / bonus-pillar keys that have no module), stashes it as the
+     focusModule so <Training> auto-expands + scrolls to it, then navigates
+     through history. Training calls onFocusConsumed once it has scrolled,
+     which clears the state — so re-clicking the SAME pillar later sets it
+     again (null → skillKey is a fresh change) and re-triggers the scroll. */
+  const openTrainingModule = (skillKey) => {
+    if (!skillKey || !MODULE_BY_SKILL[skillKey]) return;
+    setFocusModule(skillKey);
+    goView("training");
   };
 
   /* Reel DNA capture deep-link. The PWA share-target (manifest action
@@ -628,7 +643,7 @@ function AppShell() {
       {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
-      {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} />}
+      {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} />}
       {view === "footage"   && <FootageLibrary onOpen={openReel} />}
       {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
       {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}
@@ -640,7 +655,7 @@ function AppShell() {
       {view === "coverage"  && <Coverage />}
       {view === "generate"  && <IdeaGenerator />}
       {view === "reeldna"   && <ReelDna prefill={capturePrefill} />}
-      {view === "training"  && <Training onOpen={openReel} personId={shownPerson?.id} />}
+      {view === "training"  && <Training onOpen={openReel} personId={shownPerson?.id} focusModule={focusModule} onFocusConsumed={() => setFocusModule(null)} />}
       {view === "activity"  && <Activity />}
       {view === "resources" && <Resources />}
       {view === "monitor"   && isOwner && <Monitor />}
@@ -682,10 +697,20 @@ const Landing = React.lazy(() =>
   import("./pages/landing.jsx").then(m => ({ default: m.Landing }))
 );
 
+/* Owner-only 3D "Space" alternate homepage (/space). Lazy-loaded so the
+   three.js/cube bundle never ships with the normal app. Rendered INSIDE
+   the authed provider tree below so it has live store + locations; its
+   own owner gate bounces non-owners to /app. */
+const Space3D = React.lazy(() =>
+  import("./pages/space3d.jsx").then(m => ({ default: m.Space3D }))
+);
+
 function App() {
   // Root path "/" is the fully public landing page (no auth). Anything else
   // (e.g. "/app") renders the existing authed tree exactly as before.
   const isLanding = window.location.pathname === "/";
+  // "/space" swaps AppShell for the 3D cube inside the same authed tree.
+  const isSpace = window.location.pathname === "/space";
 
   if (isLanding) {
     const onEnterApp = () => window.location.assign("/app");
@@ -713,8 +738,18 @@ function App() {
                   <LocationsProvider>
                     <NotificationsProvider>
                       <PermissionsProvider>
-                        <AppShell />
-                        <GamifyWelcomePopup />
+                        {isSpace ? (
+                          <React.Suspense
+                            fallback={<div style={{ minHeight: "100vh", background: "#05070d" }} />}
+                          >
+                            <Space3D />
+                          </React.Suspense>
+                        ) : (
+                          <>
+                            <AppShell />
+                            <GamifyWelcomePopup />
+                          </>
+                        )}
                       </PermissionsProvider>
                     </NotificationsProvider>
                   </LocationsProvider>

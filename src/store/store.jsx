@@ -114,6 +114,10 @@ function dailyTaskFromDb(row) {
     taskText: task_text ?? undefined,
     taskDate: task_date ?? undefined,
     completedAt: completed_at ?? undefined,
+    // Keep created_at: the My Work task list sorts on it (my-work.jsx). Dropping
+    // it (it's destructured out above) made every hydrated/realtime row sort as
+    // "" and land in an unpredictable spot.
+    created_at: created_at ?? undefined,
     notes: rest.notes ?? undefined,
   };
 }
@@ -471,6 +475,18 @@ function workflowReducer(state, action) {
 
     case "SET_GAMIFY_HIDDEN_SUBSKILLS":
       return { ...state, gamifyHiddenSubskills: action.keys || [] };
+
+    /* ----- Training module content (owner per-field overrides) ----- */
+    case "SET_MODULE_CONTENT": {
+      const mod = { ...(state.moduleContent[action.moduleId] || {}), [action.fieldPath]: action.value };
+      return { ...state, moduleContent: { ...state.moduleContent, [action.moduleId]: mod } };
+    }
+
+    case "RESET_MODULE_CONTENT": {
+      const mod = { ...(state.moduleContent[action.moduleId] || {}) };
+      delete mod[action.fieldPath];
+      return { ...state, moduleContent: { ...state.moduleContent, [action.moduleId]: mod } };
+    }
 
     case "UPSERT_GAMIFY_PROGRESS": {
       const exists = state.gamifyProgress.some(p => p.personId === action.item.personId);
@@ -843,6 +859,7 @@ const INITIAL_STATE = {
   gamifyGradingMode: "editor+reviewer",
   rubricDescMode: "all",   // "off" | "active-only" | "all"
   gamifyHiddenSubskills: [],   // ["skillKey:subId", ...] — owner-archived rubric rows
+  moduleContent: {},           // { [moduleId]: { [fieldPath]: value } } — owner training-content overrides
   loaded: false,
   error: null,
 };
@@ -942,6 +959,21 @@ function WorkflowProvider({ children }) {
           console.warn("gamify not available (run migration 0050?):", e?.message || e);
         }
 
+        /* Owner per-field training-module content overrides — degrade to
+           {} if migration 0055 hasn't run yet (defaults live in code). */
+        let moduleContent = {};
+        try {
+          const mcRes = await supabase
+            .from("training_module_content")
+            .select("module_id, field_path, value");
+          if (mcRes.error) throw mcRes.error;
+          for (const row of (mcRes.data || [])) {
+            (moduleContent[row.module_id] ||= {})[row.field_path] = row.value;
+          }
+        } catch (e) {
+          console.warn("training_module_content not available (run migration 0055?):", e?.message || e);
+        }
+
         if (cancelled) return;
         dispatch({ type: "HYDRATE", payload: {
           reels: (reelsRes.data || []).map(reelFromDb),
@@ -957,6 +989,7 @@ function WorkflowProvider({ children }) {
           gamifyGradingMode,
           rubricDescMode,
           gamifyHiddenSubskills,
+          moduleContent,
         }});
       } catch (e) {
         if (cancelled) return;
@@ -1087,7 +1120,20 @@ function WorkflowProvider({ children }) {
           (payload) => {
             if (Array.isArray(payload.new?.value?.keys)) dispatch({ type: "SET_GAMIFY_HIDDEN_SUBSKILLS", keys: payload.new.value.keys });
           })
-      .subscribe();
+      .subscribe((status, err) => {
+        // A postgres_changes listener for a table that isn't in the
+        // supabase_realtime publication sends the WHOLE channel to
+        // CHANNEL_ERROR — every listener (incl. daily_tasks) then goes dark,
+        // silently. Surface it so the next missing-publication bug is obvious
+        // (the fix is an ALTER PUBLICATION ... ADD TABLE migration).
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.error(
+            `workflow-realtime subscription ${status}. Live updates are OFF. ` +
+            `Most likely a subscribed table is missing from the supabase_realtime ` +
+            `publication — add it via an ALTER PUBLICATION migration.`,
+            err || "");
+        }
+      });
     return () => { supabase.removeChannel(channel); };
   }, [state.loaded, _isDemo]);
 
@@ -1150,6 +1196,7 @@ function WorkflowProvider({ children }) {
     gamifyGradingMode: state.gamifyGradingMode,
     rubricDescMode: state.rubricDescMode,
     gamifyHiddenSubskills: state.gamifyHiddenSubskills,
+    moduleContent: state.moduleContent,
     /* Is this reel locked to its editor? (gamify on + work started or graded).
        UI uses this to disable assign controls / show an owner confirm. */
     isReelLocked: (reelId) => {
@@ -1375,6 +1422,8 @@ function WorkflowProvider({ children }) {
           createdBy: row.created_by,
           taskText: row.task_text,
           taskDate: row.task_date,
+          // so the new task sorts correctly before the realtime echo lands
+          created_at: new Date().toISOString(),
         }});
         if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
         await supabase.from("daily_tasks").insert(row).then(({ error }) => {
@@ -1678,6 +1727,64 @@ function WorkflowProvider({ children }) {
           dispatch({ type: "UPSERT_GAMIFY_PROGRESS", item: prog });
           persistGamifyProgress(prog).catch(e => console.error(e));
         }
+      },
+
+      /* ----- Training module content (owner per-field overrides) ----- */
+
+      /* Owner edits one field of one training module inline. Optimistic
+         dispatch, then upsert to training_module_content (RLS "owner write"
+         policy enforces owner; we ALSO guard on the real signed-in person's
+         role so editors never even attempt the write). Skipped in demo. */
+      setModuleContent: (moduleId, fieldPath, value) => {
+        dispatch({ type: "SET_MODULE_CONTENT", moduleId, fieldPath, value });
+        if (isDemoMode()) return;
+        if (authRoleRef.current !== "owner") return;
+        supabase.from("training_module_content").upsert({
+          module_id: moduleId,
+          field_path: fieldPath,
+          value,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "module_id,field_path" }).then(({ error }) => {
+          if (error) {
+            console.error("setModuleContent persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
+
+      /* Owner reverts one field back to the code default by deleting its
+         override row. Optimistic remove, then DB delete. Owner-gated. */
+      resetModuleContent: (moduleId, fieldPath) => {
+        dispatch({ type: "RESET_MODULE_CONTENT", moduleId, fieldPath });
+        if (isDemoMode()) return;
+        if (authRoleRef.current !== "owner") return;
+        supabase.from("training_module_content").delete()
+          .match({ module_id: moduleId, field_path: fieldPath })
+          .then(({ error }) => {
+            if (error) {
+              console.error("resetModuleContent persist failed:", error);
+              dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+            }
+          });
+      },
+
+      /* Read ALL editors' training progress (no person filter) for the
+         owner's dashboard roster widget. RLS already allows authenticated
+         SELECT of every row (0047 auth_read_training_progress). Returns
+         an array of { person_id, module_id, done }. */
+      loadTrainingProgressAll: async () => {
+        const { data, error } = await supabase
+          .from("training_progress")
+          .select("person_id, module_id, done");
+        if (error) {
+          console.error("loadTrainingProgressAll failed:", error);
+          return [];
+        }
+        return (data || []).map(r => ({
+          person_id: r.person_id,
+          module_id: r.module_id,
+          done: !!r.done,
+        }));
       },
     },
   }), [state, wrap]);

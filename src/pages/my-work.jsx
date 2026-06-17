@@ -28,6 +28,8 @@ import { startOfDayLocal, analyzeDay, fmtDuration, ONLINE_WINDOW_MS, loadDayRows
 import { getConnections, PLATFORMS } from "../lib/social-client.js";
 import JSZip from "jszip";
 import SpiderChart from "../components/SpiderChart.jsx";
+import { TrainingProgressWidget } from "../components/TrainingProgressWidget.jsx";
+import "./training.css";
 import GamifyPanel from "../components/GamifyPanel.jsx";
 import OwnerSkillOverlay from "../components/OwnerSkillOverlay.jsx";
 import { maxXpForSkills } from "../lib/gamify-data.jsx";
@@ -547,6 +549,8 @@ function SkilledWork({ me, onOpen, role }) {
       </div>
 
       <GamifyPanel personId={me} open={gamifyOpen} />
+
+      <TrainingProgressWidget personId={me} isOwner={false} />
 
       <div className="mywork-grid">
         {SKILLED_COLS.map(col => {
@@ -1335,6 +1339,9 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
           </div>
         </div>
         <div className="actions">
+          <DPill onClick={() => window.location.assign("/space")} title="Switch to the 3D Space view — alternate owner homepage">
+            ▦ 3D Space
+          </DPill>
           {me && (
             <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
               ↓ CapCut tracker setup
@@ -1348,6 +1355,13 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
         <CapCutTeamWidget teamMembers={peopleList.filter(p => p.role !== "owner")} />
         <PromotedInsightsSection onNavigate={onNavigate} />
         <OwnerSkillOverlay />
+
+        <TrainingProgressWidget
+          personId={me}
+          isOwner={true}
+          roster={peopleList}
+          onOpenPerson={(pid) => { onSetPerson?.(pid); onNavigate?.("training"); }}
+        />
 
         {teamStatus.length > 0 && (
           <div className="ow-team-section">

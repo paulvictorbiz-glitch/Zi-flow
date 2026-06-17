@@ -307,6 +307,174 @@
 .tr-rubric td:first-child { color: var(--fg); font-weight: 600; white-space: nowrap; }
 .tr-rubric td { color: var(--fg-dim); }
 
+/* ── Rich section blocks (pillar modules) ─────────────────────── */
+.tr-prose {
+  font-size: 13px;
+  color: var(--fg-mute);
+  line-height: 1.55;
+  margin-bottom: 4px;
+}
+.tr-good { border-left-color: var(--c-green-soft); background: rgba(127, 212, 154, 0.05); }
+.tr-bad  { border-left-color: var(--c-red-soft, rgba(240,120,120,0.4)); background: rgba(240, 120, 120, 0.05); }
+
+.tr-examples { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
+.tr-example {
+  border: 1px solid var(--line-hard);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg-3);
+}
+.tr-example.is-gold { border-color: var(--c-green-soft); }
+.tr-example.is-poor { border-color: var(--c-red-soft, rgba(240,120,120,0.4)); }
+.tr-example-tag {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--fg-dim);
+  display: block;
+  margin-bottom: 5px;
+}
+
+.tr-protip { border-left-color: var(--c-cyan-soft); background: rgba(107, 214, 224, 0.05); }
+
+.tr-nextskill {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-hard);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.tr-nextskill b { color: var(--c-violet); }
+
+.tr-mod-icon { margin-right: 7px; }
+.tr-mod-deliv {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--fg-dim);
+  border: 1px solid var(--line-hard);
+  border-radius: 5px;
+  padding: 2px 7px;
+  flex-shrink: 0;
+}
+
+/* ── Rubric quick-reference (collapsible) ─────────────────────── */
+.tr-quickref { margin-top: 30px; }
+.tr-quickref-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--bg-2);
+  border: 1px solid var(--line-hard);
+  border-radius: 8px;
+  padding: 12px 16px;
+  cursor: pointer;
+}
+.tr-quickref-toggle:hover { border-color: var(--c-violet); }
+.tr-quickref-caret { color: var(--fg-dim); }
+.tr-quickref-body { margin-top: 14px; display: flex; flex-direction: column; gap: 20px; }
+.tr-quickref-hint { font-size: 12px; color: var(--fg-dim); line-height: 1.5; }
+.tr-quickref-pillar { scroll-margin-top: 150px; }
+.tr-quickref-pillar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.tr-quickref-pillar-title {
+  font-family: var(--f-mono);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.tr-quickref-bonus {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--c-amber);
+  border: 1px solid var(--c-amber-soft);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 4px;
+}
+.tr-quickref-jump {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--c-cyan);
+  background: none;
+  border: 1px solid var(--line-hard);
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tr-quickref-jump:hover { border-color: var(--c-cyan-soft); }
+
+/* ── Dashboard training progress widget ───────────────────────── */
+.tr-widget {
+  border: 1px solid var(--line-hard);
+  border-radius: 10px;
+  background: var(--bg-2);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.tr-widget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tr-widget-title {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.tr-widget-meta { font-family: var(--f-mono); font-size: 11.5px; color: var(--c-cyan); }
+.tr-widget-sub { font-size: 11.5px; color: var(--fg-dim); font-family: var(--f-mono); }
+.tr-widget-roster { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+.tr-widget-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 160px) 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 7px;
+}
+.tr-widget-row.is-clickable { cursor: pointer; }
+.tr-widget-row.is-clickable:hover { background: rgba(255, 255, 255, 0.03); }
+.tr-widget-row-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tr-widget-row-bar { min-width: 60px; }
+.tr-widget-row-count {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+}
+
 /* Owner perspective banner */
 .tr-perspective {
   font-family: var(--f-mono);

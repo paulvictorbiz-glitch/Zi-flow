@@ -1,33 +1,37 @@
-# Handoff — last updated 2026-06-14 (Claude kill switch)
+# Handoff — last updated 2026-06-17
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-Added an **Anthropic (Claude) card to the Monitor page with a working kill switch.** It mirrors the Vercel card (links to `platform.claude.com/dashboard`, since Anthropic exposes no usage API) and has a **sliding toggle that genuinely pauses all server-side Claude usage** by flipping `app_settings.anthropic_enabled`. Deployed to prod.
+- Created `/senior-architect` skill — takes an approved `/qa-verified-plan` output and builds it task-by-task with per-task sub-agents, QA, and file ownership isolation.
+- Created `/update-migrations` skill — auto-applies pending Supabase migrations without manual dashboard pasting.
+- Diagnosed and fixed `schema_migrations` tracker discrepancy: 10 migrations (0045–0053, 0055) were missing from tracking table; used `--mark` to sync. Now 57 applied · 0 pending.
+- Training pillar modules feature (branch `training-pillar-modules`) remains staged but not yet committed or deployed — that work predates this session.
 
-## What's LIVE (this session)
-- **Monitor → "Anthropic (Claude)" card** with dashboard link + sliding kill switch (green = active, grey = paused), owner-only via RLS.
-- **Server gate enforced** on the 3 real Claude consumers: `api/generate.js` (anthropic provider only), `api/ai/ask.js` (synthesis → graceful FAQ fallback), `api/ai/suggest.js` (suggestions cron). All read `isAnthropicEnabled()` in `api/admin/_auth.js`, which **fails open** so a DB blip never breaks AI.
-- Migration `0043_anthropic_killswitch.sql` seeds the flag (optional — upsert creates it on first toggle).
+## Where we left off
+Two new skills are live locally. The main open task is committing and deploying the training pillar modules feature. Migration tracking is clean.
 
-## Still LIVE from prior sessions
-- **Rocket.Chat 7.13.8 + MongoDB** on Hetzner; `https://chat.footagebrain.com`; backend proxy authenticated; Team tab + Inbox Outbox deployed.
-- IG per-reel analytics, social OAuth, Infra Monitor, etc. (see CHANGELOG).
+## Open blockers
+- None.
 
-## Gotchas discovered / reaffirmed this session
-- **Vercel Hobby plan caps at 12 Serverless Functions.** A 13th fails the deploy. A first attempt at a dedicated `api/admin/toggle-anthropic.js` endpoint hit this — deleted it and had the UI write the flag **directly to `app_settings` via Supabase** (RLS "owner write" policy from migration 0014 enforces owner-only). **Prefer RLS-gated direct writes over new `api/*` routes for owner mutations.**
-- `api/ai/_embed.js` imports Anthropic but actually calls **OpenRouter** embeddings — not a real Claude consumer, left ungated.
-- `api/ai/suggest.js` now also serves `?action=insights` (folded in to stay under the function cap); that pass uses a free OpenRouter model and is intentionally NOT behind the kill switch.
+## Pending (written but not yet live)
+- **Training pillar modules** (branch `training-pillar-modules`) — all staged files in git but not committed or deployed. Key files: `training.jsx`, `training-curriculum.jsx`, `TrainingProgressWidget.jsx`, `RubricQuickRef.jsx`, `EditableText.jsx`, `editable.css`, `GamifyRubricSheet.jsx` updates, `activity.jsx`, `detail.jsx`, `my-work.jsx`, `store.jsx`, `app.jsx`, and migrations `0054` + `0055`.
 
-## Remaining (optional, from prior sessions)
-1. Run migration `0043` in the Supabase SQL editor (cleanliness; not blocking).
-2. Rocket.Chat: create team accounts (Judy/Jay/Leroy), enable WhatsApp omnichannel.
-3. See `TODO.md` for the longer backlog (Jarvis overlay, inbox AI replies, create-user blocker, etc.).
+## Next session — start here
+1. Commit the `training-pillar-modules` branch and deploy with `vercel --prod`.
+2. Test the training page live — module content, progress tracking, `TrainingProgressWidget`.
+3. Try the new skill pipeline: `/qa-verified-plan` on a new feature → approve → `/senior-architect` to build it.
 
-## DNS state (don't let Porkbun reset it)
-- apex `footagebrain.com` → `A 76.76.21.21` (Vercel); `www` → `CNAME cname.vercel-dns.com`.
-- `api`, `chat` → `A 178.105.14.144` (Hetzner) — leave alone. The `*` wildcard CNAME was deleted (it served the parking page).
+## Verification commands (to confirm current state on resume)
+```bash
+# Confirm migrations are in sync (should show 57 applied · 0 pending)
+node --env-file=.env.local scripts/migrate.mjs
 
-## Files changed this session (all in-repo, deployed)
-`api/admin/_auth.js`, `api/generate.js`, `api/ai/ask.js`, `api/ai/suggest.js`, `src/pages/monitor.jsx`, `src/pages/monitor.css`, + new `supabase/migrations/0043_anthropic_killswitch.sql`.
+# Confirm git branch and staged files
+git status
+git branch
+
+# Confirm new skills exist
+ls .claude/skills/
+```

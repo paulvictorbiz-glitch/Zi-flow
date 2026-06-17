@@ -18,7 +18,7 @@ import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
 import { getFootageFileMetadata, driveDownloadUrl } from "../lib/footage-brain-client.js";
 import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
-import { SKILLS } from "../lib/training-data.jsx";
+import { SKILLS } from "../lib/training-curriculum.jsx";
 import GamifyRubricSheet from "../components/GamifyRubricSheet.jsx";
 
 /* Blueprint fields start empty for every reel — operators fill them in. */
@@ -180,7 +180,7 @@ function LocationPicker({ reelId }) {
   );
 }
 
-function ReelDetail({ reel, onBack }) {
+function ReelDetail({ reel, onBack, onLearnSkill }) {
   /* reel is passed from Pipeline when a card is clicked. Default to REEL-201. */
   const current = reel || { id: "REEL-201", title: "Temple crowd sequence" };
 
@@ -1034,7 +1034,7 @@ function ReelDetail({ reel, onBack }) {
             </Card>
 
             {/* 3) Gamify — skills tagging + rubric grading (hidden when gamify is off) */}
-            <GamifyRubricSheet reel={stored || current} />
+            <GamifyRubricSheet reel={stored || current} onLearnSkill={onLearnSkill} />
         </div>
 
         {/* ===== RIGHT — inspiration embed + edit notes ===== */}

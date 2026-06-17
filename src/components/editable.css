@@ -1,0 +1,45 @@
+/* EditableText — inline click-to-edit primitive styling.
+   Uses the app's CSS vars; consistent with training.css / resources.jsx. */
+
+.et-readonly,
+.et-editable {
+  display: inline;
+}
+
+/* Preserve line breaks for multiline prose / paragraphs. */
+.et-readonly.et-multiline,
+.et-editable.et-multiline {
+  display: inline;
+  white-space: pre-wrap;
+}
+
+/* Owner affordance: subtle dotted underline + pencil on hover. */
+.et-editable {
+  cursor: text;
+  border-radius: 3px;
+  border-bottom: 1px dotted transparent;
+  transition: background 0.12s, border-color 0.12s;
+  outline: none;
+}
+.et-editable:hover,
+.et-editable:focus-visible {
+  background: rgba(169, 155, 255, 0.08);
+  border-bottom-color: var(--c-violet, #a99bff);
+}
+
+.et-pencil {
+  font-size: 0.78em;
+  margin-left: 5px;
+  color: var(--c-violet, #a99bff);
+  opacity: 0;
+  transition: opacity 0.12s;
+  user-select: none;
+}
+.et-editable:hover .et-pencil,
+.et-editable:focus-visible .et-pencil {
+  opacity: 0.75;
+}
+
+.et-input {
+  font-family: var(--f-mono);
+}

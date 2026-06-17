@@ -19,6 +19,7 @@ import json
 import time
 import platform
 import datetime
+import argparse
 import urllib.request
 import urllib.error
 
@@ -133,6 +134,8 @@ def active_project(cfg):
 
 
 def send_heartbeat(cfg, running, focused, project_title):
+    """POST one heartbeat. Returns (ok: bool, detail: str) so callers/diagnostics
+    can report the exact HTTP status or network error, not just success/failure."""
     payload = json.dumps([{
         "worker": cfg["WORKER"],
         "running": running,
@@ -152,21 +155,88 @@ def send_heartbeat(cfg, running, focused, project_title):
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
-            return 200 <= resp.status < 300
+            ok = 200 <= resp.status < 300
+            return ok, f"HTTP {resp.status}"
     except urllib.error.HTTPError as e:
         body = b""
         try:
             body = e.read()[:300]
         except Exception:
             pass
-        _log(f"HTTP {e.code}: {body!r}")
+        detail = f"HTTP {e.code}: {body!r}"
+        _log(detail)
+        return False, detail
     except Exception as e:
-        _log(f"send error: {e}")
-    return False
+        detail = f"send error: {e}"
+        _log(detail)
+        return False, detail
+
+
+def diagnose(cfg):
+    """One-shot self-test, for install.bat to call. Reports a config summary,
+    whether CapCut is running, and the live heartbeat HTTP status, then exits
+    non-zero if the heartbeat could not be sent. This proves end-to-end
+    connectivity (the EXE ran AND Supabase accepted a row) instead of leaving
+    the only evidence in the silent capcut_agent.log.
+
+    The shipped EXE is built --noconsole, so sys.stdout may be None and print()
+    would raise. We therefore write the result to capcut_diagnostic.txt next to
+    the EXE (which install.bat reads back) and also try stdout when it exists."""
+    lines = []
+
+    def emit(s):
+        lines.append(s)
+        try:
+            if sys.stdout is not None:
+                print(s)
+        except Exception:
+            pass
+
+    emit("=== CapCut tracker diagnostic ===")
+    emit(f"  worker   : {cfg['WORKER']}")
+    emit(f"  machine  : {platform.node()}")
+    emit(f"  supabase : {cfg['SUPABASE_URL']}")
+    try:
+        pids = capcut_pids(cfg["CAPCUT_PROCESS"])
+        running = len(pids) > 0
+    except Exception as e:
+        emit(f"  process check FAILED: {e}")
+        running = False
+    emit(f"  CapCut running: {'yes' if running else 'no (that is OK for this test)'}")
+    focused = False
+    project_title = None
+    if running:
+        fg_pid, _ = foreground_pid_and_title()
+        focused = fg_pid in pids
+        project_title = active_project(cfg)
+    # Always send one heartbeat so we can confirm Supabase connectivity even
+    # when CapCut is closed during the test.
+    ok, detail = send_heartbeat(cfg, running, focused, project_title)
+    emit(f"  heartbeat: {detail}")
+    if ok:
+        emit("RESULT: PASS - a test row reached Supabase. The tracker can report data.")
+    else:
+        emit("RESULT: FAIL - could not reach Supabase. See the detail above and capcut_agent.log.")
+
+    try:
+        with open(os.path.join(_base_dir(), "capcut_diagnostic.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+    return 0 if ok else 1
 
 
 def main():
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--once", "--diagnose", dest="once", action="store_true",
+                        help="run a single visible self-test and exit (used by install.bat)")
+    args, _ = parser.parse_known_args()
+
     cfg = load_config()
+
+    if args.once:
+        sys.exit(diagnose(cfg))
+
     _log(f"agent start - worker={cfg['WORKER']} machine={platform.node()} poll={cfg['POLL_SECONDS']}s")
     while True:
         try:

@@ -11,6 +11,9 @@ dist/
 
 .vercel
 
+# Obsidian vault junction (live link into C:\Users\Mi\Documents\FootageBrain Obsidian) — read-only context, not repo content
+obsidian-vault/
+
 # FootageBrain runtime artifacts that landed loose in this folder — never commit
 data/
 footage_brain.db

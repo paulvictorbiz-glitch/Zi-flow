@@ -9,6 +9,14 @@ const FB_TARGET = process.env.FB_PROXY_TARGET || "https://api.footagebrain.com";
 
 export default defineConfig({
   plugins: [react()],
+  // Pre-bundle the 3D stack at dev startup. Both the lazy public landing
+  // and the lazy owner-only /space route pull in three/fiber/drei; without
+  // this, the FIRST visit to either triggers an on-the-fly dep optimization
+  // + reload that aborts the in-flight dynamic import ("Failed to fetch
+  // dynamically imported module"). Listing them here makes that deterministic.
+  optimizeDeps: {
+    include: ["three", "@react-three/fiber", "@react-three/drei"],
+  },
   server: {
     port: 8000,
     open: "/index.html",
