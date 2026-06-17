@@ -5,6 +5,14 @@
  *   suggestions stored in improvement_suggestions.
  *   Deduplicates against existing suggestions (same title within 14 days → skip).
  *
+ * POST /api/ai/suggest?action=ig-sync
+ *   Owner-triggered (Reel DNA "Refresh" button, Bearer JWT). Kicks the Hetzner
+ *   Instagram-DM poller to run NOW instead of waiting for its 15-min cron, so a
+ *   reel just DM'd to the Page shows up in seconds. Fire-and-forget: the poll
+ *   runs in the background on Hetzner and the new reel_dna rows arrive via
+ *   Supabase realtime. The IG_SYNC_SECRET stays server-side here (never shipped
+ *   to the browser). Folded into this route to stay under the 12-function cap.
+ *
  * GET/POST /api/ai/suggest?action=insights
  *   Workflow Intelligence Log pass — distills recent Rocket.Chat conversations
  *   into workflow_insights (see _insights-core.js). Triggered by the AI Brain
@@ -22,7 +30,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED } from "../admin/_auth.js";
 import { runInsights } from "./_insights-core.js";
-import { ingestSources } from "./_rss.js";
+import { ingestSources, validateFeedUrl } from "./_rss.js";
 
 export const config = { maxDuration: 45 };
 
@@ -53,6 +61,40 @@ export default async function handler(req, res) {
     return runInsights(req, res);
   }
 
+  // ── Dispatch: force the Hetzner Instagram-DM poller to run now ─────────────
+  // Fire-and-forget — we hit /api/ig/sync WITHOUT ?wait so it returns instantly
+  // (the poll runs in the background on Hetzner, well under our function
+  // timeout); the new reel_dna rows arrive client-side via Supabase realtime.
+  if (action === "ig-sync") {
+    const igSecret = process.env.IG_SYNC_SECRET;
+    if (!igSecret) { res.status(500).json({ error: "IG_SYNC_SECRET not configured" }); return; }
+    // Truly fire-and-forget: abort our wait after 8s so a slow Hetzner poll can
+    // never push us past the Vercel function timeout (Hobby ~10s). If the poll
+    // is still running when we abort, that's fine — it finishes server-side and
+    // the new reel_dna rows arrive via Supabase realtime / the 15-min cron.
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/ig/sync?secret=${encodeURIComponent(igSecret)}`,
+        { method: "POST", signal: ctrl.signal });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Hetzner sync HTTP ${r.status}`, ...body }); return; }
+      res.status(200).json({ ok: true, started: true, ...body });
+    } catch (e) {
+      if (e.name === "AbortError") {
+        // Poll is taking >8s but is running — report success, not failure.
+        res.status(202).json({ ok: true, started: true, pending: true });
+        return;
+      }
+      console.error("ig-sync error:", e.message);
+      res.status(502).json({ error: `Couldn't reach the IG poller: ${e.message}` });
+    } finally {
+      clearTimeout(t);
+    }
+    return;
+  }
+
   // ── Dispatch: news-monitor RSS ingest (free model; not Anthropic-gated) ────
   // Triggered by the Pulse "Refresh now" button (Bearer JWT) or a Hetzner cron
   // (secret): */30 * * * * curl ".../api/ai/suggest?action=news-ingest&secret=…"
@@ -66,6 +108,32 @@ export default async function handler(req, res) {
     }
     return;
   }
+
+  // ── Dispatch: validate a feed URL for the Pulse "Add source" form ──────────
+  // Owner pastes a URL; we report whether it's a usable RSS/Atom feed and, if
+  // not, WHY plus verified replacement URLs to paste instead. Free (no LLM).
+  if (action === "validate-feed") {
+    let feedUrl = req.query?.url || url?.searchParams.get("url");
+    if (!feedUrl && req.body) {
+      feedUrl = typeof req.body === "string"
+        ? (() => { try { return JSON.parse(req.body).url; } catch { return null; } })()
+        : req.body.url;
+    }
+    if (!feedUrl) { res.status(400).json({ ok: false, reason: "No URL provided." }); return; }
+    try {
+      res.status(200).json(await validateFeedUrl(feedUrl));
+    } catch (e) {
+      console.error("validate-feed error:", e.message);
+      res.status(500).json({ ok: false, reason: e.message });
+    }
+    return;
+  }
+
+  // ── Guard: an unrecognized action must NOT fall through to the daily Claude
+  // suggestions run below. That run makes a slow LLM call and on Vercel Hobby
+  // (~10s ceiling) it times out into a non-JSON 500 — which is exactly how a
+  // not-yet-deployed `ig-sync` surfaced as a bare "IG sync failed (500)".
+  if (action) { res.status(400).json({ error: `Unknown action: ${action}` }); return; }
 
   // ── Kill switch: skip the suggestions run if the owner paused Claude ────────
   if (!(await isAnthropicEnabled())) { res.status(503).json(ANTHROPIC_PAUSED); return; }
