@@ -56,11 +56,11 @@ export const ACTION_CAPS = [
   { key: "editScript",      label: "Edit beat plan",          hint: "The beat-by-beat plan / shot list textarea" },
   { key: "editVoiceover",   label: "Edit voiceover",          hint: "The voiceover script field on a reel" },
   { key: "removeFootage",   label: "Remove attached footage", hint: "The ✕ button that detaches a clip from a reel" },
+  { key: "moveReel",        label: "Move reel cards between stages", hint: "Drag/drop or stage dropdown to move a reel between workflow stages" },
   { key: "moveToCompleted", label: "Move cards to Completed",  hint: "Drag/drop or dropdown to move a card into the Completed stage" },
   { key: "editReelId",      label: "Edit Reel ID (display number)", hint: "Inline-edit the display number of a reel in list view" },
   { key: "bulkMoveReels",   label: "Bulk move / assign reels", hint: "Select multiple reels and move/assign them at once in list view" },
   { key: "tagReelSkills",   label: "Tag reels with syllabus skills", hint: "The skill-tag picker on a reel's detail page (links a reel to a Training module)" },
-  { key: "selfAssessRubric", label: "Self-assess Gamify rubric", hint: "Editor checks off rubric sub-items on a reel (their own self-assessment)" },
   { key: "gradeRubric",     label: "Grade Gamify rubric",     hint: "Set Junior Editor/Skilled Editor/Professional per skill on a reel — awards XP" },
 ];
 
@@ -93,7 +93,7 @@ export const DEMO_VIEWS = new Set([
 export const DEMO_ACTIONS = new Set([
   "createReel", "archiveReel", "approveReview", "attachFootage",
   "changeCardColor", "editLogline", "editScript", "editVoiceover",
-  "removeFootage", "moveToCompleted", "selfAssessRubric",
+  "removeFootage", "moveReel", "moveToCompleted", "selfAssessRubric",
   // hidden on purpose: deleteReel, editReelId, bulkMoveReels, tagReelSkills,
   // gradeRubric (grading is owner/reviewer authority)
 ]);

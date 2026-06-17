@@ -19,8 +19,9 @@
      · "reviewer_only"  → editor self-assessment is hidden entirely; the
        reviewer just fills the rubric the editor sees.
 
-   Permission gates:
-     · can("selfAssessRubric") → editor may toggle their checkboxes
+   Gates:
+     · grading MODE (not a permission cap) → editor may toggle their checkboxes;
+       self-assessment is hidden entirely in "reviewer_only" mode
      · can("gradeRubric")      → reviewer/owner may set grades
    ========================================================= */
 
@@ -79,27 +80,37 @@ export default function GamifyRubricSheet({ reel, onLearnSkill }) {
   const reviewerOnly = gamifyGradingMode === "reviewer_only";
   const canTag    = can("tagReelSkills");
   const canGrade  = can("gradeRubric");
-  /* The grading MODE is authoritative over self-assessment, above any
-     permission toggle: in "reviewer_only" the editor never self-assesses —
-     the reviewer fills the rubric — so canSelf is hard-forced off regardless
-     of what can("selfAssessRubric") (which can fail-open) would return. */
-  const canSelf   = !reviewerOnly && can("selfAssessRubric");
+  /* Self-assessment is governed solely by the grading MODE — there is no
+     longer a permission cap for it. In "reviewer_only" the editor never
+     self-assesses (the reviewer fills the rubric), so canSelf is off; in
+     every other mode the editor self-assesses. */
+  const canSelf   = !reviewerOnly;
 
-  /* Owner-archived rubric rows. A row is identified globally by
-     "skillKey:subId" so hiding it removes it from every reel. Only the owner
+  /* Owner-archived rubric rows, now PER-REEL. The store keeps a map
+     { [reelId]: string[] } of hidden "skillKey:subId" rows; hiding a row only
+     removes it from THIS reel. Legacy flat-array data is bucketed under the
+     sentinel reel id "__legacy_global__", so the effective hidden set for a
+     reel is the UNION of this reel's list + the legacy bucket. Only the owner
      can archive/restore; everyone else just never sees hidden rows. */
-  const hidden = gamifyHiddenSubskills || [];
+  const hiddenMap = gamifyHiddenSubskills || {};
+  const hidden = [ ...(hiddenMap[reelId] || []), ...(hiddenMap["__legacy_global__"] || []) ];
   const hiddenSet = new Set(hidden);
   const rowKey = (skillKey, subId) => `${skillKey}:${subId}`;
   const isHidden = (skillKey, subId) => hiddenSet.has(rowKey(skillKey, subId));
 
   const hideSubskill = (skillKey, subId) => {
     if (!isOwner) return;
-    actions.setGamifyHiddenSubskills([...hidden, rowKey(skillKey, subId)]);
+    actions.setGamifyHiddenSubskills(reelId, [ ...(hiddenMap[reelId] || []), rowKey(skillKey, subId) ]);
   };
   const restoreSubskill = (key) => {
     if (!isOwner) return;
-    actions.setGamifyHiddenSubskills(hidden.filter(k => k !== key));
+    // Drop the key from this reel's list.
+    actions.setGamifyHiddenSubskills(reelId, (hiddenMap[reelId] || []).filter(k => k !== key));
+    // If it's also in the legacy global bucket, clear it there too so it
+    // doesn't reappear via the union.
+    if ((hiddenMap["__legacy_global__"] || []).includes(key)) {
+      actions.setGamifyHiddenSubskills("__legacy_global__", (hiddenMap["__legacy_global__"] || []).filter(k => k !== key));
+    }
   };
 
   // Rubric rows for this reel+editor, keyed by skill.
@@ -170,7 +181,7 @@ export default function GamifyRubricSheet({ reel, onLearnSkill }) {
       {isOwner && showArchive && hidden.length > 0 && (
         <div className="gf-archive-panel">
           <div className="gf-archive-panel-head">
-            Archived sub-skills — hidden from every reel's rubric
+            Archived sub-skills — hidden from this reel's rubric
           </div>
           {hidden.map(key => {
             const l = labelForHiddenKey(key);
@@ -251,7 +262,7 @@ export default function GamifyRubricSheet({ reel, onLearnSkill }) {
           const skillXp = row?.xpAwarded || 0;
           const mult = difficultyMultiplier(reelProfile[skillKey]);
 
-          // Hidden rows are archived globally — drop them from the sheet.
+          // Hidden rows are archived per-reel — drop them from the sheet.
           const visibleSubs = def.subskills.filter(s => !isHidden(skillKey, s.id));
           if (visibleSubs.length === 0) return null;
 
@@ -314,14 +325,14 @@ export default function GamifyRubricSheet({ reel, onLearnSkill }) {
                   <div key={sub.id} className="gf-subskill">
                     <div>
                       <div className="gf-subskill-label">
-                        {/* Owner-only hide checkbox — archives this row globally. */}
+                        {/* Owner-only hide checkbox — archives this row for this reel. */}
                         {isOwner && (
                           <input
                             type="checkbox"
                             className="gf-hide-check"
                             checked={false}
                             onChange={() => hideSubskill(skillKey, sub.id)}
-                            title="Hide this sub-skill from all reels (restorable from Archive)"
+                            title="Hide this sub-skill from this reel (restorable from Archive)"
                           />
                         )}
                         {sub.label}

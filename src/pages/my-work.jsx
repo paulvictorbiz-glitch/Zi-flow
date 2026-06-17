@@ -140,7 +140,11 @@ function MyWork({ role, personId, onOpen, onNavigate, onSetPerson }) {
 /* Tasks & Comms — daily task list per person             */
 /* ─────────────────────────────────────────────────────── */
 
-function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
+function TaskRow({
+  task, isOwner, onComplete, onDelete, onUpdate,
+  draggableTask = false, dragId = null, isOver = false,
+  onDragStartTask, onDragOverTask, onDropTask, onDragEndTask,
+}) {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(task.taskText || "");
   const [notesOpen, setNotesOpen] = useState(false);
@@ -196,11 +200,28 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
   // Keep local draft in sync when task.notes changes externally
   React.useEffect(() => { setNoteDraft(task.notes || ""); }, [task.notes]);
 
+  // Drag-reorder only when an owner-owned, incomplete row is not being inline-edited.
+  const canDrag = isOwner && !task.completed && !editing && !notesOpen;
+
   return (
-    <li style={{
-      display: "flex", flexDirection: "column", gap: 0,
-      borderBottom: "1px solid var(--line-soft, var(--line-hard))",
-    }}>
+    <li
+      className={"mw-task-row" + (isOver ? " is-drop-target" : "")}
+      draggable={canDrag}
+      onDragStart={e => {
+        const tag = (e.target.tagName || "").toLowerCase();
+        if (["input", "textarea", "button", "select"].includes(tag) || e.target.isContentEditable) { e.preventDefault(); return; }
+        if (!canDrag) { e.preventDefault(); return; }
+        e.dataTransfer.effectAllowed = "move";
+        onDragStartTask?.(task.id);
+      }}
+      onDragOver={e => { if (dragId && dragId !== task.id && !task.completed) { e.preventDefault(); onDragOverTask?.(task.id); } }}
+      onDrop={e => { e.preventDefault(); onDropTask?.(task.id); }}
+      onDragEnd={() => onDragEndTask?.()}
+      style={{
+        display: "flex", flexDirection: "column", gap: 0,
+        borderBottom: "1px solid var(--line-soft, var(--line-hard))",
+        opacity: dragId === task.id ? 0.4 : 1,
+      }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
         <input
           type="checkbox"
@@ -236,11 +257,11 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
           />
         ) : (
           <span
+            className={"mw-task-text" + (task.completed ? " is-done" : "")}
             onClick={() => { if (isOwner && !task.completed) { setEditText(task.taskText || ""); setEditing(true); } }}
             title={isOwner && !task.completed ? "Click to edit" : undefined}
             style={{
-              flex: 1, fontSize: 13,
-              color: task.completed ? "var(--fg-dim)" : "var(--fg)",
+              flex: 1,
               textDecoration: task.completed ? "line-through" : "none",
               fontFamily: "var(--f-sans, var(--f-mono))",
               cursor: isOwner && !task.completed ? "text" : "default",
@@ -400,9 +421,11 @@ function TaskRow({ task, isOwner, onComplete, onDelete, onUpdate }) {
 }
 
 function DailyTasksSection({ personId, viewerPersonId, isOwner }) {
-  const { dailyTasks, actions: { createDailyTask, completeDailyTask, deleteDailyTask, updateDailyTask } } = useWorkflow();
+  const { dailyTasks, actions: { createDailyTask, completeDailyTask, deleteDailyTask, updateDailyTask, reorderDailyTasks } } = useWorkflow();
   const [newTaskText, setNewTaskText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -412,8 +435,27 @@ function DailyTasksSection({ personId, viewerPersonId, isOwner }) {
     .filter(t => !t.completed || t.taskDate === today) // show incomplete always, completed only today
     .sort((a, b) => {
       if (a.completed !== b.completed) return a.completed ? 1 : -1; // incomplete first
+      const sa = a.sortOrder ?? Infinity, sb = b.sortOrder ?? Infinity;
+      if (sa !== sb) return sa - sb; // explicit sort order, unsorted sink below
       return (a.created_at || "").localeCompare(b.created_at || "");
     });
+
+  // HTML5 drag-reorder of the INCOMPLETE subset; completed tasks stay pinned after.
+  const handleReorder = (srcId, destId) => {
+    if (!srcId || !destId || srcId === destId) return;
+    const incomplete = myTasks.filter(t => !t.completed);
+    const srcIdx = incomplete.findIndex(t => t.id === srcId);
+    const destIdx = incomplete.findIndex(t => t.id === destId);
+    if (srcIdx === -1 || destIdx === -1) { setDragId(null); setOverId(null); return; }
+    const reordered = incomplete.slice();
+    const [moved] = reordered.splice(srcIdx, 1);
+    reordered.splice(destIdx, 0, moved);
+    const completedIds = myTasks.filter(t => t.completed).map(t => t.id);
+    const fullOrderedIds = [...reordered.map(t => t.id), ...completedIds];
+    reorderDailyTasks(fullOrderedIds);
+    setDragId(null);
+    setOverId(null);
+  };
 
   const handleAdd = async () => {
     const text = newTaskText.trim();
@@ -430,22 +472,22 @@ function DailyTasksSection({ personId, viewerPersonId, isOwner }) {
   };
 
   return (
-    <div style={{ marginTop: 24 }}>
-      <div style={{
+    <div className="mw-tasks-section" style={{ marginTop: 24 }}>
+      <div className="mw-tasks-head" style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         marginBottom: 10, borderBottom: "1px solid var(--line-hard)", paddingBottom: 8,
       }}>
-        <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+        <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em" }}>
           Tasks &amp; Comms
         </span>
-        <span style={{ fontSize: 11, color: "var(--fg-dim)", fontFamily: "var(--f-mono)" }}>
+        <span style={{ fontSize: 11, fontFamily: "var(--f-mono)" }}>
           {myTasks.filter(t => !t.completed).length} open
         </span>
       </div>
 
       <ul style={{ listStyle: "none", padding: 0, margin: "0 0 12px" }}>
         {myTasks.length === 0 && (
-          <li style={{ color: "var(--fg-dim)", fontSize: 12, fontFamily: "var(--f-mono)", padding: "6px 0" }}>
+          <li className="mw-tasks-empty" style={{ fontSize: 12, fontFamily: "var(--f-mono)", padding: "6px 0" }}>
             No tasks for today.
           </li>
         )}
@@ -457,6 +499,13 @@ function DailyTasksSection({ personId, viewerPersonId, isOwner }) {
             onComplete={completeDailyTask}
             onDelete={deleteDailyTask}
             onUpdate={updateDailyTask}
+            draggableTask={isOwner && !task.completed}
+            dragId={dragId}
+            isOver={overId === task.id}
+            onDragStartTask={(id) => setDragId(id)}
+            onDragOverTask={(id) => { if (dragId && dragId !== id) setOverId(id); }}
+            onDropTask={(destId) => handleReorder(dragId, destId)}
+            onDragEndTask={() => { setDragId(null); setOverId(null); }}
           />
         ))}
       </ul>
@@ -509,6 +558,7 @@ function SkilledWork({ me, onOpen, role }) {
   const { reels, actions, attachedFootage, gamifyEnabled } = useWorkflow();
   const { person } = useAuth();
   const { peopleById } = useRoster();
+  const { can } = usePermissions();
   const [gamifyOpen, setGamifyOpen] = useState(true);
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
   const whoLabel = peopleById[me]?.short || "Editor";
@@ -516,11 +566,16 @@ function SkilledWork({ me, onOpen, role }) {
   const isOwner = person?.role === "owner";
   const viewerPersonId = person?.id || "paul";
 
+  // Reel moves gate behind moveReel; moving INTO "completed" also needs moveToCompleted.
+  const canMoveTo = (stage) =>
+    stage === "completed" ? (can("moveReel") && can("moveToCompleted")) : can("moveReel");
+
   const [dragId, setDragId] = useState(null);
   const [dropCol, setDropCol] = useState(null);
 
   const handleDrop = (targetStage) => {
     if (!dragId) return;
+    if (!canMoveTo(targetStage)) { setDragId(null); setDropCol(null); return; }
     actions.moveStage(dragId, { stage: targetStage });
     setDragId(null);
     setDropCol(null);
@@ -558,9 +613,9 @@ function SkilledWork({ me, onOpen, role }) {
           const isTarget = dropCol === col.key;
           return (
             <div className="mw-col" key={col.key}
-                 onDragOver={e => { if (dragId) { e.preventDefault(); if (dropCol !== col.key) setDropCol(col.key); } }}
+                 onDragOver={e => { if (dragId && canMoveTo(col.key)) { e.preventDefault(); if (dropCol !== col.key) setDropCol(col.key); } }}
                  onDragLeave={() => { if (dropCol === col.key) setDropCol(null); }}
-                 onDrop={e => { e.preventDefault(); handleDrop(col.key); }}
+                 onDrop={e => { if (!canMoveTo(col.key)) return; e.preventDefault(); handleDrop(col.key); }}
                  style={{
                    outline: isTarget ? "2px dashed var(--c-cyan)" : "",
                    outlineOffset: isTarget ? "-4px" : "",
@@ -573,8 +628,8 @@ function SkilledWork({ me, onOpen, role }) {
               <div className="mw-list">
                 {rows.map(r => (
                   <div key={r.id}
-                       draggable
-                       onDragStart={e => { setDragId(r.id); e.dataTransfer.effectAllowed = "move"; }}
+                       draggable={can("moveReel")}
+                       onDragStart={e => { if (!can("moveReel")) return; setDragId(r.id); e.dataTransfer.effectAllowed = "move"; }}
                        onDragEnd={() => { setDragId(null); setDropCol(null); }}
                        style={{ opacity: dragId === r.id ? 0.4 : 1 }}>
                     <WorkCard

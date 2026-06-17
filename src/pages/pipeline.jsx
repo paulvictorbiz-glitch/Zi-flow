@@ -148,8 +148,17 @@ function Pipeline({ onOpen }) {
     setTimeout(() => setBlockedStage(null), 700);
   }, []);
 
+  const canMove = can("moveReel");
+
   const handleDrop = (lane, stage) => {
     if (!dragging) return;
+
+    /* Outer gate: if the role can't move reel cards at all, abort. */
+    if (!canMove) {
+      setDragging(null);
+      setDropTarget(null);
+      return;
+    }
 
     /* Block non-owners from dropping into the Completed column. */
     if (stage === "completed" && !can("moveToCompleted")) {
@@ -195,6 +204,9 @@ function Pipeline({ onOpen }) {
   const handleCardDrop = (target, before) => {
     setDropOnCard(null);
     if (!dragging || dragging.id === target.id) { setDragging(null); setDropTarget(null); return; }
+
+    /* Outer gate: no move capability → abort before any reorder/move. */
+    if (!canMove) { setDragging(null); setDropTarget(null); return; }
 
     /* Same completed-column gate — covers drops onto cards, not just empty cells. */
     if (target.stage === "completed" && !can("moveToCompleted")) {
@@ -396,6 +408,8 @@ function Pipeline({ onOpen }) {
                   key={stage.key}
                   onDragOver={e => {
                     if (!dragging) return;
+                    /* No move capability → never show a drop target. */
+                    if (!canMove) return;
                     /* Don't highlight Completed as a valid drop target when blocked. */
                     if (stage.key === "completed" && !can("moveToCompleted")) return;
                     e.preventDefault();
@@ -417,7 +431,7 @@ function Pipeline({ onOpen }) {
                     return (
                       <div
                         key={r.id}
-                        draggable
+                        draggable={canMove}
                         onDragStart={e => {
                           setDragging(r);
                           e.dataTransfer.effectAllowed = "move";
@@ -425,6 +439,8 @@ function Pipeline({ onOpen }) {
                         onDragEnd={() => { setDragging(null); setDropTarget(null); setDropOnCard(null); }}
                         onDragOver={e => {
                           if (!dragging || dragging.id === r.id) return;
+                          /* No move capability → never accept a card-reorder drop. */
+                          if (!canMove) return;
                           /* Block the drop cursor on cards inside a protected column. */
                           if (r.stage === "completed" && !can("moveToCompleted")) return;
                           e.preventDefault(); e.stopPropagation();

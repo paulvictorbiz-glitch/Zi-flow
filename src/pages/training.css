@@ -487,3 +487,37 @@
   margin-bottom: 10px;
   display: inline-block;
 }
+
+/* ── My Work · daily-task list readability (Implementer B) ────────
+   Hooks added by Implementer A to my-work.jsx's Tasks & Comms list.
+   Markup still carries inline `style=` (color/fontSize) on the
+   task-text span and the head's child spans, so the two readability
+   rules below use !important to out-rank those inline declarations.
+   See report: A should ideally strip the inline color/fontSize so
+   these classes can win without !important. */
+
+/* Layout-only hook — no rule needed today; kept so the selector exists. */
+.mw-tasks-section { /* container; spacing handled by inline marginTop */ }
+
+/* Raise the daily-task label out of the dim tier and bump size.
+   !important: the span carries inline color:var(--fg)/var(--fg-dim)
+   at 13px, which a plain class cannot beat. Minimal + scoped. */
+.mw-task-text { color: var(--fg) !important; font-size: 13.5px !important; }
+/* Completed tasks: dim the label back down (Implementer A's is-done state). */
+.mw-task-text.is-done { color: var(--fg-dim) !important; }
+
+/* Section head label — note the inline text spans set their own
+   color:var(--fg-dim); this lifts the head wrapper but inline wins
+   on the inner spans (flagged in report). */
+.mw-tasks-head { color: var(--fg-mute); }
+
+/* Drag affordance for owner-draggable rows. */
+.mw-task-row[draggable="true"] { cursor: grab; }
+.mw-task-row[draggable="true"]:active { cursor: grabbing; }
+
+/* Drop-target indicator during drag-reorder. */
+.mw-task-row.is-drop-target { border-top: 2px solid var(--c-cyan); }
+
+/* Lift the empty-state out of the dimmest tier (inline color:var(--fg-dim)
+   on the <li> out-ranks this; flagged in report). */
+.mw-tasks-empty { color: var(--fg-mute); }

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 8000",
+    "prebuild": "node scripts/gen-migration-manifest.mjs",
     "build": "vite build",
     "preview": "vite preview --port 8000",
     "seed": "node --env-file=.env.local seed/seed.mjs",

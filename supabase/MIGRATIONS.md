@@ -42,9 +42,15 @@ npm run migrate:apply    # run every pending migration, recording each one
 npm run migrate:manifest # rebuild the manifest the Monitor button checks against
 ```
 
-After adding/editing a migration, run `npm run migrate:manifest` and redeploy
-(`vercel --prod`) so the Monitor → Supabase card "Check migrations" button is
-comparing against the current file set.
+The manifest now **auto-regenerates at build time** — a `prebuild` hook runs
+`scripts/gen-migration-manifest.mjs` before `vite build`, and Vercel's default
+build command is `npm run build`, so a normal `vercel --prod` always ships a
+manifest that matches the current file set. You no longer need to remember to
+rebuild it before deploying.
+
+Run `npm run migrate:manifest` only to refresh the **committed** copy locally,
+so `git diff` and `npm run migrate:check-manifest` stay clean after you
+add/edit a migration.
 
 ## Check from the app (no terminal)
 

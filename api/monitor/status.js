@@ -56,7 +56,8 @@ async function checkMigrations() {
     const here = dirname(fileURLToPath(import.meta.url));
     manifest = JSON.parse(readFileSync(join(here, "migrations.manifest.json"), "utf8"));
   } catch (e) {
-    return { ok: false, error: "Could not read migrations.manifest.json: " + e.message +
+    return { ok: false, manifestMissing: true,
+      error: "Could not read migrations.manifest.json: " + e.message +
       " — run `npm run migrate:manifest` and redeploy." };
   }
 

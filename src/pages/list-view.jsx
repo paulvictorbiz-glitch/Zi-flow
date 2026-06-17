@@ -486,7 +486,10 @@ function ListView({ role, onOpen }) {
      card shows up in the new person's column on the board and their
      dashboard (not stranded in the old owner's lane). -- */
   function bulkApply(stage, personId) {
-    if (stage === "completed" && !can("moveToCompleted")) return;
+    // Outer gate: a stage move requires the moveReel capability; completed
+    // additionally requires moveToCompleted. A pure person reassignment
+    // (no stage) is not a stage move, so it isn't gated by moveReel here.
+    if (stage && !(can("moveReel") && (stage === "completed" ? can("moveToCompleted") : true))) return;
     const ids = [...selected];
     for (const id of ids) {
       if (stage === "posted") {
@@ -509,7 +512,8 @@ function ListView({ role, onOpen }) {
   /* -- stage dropdown change (per row) -- */
   function handleStageChange(reel, newStage) {
     if (newStage === reel.stage) return;
-    if (newStage === "completed" && !can("moveToCompleted")) return;
+    // Outer gate: moveReel for any stage change; completed also needs moveToCompleted.
+    if (!(can("moveReel") && (newStage === "completed" ? can("moveToCompleted") : true))) return;
     if (newStage === "posted") {
       setScheduleModal({ reelId: reel.id });
       setScheduleDate("");

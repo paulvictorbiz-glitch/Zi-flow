@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-16T00:41:30.764Z",
+  "generated": "2026-06-17T14:38:21.312Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -216,6 +216,22 @@
     {
       "version": "0052_reel_gamify_difficulty.sql",
       "checksum": "7c8e4cd2c4796a24f375750345ad62540e7965e86591b6630c82a4049b3bba30"
+    },
+    {
+      "version": "0053_rubric_revamp.sql",
+      "checksum": "7baba4cf19bb69f44a76ed0e7280f0c6d508f3b62721f35685525e6e65ddb531"
+    },
+    {
+      "version": "0054_attached_footage_realtime.sql",
+      "checksum": "a16143c268d12b029efa5ec3e6b1ffda8d7eddfd7128c652511f71f637db9482"
+    },
+    {
+      "version": "0055_training_module_content.sql",
+      "checksum": "ee415e6970f8bec64bea207e9abeaf486df83206bb677713d20add5e89ddc0f5"
+    },
+    {
+      "version": "0056_daily_tasks_sort_order.sql",
+      "checksum": "a175391788f593c1658b94004e318a62941f497c9ced9576e14e8a21fb1b6252"
     }
   ]
 }

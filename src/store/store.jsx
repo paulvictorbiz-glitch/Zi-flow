@@ -106,7 +106,7 @@ function taskToDb(task) {
 function dailyTaskFromDb(row) {
   if (!row) return row;
   const { assigned_to, created_by, task_text, task_date, completed_at,
-          created_at, updated_at, ...rest } = row;
+          sort_order, created_at, updated_at, ...rest } = row;
   return {
     ...rest,
     assignedTo: assigned_to ?? undefined,
@@ -114,12 +114,23 @@ function dailyTaskFromDb(row) {
     taskText: task_text ?? undefined,
     taskDate: task_date ?? undefined,
     completedAt: completed_at ?? undefined,
+    sortOrder: sort_order ?? undefined,
     // Keep created_at: the My Work task list sorts on it (my-work.jsx). Dropping
     // it (it's destructured out above) made every hydrated/realtime row sort as
     // "" and land in an unpredictable spot.
     created_at: created_at ?? undefined,
     notes: rest.notes ?? undefined,
   };
+}
+
+// Backward-compat read for the gamify_hidden_subskills app_settings value.
+// New shape: { map: { [reelId]: string[] } }. Legacy shape: { keys: string[] }
+// (a flat global array) — bucket it under a reserved sentinel reel id so those
+// rows stay hidden until restored. Anything else -> empty map.
+function normalizeHiddenSubskills(value) {
+  if (value && typeof value.map === "object" && value.map !== null && !Array.isArray(value.map)) return value.map;
+  if (Array.isArray(value?.keys)) return { __legacy_global__: value.keys };
+  return {};
 }
 
 function reelDnaFromDb(row) {
@@ -474,7 +485,7 @@ function workflowReducer(state, action) {
       return { ...state, rubricDescMode: action.mode };
 
     case "SET_GAMIFY_HIDDEN_SUBSKILLS":
-      return { ...state, gamifyHiddenSubskills: action.keys || [] };
+      return { ...state, gamifyHiddenSubskills: action.map || {} };
 
     /* ----- Training module content (owner per-field overrides) ----- */
     case "SET_MODULE_CONTENT": {
@@ -529,6 +540,15 @@ function workflowReducer(state, action) {
 
     case "DELETE_DAILY_TASK":
       return { ...state, dailyTasks: state.dailyTasks.filter(t => t.id !== action.id) };
+
+    case "REORDER_DAILY_TASKS": {
+      const orderMap = new Map(action.orderedIds.map((id, i) => [id, i]));
+      return {
+        ...state,
+        dailyTasks: state.dailyTasks.map(t =>
+          orderMap.has(t.id) ? { ...t, sortOrder: orderMap.get(t.id) } : t),
+      };
+    }
 
     case "APPROVE_REVIEW": {
       const stamp = action.stageEnteredAt || new Date().toISOString();
@@ -858,7 +878,7 @@ const INITIAL_STATE = {
   gamifyEnabled: false,
   gamifyGradingMode: "editor+reviewer",
   rubricDescMode: "all",   // "off" | "active-only" | "all"
-  gamifyHiddenSubskills: [],   // ["skillKey:subId", ...] — owner-archived rubric rows
+  gamifyHiddenSubskills: {},   // { [reelId]: ["skillKey:subId", ...] } — owner-archived rubric rows, per reel
   moduleContent: {},           // { [moduleId]: { [fieldPath]: value } } — owner training-content overrides
   loaded: false,
   error: null,
@@ -937,7 +957,7 @@ function WorkflowProvider({ children }) {
         let gamifyEnabled = false;
         let gamifyGradingMode = "editor+reviewer";
         let rubricDescMode = "all";
-        let gamifyHiddenSubskills = [];
+        let gamifyHiddenSubskills = {};
         try {
           const [gpRes, grRes, gsRes] = await Promise.all([
             supabase.from("gamify_progress").select("*"),
@@ -953,7 +973,7 @@ function WorkflowProvider({ children }) {
             if (s.key === "gamify_enabled") gamifyEnabled = !!s.value?.enabled;
             if (s.key === "gamify_grading_mode" && s.value?.mode) gamifyGradingMode = s.value.mode;
             if (s.key === "gamify_rubric_desc_mode" && s.value?.mode) rubricDescMode = s.value.mode;
-            if (s.key === "gamify_hidden_subskills" && Array.isArray(s.value?.keys)) gamifyHiddenSubskills = s.value.keys;
+            if (s.key === "gamify_hidden_subskills") gamifyHiddenSubskills = normalizeHiddenSubskills(s.value);
           }
         } catch (e) {
           console.warn("gamify not available (run migration 0050?):", e?.message || e);
@@ -1118,7 +1138,7 @@ function WorkflowProvider({ children }) {
       .on("postgres_changes",
           { event: "*", schema: "public", table: "app_settings", filter: "key=eq.gamify_hidden_subskills" },
           (payload) => {
-            if (Array.isArray(payload.new?.value?.keys)) dispatch({ type: "SET_GAMIFY_HIDDEN_SUBSKILLS", keys: payload.new.value.keys });
+            dispatch({ type: "SET_GAMIFY_HIDDEN_SUBSKILLS", map: normalizeHiddenSubskills(payload.new?.value) });
           })
       .subscribe((status, err) => {
         // A postgres_changes listener for a table that isn't in the
@@ -1408,6 +1428,7 @@ function WorkflowProvider({ children }) {
       },
 
       createDailyTask: async ({ assignedTo, createdBy, taskText, taskDate }) => {
+        const maxOrder = stateRef.current.dailyTasks.reduce((m, t) => Math.max(m, t.sortOrder ?? -1), -1);
         const row = {
           id: crypto.randomUUID(),
           assigned_to: assignedTo,
@@ -1415,6 +1436,7 @@ function WorkflowProvider({ children }) {
           task_text: taskText,
           task_date: taskDate || new Date().toISOString().slice(0, 10),
           completed: false,
+          sort_order: maxOrder + 1,
         };
         dispatch({ type: "UPSERT_DAILY_TASK", item: {
           ...row,
@@ -1422,16 +1444,45 @@ function WorkflowProvider({ children }) {
           createdBy: row.created_by,
           taskText: row.task_text,
           taskDate: row.task_date,
+          sortOrder: maxOrder + 1,
           // so the new task sorts correctly before the realtime echo lands
           created_at: new Date().toISOString(),
         }});
         if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
-        await supabase.from("daily_tasks").insert(row).then(({ error }) => {
+        // sort_order column may not exist yet (migration 0056) — degrade
+        // gracefully: on a column-missing error, retry the insert without it.
+        let { error } = await supabase.from("daily_tasks").insert(row);
+        if (error && /sort_order|column|PGRST204/i.test(error.message || "")) {
+          const { sort_order, ...rest } = row;
+          error = (await supabase.from("daily_tasks").insert(rest)).error;
+        }
+        if (error) {
+          console.error("createDailyTask persist failed:", error);
+          dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+        }
+      },
+
+      /* Persist a manual drag-reorder of the daily-task list. Assigns
+         sort_order by array index, optimistically reorders, then writes each
+         row. Degrades gracefully if migration 0056 (sort_order) isn't applied
+         yet — the order then persists locally only. */
+      reorderDailyTasks: async (orderedIds) => {
+        dispatch({ type: "REORDER_DAILY_TASKS", orderedIds });
+        if (isDemoMode()) return;
+        for (let i = 0; i < orderedIds.length; i++) {
+          const { error } = await supabase.from("daily_tasks")
+            .update({ sort_order: i }).eq("id", orderedIds[i]);
           if (error) {
-            console.error("createDailyTask persist failed:", error);
+            if (/sort_order|column|PGRST204/i.test(error.message || "")) {
+              // 0056 not applied yet — order persists locally only; stop trying.
+              console.warn("reorderDailyTasks: sort_order column missing (apply migration 0056)");
+              return;
+            }
+            console.error("reorderDailyTasks persist failed:", error);
             dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+            return;
           }
-        });
+        }
       },
 
       completeDailyTask: async (id, completed) => {
@@ -1591,17 +1642,20 @@ function WorkflowProvider({ children }) {
         });
       },
 
-      /* Owner-archive of individual rubric rows. `keys` is the full next set of
-         hidden "skillKey:subId" ids. Hiding completely removes the row from the
-         rubric sheet (with no trace); it stays restorable from the archive panel.
-         Persists to app_settings, same RLS pattern as the other gamify toggles. */
-      setGamifyHiddenSubskills: (keys) => {
-        const next = Array.from(new Set(keys || []));
-        dispatch({ type: "SET_GAMIFY_HIDDEN_SUBSKILLS", keys: next });
+      /* Owner-archive of individual rubric rows, PER REEL. `keysForReel` is the
+         full next set of hidden "skillKey:subId" ids for the given `reelId`.
+         Hiding completely removes the row from that reel's rubric sheet (with no
+         trace); it stays restorable from the archive panel. The whole per-reel
+         map { [reelId]: string[] } is persisted to app_settings as { map },
+         same RLS pattern as the other gamify toggles. */
+      setGamifyHiddenSubskills: (reelId, keysForReel) => {
+        const current = stateRef.current.gamifyHiddenSubskills || {};
+        const nextMap = { ...current, [reelId]: Array.from(new Set(keysForReel || [])) };
+        dispatch({ type: "SET_GAMIFY_HIDDEN_SUBSKILLS", map: nextMap });
         if (isDemoMode()) return;
         supabase.from("app_settings").upsert({
           key: "gamify_hidden_subskills",
-          value: { keys: next },
+          value: { map: nextMap },
           updated_at: new Date().toISOString(),
         }).then(({ error }) => {
           if (error) {
