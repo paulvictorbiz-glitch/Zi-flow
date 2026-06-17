@@ -4,39 +4,43 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- Built the **automated news/RSS ingestion** for the owner-only **Pulse** tab: owner curates feeds in a Sources manager → a Hetzner cron (every 30 min) + a "Refresh now" button fetch each feed, classify items (free OpenRouter, source-default fallback), dedup, and write them into the Pulse feed as `poller` rows.
-- Folded the ingester into `api/ai/suggest.js` as `?action=news-ingest` (**no new Vercel function** — at the 12-cap). New zero-dep RSS/Atom parser in `api/ai/_rss.js`.
-- Fixed the bug that blocked all ingestion: the `monitor_events` dedup index was **partial**, which Postgres won't use for `ON CONFLICT` → migration **0061** swaps it for a full unique index. After the fix, 30 articles ingested, dedup verified.
-- Added a **News Monitor health card** (Monitor page) + a **60-day retention prune** (poller rows, keeps starred).
-- Committed (`4455424`), **deployed to prod**, and fixed both Hetzner crontab lines to use `www` (the apex 308-redirects API routes — the old insights cron had been silently hitting the redirect).
-- Also generated `.claude/workflows/pulse-monitor.js` (a multi-agent build workflow file; gitignored).
+- Made **"DM a reel to @paulvictortravels (with a tag note) → it auto-logs to the Reel DNA spreadsheet"** fully **LIVE and automatic**.
+- The **webhook approach dead-ended**: Instagram only delivers real-DM webhooks once the app is **published + App-Review'd**; Development mode emits only the dashboard's synthetic "Test" event. (We proved this end-to-end: handler, signature, parser all work — Meta just never POSTs real DMs.)
+- **Pivoted to polling** the Business-Suite Instagram inbox: new `GET/POST /api/ig/sync` reads the Page's IG conversations, takes each shared reel's permalink from `shares.data[].link`, pairs it with the adjacent tag-note text, and inserts a `reel_dna` row (deduped on the share-message id). `parseTagNote` splits the note into Location/Music/Font columns.
+- Deployed the poller to **Hetzner**, added a **15-min cron**, dedup pre-check keeps Supabase writes ~0, async run dodges nginx's 60s timeout. **33 reels captured live.**
+- Committed `01046fd`; ran `vercel --prod` (frontend unchanged — feature is 100% backend, so the deploy was effectively a no-op).
+- Big lesson: the **Instagram-Login API uses a separate Instagram App Secret** (`IG_APP_SECRET`), and its webhook payload is `entry[].changes[].value`, not `messaging[]`.
 
 ## Where we left off
-Pulse news ingestion is **fully live** on footagebrain.com. Migrations 0059/0060/0061 applied to Supabase. Owner adds RSS feeds via **Pulse → Sources**, hits **Refresh now** (or waits for the 30-min cron). 2 sources configured, 30 articles ingested. The feature commit is on branch `bugfix-daily-use-batch` (not pushed).
+Inspiration capture is **working in production**: DM a reel to paulvictortravels and within ~15 min it appears in **Reel DNA → Spreadsheet** with the reel link + parsed tags. The poller (`/api/ig/sync`) is live on Hetzner with a 15-min crontab line; the webhook handler (`/api/ig/webhook`) stays deployed but dormant (only fires if the app is ever published). Branch `bugfix-daily-use-batch` holds this session's commit `01046fd` plus the prior Pulse commit `4455424` — **neither pushed to GitHub/main**.
 
 ## Open blockers
-- **None.** Ingestion, dedup, prune, cron, and the Monitor card are all verified live.
+- **None functionally.** The feature works via polling.
+- Webhooks (instant push) remain unavailable until the Meta app is **published + App-Review'd** for `instagram_business_manage_messages` — deferred; the poll covers the need.
 
-## Pending (written but not yet live)
-- **None for Pulse.**
-- Pre-existing (separate workstream, untouched this session): `CHANGELOG.md` / `HANDOFF.md` / `backend-handoff/ig_webhook.py` carry uncommitted **IG-DM** edits from a prior session; the IG-DM backend is deployed, only Meta-console config remains (see the IG-DM CHANGELOG entry).
+## Pending (written but not yet live / follow-ups)
+- **Rotate secrets pasted in chat:** the `IG_APP_SECRET` (`9d5a…`) and the two Instagram access tokens were pasted into the session — regenerate them in the Meta dashboard (Instagram app secret has a Reset; resetting won't break FB login). Update `IG_APP_SECRET` in `deploy/hetzner/.env` after.
+- **One leftover `(debug — no reel url)` row** from the Test event — delete it from the Reel DNA spreadsheet.
+- **Push `bugfix-daily-use-batch` → GitHub / merge → main** (commits `01046fd` + `4455424` are local only).
 
 ## Next session — start here
-1. **Push `bugfix-daily-use-batch` and/or merge → main** so the default branch matches prod (the Pulse commit `4455424` is local only).
-2. **Seed a few more Pulse sources** if desired (platform newsrooms for `algo`, world feeds for `news`) — see `backend-handoff/NEWS-MONITOR.md` for a starter list.
-3. Finish the **Instagram-DM-to-self ingest** (Meta console only — backend already live): add `instagram_manage_messages` + Webhooks subscription, then a calibration share.
+1. **Rotate the IG app secret + access tokens** (pasted in chat), update Hetzner `.env`, restart backend.
+2. **Push the branch to GitHub / merge → main** so the repo matches prod.
+3. Optionally: delete the leftover debug row; tune the cron interval if 15 min feels slow.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-# Pulse ingest health (run from a non-Avast box; expect {"ok":true,...,"pruned":N})
-curl -s "https://www.footagebrain.com/api/ai/suggest?action=news-ingest&secret=fbai_cron_2026"
+# Poller healthy + flags
+curl -s https://api.footagebrain.com/api/ig/status
+#  -> {"ok":true,"ingest_enabled":true,"app_secret_set":true,"supabase_configured":true,...}
 
-# Stored article count (service role; reads .env.local)
-#   -> Supabase REST: GET /rest/v1/monitor_events?source_type=eq.poller&select=id  (Prefer: count=exact)
+# Manual sync (synchronous, shows counts; dedup means inserted:0 on a repeat)
+curl -s "https://api.footagebrain.com/api/ig/sync?secret=fb_ig_sync_9f3a2026&wait=1"
+#  -> {"ok":true,"conversations":N,"reels_seen":M,"inserted":0}
 
-# Migrations applied?
-npm run migrate            # expect 0059/0060/0061 [ applied ], 0 pending
-
-# Hetzner crontab (both lines should be www.footagebrain.com)
+# Cron present (3 lines: insights, news-ingest, ig/sync every 15m)
 ssh root@178.105.14.144 "crontab -l"
+
+# Captured reels count (service role; reads .env.local)
+#  Supabase REST: GET /rest/v1/reel_dna?source=eq.ig_dm&select=count  (Prefer: count=exact)
 ```

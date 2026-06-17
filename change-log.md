@@ -68,6 +68,7 @@ Living inventory of every feature and change built. Grouped by pillar, newest fi
 | Date | Feature | Key Files / Migration | Status |
 |------|---------|----------------------|--------|
 | 2026-06-17 | **Reel Inspiration Library (on Reel DNA)** — Tag-note parser (`location=Bali, music=phonk, font=Aktiv, sfx=…`) auto-fills the gene fields + new `location` column + chips; Cards⇄Spreadsheet toggle with inline-editable columns; clicking a row opens the existing DNA helix/timeline; parse-on-read fills IG-DM/manual rows. The 1-click logger for inspiration reels | `src/lib/reel-dna.jsx` (`parseTagNote`), `src/pages/reel-dna.jsx` (`DnaTable`/`EditableCell`), `reel-dna.css`, `store.jsx`, migration `0058_reel_dna_location.sql` | `[LIVE]` |
+| 2026-06-18 | **Instagram DM → Reel DNA spreadsheet (poll)** — DM a reel (+ tag note) to @paulvictortravels → auto-logged to the Reel DNA spreadsheet. Polls the Business-Suite IG inbox (`/api/ig/sync`), pulls each reel permalink from `shares.data[].link`, pairs the adjacent tag note, dedups into `reel_dna`. 15-min Hetzner cron. Webhooks abandoned (need app Published + App Review; dev mode = synthetic Test only) | Hetzner `backend/app/api/ig_webhook.py` (src: `backend-handoff/ig_webhook.py`) | `[LIVE]` |
 | 2026-06-11 | **Instagram per-reel analytics grid** — Analytics tab shows 12-reel thumbnail grid; clicking opens detail panel with 8 lifetime metrics (reach, views, likes, comments, shares, saves, interactions, avg watch time) | `src/pages/analytics.jsx`, `src/lib/social-client.js`, Hetzner `backend/app/api/instagram.py` | `[LIVE]` |
 | 2026-06-11 | **Fix Instagram Page selection** — Backend now probes all FB Pages for a linked IG account instead of blindly using `pages[0]`; fixed for multi-Page accounts | Hetzner `backend/app/api/instagram.py` | `[LIVE]` |
 | 2026-06-11 | **Fix Instagram insights metric format** — Switched to `metric_type=total_value` for `profile_views`; `reach` remains daily time-series. Two-call approach keeps response shape stable | Hetzner `backend/app/api/instagram.py` | `[LIVE]` |
@@ -210,14 +211,17 @@ Schema history in order. All applied to the Supabase `kjruhbaahqkuajseoojn` proj
 
 **2026-06-18 — Pulse automated news monitor shipped.** The owner-only Pulse tab (manual feed, migration 0059) plus **automated RSS ingestion** (Sources manager, `api/ai/_rss.js` ingester via `suggest.js?action=news-ingest`, Hetzner cron /30m, 60-day prune, Monitor health card) are LIVE. Migrations 0059/0060/0061 applied; committed `4455424`; deployed `vercel --prod`. Both Hetzner cron lines moved to `www` (apex 308-redirects API routes). Commit is on `bugfix-daily-use-batch`, not yet pushed/merged.
 
+**2026-06-18 — Instagram-DM-to-spreadsheet ingest LIVE (via poll).** "DM a reel (+ tag note) to @paulvictortravels → it auto-logs to the Reel DNA spreadsheet" is working in prod. **Webhooks were abandoned** (Instagram only delivers real-DM webhooks once the app is *Published + App-Review'd*; dev mode emits only the synthetic Test). Pivoted to **polling the Business-Suite IG inbox**: `GET/POST /api/ig/sync` on Hetzner reads the Page's IG conversations, pulls each shared reel's permalink from `shares.data[].link`, pairs the adjacent tag-note text, and dedups into `reel_dna` (`source='ig_dm'`). 15-min Hetzner cron; dedup pre-check → ~0 steady-state Supabase writes; 33 reels captured. Committed `01046fd`; `vercel --prod` (frontend unchanged). Handler `ig_webhook.py` on Hetzner; src copy in `backend-handoff/`.
+
 **Still pending (does not block prod):**
 
-- **Branch not merged to `main`.** Prod deploys from the working tree on `bugfix-daily-use-batch`; merge → `main` so the default branch matches what's live (backup/cleanliness).
-- **Instagram-DM-to-self ingest — backend handler DRAFTED, deploy pending.** `backend-handoff/ig_webhook.py` (+ `backend-handoff/IG-DM-DEPLOY.md`, with a `FEATURE_IG_DM_DEBUG` calibration mode) completes the "DM a reel → Reel DNA spreadsheet" flow. Remaining is owner/SSH + Meta-console work only (SCP to Hetzner `backend/app/api/`, register the router, set env `IG_WEBHOOK_VERIFY_TOKEN`/`META_APP_SECRET`/flags, `docker compose build/up`; then Meta `instagram_manage_messages` + a Webhooks subscription on `messages`). NOT deployable from this Vercel repo — see HANDOFF.md + memory `reel-dna-ig-dm-ingest`.
+- **Branch not merged to `main`.** Prod deploys from the working tree on `bugfix-daily-use-batch`; merge → `main` so the default branch matches what's live (commits `01046fd` + `4455424` are local only).
+- **Rotate IG secrets pasted in chat:** `IG_APP_SECRET` + the 2 Instagram access tokens — regenerate in the Meta dashboard, update Hetzner `deploy/hetzner/.env`, restart backend.
+- **Delete the one leftover `(debug — no reel url)` row** from the Reel DNA spreadsheet (a Test-event artifact).
 - **Rocket.Chat config (owner action, no code):** set Leroy's role to reflect **Owner** (currently `admin`); disable **self-assignment** of the Owner role — both in `chat.footagebrain.com` admin.
 
-**Next step:** merge `bugfix-daily-use-batch` → `main`; then deploy the IG-DM webhook handler to Hetzner + configure Meta (`backend-handoff/IG-DM-DEPLOY.md`).
+**Next step:** rotate the IG secrets/tokens; push `bugfix-daily-use-batch` → GitHub / merge → `main`.
 
 ---
 
-*Last updated: 2026-06-18 (wrap-up #9 — Pulse automated news/RSS ingestion: Sources manager + Hetzner cron + free-LLM classify + 60-day prune + Monitor health card; fixed the partial-index ON CONFLICT bug via 0061; committed 4455424 + deployed `vercel --prod`) — update this file after each deploy or feature addition.*
+*Last updated: 2026-06-18 (wrap-up #10 — Instagram-DM-to-spreadsheet ingest LIVE via polling the Business-Suite IG inbox (`/api/ig/sync` + 15-min Hetzner cron); webhooks abandoned — need app Published + App Review; IG-Login uses a separate `IG_APP_SECRET`; committed `01046fd` + `vercel --prod`) — update this file after each deploy or feature addition.*
