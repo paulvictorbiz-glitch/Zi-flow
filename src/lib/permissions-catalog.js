@@ -40,6 +40,7 @@ export const VIEW_CAPS = [
   { key: "activity",  label: "Activity (CapCut tracker)" },
   { key: "resources", label: "Resources (link sheet)" },
   { key: "monitor",   label: "Monitor (infra usage)" },
+  { key: "pulse",     label: "Pulse (real-time alerts)" },
   { key: "ai",        label: "AI Brain (bot & notes)" },
 ];
 
@@ -110,6 +111,7 @@ export function defaultPermsForRole(roleKey) {
   for (const v of VIEW_CAPS) views[v.key] = true;
   views.activity = false; // private monitoring tab — owner enables per-person
   views.monitor  = false; // infra usage — owner only
+  views.pulse    = false; // real-time alerts — owner only
   views.ai       = false; // AI Brain — owner only
 
   const actions = {};

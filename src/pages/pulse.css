@@ -1,0 +1,507 @@
+/* =========================================================
+   Pulse page styles
+   Mirrors ai-brain.css shape (centred column, header, filters,
+   list rows, empty state) + monitor.css severity pattern.
+   ========================================================= */
+
+.pulse-root {
+  padding: 20px 24px 40px;
+  max-width: 1200px;
+  margin: 0 auto;
+  color: var(--fg);
+}
+
+/* ── Header row (title left, +Add entry right) ──────────── */
+.pulse-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.pulse-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pulse-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pulse-title {
+  font-size: 1.25rem;
+  color: var(--fg);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.pulse-subtitle {
+  color: var(--fg-dim);
+  font-size: 0.9rem;
+  margin: 0;
+  line-height: 1.3;
+}
+
+/* ── Filters wrapper ────────────────────────────────────── */
+.pulse-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.pulse-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Chips ── small toggle pill ─────────────────────────────── */
+.pulse-chip {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--f-mono);
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.pulse-chip:hover {
+  color: var(--fg);
+}
+.pulse-chip--active {
+  background: var(--c-cyan);
+  border-color: var(--c-cyan);
+  color: var(--bg);
+}
+
+/* Tone variants (sit on top of base chip; layer with --active) */
+.pulse-chip--info {
+  color: var(--c-cyan);
+}
+.pulse-chip--watch {
+  color: var(--c-amber);
+}
+.pulse-chip--high {
+  color: var(--c-red);
+}
+
+/* When a tone chip is also active, fill with the tone colour
+   (override the default cyan fill of .pulse-chip--active). */
+.pulse-chip--active.pulse-chip--info {
+  background: var(--c-cyan);
+  border-color: var(--c-cyan);
+  color: var(--bg);
+}
+.pulse-chip--active.pulse-chip--watch {
+  background: var(--c-amber);
+  border-color: var(--c-amber);
+  color: var(--bg);
+}
+.pulse-chip--active.pulse-chip--high {
+  background: var(--c-red);
+  border-color: var(--c-red);
+  color: var(--bg);
+}
+
+/* ── Empty / loading / non-owner notice ─────────────────── */
+.pulse-empty {
+  padding: 24px 14px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: var(--f-mono);
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* ── Feed wrapper ───────────────────────────────────────── */
+.pulse-feed {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* The inner PulseFeed wrapper is also `.pulse-feed`; when nested
+   inside the outer `.pulse-feed` (the page wrapper) it should not
+   double up the border / background. */
+.pulse-feed .pulse-feed {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+/* ── Day group wrapper ──────────────────────────────────── */
+.pulse-day {
+  margin-bottom: 0;
+}
+.pulse-day + .pulse-day {
+  border-top: 1px solid var(--border);
+}
+
+/* ── Day header ─────────────────────────────────────────── */
+.pulse-day-header {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+/* ── Row: severity badge | content | actions ─────────────── */
+.pulse-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.pulse-row:last-child {
+  border-bottom: none;
+}
+
+.pulse-row-content {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The component actually emits `.pulse-row-main` (column wrapping
+   head/title/summary/meta). Same shape as `.pulse-row-content`. */
+.pulse-row-main {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pulse-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pulse-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pulse-row-summary {
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pulse-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-family: var(--f-mono);
+  color: var(--fg-dim);
+}
+
+/* ── Severity badge ─────────────────────────────────────── */
+.pulse-sev {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-family: var(--f-mono);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  background: var(--bg);
+  white-space: nowrap;
+}
+.pulse-sev--info {
+  color: var(--c-cyan);
+  border-color: var(--c-cyan);
+}
+.pulse-sev--watch {
+  color: var(--c-amber);
+  border-color: var(--c-amber);
+}
+.pulse-sev--high {
+  color: var(--c-red);
+  border-color: var(--c-red);
+}
+
+/* ── Platform glyph (small mono badge in row head) ──────── */
+.pulse-platform {
+  font-family: var(--f-mono);
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+/* ── Region label (small mono text in row meta) ─────────── */
+.pulse-region {
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  font-family: var(--f-mono);
+}
+
+/* ── Tags container (holds .pulse-tag pills) ────────────── */
+.pulse-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* ── Tag pill ───────────────────────────────────────────── */
+.pulse-tag {
+  font-size: 10px;
+  font-family: var(--f-mono);
+  color: var(--fg-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+/* ── Source link ────────────────────────────────────────── */
+.pulse-source {
+  font-size: 10px;
+  font-family: var(--f-mono);
+  color: var(--c-cyan);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--c-cyan);
+}
+.pulse-source:hover {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+}
+
+/* ── Actions cluster ────────────────────────────────────── */
+.pulse-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.pulse-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.pulse-actions button:hover {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
+
+/* ── Individual action button (component emits .pulse-act) ─ */
+.pulse-act {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.pulse-act:hover {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
+
+/* Read / Archive variants — share the base look */
+.pulse-act--read,
+.pulse-act--archive {
+  /* inherits from .pulse-act */
+}
+
+/* Star — highlights when `is-on` (item.starred === true) */
+.pulse-act--star.is-on {
+  color: var(--c-amber);
+  border-color: var(--c-amber);
+}
+
+/* Trash — red hover affordance */
+.pulse-act--trash:hover {
+  color: var(--c-red);
+  border-color: var(--c-red);
+}
+
+/* Generic `.is-on` modifier (defensive, in case other act buttons
+   gain a toggled state in future). Star override above wins for
+   `.pulse-act--star.is-on` because of higher specificity. */
+.pulse-act.is-on {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
+
+/* ── Modal local container ──────────────────────────────── */
+.pulse-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--fg);
+}
+
+/* ── Responsive: narrow widths wrap actions below ───────── */
+@media (max-width: 700px) {
+  .pulse-root {
+    padding: 12px 14px 32px;
+  }
+  .pulse-row {
+    gap: 8px;
+  }
+  .pulse-row-content,
+  .pulse-row-main {
+    flex: 1 1 100%;
+    order: 2;
+  }
+  .pulse-sev {
+    order: 1;
+  }
+  .pulse-actions {
+    order: 3;
+    margin-left: 0;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+/* ── News-monitor: header toast + Sources manager ───────── */
+.pulse-toast {
+  font-size: 12px;
+  color: var(--c-ink-dim, #9aa);
+  background: var(--c-panel, rgba(255,255,255,0.04));
+  border: 1px dashed var(--c-line, rgba(255,255,255,0.14));
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.pulse-src-listhead {
+  margin-top: 14px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-ink-dim, #9aa);
+}
+.pulse-src-list {
+  margin-top: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pulse-src-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-line, rgba(255,255,255,0.12));
+  border-radius: 10px;
+  background: var(--c-panel, rgba(255,255,255,0.03));
+}
+.pulse-src-row.is-off { opacity: 0.55; }
+.pulse-src-toggle {
+  flex: 0 0 auto;
+  min-width: 38px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--c-line, rgba(255,255,255,0.2));
+  background: transparent;
+  color: var(--c-ink-dim, #9aa);
+  cursor: pointer;
+}
+.pulse-src-toggle.is-on {
+  border-color: var(--c-green, #34d399);
+  color: var(--c-green, #34d399);
+}
+.pulse-src-main { flex: 1 1 auto; min-width: 0; }
+.pulse-src-name {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pulse-src-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--c-line, rgba(255,255,255,0.18));
+  color: var(--c-ink-dim, #9aa);
+}
+.pulse-src-badge.dim { opacity: 0.7; }
+.pulse-src-url {
+  display: block;
+  font-size: 11px;
+  color: var(--c-ink-dim, #8a9);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.pulse-src-url:hover { text-decoration: underline; }
+.pulse-src-health {
+  font-size: 11px;
+  color: var(--c-ink-dim, #9aa);
+  margin-top: 2px;
+}
+.pulse-src-health.is-err { color: var(--c-red, #ef4444); }
+.pulse-src-del {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0.6;
+}
+.pulse-src-del:hover { opacity: 1; }

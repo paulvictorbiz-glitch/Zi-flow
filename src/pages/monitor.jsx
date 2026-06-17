@@ -113,6 +113,59 @@ function StatRow({ label, value, tone }) {
   );
 }
 
+/* ── News Monitor (Pulse) health ─────────────────────────────
+   Reads the live Pulse slices from the store (no extra fetch): source
+   health (enabled / errored / last fetched) + how many auto-ingested
+   articles are stored. Poller rows auto-prune after 60 days, so the
+   count stays bounded; we still warn if it climbs unusually high. */
+function fmtAgo(iso) {
+  if (!iso) return "never";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
+function NewsMonitorSection() {
+  const { monitorSources, monitorEvents } = useWorkflow();
+  const sources = Array.isArray(monitorSources) ? monitorSources : [];
+  const events  = Array.isArray(monitorEvents) ? monitorEvents : [];
+
+  const active   = sources.filter(s => s.enabled).length;
+  const errored  = sources.filter(s => s.lastStatus && s.lastStatus !== "ok");
+  const pollerN  = events.filter(e => e.sourceType === "poller").length;
+  const lastIngest = sources.reduce((m, s) =>
+    (s.lastFetchedAt && (!m || s.lastFetchedAt > m)) ? s.lastFetchedAt : m, null);
+  // Bounded by the 60-day prune; flag if it climbs past a generous ceiling.
+  const growthTone = pollerN > 5000 ? "amber" : "ok";
+
+  return (
+    <div className="mon-section-body">
+      <div className="mon-stats-grid">
+        <StatRow label="Active sources" value={`${active} / ${sources.length}`}
+          tone={sources.length === 0 ? "amber" : "ok"} />
+        <StatRow label="Articles stored" value={fmt(pollerN)} tone={growthTone} />
+        <StatRow label="Last ingest" value={fmtAgo(lastIngest)} />
+        <StatRow label="Feeds erroring" value={errored.length}
+          tone={errored.length ? "red" : "ok"} />
+      </div>
+      {errored.length > 0 && (
+        <div className="mon-hint" style={{ marginTop: 8, color: "var(--c-red, #ef4444)" }}>
+          {errored.map(s => s.name).join(", ")} — check the feed URL in Pulse → Sources.
+        </div>
+      )}
+      <div className="mon-hint" style={{ marginTop: 8 }}>
+        Auto-ingested every 30 min · classified by free OpenRouter models (falls back to
+        source defaults if throttled) · poller articles auto-prune after 60 days.
+      </div>
+    </div>
+  );
+}
+
 /* ── Toast ───────────────────────────────────────────────── */
 function Toast({ msg, onDismiss }) {
   if (!msg) return null;
@@ -1243,6 +1296,10 @@ export function Monitor() {
 
         <Card title="AI Credits" footLeft="Cohere free tier · FAQ bot usage">
           <AiCreditsSection />
+        </Card>
+
+        <Card title="News Monitor" footLeft="Pulse feeds · auto-ingest health">
+          <NewsMonitorSection />
         </Card>
 
         <Card title="Vercel" footLeft="Hosting · Functions · Bandwidth">

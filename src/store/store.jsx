@@ -171,6 +171,86 @@ function reelDnaToDb(item) {
   return out;
 }
 
+function monitorEventFromDb(row) {
+  if (!row) return row;
+  const { source_type, external_id, source_name, source_url,
+          published_at, created_by, created_at, updated_at,
+          ...rest } = row;
+  return {
+    ...rest,
+    sourceType: source_type ?? undefined,
+    externalId: external_id ?? undefined,
+    sourceName: source_name ?? undefined,
+    sourceUrl: source_url ?? undefined,
+    publishedAt: published_at ?? undefined,
+    createdBy: created_by ?? undefined,
+    createdAt: created_at ?? undefined,
+    updatedAt: updated_at ?? undefined,
+    // Defaults on read — schema lock keeps status as 'new'|'read'|'archived'.
+    tags: rest.tags ?? [],
+    starred: rest.starred ?? false,
+  };
+}
+function monitorEventToDb(item) {
+  // Only columns that exist in public.monitor_events. Drops undefined keys so
+  // partial updates don't overwrite columns the caller didn't mean to touch.
+  const { id, sourceType, externalId, category, platform, severity, status,
+          starred, title, summary, sourceName, sourceUrl, region, tags,
+          publishedAt, createdBy } = item;
+  const out = {};
+  if (id !== undefined)          out.id = id;
+  if (sourceType !== undefined)  out.source_type = sourceType;
+  if (externalId !== undefined)  out.external_id = externalId;
+  if (category !== undefined)    out.category = category;
+  if (platform !== undefined)    out.platform = platform;
+  if (severity !== undefined)    out.severity = severity;
+  if (status !== undefined)      out.status = status;
+  if (starred !== undefined)     out.starred = starred;
+  if (title !== undefined)       out.title = title;
+  if (summary !== undefined)     out.summary = summary;
+  if (sourceName !== undefined)  out.source_name = sourceName;
+  if (sourceUrl !== undefined)   out.source_url = sourceUrl;
+  if (region !== undefined)      out.region = region;
+  if (tags !== undefined)        out.tags = tags;
+  if (publishedAt !== undefined) out.published_at = publishedAt;
+  if (createdBy !== undefined)   out.created_by = createdBy;
+  return out;
+}
+
+function monitorSourceFromDb(row) {
+  if (!row) return row;
+  const { severity_default, last_fetched_at, last_status, item_count,
+          created_by, created_at, updated_at, ...rest } = row;
+  return {
+    ...rest,
+    severityDefault: severity_default ?? "info",
+    lastFetchedAt: last_fetched_at ?? undefined,
+    lastStatus: last_status ?? undefined,
+    itemCount: item_count ?? 0,
+    createdBy: created_by ?? undefined,
+    createdAt: created_at ?? undefined,
+    updatedAt: updated_at ?? undefined,
+    enabled: rest.enabled ?? true,
+  };
+}
+function monitorSourceToDb(item) {
+  // Only columns that exist in public.monitor_sources. Drops undefined keys so
+  // partial updates don't overwrite columns the caller didn't mean to touch.
+  const { id, name, url, category, platform, region, severityDefault,
+          enabled, createdBy } = item;
+  const out = {};
+  if (id !== undefined)              out.id = id;
+  if (name !== undefined)            out.name = name;
+  if (url !== undefined)             out.url = url;
+  if (category !== undefined)        out.category = category;
+  if (platform !== undefined)        out.platform = platform;
+  if (region !== undefined)          out.region = region;
+  if (severityDefault !== undefined) out.severity_default = severityDefault;
+  if (enabled !== undefined)         out.enabled = enabled;
+  if (createdBy !== undefined)       out.created_by = createdBy;
+  return out;
+}
+
 function reelChatRefsFromDb(row) {
   if (!row) return row;
   const { reel_id, message_url, created_by, created_at, ...rest } = row;
@@ -459,6 +539,50 @@ function workflowReducer(state, action) {
 
     case "DELETE_REEL_DNA_BY_ID":
       return { ...state, reelDna: state.reelDna.filter(d => d.id !== action.id) };
+
+    /* Pulse Monitor events — same optimistic + realtime shape as reel_dna. */
+    case "CREATE_MONITOR_EVENT":
+      return { ...state, monitorEvents: [action.item, ...state.monitorEvents] };
+
+    case "UPDATE_MONITOR_EVENT": {
+      const apply = (e) => e.id === action.id ? { ...e, ...action.patch } : e;
+      return { ...state, monitorEvents: state.monitorEvents.map(apply) };
+    }
+
+    case "UPSERT_MONITOR_EVENT": {
+      const exists = state.monitorEvents.some(e => e.id === action.item.id);
+      return {
+        ...state,
+        monitorEvents: exists
+          ? state.monitorEvents.map(e => e.id === action.item.id ? action.item : e)
+          : [action.item, ...state.monitorEvents],
+      };
+    }
+
+    case "DELETE_MONITOR_EVENT_BY_ID":
+      return { ...state, monitorEvents: state.monitorEvents.filter(e => e.id !== action.id) };
+
+    /* Pulse Monitor sources — owner-curated feed list; same shape as above. */
+    case "CREATE_MONITOR_SOURCE":
+      return { ...state, monitorSources: [action.item, ...state.monitorSources] };
+
+    case "UPDATE_MONITOR_SOURCE": {
+      const apply = (s) => s.id === action.id ? { ...s, ...action.patch } : s;
+      return { ...state, monitorSources: state.monitorSources.map(apply) };
+    }
+
+    case "UPSERT_MONITOR_SOURCE": {
+      const exists = state.monitorSources.some(s => s.id === action.item.id);
+      return {
+        ...state,
+        monitorSources: exists
+          ? state.monitorSources.map(s => s.id === action.item.id ? action.item : s)
+          : [action.item, ...state.monitorSources],
+      };
+    }
+
+    case "DELETE_MONITOR_SOURCE_BY_ID":
+      return { ...state, monitorSources: state.monitorSources.filter(s => s.id !== action.id) };
 
     /* Reel ↔ chat refs — same optimistic + realtime shape as reel_dna. */
     case "CREATE_REEL_CHAT_REF":
@@ -784,6 +908,70 @@ async function persistUpdateReelDna(id, patch) {
   if (error) throw error;
 }
 
+async function persistCreateMonitorEvent(item) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase.from("monitor_events").insert(monitorEventToDb(item));
+  if (error) throw error;
+}
+
+async function persistUpdateMonitorEvent(id, patch) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  // Remap camelCase patch keys to snake_case. Skips undefined keys so a
+  // partial update doesn't blow away columns the caller didn't set.
+  const dbPatch = {};
+  if ("sourceType" in patch)  dbPatch.source_type = patch.sourceType;
+  if ("externalId" in patch)  dbPatch.external_id = patch.externalId;
+  if ("category" in patch)    dbPatch.category = patch.category;
+  if ("platform" in patch)    dbPatch.platform = patch.platform;
+  if ("severity" in patch)    dbPatch.severity = patch.severity;
+  if ("status" in patch)      dbPatch.status = patch.status;
+  if ("starred" in patch)     dbPatch.starred = patch.starred;
+  if ("title" in patch)       dbPatch.title = patch.title;
+  if ("summary" in patch)     dbPatch.summary = patch.summary;
+  if ("sourceName" in patch)  dbPatch.source_name = patch.sourceName;
+  if ("sourceUrl" in patch)   dbPatch.source_url = patch.sourceUrl;
+  if ("region" in patch)      dbPatch.region = patch.region;
+  if ("tags" in patch)        dbPatch.tags = patch.tags;
+  if ("publishedAt" in patch) dbPatch.published_at = patch.publishedAt;
+  if ("createdBy" in patch)   dbPatch.created_by = patch.createdBy;
+  if (!Object.keys(dbPatch).length) return;
+  const { error } = await supabase.from("monitor_events").update(dbPatch).eq("id", id);
+  if (error) throw error;
+}
+
+async function persistDeleteMonitorEvent(id) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase.from("monitor_events").delete().eq("id", id);
+  if (error) throw error;
+}
+
+async function persistCreateMonitorSource(item) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase.from("monitor_sources").insert(monitorSourceToDb(item));
+  if (error) throw error;
+}
+
+async function persistUpdateMonitorSource(id, patch) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const dbPatch = {};
+  if ("name" in patch)            dbPatch.name = patch.name;
+  if ("url" in patch)             dbPatch.url = patch.url;
+  if ("category" in patch)        dbPatch.category = patch.category;
+  if ("platform" in patch)        dbPatch.platform = patch.platform;
+  if ("region" in patch)          dbPatch.region = patch.region;
+  if ("severityDefault" in patch) dbPatch.severity_default = patch.severityDefault;
+  if ("enabled" in patch)         dbPatch.enabled = patch.enabled;
+  if (!Object.keys(dbPatch).length) return;
+  const { error } = await supabase.from("monitor_sources").update(dbPatch).eq("id", id);
+  if (error) throw error;
+}
+
+async function persistDeleteMonitorSource(id) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase.from("monitor_sources").delete().eq("id", id);
+  if (error) throw error;
+}
+
 async function persistCreateReelChatRef(item) {
   if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const { id, reelId, channel, note, messageUrl, createdBy } = item;
@@ -875,6 +1063,8 @@ const INITIAL_STATE = {
   attachedFootage: [],
   dailyTasks: [],
   reelDna: [],
+  monitorEvents: [],
+  monitorSources: [],
   reelChatRefs: [],
   gamifyProgress: [],
   gamifyRubrics: [],
@@ -938,6 +1128,33 @@ function WorkflowProvider({ children }) {
           reelDna = (reelDnaRes.data || []).map(reelDnaFromDb);
         } catch (e) {
           console.warn("reel_dna not available (run migration 0044?):", e?.message || e);
+        }
+
+        /* Pulse Monitor events degrade to [] until migration 0059 lands. Same
+           all-or-nothing reasoning as reel_dna above — the hydrate gates the
+           whole app on `loaded`, so we never let a missing table brick boot. */
+        let monitorEvents = [];
+        try {
+          const monitorRes = await supabase
+            .from("monitor_events").select("*")
+            .order("created_at", { ascending: false });
+          if (monitorRes.error) throw monitorRes.error;
+          monitorEvents = (monitorRes.data || []).map(monitorEventFromDb);
+        } catch (e) {
+          console.warn("monitor_events not available (run migration 0059?)", e?.message || e);
+        }
+
+        /* Pulse Monitor sources — owner-curated feed list (migration 0060).
+           Degrades to [] if the table isn't there yet, same as monitor_events. */
+        let monitorSources = [];
+        try {
+          const sourcesRes = await supabase
+            .from("monitor_sources").select("*")
+            .order("created_at", { ascending: true });
+          if (sourcesRes.error) throw sourcesRes.error;
+          monitorSources = (sourcesRes.data || []).map(monitorSourceFromDb);
+        } catch (e) {
+          console.warn("monitor_sources not available (run migration 0060?)", e?.message || e);
         }
 
         /* Reel ↔ chat refs degrade to [] if migration 0046 hasn't run yet —
@@ -1005,6 +1222,8 @@ function WorkflowProvider({ children }) {
           attachedFootage: footageRes.data || [],
           dailyTasks: (dailyTasksRes.data || []).map(dailyTaskFromDb),
           reelDna,
+          monitorEvents,
+          monitorSources,
           reelChatRefs,
           gamifyProgress,
           gamifyRubrics,
@@ -1157,7 +1376,51 @@ function WorkflowProvider({ children }) {
             err || "");
         }
       });
-    return () => { supabase.removeChannel(channel); };
+
+    /* Pulse Monitor lives on its OWN channel so a missing monitor_events
+       table (migration 0059 not yet applied) only kills its own realtime —
+       not workflow-realtime, which carries every other tab's live updates.
+       Wrapped in try/catch in case the channel constructor itself throws. */
+    let monitorChannel = null;
+    try {
+      monitorChannel = supabase
+        .channel("monitor-events-realtime")
+        .on("postgres_changes",
+            { event: "*", schema: "public", table: "monitor_events" },
+            (payload) => {
+              if (payload.eventType === "DELETE") {
+                dispatch({ type: "DELETE_MONITOR_EVENT_BY_ID", id: payload.old?.id });
+              } else if (payload.new) {
+                dispatch({ type: "UPSERT_MONITOR_EVENT", item: monitorEventFromDb(payload.new) });
+              }
+            })
+        .on("postgres_changes",
+            { event: "*", schema: "public", table: "monitor_sources" },
+            (payload) => {
+              // Source toggles/adds + the ingester's last_status writes reflect live.
+              if (payload.eventType === "DELETE") {
+                dispatch({ type: "DELETE_MONITOR_SOURCE_BY_ID", id: payload.old?.id });
+              } else if (payload.new) {
+                dispatch({ type: "UPSERT_MONITOR_SOURCE", item: monitorSourceFromDb(payload.new) });
+              }
+            })
+        .subscribe((status, err) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn(
+              `monitor-events-realtime ${status} — live monitor updates OFF ` +
+              `(monitor_events likely not in supabase_realtime publication; ` +
+              `run migration 0059).`,
+              err || "");
+          }
+        });
+    } catch (e) {
+      console.warn("monitor-events-realtime channel registration failed:", e?.message || e);
+    }
+
+    return () => {
+      supabase.removeChannel(channel);
+      if (monitorChannel) { try { supabase.removeChannel(monitorChannel); } catch (_) {} }
+    };
   }, [state.loaded, _isDemo]);
 
   // Helper: dispatch locally, then persist. If persist fails,
@@ -1212,6 +1475,8 @@ function WorkflowProvider({ children }) {
     attachedFootage: state.attachedFootage,
     dailyTasks: state.dailyTasks,
     reelDna: state.reelDna,
+    monitorEvents: state.monitorEvents,
+    monitorSources: state.monitorSources,
     reelChatRefs: state.reelChatRefs,
     gamifyProgress: state.gamifyProgress,
     gamifyRubrics: state.gamifyRubrics,
@@ -1620,6 +1885,138 @@ function WorkflowProvider({ children }) {
       restoreReelDna: (id) => wrap(
         { type: "UPDATE_REEL_DNA", id, patch: { archivedAt: null } },
         () => persistUpdateReelDna(id, { archivedAt: null })),
+
+      /* ----- Pulse Monitor events -----
+         Same optimistic + realtime + Promise-returning shape as Reel DNA, but
+         pre-migration (0059 not yet applied) the persist will reject — the
+         Promise resolves to undefined on demo / rejects on DB error so callers
+         can surface a toast. Realtime lives on its own channel above. */
+      createMonitorEvent: async (partial = {}) => {
+        const now = new Date().toISOString();
+        const item = {
+          id: partial.id || crypto.randomUUID(),
+          // NOTE: createdBy and publishedAt are intentionally NOT defaulted —
+          // the caller (the Monitor tab) supplies them with the signed-in
+          // person id and the upstream feed timestamp.
+          sourceType: partial.sourceType,
+          externalId: partial.externalId,
+          category: partial.category,
+          platform: partial.platform,
+          severity: partial.severity,
+          status: partial.status ?? "new",
+          starred: partial.starred ?? false,
+          title: partial.title,
+          summary: partial.summary,
+          sourceName: partial.sourceName,
+          sourceUrl: partial.sourceUrl,
+          region: partial.region,
+          tags: partial.tags ?? [],
+          publishedAt: partial.publishedAt,
+          createdBy: partial.createdBy,
+          createdAt: partial.createdAt || now,
+        };
+        dispatch({ type: "CREATE_MONITOR_EVENT", item });
+        try {
+          await persistCreateMonitorEvent(item);
+        } catch (e) {
+          console.error("createMonitorEvent persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          throw e;
+        }
+        return item;
+      },
+
+      updateMonitorEvent: async (id, patch) => {
+        dispatch({ type: "UPDATE_MONITOR_EVENT", id, patch });
+        try {
+          await persistUpdateMonitorEvent(id, patch);
+        } catch (e) {
+          console.error("updateMonitorEvent persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          throw e;
+        }
+      },
+
+      deleteMonitorEvent: async (id) => {
+        dispatch({ type: "DELETE_MONITOR_EVENT_BY_ID", id });
+        try {
+          await persistDeleteMonitorEvent(id);
+        } catch (e) {
+          console.error("deleteMonitorEvent persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          throw e;
+        }
+      },
+
+      /* ----- Pulse Monitor sources (owner-curated RSS/Atom feed list) -----
+         Same optimistic + realtime shape as monitor events. The ingester writes
+         last_fetched_at/last_status/item_count via service_role; those land back
+         in the store through the monitor_sources realtime listener above. */
+      createMonitorSource: async (partial = {}) => {
+        const now = new Date().toISOString();
+        const item = {
+          id: partial.id || crypto.randomUUID(),
+          name: partial.name,
+          url: partial.url,
+          category: partial.category ?? "news",
+          platform: partial.platform ?? null,
+          region: partial.region ?? null,
+          severityDefault: partial.severityDefault ?? "info",
+          enabled: partial.enabled ?? true,
+          itemCount: 0,
+          createdBy: partial.createdBy,
+          createdAt: partial.createdAt || now,
+        };
+        dispatch({ type: "CREATE_MONITOR_SOURCE", item });
+        try {
+          await persistCreateMonitorSource(item);
+        } catch (e) {
+          console.error("createMonitorSource persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          throw e;
+        }
+        return item;
+      },
+
+      updateMonitorSource: async (id, patch) => {
+        dispatch({ type: "UPDATE_MONITOR_SOURCE", id, patch });
+        try {
+          await persistUpdateMonitorSource(id, patch);
+        } catch (e) {
+          console.error("updateMonitorSource persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          throw e;
+        }
+      },
+
+      deleteMonitorSource: async (id) => {
+        dispatch({ type: "DELETE_MONITOR_SOURCE_BY_ID", id });
+        try {
+          await persistDeleteMonitorSource(id);
+        } catch (e) {
+          console.error("deleteMonitorSource persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          throw e;
+        }
+      },
+
+      /* Manually run the news-monitor ingest now (the "Refresh now" button).
+         Hits the same route the Hetzner cron uses, authed with the owner's
+         Supabase JWT. New poller rows arrive live via realtime; this returns
+         the summary counts for a toast. */
+      triggerNewsIngest: async () => {
+        if (isDemoMode()) return { ok: false, demo: true };
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) throw new Error("Not signed in");
+        const res = await fetch("/api/ai/suggest?action=news-ingest", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || `Ingest failed (${res.status})`);
+        return body; // { ok, sources, inserted, errors }
+      },
 
       /* ----- Reel ↔ team chat refs ----- */
 

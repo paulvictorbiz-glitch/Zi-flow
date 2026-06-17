@@ -22,6 +22,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED } from "../admin/_auth.js";
 import { runInsights } from "./_insights-core.js";
+import { ingestSources } from "./_rss.js";
 
 export const config = { maxDuration: 45 };
 
@@ -50,6 +51,20 @@ export default async function handler(req, res) {
   // ── Dispatch: insights pass lives in the shared core module (free model) ───
   if (action === "insights") {
     return runInsights(req, res);
+  }
+
+  // ── Dispatch: news-monitor RSS ingest (free model; not Anthropic-gated) ────
+  // Triggered by the Pulse "Refresh now" button (Bearer JWT) or a Hetzner cron
+  // (secret): */30 * * * * curl ".../api/ai/suggest?action=news-ingest&secret=…"
+  if (action === "news-ingest") {
+    try {
+      const summary = await ingestSources(adminClient());
+      res.status(200).json({ ok: true, ...summary });
+    } catch (e) {
+      console.error("news-ingest error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+    return;
   }
 
   // ── Kill switch: skip the suggestions run if the owner paused Claude ────────

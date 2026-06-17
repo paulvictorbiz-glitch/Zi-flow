@@ -34,6 +34,7 @@ import { Inbox } from "./pages/inbox.jsx";
 import { TeamChat } from "./pages/team-chat.jsx";
 import { LosslessCut } from "./pages/lossless.jsx";
 import { Monitor } from "./pages/monitor.jsx";
+import { Pulse } from "./pages/pulse.jsx";
 import { AIBrain } from "./pages/ai-brain.jsx";
 import { ReelDna } from "./pages/reel-dna.jsx";
 import { extractUrl } from "./lib/reel-dna.jsx";
@@ -48,7 +49,7 @@ const FEEDBACK_FORM_URL =
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor", "ai"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor", "pulse", "ai"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -72,6 +73,7 @@ const TABS = [
   { key: "activity",  label: "Activity" },
   { key: "resources", label: "Resources" },
   { key: "monitor",   label: "Monitor" },
+  { key: "pulse",     label: "Pulse" },
   { key: "ai",        label: "AI Brain" },
 ];
 
@@ -81,7 +83,7 @@ const DEFAULT_TAB_GROUPS = [
   { key: "reeldna_group",   label: "Reel DNA",                tone: "violet", tabs: ["reeldna"] },
   { key: "training_group",  label: "Training",                tone: "violet", tabs: ["training"] },
   { key: "footage_group",   label: "Footage",                 tone: "green",  tabs: ["footage", "coverage", "editor", "lossless", "export"] },
-  { key: "analytics_group", label: "Analytics & Monitoring",  tone: "blue",   tabs: ["analytics", "monitor"] },
+  { key: "analytics_group", label: "Analytics & Monitoring",  tone: "blue",   tabs: ["analytics", "monitor", "pulse"] },
   { key: "ai_group",        label: "AI Brain",                tone: "pink",   tabs: ["ai"] },
   { key: "comms_group",     label: "Communications",          tone: "orange", tabs: ["inbox", "team"] },
   { key: "activity_group",  label: "Activity",                tone: "red",    tabs: ["activity"] },
@@ -659,6 +661,7 @@ function AppShell() {
       {view === "activity"  && <Activity />}
       {view === "resources" && <Resources />}
       {view === "monitor"   && isOwner && <Monitor />}
+      {view === "pulse"     && isOwner && <Pulse />}
       {view === "ai"        && isOwner && <AIBrain />}
       {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
 

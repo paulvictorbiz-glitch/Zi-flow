@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-17T17:49:58.620Z",
+  "generated": "2026-06-17T21:12:31.891Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -240,6 +240,18 @@
     {
       "version": "0058_reel_dna_location.sql",
       "checksum": "ef3ebb82ffcc6af255e3c0ee370c184a0742494b87c4767106db455a71ebde31"
+    },
+    {
+      "version": "0059_monitor_events.sql",
+      "checksum": "1d1aa40e3abceba36a53d66bfe04f59b63a3d4aea380d99c777b053567da9712"
+    },
+    {
+      "version": "0060_monitor_sources.sql",
+      "checksum": "04ec407f47ba36b18cc32b35a5bc90373fa2096b0c25ca906f9e7d88213cec49"
+    },
+    {
+      "version": "0061_monitor_events_dedup_full_index.sql",
+      "checksum": "2556f550213e8066b3ffb31c5b3ad9244d4b8c66cea0cbf3e881b85bd508f3e1"
     }
   ]
 }
