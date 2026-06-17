@@ -570,11 +570,11 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .reel {
   border: 1px dashed var(--dash);
   border-radius: 8px;
-  padding: 10px 11px 12px 11px;
+  padding: 12px 13px 14px 14px;
   background: var(--bg-1);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
   transition: border-color .15s, background .15s, transform .15s;
   position: relative;
@@ -584,32 +584,58 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .reel.is-blocked { border-color: var(--c-red-soft); }
 .reel.is-warn    { border-color: var(--c-amber-soft); }
 
+/* Collapsed = compact title chip: only the title + Expand control show, so
+   keep the card tight (no big inter-section gap, slimmer vertical padding). */
+.reel.collapsed { gap: 6px; padding-top: 9px; padding-bottom: 9px; }
+
 .reel .head {
   display: flex; align-items: flex-start; gap: 8px; justify-content: space-between;
 }
+/* The title column must be allowed to shrink so long titles/loglines wrap
+   inside the card instead of forcing it wider and spilling into neighbours. */
+.reel .head > div:first-child { min-width: 0; flex: 1; }
 .reel .id {
   font-family: var(--f-mono);
-  font-size: 10px;
-  color: var(--fg-dim);
+  font-size: 10.5px;
+  color: var(--fg-mute);
   letter-spacing: 0.04em;
 }
 .reel .title {
   font-family: var(--f-serif);
   font-size: 16px;
   font-style: italic;
-  line-height: 1.15;
+  line-height: 1.3;
   color: #eef3fb;
   margin-top: 2px;
+  overflow-wrap: anywhere;
 }
 .reel .note {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--fg-mute);
-  line-height: 1.4;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.reel .reel-series {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 1px 7px;
+  border: 1px dashed var(--c-violet-soft, var(--line));
+  border-radius: 999px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--c-violet, #9b8cff);
+  letter-spacing: 0.02em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .reel .links {
-  display: flex; flex-direction: column; gap: 3px;
+  display: flex; flex-direction: column; gap: 5px;
   font-family: var(--f-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
 }
 .reel .link {
   color: var(--c-cyan);
@@ -631,8 +657,8 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   padding-top: 7px;
   border-top: 1px dashed var(--line);
   font-family: var(--f-mono);
-  font-size: 10px;
-  color: var(--fg-dim);
+  font-size: 11px;
+  color: var(--fg-mute);
 }
 .reel .foot .collapse {
   color: var(--fg-dim); cursor: pointer;
@@ -740,6 +766,20 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .board .cell:nth-last-child(-n+5) { border-bottom: 0; }
 .board .cell.empty {
   background: repeating-linear-gradient(135deg, transparent, transparent 6px, rgba(255,255,255,0.012) 6px, rgba(255,255,255,0.012) 7px);
+}
+/* Series group label inside a cell (shown only when "Group by series" is on). */
+.board .cell .pipe-series-header {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-violet, #9b8cff);
+  padding: 2px 0 1px;
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: -2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* legend row (caption row right below column heads) */
@@ -2559,9 +2599,6 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .reel:hover .reel-menu-btn { opacity: 1; }
 .reel-menu-btn:hover { border-color: var(--line-hard); color: var(--fg); }
-/* Discuss is a primary action — always visible (not hover-gated like the
-   ⋯ archive/delete menu), so it's discoverable on touch + at a glance. */
-.reel-discuss-btn { opacity: 1; color: var(--c-cyan); }
 .reel-menu {
   position: absolute;
   top: 100%;

@@ -62,10 +62,11 @@ function reelToDb(reel) {
           lane, owner, stage, state, age, due, fb, refs,
           blocker, next, downstream, grouping, note, foot,
           tone, links, status, logline, script, vo, audio, inspo, plan,
-          detail, skill_tags, title, id } = reel;
+          detail, skill_tags, series, title, id } = reel;
   const out = { id, title, stage, owner, lane, state, age, due,
     fb, refs, blocker, next, downstream, grouping, note, foot,
     tone, links, status, logline, script, vo, audio, inspo, plan, detail,
+    series: series ?? null,
     skill_tags: skill_tags ?? [],
     gamify_difficulty: gamifyDifficulty ?? {},
     blocker_role: blockerRole ?? null,
@@ -136,7 +137,7 @@ function normalizeHiddenSubskills(value) {
 function reelDnaFromDb(row) {
   if (!row) return row;
   const { reel_url, genes_of_interest, quick_notes, captured_by,
-          external_ref, reel_id, archived_at,
+          external_ref, reel_id, archived_at, location,
           created_at, updated_at, ...rest } = row;
   return {
     ...rest,
@@ -147,6 +148,7 @@ function reelDnaFromDb(row) {
     externalRef: external_ref ?? undefined,
     reelId: reel_id ?? undefined,
     archivedAt: archived_at ?? undefined,
+    location: location ?? undefined,
     createdAt: created_at ?? undefined,
     updatedAt: updated_at ?? undefined,
   };
@@ -155,7 +157,7 @@ function reelDnaToDb(item) {
   // Only columns that exist in public.reel_dna; the per-gene jsonb fields
   // (music/hook/font/story/sfx) pass through untouched.
   const { reelUrl, genesOfInterest, quickNotes, capturedBy, externalRef,
-          reelId, archivedAt, id, platform, status, source,
+          reelId, archivedAt, location, id, platform, status, source,
           music, hook, font, story, sfx } = item;
   const out = { id, platform, status, source, music, hook, font, story, sfx,
     reel_url: reelUrl,
@@ -164,7 +166,8 @@ function reelDnaToDb(item) {
     captured_by: capturedBy ?? null,
     external_ref: externalRef ?? null,
     reel_id: reelId ?? null,
-    archived_at: archivedAt ?? null };
+    archived_at: archivedAt ?? null,
+    location: location ?? null };
   return out;
 }
 
@@ -1282,6 +1285,51 @@ function WorkflowProvider({ children }) {
         { type: "CREATE_REEL", reel },
         () => persistCreateReel(reel)),
 
+      /* Clone a reel into a fresh REEL id — title/script/audio/owner, the whole
+         detail blob (plan, pins, rubric notes), and the attached footage rows.
+         Used to template a reel and reassign the copy to another editor. The
+         copy starts with a clean comment thread and ungraded rubric (a new
+         editor grades their own work). reel_id FK requires the reel to exist
+         before its footage, so we insert the reel first (same ordering guard as
+         createReelWithFootage). */
+      duplicateReel: (id) => {
+        const current = stateRef.current;
+        const src = current.reels.find(r => r.id === id);
+        if (!src) return;
+        const newId = nextReelId(current.reels);
+        const clonedDetail = src.detail
+          ? { ...JSON.parse(JSON.stringify(src.detail)), comments: [] }
+          : src.detail;
+        const clone = {
+          ...src,
+          id: newId,
+          title: (src.title || "Reel") + " (copy)",
+          detail: clonedDetail,
+          board_order: undefined,
+          displayNumber: undefined,
+          archivedAt: null,
+          stageEnteredAt: new Date().toISOString(),
+        };
+        const footageClones = current.attachedFootage
+          .filter(f => f.reel_id === id)
+          .map(f => ({
+            ...f,
+            id: `footage-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            reel_id: newId,
+          }));
+        dispatch({ type: "CREATE_REEL", reel: clone });
+        footageClones.forEach(item => dispatch({ type: "ADD_ATTACHED_FOOTAGE", item }));
+        (async () => {
+          try {
+            await persistCreateReel(clone);
+            for (const item of footageClones) await persistAddAttachedFootage(item);
+          } catch (e) {
+            console.error("duplicateReel persist failed:", e);
+            dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          }
+        })();
+      },
+
       deleteReel: (id) => wrap(
         { type: "DELETE_REEL", id },
         () => persistDeleteReel(id)),
@@ -1529,7 +1577,8 @@ function WorkflowProvider({ children }) {
          which pass source='share_target'). Optimistic: the card shows instantly,
          then persists. genesOfInterest is the set of genes the user flagged. */
       createReelDnaCapture: ({ reelUrl, platform, genesOfInterest = [], quickNotes,
-                               capturedBy, source = "manual" }) => {
+                               capturedBy, source = "manual", location = null,
+                               music, font, sfx, story, hook }) => {
         const item = {
           id: crypto.randomUUID(),
           reelUrl,
@@ -1539,6 +1588,14 @@ function WorkflowProvider({ children }) {
           status: "captured",
           source,
           capturedBy: capturedBy || null,
+          location: location || null,
+          // Per-gene jsonb objects, pre-filled from a parsed tag note (only the
+          // ones actually present are written; reelDnaToDb passes them through).
+          ...(music ? { music } : {}),
+          ...(font ? { font } : {}),
+          ...(sfx ? { sfx } : {}),
+          ...(story ? { story } : {}),
+          ...(hook ? { hook } : {}),
           createdAt: new Date().toISOString(),
         };
         wrap(

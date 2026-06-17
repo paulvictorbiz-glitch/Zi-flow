@@ -562,6 +562,8 @@ function ReelDetail({ reel, onBack, onLearnSkill }) {
      Shift+click (or empty link) → edit / add. */
   const audioUrl = stored?.audio || "";
   const inspoUrl = stored?.inspo || "";
+  // Series/playlist tag — groups reels on the Pipeline board (e.g. "Nepal series").
+  const seriesVal = stored?.series || "";
 
   const editRefLink = (field, currentValue, label) => {
     const next = window.prompt(
@@ -672,6 +674,20 @@ function ReelDetail({ reel, onBack, onLearnSkill }) {
                   ✎
                 </button>
               )}
+            </span>
+            {/* Series tag — groups this reel with others on the pipeline board */}
+            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span
+                onClick={() => editRefLink("series", seriesVal, "Series")}
+                title={seriesVal ? `Series: ${seriesVal}\n(click to change)` : "Click to tag this reel's series"}
+                style={{
+                  cursor: "pointer",
+                  userSelect: "none",
+                  color: seriesVal ? "var(--c-violet)" : "var(--fg-mute)",
+                  textDecoration: "none",
+                }}>
+                {seriesVal ? `⛓ ${seriesVal}` : "+ Series"}
+              </span>
             </span>
             {/* Card colour — recolours this reel's card on the pipeline board */}
             {canColor && (

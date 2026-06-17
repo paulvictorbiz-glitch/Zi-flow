@@ -27,3 +27,7 @@ tools/credentials/
 *.json.key
 # Service-account JSON dropped in the repo root (project_id-keyid.json pattern)
 footage-brain-database-*.json
+
+# Python bytecode cache (e.g. backend-handoff/ webhook drafts)
+__pycache__/
+*.pyc

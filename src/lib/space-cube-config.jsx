@@ -86,3 +86,25 @@ export function openInApp(view) {
   try { localStorage.setItem("wb_view", view); } catch (_) {}
   window.location.assign("/app");
 }
+
+/* ─────────────────────────────────────────────────────────
+   Metallic cube palette (gold / silver / bronze). Tiles are
+   assigned a metal by a stable hash of their face key, so each
+   side reads as a coordinated metal without per-tile churn. */
+export const METAL = {
+  gold:   { color: "#d4af37", metalness: 0.92, roughness: 0.28 },
+  silver: { color: "#c8ccd0", metalness: 0.95, roughness: 0.22 },
+  bronze: { color: "#b08d57", metalness: 0.88, roughness: 0.34 },
+};
+export const METAL_KEYS = ["gold", "silver", "bronze"];
+export function metalForKey(key) {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  return METAL_KEYS[Math.abs(h) % METAL_KEYS.length];
+}
+
+/* Continuous-zoom camera thresholds (world units of camera distance
+   from origin). MIN/MAX clamp OrbitControls dolly; D_NEAR/D_FAR mark
+   the stacked↔assembled↔free zone boundaries; HYST is the deadband
+   that prevents flicker at a boundary; START is the initial distance. */
+export const CAM = { MIN: 4.5, MAX: 60, D_NEAR: 6.8, D_FAR: 16, HYST: 1.1, START: 9 };

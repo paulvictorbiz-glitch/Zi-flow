@@ -39,6 +39,10 @@ function Pipeline({ onOpen }) {
     try { return new Set(JSON.parse(localStorage.getItem("pipeline_hidden_cols") || "[]")); }
     catch { return new Set(); }
   });
+  /* Optional series/playlist grouping — clusters same-series reels within each
+     cell and shows a series header. Off by default (= current flat board). */
+  const [groupBySeries, setGroupBySeries] = useState(
+    () => localStorage.getItem("pipeline_group_by_series") === "1");
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const colMenuRef = useRef(null);
   const [lanesMenuOpen, setLanesMenuOpen] = useState(false);
@@ -51,6 +55,9 @@ function Pipeline({ onOpen }) {
   useEffect(() => {
     localStorage.setItem("pipeline_hidden_cols", JSON.stringify([...hiddenCols]));
   }, [hiddenCols]);
+  useEffect(() => {
+    localStorage.setItem("pipeline_group_by_series", groupBySeries ? "1" : "0");
+  }, [groupBySeries]);
 
   /* Close column menu on outside click */
   useEffect(() => {
@@ -136,11 +143,16 @@ function Pipeline({ onOpen }) {
       (m[k] = m[k] || []).push(r);
     });
     // Apply the user's manual order. Cards without a board_order keep their
-    // existing relative order and sit after the ordered ones.
+    // existing relative order and sit after the ordered ones. When grouping by
+    // series, cluster same-series reels first (untagged reels sort last), then
+    // fall back to board_order within each series.
+    const seriesKey = (r) => (r.series ? r.series.toLowerCase() : "￿");
     Object.values(m).forEach(list =>
-      list.sort((a, b) => (a.board_order ?? Infinity) - (b.board_order ?? Infinity)));
+      list.sort((a, b) =>
+        (groupBySeries ? seriesKey(a).localeCompare(seriesKey(b)) : 0) ||
+        (a.board_order ?? Infinity) - (b.board_order ?? Infinity)));
     return m;
-  }, [items, filter]);
+  }, [items, filter, groupBySeries]);
 
   /* Flash the Completed column header red for 700 ms to signal a blocked drop. */
   const flashBlocked = useCallback((stage) => {
@@ -266,6 +278,7 @@ function Pipeline({ onOpen }) {
         <div className="actions">
           <DPill active={filter === "all"} onClick={() => setFilter("all")}>All reels</DPill>
           <DPill active={filter === "blocked"} onClick={() => setFilter("blocked")} tone="red">Blocked / warn</DPill>
+          <DPill active={groupBySeries} onClick={() => setGroupBySeries(v => !v)}>Group by series</DPill>
           {/* Column visibility menu */}
           <div ref={colMenuRef} style={{ position: "relative" }}>
             <DPill onClick={() => setColMenuOpen(o => !o)}>
@@ -423,14 +436,22 @@ function Pipeline({ onOpen }) {
                     handleDrop(lane.id, stage.key);
                   }}
                 >
-                  {reels.map(r => {
+                  {reels.map((r, idx) => {
                     const isSelected = selectedIds.has(r.id);
                     const groupActive = isSelected && selectedIds.size > 1;
                     const isThisDrag = dragging && dragging.id === r.id;
                     const isInGroupDrag = dragging && selectedIds.has(dragging.id) && selectedIds.size > 1 && isSelected;
+                    /* When grouping, drop a thin series label at each group boundary. */
+                    const showSeriesHeader = groupBySeries &&
+                      (idx === 0 || (reels[idx - 1].series || "") !== (r.series || ""));
                     return (
+                      <React.Fragment key={r.id}>
+                      {showSeriesHeader && (
+                        <div className="pipe-series-header">
+                          {r.series ? `⛓ ${r.series}` : "· no series"}
+                        </div>
+                      )}
                       <div
-                        key={r.id}
                         draggable={canMove}
                         onDragStart={e => {
                           setDragging(r);
@@ -470,6 +491,7 @@ function Pipeline({ onOpen }) {
                           onOpen={(reel, e) => handleCardClick(reel, e || {})}
                         />
                       </div>
+                      </React.Fragment>
                     );
                   })}
                 </div>

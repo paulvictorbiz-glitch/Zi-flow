@@ -62,12 +62,18 @@
 }
 
 /* ---------- tile labels (drei Html) ---------- */
+/* drei <Html center> already applies translate(-50%,-50%) to its wrapper,
+   so this inner card must NOT translate again. */
 .s3d-tile-label {
-  transform: translate(-50%, -50%);
   text-align: center;
   pointer-events: none;
   user-select: none;
   white-space: nowrap;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(8, 12, 21, 0.74);
+  border: 1px solid rgba(120, 150, 190, 0.28);
+  backdrop-filter: blur(3px);
   font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
 }
 .s3d-tile-name {
@@ -254,11 +260,29 @@
 }
 
 /* ---------- exit / classic-home button ---------- */
-.s3d-exit {
+.s3d-topbar {
   position: absolute;
   top: 22px;
   right: 26px;
-  z-index: 8;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.s3d-iconbtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid #2a3754;
+  background: rgba(10, 15, 24, 0.7);
+  color: #c4d2e8;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+.s3d-iconbtn:hover { border-color: var(--s3d-gold); color: var(--s3d-gold-bright); transform: rotate(35deg); }
+.s3d-exit {
   padding: 8px 16px;
   border-radius: 999px;
   border: 1px solid #2a3754;
@@ -336,6 +360,145 @@
 .s3d-fallback-tile--soon { opacity: 0.55; cursor: default; }
 .s3d-fallback-tile-name { font-weight: 600; }
 .s3d-fallback-tile-metric { color: var(--s3d-gold); font-size: 12px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+/* ---------- background presets (customizable) ---------- */
+.s3d-root.s3d-bg-nebula {
+  background:
+    radial-gradient(900px 520px at 62% 38%, rgba(90, 150, 230, 0.16), transparent 60%),
+    radial-gradient(720px 460px at 36% 64%, rgba(255, 140, 80, 0.10), transparent 60%),
+    radial-gradient(1200px 820px at 50% 45%, #0c1422 0%, #070b14 55%, #04060c 100%);
+}
+.s3d-root.s3d-bg-deep {
+  background: radial-gradient(1200px 820px at 50% 40%, #0a0f1a 0%, #06080f 60%, #03040a 100%);
+}
+.s3d-root.s3d-bg-aurora {
+  background:
+    radial-gradient(820px 520px at 28% 30%, rgba(80, 220, 180, 0.16), transparent 60%),
+    radial-gradient(760px 520px at 72% 66%, rgba(150, 110, 255, 0.16), transparent 60%),
+    radial-gradient(1200px 820px at 50% 45%, #07121a 0%, #050a12 60%, #03060c 100%);
+}
+.s3d-root.s3d-bg-minimal {
+  background: linear-gradient(180deg, #0a0f17 0%, #070a12 100%);
+}
+
+/* ---------- shooting stars ---------- */
+.s3d-shooter {
+  opacity: 0;
+  animation-name: s3d-shoot;
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in;
+  will-change: transform, opacity;
+}
+@keyframes s3d-shoot {
+  0%   { opacity: 0; transform: translate(0, 0); }
+  2%   { opacity: 1; }
+  9%   { opacity: 0.85; }
+  11%  { opacity: 0; transform: translate(var(--dx), var(--dy)); }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)); }
+}
+.s3d-starweb--still .s3d-shooters { display: none; }
+
+/* ---------- on-face topic labels (assembled) ---------- */
+.s3d-face-label {
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(6, 10, 18, 0.78);
+  border: 1px solid rgba(140, 165, 205, 0.3);
+}
+.s3d-face-label--dim { opacity: 0.3; }
+.s3d-fl-name { display: block; font-size: 22px; font-weight: 700; color: #eef4ff; }
+.s3d-fl-metric { display: block; font-size: 14px; margin-top: 2px; color: var(--s3d-gold); }
+
+/* ---------- centered face topic name (assembled) ---------- */
+.s3d-face-topic {
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--s3d-face, #cfe0ff);
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(6, 10, 18, 0.55);
+  border: 1px solid color-mix(in srgb, var(--s3d-face, #cfe0ff) 45%, transparent);
+  text-shadow: 0 0 14px color-mix(in srgb, var(--s3d-face, #cfe0ff) 60%, transparent);
+}
+.s3d-face-topic--dim { opacity: 0.25; }
+
+/* ---------- column category headers (exploded) ---------- */
+.s3d-col-head {
+  --s3d-face: #7fd9ff;
+  pointer-events: none;
+  white-space: nowrap;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--s3d-face);
+  padding: 6px 13px;
+  border-radius: 999px;
+  background: rgba(6, 10, 18, 0.72);
+  border: 1px solid color-mix(in srgb, var(--s3d-face) 40%, transparent);
+}
+
+/* ---------- customization panel ---------- */
+.s3d-settings {
+  position: absolute;
+  top: 68px;
+  right: 26px;
+  z-index: 10;
+  width: 252px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(10, 15, 24, 0.95);
+  border: 1px solid #243049;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.s3d-settings--in { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+.s3d-settings-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #9fb0c8; margin-bottom: 14px; }
+.s3d-settings-x { background: none; border: none; color: #9fb0c8; font-size: 20px; cursor: pointer; line-height: 1; }
+.s3d-settings-x:hover { color: #fff; }
+.s3d-settings-group { margin-bottom: 16px; }
+.s3d-settings-group:last-child { margin-bottom: 0; }
+.s3d-settings-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #6a7a92; margin-bottom: 9px; }
+.s3d-swatches { display: flex; gap: 9px; }
+.s3d-swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; transition: transform 0.15s ease, border-color 0.15s ease; }
+.s3d-swatch:hover { transform: scale(1.12); }
+.s3d-swatch--on { border-color: #fff; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2); }
+.s3d-seg { display: flex; gap: 6px; }
+.s3d-seg--wrap { flex-wrap: wrap; }
+.s3d-seg-btn { flex: 1; min-width: 64px; padding: 7px 8px; border-radius: 8px; border: 1px solid #243049; background: transparent; color: #c4d2e8; font-size: 12.5px; cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+.s3d-seg-btn:hover { background: rgba(255, 255, 255, 0.05); }
+.s3d-seg-btn--on { background: rgba(245, 194, 102, 0.14); border-color: var(--s3d-gold); color: var(--s3d-gold-bright); }
+
+/* ---------- detail: summary + stat cards + graph ---------- */
+.s3d-detail { overflow-y: auto; }
+.s3d-detail-summary { margin: 0; color: #aebecf; font-size: 15px; line-height: 1.55; max-width: 42ch; }
+.s3d-stat-cards { display: flex; gap: 12px; flex-wrap: wrap; }
+.s3d-stat-card { display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; border-radius: 12px; background: rgba(18, 26, 41, 0.7); border: 1px solid #1f2a3d; min-width: 92px; }
+.s3d-stat-val { font-size: 26px; font-weight: 800; color: #f2f7ff; font-family: "JetBrains Mono", ui-monospace, monospace; }
+.s3d-stat-label { font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: #8a9bb5; }
+.s3d-graph { margin-top: 2px; }
+.s3d-graph-title { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #6a7a92; margin-bottom: 10px; }
+.s3d-bars { display: flex; flex-direction: column; gap: 8px; max-width: 400px; }
+.s3d-bar-row { display: flex; align-items: center; gap: 10px; }
+.s3d-bar-label { width: 80px; font-size: 12px; color: #9fb0c8; text-align: right; font-family: "JetBrains Mono", ui-monospace, monospace; text-transform: capitalize; }
+.s3d-bar-track { flex: 1; height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+.s3d-bar-fill { display: block; height: 100%; border-radius: 999px; transition: width 0.5s ease; }
+.s3d-bar-val { width: 26px; font-size: 12px; color: #cdd9ec; font-family: "JetBrains Mono", ui-monospace, monospace; }
 
 @media (max-width: 720px) {
   .s3d-menu { width: 200px; }

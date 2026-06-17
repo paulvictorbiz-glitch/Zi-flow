@@ -4,6 +4,122 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-17 — Instagram DM → Reel DNA spreadsheet (backend webhook handler drafted)
+
+**What changed:** Drafted the Hetzner backend piece that completes the "DM a reel to @paulvictortravels → it logs to the Reel DNA spreadsheet" flow. A FastAPI router (`GET/POST /api/ig/webhook`) verifies Meta's handshake, validates `X-Hub-Signature-256` over the raw body, pulls the shared-reel URL + the sender's typed tag note out of the `messages` payload, and inserts a `reel_dna` row (`source='ig_dm'`, `quick_notes`=the note) via the service role — deduped on the IG message id. The dashboard already shows it live via realtime + `parseTagNote`. Built with a **calibration mode** (`FEATURE_IG_DM_DEBUG`) that logs the raw payload and, when no reel URL is found, captures the raw event JSON into a spreadsheet row so the real IG payload shape is observable from one live test.
+
+**Where:** NEW `backend-handoff/ig_webhook.py` (deploy target: Hetzner `backend/app/api/`), NEW `backend-handoff/IG-DM-DEPLOY.md` (step-by-step deploy + Meta config + calibration). No Vercel-app code (the frontend half shipped already).
+
+**Path we took:** Paul asked to build the IG-message-to-self path. Scouting confirmed the frontend + realtime + parser were done; the only gap was the webhook handler, which lives on the SSH-only Hetzner backend (not in this repo). Mirrored the existing `whatsapp.py` router pattern (env-only secrets, always-200 ack, service-role REST insert) and the `docs/reel-dna-ig-webhook.md` spec, adding `message.text` capture for the tags. Assessed end-to-end confidence at ~55–65% on first try — the unknowns are Meta's messaging permission and the exact reel-share payload shape — so baked in the debug/calibration path to make the first real share maximally informative.
+
+**What we learned:** You can't DM your own IG account, so the test is a share from a *second* account → @paulvictortravels. The signature must be HMAC'd over the **raw** request bytes (read `await request.body()` before `json.loads`). Dedupe uses PostgREST `?on_conflict=external_ref` + `Prefer: resolution=ignore-duplicates` against the partial unique index from `0044`. Reel-share payload shapes vary across `ig_reel`/`media_share`/`story` — hence calibrate-then-lock rather than assume.
+
+**Status:** **Written, not deployed.** Backend file needs SCP → register router → set env (`IG_WEBHOOK_VERIFY_TOKEN`, `META_APP_SECRET`, flags) → `docker compose build/up` over SSH, plus Meta app config (`instagram_manage_messages` + Webhooks subscription). All owner/SSH actions — see `backend-handoff/IG-DM-DEPLOY.md`.
+
+## 2026-06-17 — 3D spinning Reel-DNA helix on the public landing page
+
+**What changed:** The landing-page "DNA breakdown" now renders a real **3D, slowly-spinning** double-helix (was the flat SVG `HelixFlat`). The strand eases to ~20% speed while the pointer is over it so a node is catchable; hovering a gene still lights its timeline lane (the existing co-visibility). A **3D / Classic** toggle (persisted to `localStorage`) reverts to the flat SVG, and non-WebGL visitors get Classic automatically. Then, per Paul's art direction, a visual overhaul: continuous **tube strands** (not dotted spheres); each gene is now **one base-pair crossbar** rendered as two **ACTG nucleotide molecules** (color-coded spheres + billboarded letters) tinted by the gene's identity colour; the helix is **tilted + pushed back**; the panel sits in a warm **"inside a mitochondria cell"** environment (layered gradients + fractal-noise membrane grain + slow-drifting organelle blobs + floating in-scene motes); and the helix box is stretched to match the timeline column's height.
+
+**Where:** `src/components/dna-helix.jsx` (added `slowOnHover`/`spinFactor`, then rewrote the geometry: `StrandTube`, `LadderRungs`, `GeneCrossbar` w/ ACTG bases + letter-sprite textures, `Motes`, a static tilt group, camera `z` 8.5→10.5), `src/pages/landing.jsx` (lazy-load `DnaHelix`, a local `webglAvailable()`, `helixView` state + the 3D/Classic toggle, render swap), `src/pages/landing.css` (canvas fill via `position:absolute;inset:0`, toggle styles, lazy skeleton, the mitochondria-cell background on `.lp-helix-wrap`, and `.lp-stage--split` `align-items: start → stretch`).
+
+**Path we took:** Planned with `/qa-verified-plan`. Exploration found the hard parts already existed: `DnaHelix` — a fully-built 3D spinning helix with the *identical* `{ genes, hoveredGene, onHoverGene, onSelectGene }` contract as the flat helix — had been written for the original landing POC but never wired into a live page, and `HomeView`/`ReelDnaView` already owned the gene↔timeline highlight. So v1 was essentially a component swap + lazy-load + a slow-on-hover prop. Paul then asked for the molecular/cellular overhaul + a classic-view toggle, which became a focused rewrite of the helix internals and the panel CSS. Verified on the dev server, then `vercel --prod`.
+
+**What we learned:** `React.lazy(DnaHelix)` plus a **local** `webglAvailable()` copy (NOT imported from dna-helix.jsx — a static import would pull three.js into the main chunk) keeps three.js out of the landing's initial bundle — confirmed by the build: landing chunk stays ~41 kB while three.js sits in the lazy 834 kB `OrbitControls` chunk, downloaded only when a WebGL visitor views the 3D helix. Slowing the spin on **canvas-region** hover (not gene-hover) is what makes a node catchable. Each crossbar is oriented by a quaternion from local +Y to the strandA→strandB vector, converted to **Euler** for R3F's `rotation` prop (sidesteps the `quaternion`-array ambiguity). ACTG letters drawn as canvas-texture **sprites** stay readable as it spins (billboarded, no font loading). The R3F canvas needs its box pinned (`absolute; inset:0`) to dodge the flex %-height gotcha.
+
+**Status:** **Live on prod** (www.footagebrain.com).
+
+## 2026-06-17 — Production deploy: shipped the full working tree to prod
+
+**What changed:** Ran `vercel --prod`, which deploys the entire working tree — so every feature that had been sitting `[LOCAL]`/`[STAGED]` is now **live** on www.footagebrain.com in one shot: the new 3D DNA helix landing, the **Reel Inspiration Library** (Reel DNA tag-note + Cards⇄Spreadsheet), the **daily-use batch** (series/playlist grouping, duplicate reel, card readability/collapse-to-title + Discuss-icon removal, Leroy → Co-Founder & CTO), the **`/space`** cinematic expansion (owner-only), and the **training pillar** modules.
+
+**Where:** Vercel production — deployment `dpl_HVosZfDVwhCA4NpLGyUo9k7iP159`, aliased to `www.footagebrain.com`. No code change; a deploy of the existing tree. Branch `bugfix-daily-use-batch`.
+
+**Path we took:** After the 3D helix was built and visually verified on the dev server, Paul said "make it live." Flagged that `vercel --prod` ships the *whole* tree (not just the helix) given the accumulated uncommitted work, got his go-ahead, and deployed. Vercel build ran clean (790 modules, 10.2 s). Migrations 0056/0057/0058 were already applied to the live DB, so the shipped frontend matched the schema.
+
+**What we learned:** A single `vercel --prod` collapses all pending work onto prod simultaneously — there is no per-feature deploy from one working tree. Net effect: the long-standing "build green but not deployed" backlog cleared in one go. The branch is still **not merged to `main`** (deploy is from the working tree), so `main` lags prod — merging it is the backup step.
+
+## 2026-06-17 — Reel Inspiration Library: tag-note auto-fill + spreadsheet view on Reel DNA
+
+**What changed:** Turned the existing Reel DNA tab into the "1-click inspiration logger" Paul wanted. (1) A **tag-note parser** lets a one-line note like `location=Bali, music=phonk house, font=Aktiv Grotesk, sfx=whoosh @0:02` auto-populate the structured gene fields + a new `location` field + light the gene chips, instead of typing each field by hand. (2) A **Cards ⇄ Spreadsheet** toggle adds a scannable table view (Reel · Location · Music · Font · SFX · Story · Source · Status) with inline-editable cells; clicking a row's DNA/timeline button opens the **existing** `ReelDnaView` helix + `ReelDeconstructor` so the spreadsheet is the fast log and any row drops into the full visual breakdown. (3) IG-DM/manual rows whose note still holds tag syntax **parse-on-read** so columns fill even before fields are promoted.
+
+**Where:** `src/lib/reel-dna.jsx` (new `parseTagNote()` + alias table), `src/pages/reel-dna.jsx` (parse on capture; `DnaTable` + `EditableCell`; lifted `viewing`/`deconstructing` overlays to page level so cards and rows share them; `resolveTags()` parse-on-read), `src/pages/reel-dna.css` (table + tag-hint styles), `src/store/store.jsx` (`createReelDnaCapture` passthrough for `location` + gene objects; `reelDnaFromDb`/`reelDnaToDb` carry `location`), new `supabase/migrations/0058_reel_dna_location.sql`, `docs/reel-dna-ig-webhook.md` (Phase-2 note: capture `message.text`).
+
+**Path we took:** Started from "what's next?" → the Obsidian backlog "Reel Inspiration Library." Exploration revealed the feature was ~75% built: the `reel_dna` table already has `music/font/hook/sfx/story` + `quick_notes`, and the IG-share-to-DM → realtime pipeline already exists. So instead of a new `inspirations` table or "Library" tab, we layered onto Reel DNA — parser + spreadsheet + one `location` column. Paul then clarified the exact flow (DM a reel with tags → spreadsheet row → click to develop), which we confirmed maps onto the existing `ReelDnaView`/`ReelDeconstructor` overlays (lifted them to page scope rather than writing new viewers).
+
+**What we learned:** The parser intentionally requires `key=value` (a bare word like "SFX" does **not** register) — this avoids ordinary prose words spuriously lighting gene chips; bare text is preserved in the quick note. `location` needs no camel/snake remap in `persistUpdateReelDna` (same name both sides), so editing it "just works." Crucially: the *Instagram DM* path is the one piece that still needs a Hetzner change — the webhook currently stores only the reel's caption in `quick_notes`; capturing Paul's typed tags requires it to also read `message.text`. The frontend parser already handles whatever lands there.
+
+**Status:** Built locally, **build green** (790 modules). Migration `0058_reel_dna_location` **applied** to live DB (`60 applied · 0 pending`). **Not committed, not deployed.**
+
+## 2026-06-17 — Reel card readability + collapse-to-title + removed Discuss icon
+
+**What changed:** Reel cards on the Pipeline board are more legible and no longer spill long titles/loglines into adjacent cards. Collapsing a card now shows **only the title** (+ an Expand control) instead of leaving the id row, pill, posted-date, menu, and foot visible. Removed the always-on white **💬 "Discuss in team chat"** action button + its inline share-to-channel popover from each card (the chat-ref *count* badge that deep-links an existing conversation is kept).
+
+**Where:** `src/components/components.jsx` (`ReelCard`), `src/styles.css` (`.reel` block + new `.reel.collapsed`; removed the dead `.reel-discuss-btn` rule).
+
+**Path we took:** Pulled the exact requested wording from the Obsidian backlog, then made the edits in one pass. For collapse, wrapped the id-row / posted-date / pill / menu in `!collapsed` guards and blanked the foot metadata. For the discuss removal, deleted the button, popover, its `discuss*` state/handlers, and the now-unused `shareReelToChannel` / `inputStyle` / `useAuth` imports (verified each was only used by that popover before removing).
+
+**What we learned:** The titles-spilling-into-neighbours bug was a flexbox default, not a font issue — the card's left head column inherits `min-width:auto`, so a long unbroken title forces the card wider. Fix is `min-width:0` on `.reel .head > div:first-child` plus `overflow-wrap:anywhere` on the title/note; the size/contrast bumps were secondary. Also: `components.jsx` and `roles-admin.jsx` each define their **own** module-local `inputStyle`, so removing the one in components.jsx was safe.
+
+**Status:** Built locally, build green. **Not deployed.**
+
+## 2026-06-17 — Duplicate reel (card menu)
+
+**What changed:** Added a **Duplicate** option to the reel card `⋯` menu. It clones a reel into a fresh `REEL-NNN` id — title (`…(copy)`), owner, tone, stage, the full detail blob (script / beat plan / pins / rubric notes) and the attached-footage rows — so the owner can template a reel and reassign the copy to another editor. The copy starts with a clean comment thread and ungraded rubric.
+
+**Where:** `src/store/store.jsx` (new `duplicateReel(id)` action), `src/components/components.jsx` (menu option, gated by `can("createReel")`; `showMenu` now also opens for create-capable roles).
+
+**Path we took:** Reused the existing `nextReelId()` for numbering and mirrored the `createReelWithFootage` sequencing (dispatch optimistically, then persist the reel **before** its footage). Cloned `attachedFootage` rows for the source id with fresh `footage-<ts>-<rand>` ids pointing at the new `reel_id`.
+
+**What we learned:** Attached footage rows carry a `reel_id` FK to `reels.id`, so the reel must be inserted first or the footage inserts race ahead and fail silently — the same ordering trap `createReelWithFootage` was written to avoid. `reelToDb` whitelists columns and drops `board_order`, so the clone naturally lands unsorted (Infinity) rather than overlapping the original's slot.
+
+**Status:** Built locally, build green. **Not deployed.**
+
+## 2026-06-17 — Series / playlist grouping on the Pipeline board
+
+**What changed:** Reels can be tagged with a **series** (e.g. "Nepal series") via a "+ Series" tag in the reel detail header. The Pipeline board gets an optional **"Group by series"** toggle (persisted in localStorage, off by default) that clusters same-series reels within each cell under a thin series label; every card also shows a small series chip when tagged.
+
+**Where:** new `supabase/migrations/0057_reel_series.sql` (`ALTER TABLE reels ADD COLUMN IF NOT EXISTS series TEXT`); `src/store/store.jsx` (`reelToDb` now maps `series`); `src/pages/detail.jsx` (series tag via the existing `editRefLink` prompt pattern); `src/pages/pipeline.jsx` (toggle + cell sort + in-cell `pipe-series-header`); `src/components/components.jsx` + `src/styles.css` (card chip + header styles).
+
+**Path we took:** Single nullable column + reuse of existing plumbing — `reelFromDb` already passes unknown columns through via `...rest`, so only the write side (`reelToDb`) needed the field; the detail input reuses `editRefLink`, and the board reuses the `pipeline_hidden_lanes` localStorage pattern. Applied the migration with `/update-migrations` (`node scripts/migrate.mjs --apply`) → **59 applied · 0 pending**.
+
+**What we learned:** The migration manifest (`api/monitor/migrations.manifest.json`) is regenerated automatically by the `prebuild` script on `npm run build`, so a new migration only needs the `.sql` file — no manual manifest edit. Grouping is purely a render/sort concern: clustering is done in the `cells` sort (`series` key, untagged sorts last via `￿`) and headers are emitted inline with a `React.Fragment` so drag-drop reorder stays intact.
+
+**Status:** Migration **applied to live DB**; code built green. **Not deployed.**
+
+## 2026-06-17 — Landing: Leroy title → Co-Founder & CTO
+
+**What changed:** The public marketing site's Team section now lists Leroy Crosby as **"Co-Founder & CTO"** (was "Co-Founder & Creative Director").
+
+**Where:** `src/lib/site-content.jsx` (one line in the `TEAM` array).
+
+**Path we took:** Straight one-line edit per the Obsidian backlog.
+
+**Status:** Built locally, build green. **Not deployed.**
+
+## 2026-06-17 — `/space` cinematic scene expansion (7 features, multi-agent build)
+
+**What changed:** Turned the `/space` owner-only 3D homepage into an explorable star system. (F1) Each cube face now shows its **topic name** centered, anchored to the face, hidden when it turns away. (F2) **Empty grid slots** render as dim, non-interactive boxes so the full per-face structure is visible. (F3) **Continuous-zoom camera**: scroll = smooth dolly (OrbitControls owns the wheel); a `ZoneWatcher` maps camera distance → `free` (orbit+pan to roam celestials) / `assembled` (drag-rotate) / `stacked` (zoom into the column view), with a hysteresis deadband. (F4) Galaxy spin slowed 0.12→0.045 + a large additive **nebula** on the −X "western" sky. (F5) **Metallic** gold/silver/bronze cubes (keyed per face) with `RoundedBox` edges and a baked drei `Environment` for sweeping reflections, plus a distant **sun** (opposite the black hole) with 4 orbiting planets and a real `directionalLight`. (F7) A spinning blue/purple **neutron star** with pulsing polar jets below the cube. (F8) A stylized **space-battle** vignette above (alien ships from hyperspace, a Death-Star-like station, red/green beams).
+
+**Where:** new `src/components/space/{Galaxy,Nebula,Sun,NeutronStar,SpaceBattle}.jsx` + `celestial-shared.js`; edits to `RubikCube.jsx`, `space3d.jsx`, `space3d.css`, `space-cube-config.jsx`, `SpaceSettings.jsx`. Owner-only, lazy-loaded `space3d` chunk (now ~935 kB).
+
+**Path we took:** `/qa-verified-plan` (Explore + Plan agents) produced a layered plan; user picked continuous-zoom, metallic palette (supersedes the earlier black+yellow idea), and fill-the-gaps slots. Executed as Senior Architect: a gate wave (config + `celestial-shared.js` extraction + Galaxy mounts) I did directly, then **4 parallel sub-agents** built the isolated set-piece files (Nebula/Sun/NeutronStar/SpaceBattle — one file each), while the cube (F1/F2/F5) and camera (F3) changes — which share `RubikCube.jsx`/`space3d.jsx` — were done directly and sequentially to avoid clobbering.
+
+**What we learned:** (1) The two big camera landmines: OrbitControls' `enableZoom` consumes the wheel, so the old manual 480ms wheel-step handler had to be **deleted** or it double-fires; and the old `CameraRig` (damping the camera every frame) **fights** an always-mounted OrbitControls → had to be removed. (2) Distance→mode needs **hysteresis** or it flickers at a boundary; `controls.getDistance()` is null on the first frames, so fall back to `camera.position.length()`. (3) A drei `<Environment frames={1}>` bakes the cubemap once (highlights sweep as the cube rotates, no per-frame cost); `<color attach="background">` inside it tints the *env* scene only, leaving the canvas transparent over the CSS gradient. (4) directionalLight needs its `target` in the scene graph — a child `<primitive object={target}>` whose local offset cancels the group translation aims it at the origin. (5) Decorative meshes (empty slots, set-pieces) must set `raycast={()=>null}` / carry no handlers so they never steal cube clicks. (6) Parallel sub-agents are safe only for disjoint files — the 4 set-pieces qualified; the shared cube/camera files did not.
+
+**Status:** **Built locally, build green (789 modules); NOT visually verified and NOT deployed.** Likely tuning needed on metallic brightness (ambient dropped to 0.25, per-tile gold edges removed for non-wire) and the zone thresholds / set-piece distances+scales.
+
+## 2026-06-17 — 3D Milky-Way galaxy backdrop for `/space`
+
+**What changed:** Added a real in-Canvas galaxy behind the cube: thousands of GPU-twinkling stationary distant stars, a Sagittarius A* black hole with photon ring + bulge glow, a tilted rotating accretion disk (hot blue-white → orange particles), a co-rotating near-star bulge, and subtle asteroids drifting in straight lines across the view. Replaced the flat SVG `StarWeb` in the 3D path (kept it for the reduced-motion/no-WebGL fallback).
+
+**Where:** new `src/components/space/Galaxy.jsx`; mounted as the first child of the Canvas in `src/pages/space3d.jsx`.
+
+**Path we took:** `/qa-verified-plan` → user chose realistic Milky-Way colors and to bundle the asteroids in. Implemented as `THREE.Points` + a small additive `ShaderMaterial` (custom `aColor`/`aSize`/`aPhase` attributes, GPU twinkle via a time uniform) so thousands of stars cost one draw call; mobile halves the counts.
+
+**What we learned:** Use a **custom `aColor` attribute** + manual `attribute vec3 aColor` in the shader rather than three's auto `vertexColors`/`color` (avoids cross-version redeclaration issues); keep all additive points `depthWrite:false` + `toneMapped:false` so they layer over the transparent canvas and the black-hole sphere (default depthWrite) still occludes correctly. Build all geometry/materials in `useMemo`, dispose in `useEffect` cleanup, and never allocate in `useFrame`.
+
+**Status:** **Built locally, build green; superseded/extended by the scene expansion above. NOT deployed.**
+
 ## 2026-06-17 — 7 daily-use bug fixes (multi-agent `/workflow` run)
 
 **What changed:** Fixed the 7 "do these first — daily use impact" bugs from the Obsidian backlog in one coordinated, file-ownership-isolated multi-agent run. (1) **Permission enforcement** — added a `moveReel` capability (default `true`) that actually gates reel-card moves on the Pipeline board, My Work, and List view; completed-stage moves require `moveReel && moveToCompleted`. (2) **Owner preview-role** — verified already consistent with the real editor (no change). (3) **Per-reel rubric archive** — `gamifyHiddenSubskills` is now a `{ [reelId]: string[] }` map instead of a global flat array, so hiding a sub-skill on one reel no longer hides it everywhere. (4) **Migration manifest** — a `prebuild` hook regenerates `migrations.manifest.json` on every build (it had gone stale at 54/57 entries), fixing the Monitor "Check migrations" error. (5) **My Work task reorder** — new `daily_tasks.sort_order` column (migration 0056) + `reorderDailyTasks()` action + HTML5 drag-and-drop on task rows + readability/contrast classes. (6) **Per-editor training widget** — verified working on the owner dashboard (no change). (7) **Redundant self-assess toggle** — removed `selfAssessRubric` from the roles matrix (kept in `DEMO_ACTIONS`); Monitor Gamify card stays the single control.

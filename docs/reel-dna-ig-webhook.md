@@ -95,3 +95,27 @@ Echo `hub.challenge` as plain text **iff** `hub.mode === 'subscribe'` AND
 - **Dedupe key**: use `mid`, not `reel_url` (shortlinks/query params vary).
 - **Meta retry storms**: ack 200 quickly; idempotent insert via the unique index.
 - **App-review latency**: keep the flag off in prod until approved.
+
+---
+
+## Phase 2 — capture the sender's tag note (for the Inspiration spreadsheet)
+
+The frontend now parses a `key=value` tag note (`location=Bali, music=phonk,
+font=Aktiv, sfx=whoosh @0:02`) out of a `reel_dna` row's `quick_notes` and
+auto-fills the spreadsheet columns / gene fields (`src/lib/reel-dna.jsx`
+`parseTagNote`, used by `src/pages/reel-dna.jsx`). Manual + bookmarklet captures
+already feed it the note directly.
+
+For the **Instagram DM** path to feed it too, the webhook must store **the text
+Paul types alongside the share** (his tags), not only the reel's own caption.
+One change in the `POST /api/ig/webhook` handler (step 3 above):
+
+- When building the insert, set `quick_notes` to `message.text` (the accompanying
+  message body) when present — falling back to the reel attachment's
+  caption/title only when there's no typed text. (If IG delivers the share and
+  the text as two separate message events, associate by sender within a short
+  window, or just insert the text onto the most recent un-noted `ig_dm` row for
+  that sender.)
+
+No frontend change is needed for this — `parseTagNote` runs on whatever lands in
+`quick_notes`, including parse-on-read for already-captured rows.

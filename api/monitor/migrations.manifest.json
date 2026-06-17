@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-17T15:08:25.189Z",
+  "generated": "2026-06-17T17:49:58.620Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -232,6 +232,14 @@
     {
       "version": "0056_daily_tasks_sort_order.sql",
       "checksum": "a175391788f593c1658b94004e318a62941f497c9ced9576e14e8a21fb1b6252"
+    },
+    {
+      "version": "0057_reel_series.sql",
+      "checksum": "f50fc0acd2b590f2184a83402fe614d73e3a735136bc1ab90e2a9eefee75affb"
+    },
+    {
+      "version": "0058_reel_dna_location.sql",
+      "checksum": "ef3ebb82ffcc6af255e3c0ee370c184a0742494b87c4767106db455a71ebde31"
     }
   ]
 }

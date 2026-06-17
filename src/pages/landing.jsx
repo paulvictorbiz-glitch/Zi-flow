@@ -30,6 +30,30 @@ import { CreditsModal } from "../components/credits-modal.jsx";
 import { PlatformShowcase } from "../components/platform-showcase.jsx";
 import "./landing.css";
 
+/* The 3D spinning helix is lazy-loaded so three.js / R3F never lands in the
+   initial landing bundle — it only downloads when a WebGL-capable visitor
+   actually views the 3D helix. The classic flat-SVG helix (HelixFlat, imported
+   above) ships eagerly and is both the no-WebGL fallback and the "classic
+   view" the toggle reverts to. */
+const DnaHelix = React.lazy(() => import("../components/dna-helix.jsx"));
+
+/* Local WebGL feature check — kept here (rather than imported from
+   dna-helix.jsx) so referencing it can't pull the three.js module into the
+   main bundle. Mirrors the check inside dna-helix.jsx. */
+function webglAvailable() {
+  try {
+    const c = document.createElement("canvas");
+    return !!(window.WebGLRenderingContext &&
+      (c.getContext("webgl") || c.getContext("experimental-webgl")));
+  } catch { return false; }
+}
+
+const HELIX_VIEW_KEY = "lp_helix_view";
+function loadHelixView() {
+  try { return localStorage.getItem(HELIX_VIEW_KEY) === "classic" ? "classic" : "3d"; }
+  catch { return "3d"; }
+}
+
 const LOGO_SRC = "/brand/reel-dna-logo.png";
 
 function scrollToBreakdown() {
@@ -59,6 +83,17 @@ function Wordmark({ onClick }) {
 function HomeView({ onEnterApp }) {
   const [hoveredGene, setHoveredGene] = useState(null);
   const [reelUrl, setReelUrl] = useState(DEMO_REEL.sampleReel.sourceUrl);
+
+  // WebGL-capable visitors get the 3D spinning helix by default; anyone can
+  // toggle back to the classic flat-SVG view. The choice persists across
+  // reloads. Non-WebGL visitors only ever see the classic view (no toggle).
+  const canWebGL = useMemo(() => webglAvailable(), []);
+  const [helixView, setHelixView] = useState(loadHelixView);
+  const setView = (v) => {
+    setHelixView(v);
+    try { localStorage.setItem(HELIX_VIEW_KEY, v); } catch (_) {}
+  };
+  const show3D = canWebGL && helixView === "3d";
 
   // Deferred, cancelable hover-clear. For the top genes the asset fan renders
   // directly over the hovered node, so the cursor crossing node→fan fires the
@@ -135,10 +170,31 @@ function HomeView({ onEnterApp }) {
         <div className="lp-stage lp-stage--split">
           {/* Left: the tall DNA helix (with the asset fan floating beside it) */}
           <div className="lp-helix-col">
-            <span className="lp-stage-cap">GENETIC_STREAM.mp4</span>
+            <div className="lp-helix-head">
+              <span className="lp-stage-cap">GENETIC_STREAM.mp4</span>
+              {canWebGL && (
+                <div className="lp-helix-toggle" role="group" aria-label="Helix view">
+                  <button type="button"
+                          className={"lp-helix-toggle-btn" + (helixView === "3d" ? " is-on" : "")}
+                          aria-pressed={helixView === "3d"}
+                          onClick={() => setView("3d")}>3D</button>
+                  <button type="button"
+                          className={"lp-helix-toggle-btn" + (helixView === "classic" ? " is-on" : "")}
+                          aria-pressed={helixView === "classic"}
+                          onClick={() => setView("classic")}>Classic</button>
+                </div>
+              )}
+            </div>
             <div className="lp-helix-wrap">
-              <HelixFlat genes={genes} hoveredGene={hoveredGene}
-                         onHoverGene={onHoverGene} onSelectGene={setGeneNow} />
+              {show3D ? (
+                <React.Suspense fallback={<div className="lp-helix-skel" aria-hidden="true" />}>
+                  <DnaHelix slowOnHover genes={genes} hoveredGene={hoveredGene}
+                            onHoverGene={onHoverGene} onSelectGene={setGeneNow} />
+                </React.Suspense>
+              ) : (
+                <HelixFlat genes={genes} hoveredGene={hoveredGene}
+                           onHoverGene={onHoverGene} onSelectGene={setGeneNow} />
+              )}
               {/* Asset fan floats over the helix area on hover. Keep it open
                   while the cursor is over it (the top genes' fan overlaps the
                   hovered node, so node→fan would otherwise drop the state). */}

@@ -5,10 +5,8 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useNow, formatAge } from "../lib/time.jsx";
 import { useWorkflow } from "../store/store.jsx";
-import { useAuth } from "../auth.jsx";
 import { useNotifications } from "./notifications.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
-import { shareReelToChannel } from "../lib/social-client.js";
 
 /* ---------- Status pill ---------- */
 function Pill({ tone, dashed, children }) {
@@ -64,18 +62,6 @@ function Card({ title, right, footLeft, children, defaultOpen = true, tone, soli
 // and the --c-* tokens in styles.css). Default is cyan.
 const CARD_COLORS = ["cyan", "violet", "green", "amber", "red", "blue", "orange", "pink"];
 
-// Native-looking input chrome for the inline Discuss popover (no shared input
-// class exists in styles.css, so the tokens are referenced inline).
-const inputStyle = {
-  fontSize: 11,
-  background: "var(--bg-0)",
-  border: "1px solid var(--line)",
-  borderRadius: 4,
-  color: "var(--fg)",
-  padding: "4px 6px",
-  fontFamily: "var(--f-mono)",
-};
-
 function ReelCard({ reel, onOpen, state, isSelected }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'
   const [collapsed, setCollapsed] = useState(false);
@@ -105,7 +91,6 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
 
   /* Per-card action menu (archive / delete) — gated by role permissions. */
   const { actions, reelChatRefs } = useWorkflow();
-  const { person: me } = useAuth();
   const { can } = usePermissions();
   const { unreadByReel } = useNotifications();
   const unreadCount = unreadByReel[reel.id] || 0;
@@ -117,40 +102,6 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
     () => (reelChatRefs || []).filter(r => (r.reelId ?? r.reel_id) === reel.id),
     [reelChatRefs, reel.id]);
 
-  /* Inline "Discuss" popover state. */
-  const [discussOpen, setDiscussOpen] = useState(false);
-  const [discussChannel, setDiscussChannel] = useState("pipeline");
-  const [discussNote, setDiscussNote] = useState("");
-  const [discussBusy, setDiscussBusy] = useState(false);
-  const [discussErr, setDiscussErr] = useState(null);
-  const discussRef = useRef(null);
-  useEffect(() => {
-    if (!discussOpen) return;
-    const close = (e) => { if (discussRef.current && !discussRef.current.contains(e.target)) setDiscussOpen(false); };
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
-  }, [discussOpen]);
-
-  /* Same shared path as the Team-chat picker: posts a pink reel card into the
-     channel AND saves the feedback as a comment on the reel. */
-  const submitDiscuss = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (discussBusy) return;
-    const channel = (discussChannel || "pipeline").trim() || "pipeline";
-    const note = discussNote.trim();
-    setDiscussBusy(true);
-    setDiscussErr(null);
-    const r = await shareReelToChannel({ reelId: reel.id, feedback: note, channel });
-    setDiscussBusy(false);
-    if (!r.ok) { setDiscussErr(r.error || "Send failed."); return; }
-    actions.addReelChatRef({
-      reelId: reel.id, channel, note, messageUrl: r.message_url, createdBy: me?.id,
-    });
-    setDiscussNote("");
-    setDiscussOpen(false);
-  };
-
   const openChatRef = (e, ref) => {
     e.stopPropagation();
     const url = ref.messageUrl
@@ -159,7 +110,8 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
   };
   const canArchive = can("archiveReel");
   const canDelete = can("deleteReel");
-  const showMenu = canArchive || canDelete;
+  const canCreate = can("createReel");
+  const showMenu = canArchive || canDelete || canCreate;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   useEffect(() => {
@@ -181,86 +133,67 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
       actions.deleteReel(reel.id);
     }
   };
+  /* Clone this reel (script, audio, owner, rubric, footages, pins) into a new
+     REEL id — used to template a reel and reassign the copy to another editor. */
+  const onDuplicate = (e) => {
+    e.stopPropagation();
+    setMenuOpen(false);
+    actions.duplicateReel(reel.id);
+  };
 
   return (
     <div className={cls} onClick={openReel} style={cardStyle}>
       <div className="head">
         <div>
-          <div className="id">
-            {reel.id}
-            {unreadCount > 0 && (
-              <span className="unread-dot"
-                    title={unreadCount + " unread comment" + (unreadCount === 1 ? "" : "s")}>
-                {unreadCount}
-              </span>
-            )}
-            {chatRefs.length > 0 && (
-              <span className="unread-dot"
-                    title={"Discussed in team chat — open the latest conversation"}
-                    style={{ cursor: "pointer" }}
-                    onClick={e => openChatRef(e, chatRefs[0])}>
-                💬 {chatRefs.length}
-              </span>
-            )}
-          </div>
+          {!collapsed && (
+            <div className="id">
+              {reel.id}
+              {unreadCount > 0 && (
+                <span className="unread-dot"
+                      title={unreadCount + " unread comment" + (unreadCount === 1 ? "" : "s")}>
+                  {unreadCount}
+                </span>
+              )}
+              {chatRefs.length > 0 && (
+                <span className="unread-dot"
+                      title={"Discussed in team chat — open the latest conversation"}
+                      style={{ cursor: "pointer" }}
+                      onClick={e => openChatRef(e, chatRefs[0])}>
+                  💬 {chatRefs.length}
+                </span>
+              )}
+            </div>
+          )}
           <div className="title">{reel.title}</div>
+          {/* Series/playlist tag — lets the Pipeline optionally group reels
+              (e.g. "Nepal series"). Shown as a small chip under the title. */}
+          {!collapsed && reel.series && (
+            <div className="reel-series" title={"Series: " + reel.series}>
+              ⛓ {reel.series}
+            </div>
+          )}
           {/* Posted cards carry their scheduled post date (from the
               Move-to-Posted modal) so the date is visible on the board. */}
-          {reel.stage === "posted" && reel.scheduledPostDate && (
+          {!collapsed && reel.stage === "posted" && reel.scheduledPostDate && (
             <div className="mono dim" style={{ fontSize: 10, marginTop: 2 }}
                  title="Scheduled post date">
               📅 {reel.scheduledPostDate}
             </div>
           )}
         </div>
-        {pillText && <Pill tone={pillTone}>{pillText}</Pill>}
-        <button
-          className="reel-menu-btn reel-discuss-btn"
-          onClick={e => { e.stopPropagation(); setMenuOpen(false); setDiscussOpen(o => !o); }}
-          aria-label="Discuss in team chat"
-          title="Discuss in team chat"
-        >💬</button>
-        {discussOpen && (
-          <div ref={discussRef} className="reel-menu" onClick={e => e.stopPropagation()}
-               style={{ padding: 8, width: 200 }}>
-            <form onSubmit={submitDiscuss} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <input
-                value={discussChannel}
-                onChange={e => setDiscussChannel(e.target.value)}
-                placeholder="channel (e.g. pipeline)"
-                onClick={e => e.stopPropagation()}
-                style={inputStyle}
-              />
-              <input
-                value={discussNote}
-                onChange={e => setDiscussNote(e.target.value)}
-                placeholder="feedback (saved to reel)"
-                onClick={e => e.stopPropagation()}
-                style={inputStyle}
-              />
-              <button type="submit" className="dpill is-primary" style={{ fontSize: 11 }}
-                      disabled={discussBusy}>
-                {discussBusy ? "Sharing…" : "Share to chat ↗"}
-              </button>
-              {discussErr && (
-                <span style={{ fontSize: 10, color: "var(--c-red, #ff7373)", fontFamily: "var(--f-mono)" }}>
-                  {discussErr}
-                </span>
-              )}
-            </form>
-          </div>
-        )}
-        {showMenu && (
+        {!collapsed && pillText && <Pill tone={pillTone}>{pillText}</Pill>}
+        {!collapsed && showMenu && (
           <button
             className="reel-menu-btn"
-            onClick={e => { e.stopPropagation(); setDiscussOpen(false); setMenuOpen(o => !o); }}
+            onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
             aria-label="Card actions"
           >⋯</button>
         )}
-        {showMenu && menuOpen && (
+        {!collapsed && showMenu && menuOpen && (
           <div ref={menuRef} className="reel-menu" onClick={e => e.stopPropagation()}>
             {canArchive && <div className="reel-menu-opt" onClick={onArchive}>Archive</div>}
             {canDelete && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
+            {canCreate && <div className="reel-menu-opt" onClick={onDuplicate}>Duplicate</div>}
           </div>
         )}
       </div>
@@ -274,7 +207,7 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
         </div>
       )}
       <div className="foot">
-        <span>{reel.foot || ""}</span>
+        <span>{collapsed ? "" : (reel.foot || "")}</span>
         <span
           className="collapse"
           onClick={e => { e.stopPropagation(); setCollapsed(c => !c); }}

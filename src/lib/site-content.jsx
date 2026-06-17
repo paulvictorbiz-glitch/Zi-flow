@@ -21,7 +21,7 @@ export const TEAM = [
   {
     id: "leroy",
     name: "Leroy Crosby",
-    title: "Co-Founder & Creative Director",
+    title: "Co-Founder & CTO",
     photo: "/team/leroy-crosby.jpg",
     initials: "LC",
     accent: "#9b8cff",
