@@ -3,7 +3,7 @@
 Living inventory of every feature and change built. Grouped by pillar, newest first within each section.
 
 **Legend:** `[LIVE]` = deployed to prod · `[STAGED]` = built, not yet deployed · `[LOCAL]` = uncommitted / in progress  
-**Counts:** ~50 commits · 58 DB migrations · 7 feature pillars
+**Counts:** ~51 commits · 61 DB migrations · 7 feature pillars
 
 ---
 
@@ -48,6 +48,8 @@ Living inventory of every feature and change built. Grouped by pillar, newest fi
 
 | Date | Feature | Key Files / Migration | Status |
 |------|---------|----------------------|--------|
+| 2026-06-18 | **Pulse — automated news/RSS ingestion** — Owner curates RSS/Atom feeds (Sources manager); a Hetzner cron (/30m) + "Refresh now" button fetch each feed, classify items (free OpenRouter, source-default fallback), dedup, and write them into the Pulse feed as `poller` rows. Zero-dep parser, 60-day retention prune, News Monitor health card. Folded into `suggest.js?action=news-ingest` (no new Vercel fn) | `api/ai/_rss.js`, `api/ai/suggest.js`, `src/components/pulse-sources.jsx`, `src/store/store.jsx`, `src/pages/monitor.jsx`, migrations `0060_monitor_sources.sql`, `0061_monitor_events_dedup_full_index.sql` | `[LIVE]` |
+| 2026-06-18 | **Pulse monitor tab (manual)** — Owner-only live feed for algorithm updates + world/political news: category/platform/severity filters, status lens, manual "Add entry" form, realtime | `src/pages/pulse.jsx`/`.css`, `src/components/pulse-feed.jsx`, `pulse-filters.jsx`, `pulse-entry-modal.jsx`, `src/app.jsx`, `permissions-catalog.js`, migration `0059_monitor_events.sql` | `[LIVE]` |
 | 2026-06-17 | **`/workflow` orchestrator skill** — Runs a `/qa-verified-plan` output by spinning up one Senior Architect agent per mission-critical component, each managing implementer subagents + exactly one dedicated QA agent, across parallel waves with inter-wave gates | `.claude/skills/workflow/SKILL.md` | `[LIVE]` |
 | 2026-06-17 | **Migration manifest auto-regen (prebuild)** — Monitor "Check migrations" no longer errors on a stale manifest; a `prebuild` npm hook regenerates `migrations.manifest.json` on every build (was stale 54/57) | `package.json`, `api/monitor/status.js`, `api/monitor/migrations.manifest.json`, `supabase/MIGRATIONS.md` | `[LIVE]` |
 | 2026-06-17 | **`/senior-architect` skill** — Executes an approved /qa-verified-plan output task-by-task with file ownership registry, per-task sub-agent teams (3–4 agents + QA), sequential layer execution, and cross-task contamination prevention | `.claude/skills/senior-architect/SKILL.md` | `[LIVE]` |
@@ -132,7 +134,7 @@ Living inventory of every feature and change built. Grouped by pillar, newest fi
 
 ---
 
-## Database Migrations (all 57)
+## Database Migrations (through 0061)
 
 Schema history in order. All applied to the Supabase `kjruhbaahqkuajseoojn` project.
 
@@ -196,12 +198,17 @@ Schema history in order. All applied to the Supabase `kjruhbaahqkuajseoojn` proj
 | 0056 | `daily_tasks_sort_order.sql` | My Work task drag-reorder ordinal (APPLIED 2026-06-17) |
 | 0057 | `reel_series.sql` | Series/playlist tag on reels (APPLIED 2026-06-17) |
 | 0058 | `reel_dna_location.sql` | Location tag column on reel_dna for the inspiration spreadsheet (APPLIED 2026-06-17) |
+| 0059 | `monitor_events.sql` | Pulse monitor events (algo/news feed) — owner+service RLS, realtime (APPLIED 2026-06-17) |
+| 0060 | `monitor_sources.sql` | Pulse owner-curated RSS/Atom feed list for auto-ingest (APPLIED 2026-06-18) |
+| 0061 | `monitor_events_dedup_full_index.sql` | Swap partial dedup index → full unique index so ingest upsert ON CONFLICT resolves (APPLIED 2026-06-18) |
 
 ---
 
 ## Deployed & Committed (as of 2026-06-17)
 
 **The full working tree is now LIVE on www.footagebrain.com.** This session ran `vercel --prod` from branch `bugfix-daily-use-batch`, which deploys the entire tree at once — clearing the long-standing "build green but not deployed" backlog. Shipped live together: the **3D DNA helix landing**, the **Reel Inspiration Library** (Reel DNA tag-note + Cards⇄Spreadsheet), the **daily-use batch** (series/playlist grouping, duplicate reel, card readability/collapse, Leroy→CTO), the **`/space`** cinematic expansion (owner-only), and the **training pillar**. Migrations 0056/0057/0058 applied. The tree was then committed + pushed to `bugfix-daily-use-batch`.
+
+**2026-06-18 — Pulse automated news monitor shipped.** The owner-only Pulse tab (manual feed, migration 0059) plus **automated RSS ingestion** (Sources manager, `api/ai/_rss.js` ingester via `suggest.js?action=news-ingest`, Hetzner cron /30m, 60-day prune, Monitor health card) are LIVE. Migrations 0059/0060/0061 applied; committed `4455424`; deployed `vercel --prod`. Both Hetzner cron lines moved to `www` (apex 308-redirects API routes). Commit is on `bugfix-daily-use-batch`, not yet pushed/merged.
 
 **Still pending (does not block prod):**
 
@@ -213,4 +220,4 @@ Schema history in order. All applied to the Supabase `kjruhbaahqkuajseoojn` proj
 
 ---
 
-*Last updated: 2026-06-17 (wrap-up #8 — 3D spinning Reel-DNA helix on the landing page + full working-tree `vercel --prod` deploy; the staged backlog — Reel Inspiration Library, daily-use batch, /space, training pillar — is now LIVE) — update this file after each deploy or feature addition.*
+*Last updated: 2026-06-18 (wrap-up #9 — Pulse automated news/RSS ingestion: Sources manager + Hetzner cron + free-LLM classify + 60-day prune + Monitor health card; fixed the partial-index ON CONFLICT bug via 0061; committed 4455424 + deployed `vercel --prod`) — update this file after each deploy or feature addition.*

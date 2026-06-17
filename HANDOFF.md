@@ -1,35 +1,42 @@
-# Handoff — last updated 2026-06-17
+# Handoff — last updated 2026-06-18
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- Built a **3D spinning Reel-DNA helix** on the public landing page (planned via `/qa-verified-plan`). The 3D `DnaHelix` component already existed but was never wired in — so v1 was a lazy-loaded component swap of the flat SVG helix, plus a **slow-on-hover** spin and a **3D / Classic toggle** (localStorage-persisted; non-WebGL → Classic).
-- **Visual overhaul** of the helix per Paul: continuous **tube strands**, each gene = one **ACTG base-pair crossbar** (color-coded nucleotide molecules + billboarded letters), **tilt + pushed back**, a warm **"mitochondria cell"** background, and the helix box **stretched** to match the timeline column.
-- **Deployed the entire working tree to prod** (`vercel --prod` → www.footagebrain.com). This shipped not just the helix but ALL previously-staged work live at once: Reel Inspiration Library, the daily-use batch (series grouping, duplicate reel, card readability, Leroy→CTO), `/space`, and the training pillar.
-- **Committed + pushed** the working tree to GitHub on branch `bugfix-daily-use-batch`.
-- three.js stays lazy on the landing — confirmed in the build (landing ~41 kB; three.js in the on-demand 834 kB chunk).
+- Built the **automated news/RSS ingestion** for the owner-only **Pulse** tab: owner curates feeds in a Sources manager → a Hetzner cron (every 30 min) + a "Refresh now" button fetch each feed, classify items (free OpenRouter, source-default fallback), dedup, and write them into the Pulse feed as `poller` rows.
+- Folded the ingester into `api/ai/suggest.js` as `?action=news-ingest` (**no new Vercel function** — at the 12-cap). New zero-dep RSS/Atom parser in `api/ai/_rss.js`.
+- Fixed the bug that blocked all ingestion: the `monitor_events` dedup index was **partial**, which Postgres won't use for `ON CONFLICT` → migration **0061** swaps it for a full unique index. After the fix, 30 articles ingested, dedup verified.
+- Added a **News Monitor health card** (Monitor page) + a **60-day retention prune** (poller rows, keeps starred).
+- Committed (`4455424`), **deployed to prod**, and fixed both Hetzner crontab lines to use `www` (the apex 308-redirects API routes — the old insights cron had been silently hitting the redirect).
+- Also generated `.claude/workflows/pulse-monitor.js` (a multi-agent build workflow file; gitignored).
 
 ## Where we left off
-The 3D DNA helix is **live** on www.footagebrain.com and was visually verified on the dev server before deploy. The whole working tree is deployed and committed. The dev server may still be running locally (background task, port 8002).
+Pulse news ingestion is **fully live** on footagebrain.com. Migrations 0059/0060/0061 applied to Supabase. Owner adds RSS feeds via **Pulse → Sources**, hits **Refresh now** (or waits for the 30-min cron). 2 sources configured, 30 articles ingested. The feature commit is on branch `bugfix-daily-use-batch` (not pushed).
 
 ## Open blockers
-- **None for the helix.** It's live and verified.
-- **Instagram-DM-to-self ingest — handler now DRAFTED, deploy pending (Hetzner + Meta, not from this repo):** the webhook handler is written at `backend-handoff/ig_webhook.py` (+ `backend-handoff/IG-DM-DEPLOY.md`), with a `FEATURE_IG_DM_DEBUG` calibration mode. Remaining = owner/SSH actions only: SCP to `/srv/.../backend/app/api/`, register the router, set env (`IG_WEBHOOK_VERIFY_TOKEN`, `META_APP_SECRET`, flags), `docker compose build/up`, then Meta config (`instagram_manage_messages` + Webhooks subscription on `messages`). Test = share a reel from a *second* account → @paulvictortravels. See memory `reel-dna-ig-dm-ingest`.
+- **None.** Ingestion, dedup, prune, cron, and the Monitor card are all verified live.
 
 ## Pending (written but not yet live)
-- **None pending deploy** — the backlog of "built but not deployed" work cleared this session (it's all live now).
-- **Branch not merged to `main`:** the deploy is from the working tree on `bugfix-daily-use-batch`; `main` lags prod. Merge it for backup/cleanliness.
-- **Rocket.Chat config (owner action, no code):** set Leroy's role label to **Owner**; disable Owner self-assignment — both in `chat.footagebrain.com` admin.
+- **None for Pulse.**
+- Pre-existing (separate workstream, untouched this session): `CHANGELOG.md` / `HANDOFF.md` / `backend-handoff/ig_webhook.py` carry uncommitted **IG-DM** edits from a prior session; the IG-DM backend is deployed, only Meta-console config remains (see the IG-DM CHANGELOG entry).
 
 ## Next session — start here
-1. **Merge `bugfix-daily-use-batch` → `main`** so the repo's default branch matches what's live on prod.
-2. **Deploy the Instagram-message-to-self ingest** (handler already drafted in `backend-handoff/ig_webhook.py`): SCP to Hetzner + register router + set env + `docker compose build/up`, then Meta app config — follow `backend-handoff/IG-DM-DEPLOY.md`. Run the `FEATURE_IG_DM_DEBUG` calibration share first, then flip `FEATURE_IG_DM_INGEST=1`.
-3. Any **helix visual tweaks** Paul wants after seeing it live (tilt angle, spin speed, background warmth, base-sphere colour = ACTG vs gene colour, mote density, letter legibility/depthTest).
+1. **Push `bugfix-daily-use-batch` and/or merge → main** so the default branch matches prod (the Pulse commit `4455424` is local only).
+2. **Seed a few more Pulse sources** if desired (platform newsrooms for `algo`, world feeds for `news`) — see `backend-handoff/NEWS-MONITOR.md` for a starter list.
+3. Finish the **Instagram-DM-to-self ingest** (Meta console only — backend already live): add `instagram_manage_messages` + Webhooks subscription, then a calibration share.
 
 ## Verification commands (to confirm current state on resume)
-- `curl -sI https://www.footagebrain.com | head -1` — site responds (200).
-- Open `https://www.footagebrain.com/` → scroll to the breakdown → 3D helix spins, slows on hover, hovering a gene lights its timeline lane; 3D/Classic toggle works.
-- `npm run build` — confirm build still green (790 modules; landing chunk ~41 kB; three.js isolated in the `OrbitControls` chunk).
-- `git log --oneline -3` — confirm this session's commit is on `bugfix-daily-use-batch`.
-- `git branch --contains main` / `git log main..bugfix-daily-use-batch --oneline` — see what still needs merging to `main`.
+```bash
+# Pulse ingest health (run from a non-Avast box; expect {"ok":true,...,"pruned":N})
+curl -s "https://www.footagebrain.com/api/ai/suggest?action=news-ingest&secret=fbai_cron_2026"
+
+# Stored article count (service role; reads .env.local)
+#   -> Supabase REST: GET /rest/v1/monitor_events?source_type=eq.poller&select=id  (Prefer: count=exact)
+
+# Migrations applied?
+npm run migrate            # expect 0059/0060/0061 [ applied ], 0 pending
+
+# Hetzner crontab (both lines should be www.footagebrain.com)
+ssh root@178.105.14.144 "crontab -l"
+```
