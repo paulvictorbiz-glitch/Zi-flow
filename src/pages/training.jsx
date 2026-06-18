@@ -21,7 +21,7 @@
    The `focusModule` prop (a skillKey, passed by app.jsx) auto-expands and
    scrolls to that module on mount / when it changes. */
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase-client.js";
 import { useAuth } from "../auth.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
@@ -32,7 +32,12 @@ import {
 } from "../lib/training-curriculum.jsx";
 import { EditableText } from "../components/EditableText.jsx";
 import { RubricQuickRef } from "../components/RubricQuickRef.jsx";
+import { Quiz } from "../components/training/Quiz.jsx";
+import { QuizEditor } from "../components/training/QuizEditor.jsx";
+import { FlashcardDeck } from "../components/training/FlashcardDeck.jsx";
+import { ModuleChapters } from "../components/training/ModuleChapters.jsx";
 import "./training.css";
+import "../components/training/training-blocks.css";
 
 export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
   const { person: me } = useAuth();
@@ -50,10 +55,16 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
 
   // progress: { [moduleId]: { done: bool, lessons_done: number[] } }
   const [progress, setProgress] = useState({});
+  // quizBest: { [moduleId]: { score, total } } — this person's best quiz score.
+  const [quizBest, setQuizBest] = useState({});
+  const quizBestRef = useRef({});
+  useEffect(() => { quizBestRef.current = quizBest; }, [quizBest]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState({}); // expanded module ids (= skillKeys)
 
-  /* Load this person's progress rows. */
+  /* Load this person's progress + quiz-attempt rows. Quiz attempts degrade
+     gracefully to {} if migration 0078 hasn't been applied yet (the quiz UI
+     still works; only the saved best-score badge is absent). */
   useEffect(() => {
     let cancelled = false;
     if (!viewedId) { setLoading(false); return; }
@@ -72,6 +83,22 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
         };
       }
       setProgress(map);
+
+      const qMap = {};
+      try {
+        const { data: qa, error: qErr } = await supabase
+          .from("training_quiz_attempts")
+          .select("module_id, score, total")
+          .eq("person_id", viewedId);
+        if (qErr) throw qErr;
+        for (const row of qa || []) {
+          qMap[row.module_id] = { score: row.score, total: row.total };
+        }
+      } catch (e) {
+        console.warn("training_quiz_attempts not available (run migration 0078?):", e?.message || e);
+      }
+      if (cancelled) return;
+      setQuizBest(qMap);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -99,6 +126,51 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
       { onConflict: "person_id,module_id" }
     );
   }, [isSelf, viewedId]);
+
+  /* Persist this person's BEST quiz score for a module (upsert on
+     person_id+module_id). Best-score semantics: only writes when the new
+     score fraction is at least the current best. Optimistic. Only the person
+     themselves may write (RLS rejects otherwise); the owner previewing another
+     editor is read-only. Degrades silently if migration 0078 hasn't run. */
+  const saveQuizAttempt = useCallback(async (moduleId, score, total, answers) => {
+    if (!isSelf || !viewedId || !total) return;
+    const cur = quizBestRef.current[moduleId];
+    const better = !cur || (score / total) >= (cur.score / cur.total);
+    if (!better) return;
+    setQuizBest(prev => ({ ...prev, [moduleId]: { score, total } }));
+    const { error } = await supabase.from("training_quiz_attempts").upsert(
+      {
+        person_id: viewedId,
+        module_id: moduleId,
+        score,
+        total,
+        answers,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "person_id,module_id" }
+    );
+    if (error) console.warn("saveQuizAttempt failed:", error.message || error);
+  }, [isSelf, viewedId]);
+
+  /* Resolve / write a STRUCTURED block (quiz, flashcards) stored as JSON under
+     a synthetic field_path "<key>::data" in training_module_content — the same
+     override channel as prose fields (resolveField) and embeds (::embed). Owner
+     override (parsed JSON) wins, else the code default array from the module. */
+  const BLOCK_SUFFIX = "::data";
+  const resolveBlock = useCallback((moduleId, key, fallback) => {
+    const raw = moduleContent?.[moduleId]?.[key + BLOCK_SUFFIX];
+    if (raw == null) return fallback || [];
+    try {
+      const v = JSON.parse(raw);
+      return Array.isArray(v) ? v : (fallback || []);
+    } catch { return fallback || []; }
+  }, [moduleContent]);
+  const setBlock = useCallback((moduleId, key, arr) => {
+    actions.setModuleContent(moduleId, key + BLOCK_SUFFIX, JSON.stringify(arr));
+  }, [actions]);
+  const resetBlock = useCallback((moduleId, key) => {
+    actions.resetModuleContent(moduleId, key + BLOCK_SUFFIX);
+  }, [actions]);
 
   // checklist length per module (the trackable lesson list).
   const checklistLen = (mod) => (mod.sections.checklist || []).length;
@@ -285,6 +357,14 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
             onCommit={(fieldPath, value) => actions.setModuleContent(mod.id, fieldPath, value)}
             embedUrlsFor={(fieldPath) => embedUrlsFor(mod.id, fieldPath)}
             onToggleEmbed={(fieldPath, url, next) => toggleEmbed(mod.id, fieldPath, url, next)}
+            quiz={resolveBlock(mod.id, "quiz", mod.sections.quiz)}
+            quizBest={quizBest[mod.id] || null}
+            onQuizAttempt={(score, total, answers) => saveQuizAttempt(mod.id, score, total, answers)}
+            onSaveQuiz={(arr) => setBlock(mod.id, "quiz", arr)}
+            onResetQuiz={() => resetBlock(mod.id, "quiz")}
+            flashcards={resolveBlock(mod.id, "flashcards", mod.sections.flashcards)}
+            onSaveFlashcards={(arr) => setBlock(mod.id, "flashcards", arr)}
+            onResetFlashcards={() => resetBlock(mod.id, "flashcards")}
             practiceReels={reelsBySkill[mod.skillKey] || []}
             onOpenReel={onOpen}
             onJumpToModule={jumpTo}
@@ -368,9 +448,13 @@ function ModuleCard({
   mod, progress, expanded, onToggleExpand,
   onToggleLesson, onToggleDone, readOnly, canEdit,
   resolveField, onCommit, embedUrlsFor, onToggleEmbed,
+  quiz, quizBest, onQuizAttempt, onSaveQuiz, onResetQuiz,
+  flashcards, onSaveFlashcards, onResetFlashcards,
   practiceReels, onOpenReel, onJumpToModule,
 }) {
   const s = mod.sections;
+  const [editingQuiz, setEditingQuiz] = useState(false);
+  const hasQuiz = Array.isArray(quiz) && quiz.length > 0;
 
   /* Per-field props that wire EditableText's linkify embeds to persisted
      module content. Only the owner (canEdit) gets a persist callback; for
@@ -390,106 +474,159 @@ function ModuleCard({
   const rf = (path, fallback) => resolveField(mod.id, path, fallback);
   const nextMod = mod.nextSkill ? MODULE_BY_SKILL[mod.nextSkill] : null;
 
-  return (
-    <div
-      className={"tr-mod" + (progress.done ? " is-done" : "")}
-      id={"tr-mod-" + mod.skillKey}
-    >
-      <div className="tr-mod-head" onClick={onToggleExpand}>
-        <span className="tr-mod-title">
-          <span className="tr-mod-icon">{mod.icon}</span>
-          {mod.title}
-        </span>
-        <span className="tr-mod-deliv">{mod.deliverables}</span>
-        <Ring pct={pct} />
-        <span className="tr-caret">{expanded ? "▾" : "▸"}</span>
+  /* The module's sections, grouped into ~5 digestible chapters for the
+     in-module slide carousel (ModuleChapters). Same blocks as before — only
+     the presentation changes; progress/quiz/flashcard state is untouched. */
+  const goldBlock = (s.goldExamples?.length || s.goldBreakdown?.length) ? (
+    <>
+      <div className="tr-block-label">Gold standard examples</div>
+      <div className="tr-example is-gold">
+        <span className="tr-example-tag">Examples</span>
+        <ul className="tr-list">
+          {(s.goldExamples || []).map((it, i) => (
+            <li key={i}>
+              <EditableText value={rf("goldExamples." + i, it)} canEdit={canEdit}
+                multiline linkify onCommit={(v) => onCommit("goldExamples." + i, v)}
+                {...getEmbedProps("goldExamples." + i)} />
+            </li>
+          ))}
+        </ul>
+        {s.goldBreakdown?.length > 0 && (
+          <>
+            <span className="tr-example-tag" style={{ marginTop: 8 }}>Why it works</span>
+            <ul className="tr-list">
+              {s.goldBreakdown.map((it, i) => (
+                <li key={i}>
+                  <EditableText value={rf("goldBreakdown." + i, it)} canEdit={canEdit}
+                    multiline linkify onCommit={(v) => onCommit("goldBreakdown." + i, v)}
+                    {...getEmbedProps("goldBreakdown." + i)} />
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </div>
+    </>
+  ) : null;
 
-      {expanded && (
-        <div className="tr-mod-body">
+  const poorBlock = (s.poorExamples?.length || s.poorBreakdown?.length) ? (
+    <>
+      <div className="tr-block-label">Poor standard examples</div>
+      <div className="tr-example is-poor">
+        <span className="tr-example-tag">Examples</span>
+        <ul className="tr-list">
+          {(s.poorExamples || []).map((it, i) => (
+            <li key={i}>
+              <EditableText value={rf("poorExamples." + i, it)} canEdit={canEdit}
+                multiline linkify onCommit={(v) => onCommit("poorExamples." + i, v)}
+                {...getEmbedProps("poorExamples." + i)} />
+            </li>
+          ))}
+        </ul>
+        {s.poorBreakdown?.length > 0 && (
+          <>
+            <span className="tr-example-tag" style={{ marginTop: 8 }}>Why it falls short</span>
+            <ul className="tr-list">
+              {s.poorBreakdown.map((it, i) => (
+                <li key={i}>
+                  <EditableText value={rf("poorBreakdown." + i, it)} canEdit={canEdit}
+                    multiline linkify onCommit={(v) => onCommit("poorBreakdown." + i, v)}
+                    {...getEmbedProps("poorBreakdown." + i)} />
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    </>
+  ) : null;
+
+  const quizBlock = (hasQuiz || canEdit) ? (
+    <>
+      <div className="tr-block-label tb-label-row">
+        <span>Self-check quiz</span>
+        {canEdit && (
+          <button type="button" className="tb-mini-btn" onClick={() => setEditingQuiz(e => !e)}>
+            {editingQuiz ? "Done editing" : "Edit quiz"}
+          </button>
+        )}
+      </div>
+      {editingQuiz ? (
+        <QuizEditor quiz={quiz} onSave={onSaveQuiz} onReset={onResetQuiz} onClose={() => setEditingQuiz(false)} />
+      ) : hasQuiz ? (
+        <Quiz quiz={quiz} best={quizBest} readOnly={readOnly} onAttempt={onQuizAttempt} />
+      ) : (
+        <span className="tr-reels-empty">No quiz yet. Use “Edit quiz” to add questions.</span>
+      )}
+    </>
+  ) : (
+    <ListBlock label="Self-assessment — ask yourself" base="selfAssessment"
+      items={s.selfAssessment} canEdit={canEdit} onCommit={onCommit}
+      resolveField={resolveField} moduleId={mod.id} getEmbedProps={getEmbedProps} />
+  );
+
+  const tutorialsBlock = mod.videos?.length > 0 ? (
+    <>
+      <div className="tr-block-label">Tutorials</div>
+      <div className="tr-videos">
+        {mod.videos.map((v, i) => {
+          const yt = v.kind === "youtube" ? youtubeId(v.url) : null;
+          if (yt) {
+            return (
+              <div key={i} className="tr-embed">
+                <iframe
+                  src={"https://www.youtube.com/embed/" + yt}
+                  title={v.label || "Tutorial"}
+                  loading="lazy"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+            );
+          }
+          return (
+            <a key={i} className="tr-vid-link" href={v.url} target="_blank" rel="noopener noreferrer">
+              ▶ {v.label || (v.kind === "ig" ? "Watch on Instagram" : "Watch tutorial")}
+            </a>
+          );
+        })}
+      </div>
+    </>
+  ) : null;
+
+  const chapters = [
+    {
+      key: "learn", label: "Learn", icon: "📖",
+      node: (
+        <>
           <ProseBlock label="Why this skill matters" fieldPath="whyMatters"
             value={rf("whyMatters", s.whyMatters)} canEdit={canEdit} onCommit={onCommit}
             getEmbedProps={getEmbedProps} />
-
           <ProseBlock label="Skill definition" fieldPath="definition"
             value={rf("definition", s.definition)} canEdit={canEdit} onCommit={onCommit}
             getEmbedProps={getEmbedProps} />
-
           <ProseBlock label="What good looks like" fieldPath="goodLooks"
             value={rf("goodLooks", s.goodLooks)} canEdit={canEdit} onCommit={onCommit}
-            className="" getEmbedProps={getEmbedProps} />
-
+            getEmbedProps={getEmbedProps} />
+        </>
+      ),
+    },
+    {
+      key: "standards", label: "Standards", icon: "⭐",
+      node: (
+        <>
           <ListBlock label="Common mistakes" base="commonMistakes"
             items={s.commonMistakes} canEdit={canEdit} onCommit={onCommit}
             resolveField={resolveField} moduleId={mod.id} getEmbedProps={getEmbedProps} />
-
-          {/* Gold standard */}
-          {(s.goldExamples?.length || s.goldBreakdown?.length) ? (
-            <>
-              <div className="tr-block-label">Gold standard examples</div>
-              <div className="tr-example is-gold">
-                <span className="tr-example-tag">Examples</span>
-                <ul className="tr-list">
-                  {(s.goldExamples || []).map((it, i) => (
-                    <li key={i}>
-                      <EditableText value={rf("goldExamples." + i, it)} canEdit={canEdit}
-                        multiline linkify onCommit={(v) => onCommit("goldExamples." + i, v)}
-                        {...getEmbedProps("goldExamples." + i)} />
-                    </li>
-                  ))}
-                </ul>
-                {s.goldBreakdown?.length > 0 && (
-                  <>
-                    <span className="tr-example-tag" style={{ marginTop: 8 }}>Why it works</span>
-                    <ul className="tr-list">
-                      {s.goldBreakdown.map((it, i) => (
-                        <li key={i}>
-                          <EditableText value={rf("goldBreakdown." + i, it)} canEdit={canEdit}
-                            multiline linkify onCommit={(v) => onCommit("goldBreakdown." + i, v)}
-                            {...getEmbedProps("goldBreakdown." + i)} />
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-            </>
-          ) : null}
-
-          {/* Poor standard */}
-          {(s.poorExamples?.length || s.poorBreakdown?.length) ? (
-            <>
-              <div className="tr-block-label">Poor standard examples</div>
-              <div className="tr-example is-poor">
-                <span className="tr-example-tag">Examples</span>
-                <ul className="tr-list">
-                  {(s.poorExamples || []).map((it, i) => (
-                    <li key={i}>
-                      <EditableText value={rf("poorExamples." + i, it)} canEdit={canEdit}
-                        multiline linkify onCommit={(v) => onCommit("poorExamples." + i, v)}
-                        {...getEmbedProps("poorExamples." + i)} />
-                    </li>
-                  ))}
-                </ul>
-                {s.poorBreakdown?.length > 0 && (
-                  <>
-                    <span className="tr-example-tag" style={{ marginTop: 8 }}>Why it falls short</span>
-                    <ul className="tr-list">
-                      {s.poorBreakdown.map((it, i) => (
-                        <li key={i}>
-                          <EditableText value={rf("poorBreakdown." + i, it)} canEdit={canEdit}
-                            multiline linkify onCommit={(v) => onCommit("poorBreakdown." + i, v)}
-                            {...getEmbedProps("poorBreakdown." + i)} />
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-            </>
-          ) : null}
-
-          {/* Editing exercise */}
+          {goldBlock}
+          {poorBlock}
+        </>
+      ),
+    },
+    {
+      key: "practice", label: "Practice", icon: "🎬",
+      node: (
+        <>
           <div className="tr-block-label">Editing exercise</div>
           <div className="tr-callout">
             <span className="tr-callout-tag">Exercise</span>
@@ -497,13 +634,39 @@ function ModuleCard({
               multiline linkify onCommit={(v) => onCommit("exercise", v)}
               {...getEmbedProps("exercise")} />
           </div>
-
-          <ListBlock label="Self-assessment — ask yourself" base="selfAssessment"
-            items={s.selfAssessment} canEdit={canEdit} onCommit={onCommit}
-            resolveField={resolveField} moduleId={mod.id} getEmbedProps={getEmbedProps} />
-
-          {/* Checklist — TRACKABLE. Checkboxes drive progress; the TEXT is
-             owner-editable (independent of ticking). */}
+          {tutorialsBlock}
+          <div className="tr-block-label">Practice on real projects</div>
+          {practiceReels.length === 0 ? (
+            <span className="tr-reels-empty">
+              No reels tagged for this skill yet. Tag a reel with “{mod.title}” from its detail page.
+            </span>
+          ) : (
+            <div className="tr-reels">
+              {practiceReels.map(r => (
+                <button key={r.id} className="tr-reel-link" onClick={() => onOpenReel?.(r)}>
+                  <span className="tr-reel-num">{r.displayNumber ? "#" + r.displayNumber : r.id}</span>
+                  <span className="tr-reel-title">{r.title || "(untitled)"}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "recall", label: "Recall", icon: "🧠",
+      node: (
+        <>
+          <FlashcardDeck cards={flashcards} canEdit={canEdit}
+            onSave={onSaveFlashcards} onReset={onResetFlashcards} />
+          {quizBlock}
+        </>
+      ),
+    },
+    {
+      key: "track", label: "Track", icon: "✅",
+      node: (
+        <>
           <div className="tr-block-label">Checklist</div>
           {checklist.map((item, i) => (
             <div key={i} className={"tr-lesson" + (checked.has(i) ? " is-checked" : "")}>
@@ -525,12 +688,9 @@ function ModuleCard({
               </span>
             </div>
           ))}
-
           <ListBlock label="Development plan" base="developmentPlan"
             items={s.developmentPlan} canEdit={canEdit} onCommit={onCommit}
             resolveField={resolveField} moduleId={mod.id} getEmbedProps={getEmbedProps} />
-
-          {/* Pro tips — only when present */}
           {s.proTips?.length > 0 && (
             <>
               <div className="tr-block-label">Pro tips</div>
@@ -548,55 +708,6 @@ function ModuleCard({
               </div>
             </>
           )}
-
-          {/* Tutorials */}
-          {mod.videos?.length > 0 && (
-            <>
-              <div className="tr-block-label">Tutorials</div>
-              <div className="tr-videos">
-                {mod.videos.map((v, i) => {
-                  const yt = v.kind === "youtube" ? youtubeId(v.url) : null;
-                  if (yt) {
-                    return (
-                      <div key={i} className="tr-embed">
-                        <iframe
-                          src={"https://www.youtube.com/embed/" + yt}
-                          title={v.label || "Tutorial"}
-                          loading="lazy"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                          allowFullScreen
-                        />
-                      </div>
-                    );
-                  }
-                  return (
-                    <a key={i} className="tr-vid-link" href={v.url} target="_blank" rel="noopener noreferrer">
-                      ▶ {v.label || (v.kind === "ig" ? "Watch on Instagram" : "Watch tutorial")}
-                    </a>
-                  );
-                })}
-              </div>
-            </>
-          )}
-
-          {/* Practice on real projects */}
-          <div className="tr-block-label">Practice on real projects</div>
-          {practiceReels.length === 0 ? (
-            <span className="tr-reels-empty">
-              No reels tagged for this skill yet. Tag a reel with “{mod.title}” from its detail page.
-            </span>
-          ) : (
-            <div className="tr-reels">
-              {practiceReels.map(r => (
-                <button key={r.id} className="tr-reel-link" onClick={() => onOpenReel?.(r)}>
-                  <span className="tr-reel-num">{r.displayNumber ? "#" + r.displayNumber : r.id}</span>
-                  <span className="tr-reel-title">{r.title || "(untitled)"}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Mark done */}
           {!readOnly && (
             <div style={{ marginTop: 16 }}>
               <button
@@ -613,8 +724,6 @@ function ModuleCard({
               </button>
             </div>
           )}
-
-          {/* Next skill (label only; Layer 3 wires actual nav) */}
           {nextMod && (
             <div className="tr-nextskill">
               Next skill → <b>{nextMod.icon} {nextMod.title}</b>{" "}
@@ -628,6 +737,37 @@ function ModuleCard({
               </button>
             </div>
           )}
+        </>
+      ),
+    },
+  ];
+
+  return (
+    <div
+      className={"tr-mod" + (progress.done ? " is-done" : "")}
+      id={"tr-mod-" + mod.skillKey}
+    >
+      <div className="tr-mod-head" onClick={onToggleExpand}>
+        <span className="tr-mod-title">
+          <span className="tr-mod-icon">{mod.icon}</span>
+          {mod.title}
+        </span>
+        <span className="tr-mod-deliv">{mod.deliverables}</span>
+        {quizBest && quizBest.total > 0 && (
+          <span
+            className={"tb-score-badge" + (quizBest.score === quizBest.total ? " is-pass" : "")}
+            title="Best quiz score"
+          >
+            Quiz {quizBest.score}/{quizBest.total}
+          </span>
+        )}
+        <Ring pct={pct} />
+        <span className="tr-caret">{expanded ? "▾" : "▸"}</span>
+      </div>
+
+      {expanded && (
+        <div className="tr-mod-body">
+          <ModuleChapters chapters={chapters} />
         </div>
       )}
     </div>
