@@ -15,7 +15,7 @@
 
 import React, { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import { DPill } from "../components/components.jsx";
-import { APIProvider, Map, AdvancedMarker, InfoWindow } from "@vis.gl/react-google-maps";
+import { APIProvider, Map, Marker, InfoWindow } from "@vis.gl/react-google-maps";
 import { supabase } from "../lib/supabase-client.js";
 import { useWorkflow } from "../store/store.jsx";
 import {
@@ -35,7 +35,11 @@ function LocationMarker({ location: l, selected, onSelect, onEdit }) {
   const pos = { lat: l.lat, lng: l.lng };
   return (
     <>
-      <AdvancedMarker
+      {/* Classic Marker (google.maps.Marker) — unlike AdvancedMarker it does
+          NOT require a Cloud-configured Map ID, so it renders reliably without
+          extra setup. AdvancedMarker + an unconfigured mapId was throwing
+          "reading 'get'" from inside the Maps lib when the map failed to init. */}
+      <Marker
         position={pos}
         onClick={() => onSelect(selected ? null : l)}
         title={l.name}
@@ -716,8 +720,15 @@ function Locations() {
                 <Map
                   center={camera.center}
                   zoom={camera.zoom}
-                  onCameraChanged={ev => setCamera({ center: ev.detail.center, zoom: ev.detail.zoom })}
-                  mapId="ziflow-locations"
+                  onCameraChanged={ev => {
+                    // Guard: during init the event can carry undefined center/zoom;
+                    // feeding those back as controlled props makes the Maps lib
+                    // call .get() on an undefined internal → "reading 'get'".
+                    const c = ev?.detail?.center, z = ev?.detail?.zoom;
+                    if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng) && Number.isFinite(z)) {
+                      setCamera({ center: { lat: c.lat, lng: c.lng }, zoom: z });
+                    }
+                  }}
                   gestureHandling="greedy"
                   style={{ width: "100%", height: "calc(100vh - 240px)", minHeight: 420 }}
                 >
