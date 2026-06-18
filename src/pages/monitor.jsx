@@ -166,6 +166,206 @@ function NewsMonitorSection() {
   );
 }
 
+/* ── World Monitor section ───────────────────────────────────
+   Reads the live free-feed (USGS/FIRMS/ACLED) usage from
+   /api/monitor/status (status.js fetchWorldMonitorStats → app_settings
+   keys `world_monitor` + `world_monitor_usage`). Shows the FIRMS daily
+   cap + ACLED usage bars, native event/ingest stats, and an owner kill
+   switch on the embed + each free feed. Paid APIs (Finnhub/FRED/IMF/
+   NASDAQ/flights) are rendered DISABLED — they stay off for now.
+
+   Single-writer contract: this card is the ONLY writer of the
+   `world_monitor` flags (the ingest engine owns `world_monitor_usage`).
+   Writes go straight to app_settings via the "owner write app_settings"
+   RLS policy (mirrors AnthropicSection) — no Vercel function burned. */
+function WorldMonitorSection({ data }) {
+  // Local copy of the flags so a toggle is optimistic; seeded from status.
+  const [flags, setFlags] = useState(null);
+  const [saving, setSaving] = useState(null); // which key is mid-write
+  const [err, setErr]       = useState(null);
+
+  // Seed/refresh local flag state whenever the status payload changes.
+  useEffect(() => {
+    if (!data || data.error || !data.configured) { setFlags(null); return; }
+    setFlags({
+      embedEnabled: data.embedEnabled !== false,
+      free: {
+        usgs:  data.free?.usgs  !== false,
+        firms: data.free?.firms !== false,
+        acled: data.free?.acled !== false,
+      },
+      paid: {
+        finnhub: !!data.paid?.finnhub,
+        fred:    !!data.paid?.fred,
+        imf:     !!data.paid?.imf,
+        nasdaq:  !!data.paid?.nasdaq,
+        flights: !!data.paid?.flights,
+      },
+    });
+  }, [data]);
+
+  // Owner-gated write of the whole `world_monitor` flag object to
+  // app_settings. `mutate` produces the next value from the current one.
+  async function writeFlags(saveKey, mutate) {
+    if (!flags || saving) return;
+    const next = mutate(flags);
+    setSaving(saveKey);
+    setErr(null);
+    setFlags(next); // optimistic
+    try {
+      const { error } = await supabase
+        .from("app_settings")
+        .upsert(
+          {
+            key: "world_monitor",
+            value: { embed_enabled: next.embedEnabled, free: next.free, paid: next.paid },
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "key" }
+        );
+      if (error) throw error;
+    } catch (e) {
+      setFlags(flags); // revert on failure
+      setErr(e.message || "Save failed — owner access required");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  if (!data) return <div className="mon-loading">Loading…</div>;
+  if (data.error) return <div className="mon-error">{data.error}</div>;
+  if (!data.configured) return (
+    <div className="mon-unconfigured">
+      Add <code>SUPABASE_URL</code> + <code>SUPABASE_SERVICE_ROLE_KEY</code> to Vercel env vars,
+      then run migration <code>0066_world_monitor_settings.sql</code> to seed the feed flags.
+    </div>
+  );
+
+  const embedOk   = data.embedOk !== false;
+  const embedTone = !flags?.embedEnabled ? "amber" : embedOk ? "ok" : "red";
+  const PAID = [
+    ["finnhub", "Finnhub"],
+    ["fred",    "FRED"],
+    ["imf",     "IMF"],
+    ["nasdaq",  "NASDAQ"],
+    ["flights", "Flight tracker"],
+  ];
+
+  return (
+    <div className="mon-section-body">
+      <div className="mon-hint" style={{ marginBottom: 10 }}>
+        Free world feeds ingested natively into Pulse (USGS quakes, NASA FIRMS
+        fires, ACLED conflict). The public worldmonitor.app dashboard is embedded
+        read-only in Pulse → World. Paid APIs stay off.
+      </div>
+
+      <UsageBar
+        label={`FIRMS — ${fmt(data.firmsDailyUsed).replace("—","0")} / ${fmt(data.firmsDailyLimit)} map keys today`}
+        pct={data.firmsDailyPct ?? 0}
+      />
+      {data.acledLimit > 0 ? (
+        <UsageBar
+          label={`ACLED — ${fmt(data.acledUsed).replace("—","0")} / ${fmt(data.acledLimit)} this period`}
+          pct={data.acledPct ?? 0}
+        />
+      ) : (
+        <StatRow label="ACLED calls" value={fmt(data.acledUsed).replace("—","0")} tone="ok" />
+      )}
+
+      <div className="mon-stats-grid" style={{ marginTop: 8 }}>
+        <StatRow label="USGS events stored" value={fmt(data.usgsCount).replace("—","0")} tone="ok" />
+        <StatRow label="Last ingest" value={fmtAgo(data.lastIngestAt)} />
+        <StatRow
+          label="Embed health"
+          value={!flags?.embedEnabled ? "disabled" : embedOk ? "reachable" : "blocked"}
+          tone={embedTone}
+        />
+      </div>
+
+      {/* Embed kill switch */}
+      <div className="mon-killrow">
+        <div className="mon-killrow-text">
+          <div className="mon-killrow-title">World embed</div>
+          <div className="mon-killrow-sub">
+            {flags == null
+              ? "Checking…"
+              : flags.embedEnabled
+                ? "Active — Pulse → World shows the worldmonitor.app embed"
+                : "Hidden — the World view embed is turned off"}
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!!flags?.embedEnabled}
+          disabled={flags == null || saving === "embed"}
+          onClick={() => writeFlags("embed", f => ({ ...f, embedEnabled: !f.embedEnabled }))}
+          className={`mon-switch${flags?.embedEnabled ? " mon-switch--on" : ""}`}
+          title={flags?.embedEnabled ? "Click to hide the World embed" : "Click to show the World embed"}
+        >
+          <span className="mon-switch-knob" />
+        </button>
+      </div>
+
+      {/* Free-feed toggles */}
+      <div className="mon-table-label" style={{ marginTop: 12 }}>Free feeds</div>
+      {[
+        ["usgs",  "USGS earthquakes"],
+        ["firms", "NASA FIRMS fires"],
+        ["acled", "ACLED conflict"],
+      ].map(([key, label]) => {
+        const on = !!flags?.free?.[key];
+        return (
+          <div key={key} className="mon-killrow">
+            <div className="mon-killrow-text">
+              <div className="mon-killrow-title">{label}</div>
+              <div className="mon-killrow-sub">
+                {flags == null ? "Checking…" : on ? "Ingesting on each run" : "Skipped — feed disabled"}
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={on}
+              disabled={flags == null || saving === `free.${key}`}
+              onClick={() => writeFlags(`free.${key}`, f => ({
+                ...f, free: { ...f.free, [key]: !f.free[key] },
+              }))}
+              className={`mon-switch${on ? " mon-switch--on" : ""}`}
+              title={on ? `Click to stop ingesting ${label}` : `Click to ingest ${label}`}
+            >
+              <span className="mon-switch-knob" />
+            </button>
+          </div>
+        );
+      })}
+
+      {err && <div className="mon-killrow-err">{err}</div>}
+
+      {/* Paid APIs — off for now, rendered disabled */}
+      <div className="mon-table-label" style={{ marginTop: 12 }}>Paid APIs</div>
+      {PAID.map(([key, label]) => (
+        <div key={key} className="mon-killrow">
+          <div className="mon-killrow-text">
+            <div className="mon-killrow-title">{label}</div>
+            <div className="mon-killrow-sub">off — enable later</div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={false}
+            disabled
+            className="mon-switch"
+            title="Paid API — disabled for now"
+          >
+            <span className="mon-switch-knob" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ── Toast ───────────────────────────────────────────────── */
 function Toast({ msg, onDismiss }) {
   if (!msg) return null;
@@ -372,6 +572,16 @@ function HetznerSection({ data }) {
         <StatRow label="Incoming"      value={fmtBytes(data.incoming)} />
         <StatRow label="Outgoing"      value={fmtBytes(data.outgoing)} />
       </div>
+
+      <a
+        href="https://console.hetzner.com"
+        target="_blank"
+        rel="noreferrer"
+        className="mon-vercel-link"
+        style={{ marginTop: 12 }}
+      >
+        Open Hetzner Console ↗
+      </a>
     </div>
   );
 }
@@ -1215,6 +1425,13 @@ export function Monitor() {
     if (gcp?.configured && gcp.youtube?.quotaPct >= WARN_PCT)
       alerts.push(`YouTube quota at ${gcp.youtube.quotaPct}%`);
 
+    const wm = d.worldMonitor;
+    if (wm?.configured) {
+      if (wm.firmsDailyPct >= WARN_PCT) alerts.push(`FIRMS daily quota at ${wm.firmsDailyPct}%`);
+      if (wm.acledPct >= WARN_PCT)      alerts.push(`ACLED quota at ${wm.acledPct}%`);
+      if (wm.embedEnabled && wm.embedOk === false) alerts.push("World embed unreachable");
+    }
+
     if (alerts.length) {
       setToast(alerts.join("  ·  "));
     }
@@ -1300,6 +1517,10 @@ export function Monitor() {
 
         <Card title="News Monitor" footLeft="Pulse feeds · auto-ingest health">
           <NewsMonitorSection />
+        </Card>
+
+        <Card title="World Monitor" footLeft="Free APIs · Limits · Usage">
+          <WorldMonitorSection data={data?.worldMonitor} />
         </Card>
 
         <Card title="Vercel" footLeft="Hosting · Functions · Bandwidth">

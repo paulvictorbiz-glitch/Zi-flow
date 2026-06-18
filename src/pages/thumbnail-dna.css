@@ -1,0 +1,293 @@
+/* =========================================================
+   Thumbnail DNA tab. Scoped under .thumbnail-dna so nothing leaks.
+   Reuses the global design tokens (--bg-*, --fg-*, --c-*, --f-*).
+   Mirrors src/pages/reel-dna.css with a .td- prefix.
+   ========================================================= */
+
+.thumbnail-dna { display: block; }
+
+.td-body {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 12px 22px 48px;
+}
+
+.td-error {
+  margin: 0 22px;
+  padding: 8px 12px;
+  border: 1px dashed var(--c-red);
+  border-radius: 6px;
+  color: var(--c-red);
+  font-family: var(--f-mono); font-size: 12px;
+}
+
+/* ── Capture form ──────────────────────────────────────── */
+.td-capture { display: flex; flex-direction: column; gap: 10px; }
+.td-capture-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.td-input {
+  flex: 1; min-width: 220px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: var(--f-mono); font-size: 13px;
+  padding: 8px 10px;
+}
+.td-input:focus { outline: none; border-color: var(--c-cyan); }
+
+.td-warn {
+  font-family: var(--f-mono); font-size: 11px;
+  color: var(--c-amber);
+}
+
+/* Live thumbnail preview under the URL input. */
+.td-preview { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.td-preview-meta { font-family: var(--f-mono); font-size: 10.5px; }
+.td-preview .td-thumb-img {
+  width: 320px; max-width: 100%; aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-3);
+  display: block;
+}
+
+.td-thumb-img { display: block; }
+
+.td-genes-pick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.td-genes-label {
+  font-family: var(--f-mono); font-size: 10.5px;
+  color: var(--fg-dim); text-transform: uppercase; letter-spacing: .08em;
+  margin-right: 4px;
+}
+.td-gene-chip {
+  background: transparent;
+  border: 1px dashed var(--dash);
+  border-radius: 999px;
+  color: var(--fg-mute);
+  font-family: var(--f-mono); font-size: 11.5px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all .12s ease;
+}
+.td-gene-chip:hover { color: var(--fg); border-color: var(--line-hard); }
+.td-gene-chip.is-on {
+  color: var(--bg-0);
+  background: var(--c-cyan);
+  border-color: var(--c-cyan);
+  font-weight: 600;
+}
+
+.td-notes {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: var(--f-sans); font-size: 13px;
+  padding: 8px 10px; resize: vertical;
+}
+.td-notes:focus { outline: none; border-color: var(--c-cyan); }
+
+.td-capture-actions { display: flex; justify-content: flex-end; }
+
+/* ── Filter bar ────────────────────────────────────────── */
+.td-filterbar {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  padding: 2px 0;
+}
+.td-filterbar .mono { font-family: var(--f-mono); font-size: 10.5px; }
+.td-filterbar .dim  { color: var(--fg-dim); text-transform: uppercase; letter-spacing: .08em; }
+
+/* ── Library grid ──────────────────────────────────────── */
+.td-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 720px) { .td-grid { grid-template-columns: 1fr; } }
+
+.td-empty {
+  padding: 36px 16px; text-align: center;
+  color: var(--fg-dim);
+  font-family: var(--f-mono); font-size: 12.5px;
+  border: 1px dashed var(--dash); border-radius: 8px;
+}
+
+/* ── A captured-thumbnail card ─────────────────────────── */
+.td-card {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-hard);
+  border-radius: 8px;
+  background: var(--bg-2);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.td-status--captured    { border-left-color: var(--c-blue); }
+.td-status--in_progress { border-left-color: var(--c-amber); }
+.td-status--done        { border-left-color: var(--c-green); }
+
+.td-card-thumb { display: block; }
+.td-card-thumb .td-thumb-img {
+  width: 100%; aspect-ratio: 16 / 9; object-fit: cover;
+  background: var(--bg-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.td-card-body { padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 9px; }
+
+.td-card-head {
+  display: flex; justify-content: space-between; gap: 10px; align-items: flex-start;
+}
+.td-card-title { min-width: 0; flex: 1; }
+.td-card-url {
+  display: block;
+  color: var(--c-cyan);
+  font-family: var(--f-sans); font-size: 13px; font-weight: 600;
+  text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.td-card-url:hover { text-decoration: underline; }
+
+.td-card-meta {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  margin-top: 4px;
+}
+.td-tag {
+  font-family: var(--f-mono); font-size: 10px;
+  color: var(--fg-mute);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 1px 6px;
+}
+.td-tag.dim { color: var(--fg-dim); border-color: var(--line-soft); }
+.td-tag.sm  { font-size: 9.5px; padding: 0 5px; }
+
+/* status picker (top-right of card) */
+.td-status-pick { display: flex; gap: 4px; flex-shrink: 0; }
+.td-status-chip {
+  background: transparent;
+  border: 1px dashed var(--dash); border-radius: 4px;
+  color: var(--fg-dim);
+  font-family: var(--f-mono); font-size: 10px;
+  padding: 2px 7px; cursor: pointer;
+}
+.td-status-chip:hover { color: var(--fg-mute); }
+.td-status-chip.is-on {
+  color: var(--bg-0); background: var(--fg-mute); border-color: var(--fg-mute);
+  font-weight: 600;
+}
+
+.td-card-genes { display: flex; gap: 5px; flex-wrap: wrap; }
+.td-gene-tag {
+  font-family: var(--f-mono); font-size: 10px;
+  color: var(--c-cyan);
+  background: color-mix(in srgb, var(--c-cyan) 12%, transparent);
+  border-radius: 4px; padding: 1px 7px;
+}
+
+/* ── Per-gene editor (card) ────────────────────────────── */
+.td-editor {
+  display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px dashed var(--line); padding-top: 10px;
+}
+.td-editor-block { display: flex; flex-direction: column; gap: 4px; }
+.td-editor-label {
+  font-family: var(--f-mono); font-size: 10px;
+  color: var(--fg-dim); text-transform: uppercase; letter-spacing: .08em;
+}
+
+.td-card-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 8px 12px;
+  border-top: 1px dashed var(--line-soft); padding-top: 8px;
+}
+.td-collapse, .td-archive {
+  font-family: var(--f-mono); font-size: 10.5px;
+  color: var(--fg-dim); cursor: pointer;
+}
+.td-collapse:hover { color: var(--c-cyan); }
+.td-archive:hover  { color: var(--c-red); }
+.td-card-foot-right { display: flex; gap: 12px; align-items: center; }
+.td-delete {
+  font-family: var(--f-mono); font-size: 10.5px; cursor: pointer;
+  color: var(--fg-dim);
+}
+.td-delete:hover { color: var(--c-red); }
+
+/* ── Spreadsheet / log view ────────────────────────────── */
+.td-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+.td-table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--f-mono); font-size: 12px;
+  min-width: 1040px;
+}
+.td-table thead th {
+  text-align: left; padding: 8px 10px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--fg-dim); font-weight: 600;
+  background: var(--bg-3);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 1;
+  white-space: nowrap;
+}
+.td-table .td-th-thumb { min-width: 220px; }
+.td-table .td-th-act   { width: 1%; }
+
+.td-tr { border-bottom: 1px solid var(--line-soft); border-left: 3px solid transparent; }
+.td-tr:hover { background: color-mix(in srgb, var(--c-cyan) 5%, transparent); }
+.td-tr.td-status--captured    { border-left-color: var(--c-blue); }
+.td-tr.td-status--in_progress { border-left-color: var(--c-amber); }
+.td-tr.td-status--done        { border-left-color: var(--c-green); }
+.td-table td { padding: 4px 8px; vertical-align: middle; }
+
+.td-td-thumb { max-width: 280px; }
+.td-cell-thumb { display: block; }
+.td-cell-thumb .td-thumb-img {
+  width: 120px; aspect-ratio: 16 / 9; object-fit: cover;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg-3);
+}
+.td-cell-sub { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.td-cell-title {
+  display: block; max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg); font-size: 11.5px;
+}
+
+.td-cell-input {
+  width: 100%; min-width: 90px;
+  background: transparent;
+  border: 1px solid transparent; border-radius: 4px;
+  color: var(--fg);
+  font-family: var(--f-mono); font-size: 11.5px;
+  padding: 4px 6px;
+}
+.td-cell-input::placeholder { color: var(--fg-dim); opacity: .5; }
+.td-cell-input:hover { border-color: var(--line-soft); }
+.td-cell-input:focus { outline: none; border-color: var(--c-cyan); background: var(--bg-3); }
+
+.td-cell-status {
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px;
+  font-family: var(--f-mono); font-size: 11px; padding: 3px 6px;
+}
+.td-cell-status:focus { outline: none; border-color: var(--c-cyan); }
+
+.td-td-act { white-space: nowrap; text-align: right; }
+.td-row-btn {
+  font-family: var(--f-mono); font-size: 10.5px;
+  color: var(--c-violet);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--c-violet) 35%, transparent);
+  border-radius: 4px; padding: 2px 7px; margin-left: 4px;
+  cursor: pointer;
+}
+.td-row-btn:hover { background: color-mix(in srgb, var(--c-violet) 14%, transparent); }
+.td-row-btn--archive { color: var(--fg-dim); border-color: var(--line-soft); }
+.td-row-btn--archive:hover { color: var(--c-red); border-color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }
+.td-row-btn--delete { color: var(--fg-dim); border-color: var(--line-soft); }
+.td-row-btn--delete:hover { color: var(--c-red); border-color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }

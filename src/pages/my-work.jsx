@@ -298,6 +298,7 @@ function TaskRow({
             readOnly={!isOwner}
             rows={3}
             onKeyDown={handleNoteKeyDown}
+            onMouseDown={e => e.stopPropagation()}
             style={{
               width: "100%", boxSizing: "border-box",
               background: "var(--bg-2)",
@@ -372,6 +373,7 @@ function TaskRow({
               placeholder="Add a note… (Shift+Enter for new line, Enter to save)"
               readOnly={!isOwner}
               onKeyDown={handleNoteKeyDown}
+              onMouseDown={e => e.stopPropagation()}
               style={{
                 flex: 1, minHeight: "50vh", width: "100%", boxSizing: "border-box",
                 background: "var(--bg-1, var(--bg-2))",

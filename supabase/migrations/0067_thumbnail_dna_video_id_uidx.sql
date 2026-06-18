@@ -1,0 +1,36 @@
+-- Thumbnail DNA: a FULL unique index on video_id — the dedupe arbiter for the
+-- YouTube-playlist auto-ingest poller (api/ai/suggest.js ?action=yt-sync).
+--
+-- WHY: the yt-sync poller inserts each playlist video with
+--   ON CONFLICT (video_id) DO NOTHING  (PostgREST upsert onConflict:'video_id',
+--   ignoreDuplicates:true) so re-polling the same feed never re-inserts a video
+--   and never clobbers manual gene tags on an already-captured row.
+-- This index IS that ON CONFLICT arbiter — without it the upsert fails with
+-- "no unique or exclusion constraint matching the ON CONFLICT specification".
+--
+-- It ALSO doubles as the anti-resurrection guard: a soft-deleted row (0062-style
+-- deleted_at tombstone) KEEPS its video_id, so the unique index blocks the poller
+-- from re-inserting a video the owner deleted — deletes are never resurrected.
+--
+-- FULL, NOT PARTIAL: a partial index (e.g. WHERE video_id IS NOT NULL) CANNOT be
+-- used for ON CONFLICT inference unless the statement repeats the exact predicate,
+-- which PostgREST's onConflict cannot do — that is the 0061 gotcha (error 42P10,
+-- 0 rows inserted). A FULL unique index avoids it while preserving dedup: Postgres
+-- treats NULLs as DISTINCT by default, so manual rows whose link didn't parse
+-- (video_id = NULL) keep working — multiple NULL video_id rows stay allowed; only
+-- rows with a real video_id are deduped.
+--
+-- APPLY IS HUMAN-GATED. This file is only WRITTEN by the workflow, never applied.
+-- The human applies it (e.g. `npm run migrate:apply`) AFTER confirming there are
+-- no pre-existing duplicate video_ids — CREATE UNIQUE INDEX hard-fails on dupes.
+--
+-- READ-ONLY pre-flight check (run this BEFORE applying; expect ZERO rows). This is
+-- intentionally non-destructive — there is NO de-dup CTE here. If it returns any
+-- rows, resolve the duplicates by hand before applying:
+--
+--   SELECT video_id, count(*) FROM public.thumbnail_dna
+--   WHERE video_id IS NOT NULL
+--   GROUP BY video_id HAVING count(*) > 1;
+
+CREATE UNIQUE INDEX IF NOT EXISTS thumbnail_dna_video_id_uidx
+  ON public.thumbnail_dna (video_id);

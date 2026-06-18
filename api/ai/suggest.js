@@ -30,7 +30,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED } from "../admin/_auth.js";
 import { runInsights } from "./_insights-core.js";
-import { ingestSources, validateFeedUrl } from "./_rss.js";
+import { ingestSources, validateFeedUrl, parseYouTubePlaylistFeed } from "./_rss.js";
+import { ingestWorldEvents } from "./_world-feeds.js";
 
 export const config = { maxDuration: 45 };
 
@@ -109,6 +110,22 @@ export default async function handler(req, res) {
     return;
   }
 
+  // ── Dispatch: World Monitor free-feed ingest (USGS/FIRMS/ACLED; no LLM) ────
+  // Triggered by the Pulse "World" view "Refresh now" button (Bearer JWT) or a
+  // Hetzner cron (secret): */15 * * * * curl ".../api/ai/suggest?action=world-ingest&secret=…"
+  // Natively ingests the FREE feeds worldmonitor aggregates into monitor_events
+  // (source_type='geo'); paid APIs have no code path. Free (no LLM, not gated).
+  if (action === "world-ingest") {
+    try {
+      const summary = await ingestWorldEvents(adminClient());
+      res.status(200).json({ ok: true, ...summary });
+    } catch (e) {
+      console.error("world-ingest error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+    return;
+  }
+
   // ── Dispatch: validate a feed URL for the Pulse "Add source" form ──────────
   // Owner pastes a URL; we report whether it's a usable RSS/Atom feed and, if
   // not, WHY plus verified replacement URLs to paste instead. Free (no LLM).
@@ -125,6 +142,152 @@ export default async function handler(req, res) {
     } catch (e) {
       console.error("validate-feed error:", e.message);
       res.status(500).json({ ok: false, reason: e.message });
+    }
+    return;
+  }
+
+  // ── Dispatch: YouTube oEmbed lookup for the Thumbnail DNA capture form ─────
+  // Owner pastes a YouTube URL; we fetch youtube.com/oembed server-side and
+  // return title/channel/thumbnail for best-effort enrichment. The displayed
+  // thumbnail is derived client-side (zero-key) and never blocks on this — so
+  // ANY failure returns HTTP 200 { ok:false, reason } (not 500). Folded here to
+  // stay under the 12-function cap. Free (no LLM).
+  if (action === "youtube-oembed") {
+    let ytUrl = req.query?.url || url?.searchParams.get("url");
+    if (!ytUrl && req.body) {
+      ytUrl = typeof req.body === "string"
+        ? (() => { try { return JSON.parse(req.body).url; } catch { return null; } })()
+        : req.body.url;
+    }
+    if (!ytUrl) { res.status(400).json({ ok: false, reason: "No URL provided." }); return; }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const r = await fetch(
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(ytUrl)}&format=json`,
+        { signal: ctrl.signal });
+      if (!r.ok) {
+        res.status(200).json({ ok: false, reason: `oEmbed HTTP ${r.status}` });
+        return;
+      }
+      const data = await r.json();
+      res.status(200).json({
+        ok: true,
+        title: data?.title ?? null,
+        channel: data?.author_name ?? null,
+        thumbnail_url: data?.thumbnail_url ?? null,
+      });
+    } catch (e) {
+      const reason = e.name === "AbortError" ? "oEmbed request timed out" : e.message;
+      res.status(200).json({ ok: false, reason });
+    } finally {
+      clearTimeout(t);
+    }
+    return;
+  }
+
+  // ── Dispatch: YouTube playlist auto-ingest → thumbnail_dna (free, no LLM) ──
+  // Triggered by the Thumbnails "↻ Refresh" button (Bearer JWT) or a Hetzner
+  // cron (secret): */15 * * * * curl ".../api/ai/suggest?action=yt-sync&secret=…"
+  // Polls a public YouTube playlist's Atom feed and inserts each video into
+  // thumbnail_dna deduped on video_id (ON CONFLICT DO NOTHING via the FULL
+  // unique index thumbnail_dna_video_id_uidx from migration 0067) — so dropping
+  // a video into the playlist auto-catalogs it, and the new row arrives live via
+  // the existing thumbnail_dna realtime sub. Mirrors news-ingest's shape. Genes
+  // stay null (manual-only); DO NOTHING never clobbers a manual gene tag.
+  if (action === "yt-sync") {
+    const pid = process.env.YT_THUMBNAIL_PLAYLIST_ID;
+    if (!pid) {
+      res.status(200).json({ ok: true, skipped: true, reason: "YT_THUMBNAIL_PLAYLIST_ID not set" });
+      return;
+    }
+    try {
+      // Fetch the playlist Atom feed with an 8s abort (stays well under maxDuration:45).
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      let xml;
+      try {
+        const r = await fetch(
+          `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(pid)}`,
+          { signal: ctrl.signal });
+        if (!r.ok) throw new Error(`YouTube feed HTTP ${r.status}`);
+        xml = await r.text();
+      } finally {
+        clearTimeout(t);
+      }
+
+      const entries = parseYouTubePlaylistFeed(xml);
+      if (!entries.length) {
+        res.status(200).json({ ok: true, items_seen: 0, inserted: 0 });
+        return;
+      }
+
+      const rows = entries.map((e) => ({
+        platform: "yt",
+        source: "yt_playlist",
+        video_id: e.videoId,
+        video_url: `https://www.youtube.com/watch?v=${e.videoId}`,
+        thumbnail_url: `https://i.ytimg.com/vi/${e.videoId}/hqdefault.jpg`,
+        title: e.title || null,
+        channel: e.channel || null,
+      }));
+
+      // ON CONFLICT (video_id) DO NOTHING — never DO UPDATE (must not clobber
+      // manual gene tags on an already-captured video). ignoreDuplicates+select
+      // returns ONLY freshly-inserted rows.
+      const { data, error } = await adminClient()
+        .from("thumbnail_dna")
+        .upsert(rows, { onConflict: "video_id", ignoreDuplicates: true })
+        .select("id");
+      if (error) throw new Error(error.message);
+
+      res.status(200).json({ ok: true, items_seen: entries.length, inserted: (data || []).length });
+    } catch (e) {
+      console.error("yt-sync error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+    return;
+  }
+
+  // ── Dispatch: Discord notification when a reel moves to in_progress ─────────
+  // Called from the store's moveStage / sendBack with a Bearer JWT.
+  // Reads discord_config from app_settings (owner sets once via Roles Admin).
+  // discord_config shape: { mode: "all"|"owner", webhooks: { paul: "url", ... } }
+  // Always returns 200 — Discord failures must never surface as app errors.
+  if (action === "discord-notify") {
+    const body = req.body || {};
+    const { reel_id, reel_title, assigned_to, stage, sent_back } = body;
+    if (!reel_id || !stage) {
+      res.status(400).json({ error: "reel_id and stage required" }); return;
+    }
+    try {
+      const cfgRes = await adminClient()
+        .from("app_settings").select("value").eq("key", "discord_config").maybeSingle();
+      const cfg = cfgRes.data?.value || {};
+      if (!cfg.webhooks) {
+        res.status(200).json({ ok: true, skipped: true, reason: "no webhooks configured" }); return;
+      }
+      // Build recipient set: assignee + always paul + maya on in_progress
+      const targets = new Set(["paul", "maya"]);
+      if (assigned_to) targets.add(assigned_to);
+      const displayTitle = reel_title || reel_id;
+      const msg = sent_back
+        ? `🔄 **${displayTitle}** was sent back to ${assigned_to || "editor"} for revisions`
+        : `▶️ **${displayTitle}** moved to In Progress${assigned_to ? " — assigned to " + assigned_to : ""}`;
+      const results = await Promise.allSettled(
+        [...targets].filter(t => cfg.webhooks[t]).map(t =>
+          fetch(cfg.webhooks[t], {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: msg }),
+          })
+        )
+      );
+      const sent = results.filter(r => r.status === "fulfilled").length;
+      res.status(200).json({ ok: true, sent, total: [...targets].length });
+    } catch (e) {
+      console.error("discord-notify error:", e.message);
+      res.status(200).json({ ok: true, skipped: true, error: e.message });
     }
     return;
   }

@@ -142,6 +142,16 @@
   border-radius: 0;
 }
 
+/* Card-grid layouts (magazine / kanban) manage their own card chrome,
+   so the outer feed box drops its border + background for them. */
+.pulse-feed[data-layout="magazine"],
+.pulse-feed[data-layout="kanban"] {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+
 /* ── Day group wrapper ──────────────────────────────────── */
 .pulse-day {
   margin-bottom: 0;
@@ -505,3 +515,978 @@
   opacity: 0.6;
 }
 .pulse-src-del:hover { opacity: 1; }
+
+/* ── Add-source feed check + diagnostics ───────────────────────────── */
+.pulse-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 10px;
+  flex-wrap: wrap;
+}
+.pulse-check-btn {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--c-ink, #e8eef2);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--c-line, rgba(255,255,255,0.18));
+}
+.pulse-check-btn:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+.pulse-check-btn:disabled { opacity: 0.5; cursor: default; }
+
+.pulse-diag {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  border: 1px solid var(--c-line, rgba(255,255,255,0.14));
+}
+.pulse-diag.is-ok {
+  color: var(--c-green, #34d399);
+  background: rgba(52,211,153,0.10);
+  border-color: rgba(52,211,153,0.35);
+}
+.pulse-diag.is-err {
+  background: rgba(239,68,68,0.08);
+  border-color: rgba(239,68,68,0.30);
+}
+.pulse-diag-reason { color: var(--c-red, #ef4444); font-weight: 600; }
+.pulse-diag-sughead {
+  margin-top: 8px;
+  color: var(--c-ink-dim, #9aa);
+  font-size: 11.5px;
+}
+.pulse-diag-sughead code {
+  font-family: ui-monospace, Menlo, monospace;
+  background: rgba(255,255,255,0.08);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.pulse-diag-sug {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+}
+.pulse-diag-sug-main { min-width: 0; flex: 1 1 auto; }
+.pulse-diag-sug-label { color: var(--c-ink, #e8eef2); font-weight: 600; }
+.pulse-diag-sug-url {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: var(--c-ink-dim, #9aa);
+  word-break: break-all;
+}
+.pulse-diag-use {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: #0b1220;
+  background: var(--c-accent, #6ee7ff);
+  border: none;
+}
+.pulse-diag-use:hover { filter: brightness(1.08); }
+.pulse-diag-anyway {
+  margin-top: 10px;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--c-ink-dim, #9aa);
+  background: transparent;
+  border: 1px solid var(--c-line, rgba(255,255,255,0.18));
+}
+.pulse-diag-anyway:hover { color: var(--c-ink, #e8eef2); }
+
+/* =========================================================
+   WORLD MONITOR (hybrid)  —  APPEND-ONLY
+   All selectors below are NEW (prefixes .pulse-viewtoggle*,
+   .pulse-world*, .pulse-evlink*). No existing selector above
+   is modified. Mirrors the landing.jsx helix toggle + the
+   existing pulse row/feed look. CSS vars reuse the same
+   fallbacks used throughout this file.
+   ========================================================= */
+
+/* ── Classic ⇄ World view toggle ─────────────────────────
+   Plain <button aria-pressed> elements inside role="group"
+   (DPill has no aria-pressed). Mirrors .lp-helix-toggle. The
+   active state keys off [aria-pressed="true"]; .is-on is kept
+   as a defensive alias in case the markup also sets it. */
+.pulse-viewtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+}
+.pulse-viewtoggle-btn {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 999px;
+  color: var(--fg-dim);
+  background: transparent;
+  transition: color .18s ease, background .18s ease;
+}
+.pulse-viewtoggle-btn:hover { color: var(--fg); }
+.pulse-viewtoggle-btn[aria-pressed="true"],
+.pulse-viewtoggle-btn.is-on {
+  color: var(--bg);
+  background: var(--c-cyan);
+}
+
+/* ── World view container ────────────────────────────────
+   Two stacked panels: embed card on top, native geo feed
+   card below. Class names match src/components/pulse-world.jsx. */
+.pulse-world {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── World Monitor embed card ────────────────────────────
+   iframe → worldmonitor.app/embed.html (the only frame-allowed
+   path). Fixed height that collapses on narrow screens. */
+.pulse-world-embed-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pulse-world-embed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.pulse-world-embed-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.pulse-world-embed-open {
+  font-size: 10px;
+  font-family: var(--f-mono);
+  color: var(--c-cyan);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--c-cyan);
+  white-space: nowrap;
+}
+.pulse-world-embed-open:hover {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+}
+.pulse-world-embed-frame {
+  display: block;
+  width: 100%;
+  height: 520px;
+  border: 0;
+  background: var(--bg);
+}
+.pulse-world-embed-fallback {
+  padding: 24px 14px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: var(--f-mono);
+  text-align: center;
+}
+.pulse-world-embed-fallback a {
+  color: var(--c-cyan);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--c-cyan);
+}
+.pulse-world-embed-fallback a:hover {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+}
+
+/* ── Native geo feed card (USGS / FIRMS / ACLED) ─────────── */
+.pulse-world-feed-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pulse-world-feed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.pulse-world-feed-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pulse-world-feed-count {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-cyan);
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+/* Refresh-now button (local to the World feed) */
+.pulse-world-refresh {
+  appearance: none;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--c-ink, #e8eef2);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--c-line, rgba(255,255,255,0.18));
+  transition: background .15s, border-color .15s;
+}
+.pulse-world-refresh:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+.pulse-world-refresh:disabled { opacity: 0.5; cursor: default; }
+
+/* Local run-summary toast (kind = ok | err) */
+.pulse-world-toast {
+  margin: 10px 14px 0;
+  font-size: 12px;
+  font-family: var(--f-mono);
+  border-radius: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  background: var(--bg);
+}
+.pulse-world-toast--ok {
+  color: var(--c-green, #34d399);
+  border-color: rgba(52,211,153,0.35);
+  background: rgba(52,211,153,0.10);
+}
+.pulse-world-toast--err {
+  color: var(--c-red, #ef4444);
+  border-color: rgba(239,68,68,0.30);
+  background: rgba(239,68,68,0.08);
+}
+
+/* One group per event type (earthquake / fire / conflict). */
+.pulse-world-group + .pulse-world-group {
+  border-top: 1px solid var(--border);
+}
+.pulse-world-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.pulse-world-group-glyph {
+  font-size: 12px;
+  line-height: 1;
+}
+.pulse-world-group-label {
+  color: var(--fg);
+}
+.pulse-world-group-src {
+  color: var(--fg-dim);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.pulse-world-group-count {
+  margin-left: auto;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+/* Per-event row inside a group (data-event-type drives the accent). */
+.pulse-world-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.pulse-world-row:last-child { border-bottom: none; }
+.pulse-world-row-main {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pulse-world-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pulse-world-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.4;
+  min-width: 0;
+}
+.pulse-world-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-family: var(--f-mono);
+  color: var(--fg-dim);
+}
+.pulse-world-place,
+.pulse-world-region,
+.pulse-world-coords,
+.pulse-world-when {
+  white-space: nowrap;
+}
+.pulse-world-coords {
+  opacity: 0.85;
+}
+
+/* Metric badge (earthquake magnitude, etc.). The accent colour
+   is keyed off the row's data-event-type. */
+.pulse-world-metric {
+  flex-shrink: 0;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  background: var(--bg);
+  white-space: nowrap;
+}
+.pulse-world-row[data-event-type="earthquake"] .pulse-world-metric {
+  color: var(--c-amber);
+  border-color: var(--c-amber);
+}
+.pulse-world-row[data-event-type="fire"] .pulse-world-metric {
+  color: var(--c-red);
+  border-color: var(--c-red);
+}
+.pulse-world-row[data-event-type="conflict"] .pulse-world-metric {
+  color: var(--c-cyan);
+  border-color: var(--c-cyan);
+}
+
+/* Per-row "Link" affordance — mirrors .pulse-act look. */
+.pulse-world-link-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.pulse-world-link-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
+
+/* Empty / loading state inside the World feed. */
+.pulse-world-empty {
+  padding: 20px 14px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: var(--f-mono);
+  text-align: center;
+}
+
+/* ── Event → pipeline-card link UI (PulseEventLink) ──────
+   Attach a geo event to a reel / review_card / location.
+   Manual pick + auto-match SUGGESTION + existing-link list. */
+.pulse-evlink {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--fg);
+}
+
+/* Target-type chooser row (reel / review_card / location). */
+.pulse-evlink-types {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pulse-evlink-type {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--f-mono);
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.pulse-evlink-type:hover { color: var(--fg); }
+.pulse-evlink-type[aria-pressed="true"],
+.pulse-evlink-type.is-on {
+  background: var(--c-cyan);
+  border-color: var(--c-cyan);
+  color: var(--bg);
+}
+
+/* Picker (manual select of a target row). */
+.pulse-evlink-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pulse-evlink-picker select,
+.pulse-evlink-picker input {
+  flex: 1 1 180px;
+  min-width: 0;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--c-line, rgba(255,255,255,0.18));
+  background: var(--c-panel, rgba(255,255,255,0.03));
+  color: var(--fg);
+}
+.pulse-evlink-add {
+  flex: 0 0 auto;
+  appearance: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #0b1220;
+  background: var(--c-accent, #6ee7ff);
+  border: none;
+  transition: filter .15s;
+}
+.pulse-evlink-add:hover:not(:disabled) { filter: brightness(1.08); }
+.pulse-evlink-add:disabled { opacity: 0.5; cursor: default; }
+
+/* Auto-match suggestion (region / coordinate based; never auto-creates). */
+.pulse-evlink-suggest {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(110,231,255,0.06);
+  border: 1px solid rgba(110,231,255,0.30);
+}
+.pulse-evlink-suggest-main { flex: 1 1 auto; min-width: 0; }
+.pulse-evlink-suggest-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-ink, #e8eef2);
+}
+.pulse-evlink-suggest-meta {
+  font-size: 11px;
+  font-family: var(--f-mono);
+  color: var(--c-ink-dim, #9aa);
+}
+.pulse-evlink-suggest-use {
+  flex: 0 0 auto;
+  appearance: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: #0b1220;
+  background: var(--c-accent, #6ee7ff);
+  border: none;
+}
+.pulse-evlink-suggest-use:hover { filter: brightness(1.08); }
+
+/* Existing-links list (with unlink). */
+.pulse-evlink-listhead {
+  margin-top: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-ink-dim, #9aa);
+}
+.pulse-evlink-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.pulse-evlink-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--c-line, rgba(255,255,255,0.12));
+  border-radius: 10px;
+  background: var(--c-panel, rgba(255,255,255,0.03));
+}
+.pulse-evlink-row-main { flex: 1 1 auto; min-width: 0; }
+.pulse-evlink-row-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Target-type badge on a link row (reel / review_card / location). */
+.pulse-evlink-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--c-line, rgba(255,255,255,0.18));
+  color: var(--c-ink-dim, #9aa);
+}
+.pulse-evlink-badge--reel { color: var(--c-cyan); border-color: var(--c-cyan); }
+.pulse-evlink-badge--review_card { color: var(--c-amber); border-color: var(--c-amber); }
+.pulse-evlink-badge--location { color: var(--c-green, #34d399); border-color: var(--c-green, #34d399); }
+.pulse-evlink-unlink {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.pulse-evlink-unlink:hover { color: var(--c-red); border-color: var(--c-red); }
+
+/* Empty state for the link list. */
+.pulse-evlink-empty {
+  padding: 12px 10px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: var(--f-mono);
+  text-align: center;
+}
+
+/* ── Responsive: narrow widths ──────────────────────────── */
+@media (max-width: 700px) {
+  .pulse-world-embed-frame { height: 380px; }
+  .pulse-world-row-main { flex: 1 1 100%; order: 1; }
+  .pulse-world-link-btn {
+    order: 2;
+    margin-left: 0;
+  }
+}
+
+/* =========================================================
+   PULSE COMPREHENSIVE  —  APPEND-ONLY
+   Layout switcher + four feed layouts (timeline / magazine /
+   table / kanban) + the shared inline detail/tag editor.
+   All selectors are NEW (prefixes .pc-*). Reuses the existing
+   .pulse-sev / .pulse-platform / .pulse-tag / .pulse-act tokens.
+   ========================================================= */
+
+/* ── Layout switcher bar ─────────────────────────────────── */
+.pc-layoutbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.pc-layoutbar-label {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+}
+.pc-layoutbar-count {
+  margin-left: auto;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.pc-layout-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.pc-layout-btn {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 6px;
+  color: var(--fg-dim);
+  background: transparent;
+  transition: color .15s ease, background .15s ease;
+}
+.pc-layout-btn:hover { color: var(--fg); }
+.pc-layout-btn.is-on {
+  color: var(--bg);
+  background: var(--c-cyan);
+}
+
+/* ── Star flag (collapsed rows/cards) ────────────────────── */
+.pc-star-flag { color: var(--c-amber); font-size: 12px; flex-shrink: 0; }
+.pc-chevron { color: var(--fg-dim); font-size: 11px; margin-left: auto; flex-shrink: 0; }
+.pc-dash { color: var(--fg-dim); opacity: 0.5; }
+
+/* ════════ Shared inline detail / editor ═════════════════ */
+.pc-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.pc-detail-summary {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.pc-detail-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.pc-detail-field { display: flex; flex-direction: column; gap: 5px; }
+.pc-detail-label {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+}
+
+/* Segmented quick-set (severity / status) */
+.pc-seg { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.pc-seg-btn {
+  appearance: none;
+  cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  transition: all .14s ease;
+}
+.pc-seg-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
+.pc-seg-btn.is-on { color: var(--bg); background: var(--c-cyan); border-color: var(--c-cyan); }
+.pc-seg-btn--high.is-on  { background: var(--c-red);   border-color: var(--c-red); }
+.pc-seg-btn--watch.is-on { background: var(--c-amber); border-color: var(--c-amber); }
+.pc-seg-btn--info.is-on  { background: var(--c-cyan);  border-color: var(--c-cyan); }
+
+/* Tag editor */
+.pc-tagedit { display: flex; flex-direction: column; gap: 5px; }
+.pc-tagedit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.pc-tagchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--c-cyan);
+  background: color-mix(in srgb, var(--c-cyan) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-cyan) 35%, transparent);
+  border-radius: 999px;
+  padding: 2px 4px 2px 9px;
+}
+.pc-tagchip-x {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 3px;
+  opacity: 0.7;
+}
+.pc-tagchip-x:hover { opacity: 1; color: var(--c-red); }
+.pc-tag-input {
+  flex: 1 1 120px;
+  min-width: 90px;
+  background: var(--surface, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  padding: 3px 10px;
+}
+.pc-tag-input:focus { outline: none; border-color: var(--c-cyan); }
+
+.pc-detail-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+.pc-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.pc-detail-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ════════ TIMELINE ══════════════════════════════════════ */
+.pc-timeline { display: flex; flex-direction: column; }
+.pc-tl-day + .pc-tl-day { border-top: 1px solid var(--border); }
+.pc-tl-dayhead {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.pc-tl-item { border-bottom: 1px solid var(--border); border-left: 3px solid transparent; }
+.pc-tl-item:last-child { border-bottom: none; }
+.pc-tl-item[data-severity="high"]  { border-left-color: var(--c-red); }
+.pc-tl-item[data-severity="watch"] { border-left-color: var(--c-amber); }
+.pc-tl-item[data-severity="info"]  { border-left-color: var(--c-cyan); }
+.pc-tl-item.is-open { background: color-mix(in srgb, var(--c-cyan) 4%, transparent); }
+.pc-tl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.pc-tl-row:hover { background: color-mix(in srgb, var(--c-cyan) 5%, transparent); }
+.pc-tl-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  min-width: 0;
+  flex: 1 1 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ════════ MAGAZINE ══════════════════════════════════════ */
+.pc-mag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.pc-mag-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+  transition: border-color .15s, transform .12s;
+}
+.pc-mag-card[data-severity="high"]  { border-left-color: var(--c-red); }
+.pc-mag-card[data-severity="watch"] { border-left-color: var(--c-amber); }
+.pc-mag-card[data-severity="info"]  { border-left-color: var(--c-cyan); }
+.pc-mag-card:hover { border-color: var(--fg-dim); }
+.pc-mag-card.is-open { border-color: var(--c-cyan); }
+.pc-mag-body { padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 8px; }
+.pc-mag-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pc-mag-date { font-family: var(--f-mono); font-size: 10px; color: var(--fg-dim); margin-left: auto; }
+.pc-mag-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--fg);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pc-mag-summary {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pc-mag-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+.pc-mag-source { font-family: var(--f-mono); font-size: 10px; color: var(--c-cyan); }
+
+/* ════════ TABLE ═════════════════════════════════════════ */
+.pc-table-wrap { overflow-x: auto; }
+.pc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.pc-th {
+  text-align: left;
+  padding: 9px 10px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.pc-th:hover { color: var(--fg); }
+.pc-th--title { width: 40%; }
+.pc-th--chev { width: 28px; }
+.pc-sortarrow { color: var(--c-cyan); }
+.pc-tr {
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.pc-tr td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.pc-tr:hover td { background: color-mix(in srgb, var(--c-cyan) 5%, transparent); }
+.pc-tr[data-severity="high"]  { border-left-color: var(--c-red); }
+.pc-tr[data-severity="watch"] { border-left-color: var(--c-amber); }
+.pc-tr[data-severity="info"]  { border-left-color: var(--c-cyan); }
+.pc-tr.is-open td { background: color-mix(in srgb, var(--c-cyan) 7%, transparent); }
+.pc-td-date { font-family: var(--f-mono); font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.pc-td-title { font-weight: 600; color: var(--fg); }
+.pc-td-source { font-family: var(--f-mono); font-size: 11px; color: var(--fg-dim); }
+.pc-td-chev { text-align: right; }
+.pc-detail-tr td { padding: 0 !important; background: var(--bg); }
+.pc-detail-tr .pc-detail { border-top: none; }
+
+/* ════════ KANBAN ════════════════════════════════════════ */
+.pc-kanban {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.pc-kan-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  min-height: 80px;
+}
+.pc-kan-col--high  { border-top-color: var(--c-red); }
+.pc-kan-col--watch { border-top-color: var(--c-amber); }
+.pc-kan-col--info  { border-top-color: var(--c-cyan); }
+.pc-kan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pc-kan-count {
+  margin-left: auto;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fg-dim);
+}
+.pc-kan-body { display: flex; flex-direction: column; gap: 8px; }
+.pc-kan-empty {
+  text-align: center;
+  color: var(--fg-dim);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  padding: 8px;
+  opacity: 0.5;
+}
+.pc-kan-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.pc-kan-card.is-open { border-color: var(--c-cyan); }
+.pc-kan-card-body { padding: 10px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+.pc-kan-card-head { display: flex; align-items: center; gap: 6px; }
+.pc-kan-date { font-family: var(--f-mono); font-size: 9.5px; color: var(--fg-dim); margin-left: auto; }
+.pc-kan-title { font-size: 12.5px; font-weight: 600; line-height: 1.35; color: var(--fg); }
+.pc-kan-card .pc-detail { padding: 10px; gap: 10px; }
+
+@media (max-width: 760px) {
+  .pc-kanban { grid-template-columns: 1fr; }
+  .pc-th--title { width: auto; }
+}

@@ -189,9 +189,10 @@
 
 .rd-card-foot {
   display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 8px 12px;
   border-top: 1px dashed var(--line-soft); padding-top: 8px;
 }
-.rd-card-foot-left { display: flex; gap: 12px; align-items: center; }
+.rd-card-foot-left { display: flex; gap: 10px 12px; align-items: center; flex-wrap: wrap; min-width: 0; }
 .rd-collapse, .rd-archive, .rd-deconstruct {
   font-family: var(--f-mono); font-size: 10.5px;
   color: var(--fg-dim); cursor: pointer;
@@ -204,6 +205,54 @@
   border-radius: 4px; padding: 1px 8px;
 }
 .rd-deconstruct:hover { background: color-mix(in srgb, var(--c-violet) 12%, transparent); }
+
+.rd-card-foot-right { display: flex; gap: 12px; align-items: center; }
+.rd-send {
+  font-family: var(--f-mono); font-size: 10.5px; cursor: pointer;
+  color: var(--c-green);
+  border: 1px solid color-mix(in srgb, var(--c-green) 38%, transparent);
+  border-radius: 4px; padding: 1px 8px;
+}
+.rd-send:hover { background: color-mix(in srgb, var(--c-green) 12%, transparent); }
+.rd-delete {
+  font-family: var(--f-mono); font-size: 10.5px; cursor: pointer;
+  color: var(--fg-dim);
+}
+.rd-delete:hover { color: var(--c-red); }
+
+/* ── Production brief (logged location + gene fields, pipeline-matching) ── */
+.rd-brief {
+  display: flex; flex-direction: column; gap: 3px;
+  border-top: 1px dashed var(--line-soft); padding-top: 8px;
+}
+.rd-brief-row { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; line-height: 1.4; }
+.rd-brief-key {
+  flex: 0 0 64px; font-family: var(--f-mono); font-size: 10px;
+  color: var(--fg-dim); text-transform: uppercase; letter-spacing: .06em;
+}
+.rd-brief-val { color: var(--fg-mute); word-break: break-word; min-width: 0; }
+
+/* ── Refresh / send notice line ────────────────────────── */
+.rd-notice {
+  font-family: var(--f-sans); font-size: 12.5px; line-height: 1.4;
+  border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; cursor: pointer;
+}
+.rd-notice--ok {
+  border: 1px solid color-mix(in srgb, var(--c-green) 40%, transparent);
+  background: color-mix(in srgb, var(--c-green) 8%, transparent);
+  color: var(--c-green);
+}
+.rd-notice--err {
+  border: 1px dashed var(--c-red);
+  background: color-mix(in srgb, var(--c-red) 8%, transparent);
+  color: var(--c-red);
+}
+
+.rd-row-btn--send { color: var(--c-green); border-color: color-mix(in srgb, var(--c-green) 40%, transparent); }
+.rd-row-btn--send:hover { background: color-mix(in srgb, var(--c-green) 14%, transparent); }
+.rd-row-btn--linked { color: var(--c-green); border-color: color-mix(in srgb, var(--c-green) 30%, transparent); cursor: default; }
+.rd-row-btn--delete { color: var(--fg-dim); border-color: var(--line-soft); }
+.rd-row-btn--delete:hover { color: var(--c-red); border-color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }
 
 /* ── Bookmarklet footer ────────────────────────────────── */
 .rd-bookmarklet {
@@ -308,3 +357,362 @@
 .rd-row-btn:hover { background: color-mix(in srgb, var(--c-violet) 14%, transparent); }
 .rd-row-btn--archive { color: var(--fg-dim); border-color: var(--line-soft); }
 .rd-row-btn--archive:hover { color: var(--c-red); border-color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }
+
+/* =========================================================
+   COMPREHENSIVE VIEW  —  APPEND-ONLY
+   Classic ⇄ Comprehensive toggle, Classic column filters, and
+   the Comprehensive faceted rail + Grid/Gallery content. All
+   selectors below are NEW (.rd-viewtoggle*, .rd-colfilter*,
+   .rdc-*). Reuses the existing tokens + .rd-table / .rd-grid.
+   ========================================================= */
+
+/* ── Classic ⇄ Comprehensive toggle (mirrors pulse-viewtoggle) ── */
+.rd-viewtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-3);
+}
+.rd-viewtoggle-btn {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 999px;
+  color: var(--fg-dim);
+  background: transparent;
+  transition: color .16s ease, background .16s ease;
+}
+.rd-viewtoggle-btn:hover { color: var(--fg); }
+.rd-viewtoggle-btn.is-on { color: var(--bg-0); background: var(--c-cyan); }
+
+/* ── Classic spreadsheet: per-column filter row ──────────── */
+.rd-colfilter-row { background: var(--bg-2); }
+.rd-colfilter-td {
+  padding: 5px 8px !important;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 30px; /* sits just under the sticky header row */
+  background: var(--bg-2);
+  z-index: 1;
+}
+.rd-colfilter-input,
+.rd-colfilter-select {
+  width: 100%;
+  min-width: 70px;
+  box-sizing: border-box;
+  background: var(--bg-3);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  padding: 3px 6px;
+}
+.rd-colfilter-input::placeholder { color: var(--fg-dim); opacity: 0.5; }
+.rd-colfilter-input:focus,
+.rd-colfilter-select:focus { outline: none; border-color: var(--c-cyan); }
+.rd-colfilter-clear-td { text-align: right; }
+.rd-colfilter-clear {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.rd-colfilter-clear:hover { color: var(--c-red); border-color: var(--c-red); }
+
+/* ── Comprehensive: rail + content shell ─────────────────── */
+.rdc-root {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.rdc-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  position: sticky;
+  top: 12px;
+}
+.rdc-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.rdc-rail-title {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+}
+.rdc-clear {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--c-cyan);
+  padding: 0;
+}
+.rdc-clear:hover { text-decoration: underline; }
+
+.rdc-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  padding: 6px 9px;
+}
+.rdc-search:focus { outline: none; border-color: var(--c-cyan); }
+
+.rdc-facet { display: flex; flex-direction: column; gap: 6px; }
+.rdc-facet-title {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+}
+.rdc-facet-opts { display: flex; flex-wrap: wrap; gap: 5px; }
+.rdc-facet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  appearance: none;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--fg-mute);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  padding: 3px 5px 3px 10px;
+  transition: all .13s ease;
+}
+.rdc-facet-chip:hover { color: var(--fg); border-color: var(--line-hard); }
+.rdc-facet-chip.is-on {
+  color: var(--bg-0);
+  background: var(--c-cyan);
+  border-color: var(--c-cyan);
+  font-weight: 600;
+}
+.rdc-facet-count {
+  font-size: 9.5px;
+  min-width: 16px;
+  text-align: center;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg-dim) 18%, transparent);
+  color: var(--fg-dim);
+}
+.rdc-facet-chip.is-on .rdc-facet-count {
+  background: color-mix(in srgb, var(--bg-0) 28%, transparent);
+  color: var(--bg-0);
+}
+
+/* ── Comprehensive content area ──────────────────────────── */
+.rdc-content { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.rdc-contentbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.rdc-result-count {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.rdc-subswitch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-3);
+}
+.rdc-sub-btn {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 6px;
+  color: var(--fg-dim);
+  background: transparent;
+  transition: color .15s ease, background .15s ease;
+}
+.rdc-sub-btn:hover { color: var(--fg); }
+.rdc-sub-btn.is-on { color: var(--bg-0); background: var(--c-cyan); }
+
+@media (max-width: 860px) {
+  .rdc-root { grid-template-columns: 1fr; }
+  .rdc-rail { position: static; }
+}
+
+/* =========================================================
+   UNIFIED ASSETS  —  APPEND-ONLY
+   Per-card Assets column (.rd-assets-col / .rd-assets-head),
+   the four collapsible sections (.asset-section*), per-type item
+   rows, and the full-screen Assets takeover page. Class names match
+   exactly what asset-section.jsx / reel-assets.jsx / reel-assets-panel.jsx
+   / reel-assets-page.jsx emit. Reuses existing tokens.
+   ========================================================= */
+
+/* ── Card becomes a flex row: existing body beside the assets column ── */
+.rd-card { flex-direction: row; align-items: flex-start; gap: 16px; }
+.rd-card-main {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.rd-assets-col {
+  flex: 0 0 240px; min-width: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+@media (max-width: 720px) {
+  .rd-card { flex-direction: column; }
+  .rd-assets-col { flex-basis: auto; width: 100%; }
+}
+
+/* ── "Assets <total> →" heading button (opens the full page) ── */
+.rd-assets-head {
+  display: block; width: 100%; text-align: left;
+  appearance: none; cursor: pointer;
+  background: transparent; border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 0 0 6px;
+  font-family: var(--f-mono); font-size: 11px; font-weight: 700;
+  letter-spacing: .05em; text-transform: uppercase;
+  color: var(--fg-mute);
+  transition: color .14s ease;
+}
+.rd-assets-head:hover { color: var(--c-cyan); border-bottom-color: var(--c-cyan); }
+
+/* ── Count pills (reuse the needs-badge look) ── */
+.asset-total-badge,
+.asset-count-badge {
+  display: inline-block; min-width: 16px; text-align: center;
+  padding: 0 6px; border-radius: 999px;
+  font-family: var(--f-mono); font-size: 10px; font-weight: 700;
+  color: var(--bg-0); background: var(--c-cyan);
+}
+.asset-count-badge.is-zero {
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--fg-dim) 18%, transparent);
+}
+
+/* ── Collapsible section (asset-section.jsx) ── */
+.asset-section { display: flex; flex-direction: column; }
+.asset-section-head {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  appearance: none; cursor: pointer; text-align: left;
+  background: transparent;
+  border: 1px solid var(--line-soft); border-radius: 6px;
+  padding: 5px 8px;
+  font-family: var(--f-mono); font-size: 11.5px;
+  color: var(--fg-mute);
+  transition: border-color .14s ease, color .14s ease;
+}
+.asset-section-head:hover { color: var(--fg); border-color: var(--line-hard); }
+.asset-section-icon { flex: 0 0 auto; }
+.asset-section-label { flex: 1 1 auto; min-width: 0; }
+.asset-section-chevron { flex: 0 0 auto; color: var(--fg-dim); font-size: 10px; }
+.asset-section.compact .asset-section-head { font-size: 11px; padding: 4px 7px; }
+
+.asset-section-body {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 6px 4px 8px;
+}
+.asset-empty {
+  font-family: var(--f-mono); font-size: 10.5px;
+  font-style: italic; color: var(--fg-dim);
+}
+
+/* ── Per-item rows ── */
+.rd-asset-row {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--f-mono); font-size: 11px;
+}
+.rd-asset-name {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg-mute);
+}
+.rd-asset-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.rd-asset-thumb-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.rd-asset-thumb-wrap { position: relative; display: inline-flex; }
+.rd-asset-thumb {
+  display: block; width: 64px; height: 36px;
+  border: 1px solid var(--line); border-radius: 4px;
+  overflow: hidden; background: var(--bg-3);
+}
+.rd-asset-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.rd-asset-news {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  font-family: var(--f-sans); font-size: 12px; line-height: 1.35;
+}
+.rd-asset-news a { color: var(--c-cyan); text-decoration: none; min-width: 0; word-break: break-word; }
+.rd-asset-news a:hover { text-decoration: underline; }
+.rd-asset-news-time { font-family: var(--f-mono); font-size: 10px; color: var(--fg-dim); }
+
+/* ── Detach (✕) on a row/chip ── */
+.rd-asset-detach {
+  appearance: none; cursor: pointer;
+  background: transparent; border: 0;
+  color: var(--fg-dim); font-size: 11px; line-height: 1;
+  padding: 0 2px; margin-left: 4px;
+}
+.rd-asset-detach:hover { color: var(--c-red); }
+
+/* ── Spreadsheet Assets column ── */
+.rd-th-assets { width: 1%; white-space: nowrap; }
+.rd-td-assets { white-space: nowrap; text-align: center; }
+
+/* ── Full-screen Assets takeover page ── */
+.rd-assets-page { display: block; padding-bottom: 48px; }
+.rd-assets-page > .page-head { margin-bottom: 12px; }
+.rd-assets-page .asset-section { margin: 0 22px; }
+.rd-pull-btn,
+.rd-back-btn {
+  appearance: none; cursor: pointer;
+  font-family: var(--f-mono); font-size: 11.5px; font-weight: 600;
+  border-radius: 6px; padding: 5px 12px;
+  background: var(--bg-3); color: var(--fg-mute);
+  border: 1px solid var(--line);
+  transition: all .14s ease;
+}
+.rd-pull-btn {
+  color: var(--c-green);
+  border-color: color-mix(in srgb, var(--c-green) 40%, transparent);
+}
+.rd-pull-btn:hover { background: color-mix(in srgb, var(--c-green) 12%, transparent); }
+.rd-back-btn:hover { color: var(--fg); border-color: var(--line-hard); }

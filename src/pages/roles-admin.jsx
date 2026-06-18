@@ -16,6 +16,7 @@
 
 import React from "react";
 import { usePermissions } from "../lib/permissions.jsx";
+import { useWorkflow } from "../store/store.jsx";
 import { VIEW_CAPS, ACTION_CAPS, EDITABLE_ROLES } from "../lib/permissions-catalog.js";
 import { ROLES } from "../lib/shared-data.jsx";
 import { DPill } from "../components/components.jsx";
@@ -322,11 +323,11 @@ function PersonRow({ person, token, onRefresh, onResult, trackerTs }) {
               onChange={e => setEmail(e.target.value)}
               style={{ ...inputStyle, fontSize: 11, padding: "5px 7px" }}
             />
-            <input
-              type="text" required
+            <PasswordField
               placeholder="Password (min 6 chars)"
               value={passInput}
               onChange={e => setPass(e.target.value)}
+              minLength={6}
               style={{ ...inputStyle, fontSize: 11, padding: "5px 7px" }}
             />
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -406,12 +407,12 @@ function PersonRow({ person, token, onRefresh, onResult, trackerTs }) {
             can't be read back (stored hashed) — this replaces it. Share the new one with them.
           </div>
           <div style={{ display: "flex", gap: 5 }}>
-            <input
-              type="text" required
+            <PasswordField
               placeholder="New password (min 6 chars)"
               value={passInput}
               onChange={e => setPass(e.target.value)}
-              style={{ ...inputStyle, flex: 1, fontSize: 11, padding: "5px 7px" }}
+              minLength={6}
+              style={{ ...inputStyle, fontSize: 11, padding: "5px 7px" }}
             />
             <ActionBtn busy={busy} onClick={() => run(
               () => adminFetch("/api/admin/set-password", token, { peopleId: person.id, password: passInput }),
@@ -499,6 +500,38 @@ function ErrMsg({ children }) {
   );
 }
 
+/* Password input with an inline show/hide toggle. Real passwords are stored
+   hashed (can't be read back) — this masks/reveals the value being typed. */
+function PasswordField({ value, onChange, placeholder, style, minLength }) {
+  const [show, setShow] = React.useState(false);
+  return (
+    <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+      <input
+        type={show ? "text" : "password"}
+        required
+        minLength={minLength}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        style={{ ...style, paddingRight: 46, width: "100%", boxSizing: "border-box" }}
+      />
+      <button
+        type="button"
+        onClick={() => setShow(s => !s)}
+        title={show ? "Hide password" : "Show password"}
+        style={{
+          position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+          background: "none", border: "none", cursor: "pointer", padding: "2px 4px",
+          fontFamily: "var(--f-mono)", fontSize: 9, letterSpacing: "0.04em",
+          textTransform: "uppercase", color: "var(--fg-mute)",
+        }}
+      >
+        {show ? "hide" : "show"}
+      </button>
+    </div>
+  );
+}
+
 const expandStyle = {
   marginTop: 6, padding: "8px 10px",
   border: "1px dashed var(--line-hard)", borderRadius: 4,
@@ -549,7 +582,7 @@ function AddEditorForm({ token, onSuccess, onResult }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <input required placeholder="Full name" value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
         <input required type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={inputStyle} />
-        <input required type="password" placeholder="Password (min 6 chars)" minLength={6} value={password} onChange={e => setPass(e.target.value)} style={inputStyle} />
+        <PasswordField placeholder="Password (min 6 chars)" minLength={6} value={password} onChange={e => setPass(e.target.value)} style={inputStyle} />
         <select value={role} onChange={e => setRole(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
           {EDITABLE_ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
           <option value="owner">Owner (full access)</option>
@@ -849,6 +882,42 @@ function UsersPanel() {
 }
 
 /* =========================================================
+   Owner feature flags — experimental UI switches that persist
+   to app_settings (owner-write RLS) and apply to everyone.
+   ========================================================= */
+
+function FeatureFlagsPanel() {
+  const { unifiedCards, actions } = useWorkflow();
+  return (
+    <div style={{
+      border: "1px dashed var(--line-hard)", borderRadius: 6,
+      padding: "10px 12px", margin: "4px 0 8px",
+    }}>
+      <div className="mono" style={{
+        fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase",
+        color: "var(--fg-mute)", marginBottom: 8,
+      }}>
+        Feature flags
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <Toggle
+          on={!!unifiedCards}
+          onClick={() => actions.setUnifiedCards(!unifiedCards)}
+        />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, color: "var(--fg)" }}>Unified Reel DNA card</div>
+          <div className="mono dim" style={{ fontSize: 10.5, lineHeight: 1.45 }}>
+            New card layout with quick multi-attach (+ per category), inline add
+            thumbnail/news, and a hide-all-assets toggle. Off = the current cards.
+            Applies to everyone; flip back here any time to revert.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
    Main page
    ========================================================= */
 
@@ -898,6 +967,7 @@ function RolesAdmin({ onBack }) {
 
       {/* Permissions matrix — full width now that the sidebar is gone */}
       <div style={{ padding: "0 22px 40px" }}>
+        <FeatureFlagsPanel />
         {/* UI-gating disclosure */}
         <div style={{
           border: "1px dashed var(--c-amber-soft)", background: "rgba(245,194,102,0.05)",

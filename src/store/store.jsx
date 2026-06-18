@@ -160,7 +160,7 @@ function reelDnaToDb(item) {
   // (music/hook/font/story/sfx) pass through untouched.
   const { reelUrl, genesOfInterest, quickNotes, capturedBy, externalRef,
           reelId, archivedAt, deletedAt, location, id, platform, status, source,
-          music, hook, font, story, sfx } = item;
+          music, hook, font, story, sfx, contentType } = item;
   const out = { id, platform, status, source, music, hook, font, story, sfx,
     reel_url: reelUrl,
     genes_of_interest: genesOfInterest ?? [],
@@ -170,14 +170,60 @@ function reelDnaToDb(item) {
     reel_id: reelId ?? null,
     archived_at: archivedAt ?? null,
     deleted_at: deletedAt ?? null,
-    location: location ?? null };
+    location: location ?? null,
+    content_type: contentType ?? null };
   return out;
+}
+
+// Thumbnail DNA — separate table from reel_dna, manual YouTube-thumbnail capture.
+// The six design genes (color/typography/face/layout/mood/subject) are PLAIN
+// TEXT columns (pass-through both directions, not jsonb).
+function thumbnailFromDb(row) {
+  if (!row) return row;
+  const { video_url, video_id, thumbnail_url, genes_of_interest, quick_notes,
+          captured_by, archived_at, deleted_at, created_at, updated_at,
+          ...rest } = row;
+  return {
+    ...rest,
+    videoUrl: video_url,
+    videoId: video_id ?? undefined,
+    thumbnailUrl: thumbnail_url ?? undefined,
+    genesOfInterest: genes_of_interest ?? [],
+    quickNotes: quick_notes ?? undefined,
+    capturedBy: captured_by ?? undefined,
+    archivedAt: archived_at ?? undefined,
+    deletedAt: deleted_at ?? undefined,
+    createdAt: created_at ?? undefined,
+    updatedAt: updated_at ?? undefined,
+  };
+}
+function thumbnailToDb(item) {
+  // Only columns that exist in public.thumbnail_dna; the six gene text fields
+  // (color/typography/face/layout/mood/subject) pass through untouched via rest.
+  const { videoUrl, videoId, thumbnailUrl, genesOfInterest, quickNotes,
+          capturedBy, archivedAt, deletedAt, id, title, channel, platform,
+          status, source, color, typography, face, layout, mood, subject } = item;
+  return {
+    id, title: title ?? null, channel: channel ?? null,
+    platform: platform || "yt", status, source,
+    color: color ?? null, typography: typography ?? null, face: face ?? null,
+    layout: layout ?? null, mood: mood ?? null, subject: subject ?? null,
+    video_url: videoUrl,
+    video_id: videoId ?? null,
+    thumbnail_url: thumbnailUrl ?? null,
+    genes_of_interest: genesOfInterest ?? [],
+    quick_notes: quickNotes ?? null,
+    captured_by: capturedBy ?? null,
+    archived_at: archivedAt ?? null,
+    deleted_at: deletedAt ?? null,
+  };
 }
 
 function monitorEventFromDb(row) {
   if (!row) return row;
   const { source_type, external_id, source_name, source_url,
           published_at, created_by, created_at, updated_at,
+          event_type,
           ...rest } = row;
   return {
     ...rest,
@@ -189,6 +235,10 @@ function monitorEventFromDb(row) {
     createdBy: created_by ?? undefined,
     createdAt: created_at ?? undefined,
     updatedAt: updated_at ?? undefined,
+    // Geo (source_type='geo') columns. eventType is the only multi-word one
+    // needing a remap; lat/lng/metric/magnitude/place/confidence/fatalities
+    // are single-word and ride through `...rest` untouched.
+    eventType: event_type ?? undefined,
     // Defaults on read — schema lock keeps status as 'new'|'read'|'archived'.
     tags: rest.tags ?? [],
     starred: rest.starred ?? false,
@@ -199,7 +249,8 @@ function monitorEventToDb(item) {
   // partial updates don't overwrite columns the caller didn't mean to touch.
   const { id, sourceType, externalId, category, platform, severity, status,
           starred, title, summary, sourceName, sourceUrl, region, tags,
-          publishedAt, createdBy } = item;
+          publishedAt, createdBy,
+          eventType, metric, lat, lng, magnitude, place, confidence, fatalities } = item;
   const out = {};
   if (id !== undefined)          out.id = id;
   if (sourceType !== undefined)  out.source_type = sourceType;
@@ -217,7 +268,129 @@ function monitorEventToDb(item) {
   if (tags !== undefined)        out.tags = tags;
   if (publishedAt !== undefined) out.published_at = publishedAt;
   if (createdBy !== undefined)   out.created_by = createdBy;
+  // Geo (source_type='geo') columns. event_type is the remapped key; the rest
+  // are single-word columns written as-is. lng (NOT lon) is the frozen lon name.
+  if (eventType !== undefined)   out.event_type = eventType;
+  if (metric !== undefined)      out.metric = metric;
+  if (lat !== undefined)         out.lat = lat;
+  if (lng !== undefined)         out.lng = lng;
+  if (magnitude !== undefined)   out.magnitude = magnitude;
+  if (place !== undefined)       out.place = place;
+  if (confidence !== undefined)  out.confidence = confidence;
+  if (fatalities !== undefined)  out.fatalities = fatalities;
   return out;
+}
+
+/* ---------- monitor_event_links (event → reel/review_card/location) ---------- */
+function eventLinkFromDb(row) {
+  if (!row) return row;
+  const { event_id, target_type, target_id, created_by, created_at, ...rest } = row;
+  return {
+    ...rest,
+    eventId: event_id,
+    targetType: target_type ?? undefined,
+    targetId: target_id ?? undefined,
+    createdBy: created_by ?? undefined,
+    createdAt: created_at ?? undefined,
+  };
+}
+function eventLinkToDb(item) {
+  // Only columns that exist in public.monitor_event_links. Drops undefined keys.
+  const { id, eventId, targetType, targetId, label, createdBy } = item;
+  const out = {};
+  if (id !== undefined)         out.id = id;
+  if (eventId !== undefined)    out.event_id = eventId;
+  if (targetType !== undefined) out.target_type = targetType;
+  if (targetId !== undefined)   out.target_id = targetId;
+  if (label !== undefined)      out.label = label;
+  if (createdBy !== undefined)  out.created_by = createdBy;
+  return out;
+}
+
+/* reel_dna_assets — polymorphic join from a reel_dna card (uuid) to any of
+   four asset types (footage/location/thumbnail/news). asset_id is TEXT in the
+   DB (mixed text/uuid source PKs are coerced to text on write). */
+function reelDnaAssetFromDb(row) {
+  if (!row) return row;
+  const { reel_dna_id, asset_type, asset_id, label, created_by, created_at, ...rest } = row;
+  return {
+    ...rest,
+    reelDnaId: reel_dna_id,
+    assetType: asset_type ?? undefined,
+    assetId: asset_id ?? undefined,
+    label: label ?? undefined,
+    createdBy: created_by ?? undefined,
+    createdAt: created_at ?? undefined,
+  };
+}
+
+/* PURE resolver (no hooks, importable) — joins the reel_dna_assets link rows
+   for one card to their LIVE source rows, bucketed by type. Locations live in
+   a SEPARATE provider (useLocations()) the store can't read, so every source
+   array is passed in by the caller. Any link whose source row no longer
+   resolves is SKIPPED (orphan-safe). */
+export function resolveReelDnaAssets(reelDnaId, sources = {}) {
+  const {
+    reelDnaAssets = [],
+    attachedFootage = [],
+    locations = [],
+    thumbnailDna = [],
+    monitorEvents = [],
+  } = sources;
+
+  const out = { footage: [], locations: [], thumbnails: [], news: [] };
+  if (!reelDnaId) return out;
+
+  // Index each source by string id once (asset_id is text in the DB).
+  const footageById = new Map();
+  for (const f of attachedFootage) if (f && f.id != null) footageById.set(String(f.id), f);
+  const locById = new Map();
+  for (const l of locations) if (l && l.id != null) locById.set(String(l.id), l);
+  const thumbById = new Map();
+  for (const t of thumbnailDna) if (t && t.id != null) thumbById.set(String(t.id), t);
+  const newsById = new Map();
+  for (const n of monitorEvents) if (n && n.id != null) newsById.set(String(n.id), n);
+
+  for (const link of reelDnaAssets) {
+    if (!link || link.reelDnaId !== reelDnaId) continue;
+    const key = link.assetId == null ? "" : String(link.assetId);
+    switch (link.assetType) {
+      case "footage": {
+        const row = footageById.get(key);
+        if (row) out.footage.push(row);
+        break;
+      }
+      case "location": {
+        const row = locById.get(key);
+        if (row) out.locations.push(row);
+        break;
+      }
+      case "thumbnail": {
+        const row = thumbById.get(key);
+        if (row) out.thumbnails.push(row);
+        break;
+      }
+      case "news": {
+        const row = newsById.get(key);
+        if (row) out.news.push(row);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return out;
+}
+
+/* PURE counts (no hooks, importable) — derived from the RESOLVED lists so a
+   badge can never disagree with the expanded sections or count orphan rows. */
+export function assetCountsForReelDna(reelDnaId, sources = {}) {
+  const r = resolveReelDnaAssets(reelDnaId, sources);
+  const footage = r.footage.length;
+  const locations = r.locations.length;
+  const thumbnails = r.thumbnails.length;
+  const news = r.news.length;
+  return { footage, locations, thumbnails, news, total: footage + locations + thumbnails + news };
 }
 
 function monitorSourceFromDb(row) {
@@ -546,6 +719,31 @@ function workflowReducer(state, action) {
     case "SET_REEL_DNA":   // full replace — used by the Refresh button's reload
       return { ...state, reelDna: action.items };
 
+    /* Thumbnail DNA — separate table, same optimistic + realtime shape as reel_dna. */
+    case "CREATE_THUMBNAIL_DNA":
+      return { ...state, thumbnailDna: [action.item, ...state.thumbnailDna] };
+
+    case "UPDATE_THUMBNAIL_DNA": {
+      const apply = (d) => d.id === action.id ? { ...d, ...action.patch } : d;
+      return { ...state, thumbnailDna: state.thumbnailDna.map(apply) };
+    }
+
+    case "UPSERT_THUMBNAIL_DNA": {
+      const exists = state.thumbnailDna.some(d => d.id === action.item.id);
+      return {
+        ...state,
+        thumbnailDna: exists
+          ? state.thumbnailDna.map(d => d.id === action.item.id ? action.item : d)
+          : [action.item, ...state.thumbnailDna],
+      };
+    }
+
+    case "DELETE_THUMBNAIL_DNA_BY_ID":
+      return { ...state, thumbnailDna: state.thumbnailDna.filter(d => d.id !== action.id) };
+
+    case "SET_THUMBNAIL_DNA":   // full replace — used by reloadThumbnailDna
+      return { ...state, thumbnailDna: action.items };
+
     /* Pulse Monitor events — same optimistic + realtime shape as reel_dna. */
     case "CREATE_MONITOR_EVENT":
       return { ...state, monitorEvents: [action.item, ...state.monitorEvents] };
@@ -590,6 +788,43 @@ function workflowReducer(state, action) {
     case "DELETE_MONITOR_SOURCE_BY_ID":
       return { ...state, monitorSources: state.monitorSources.filter(s => s.id !== action.id) };
 
+    /* Monitor event links (geo/news event → reel/review_card/location).
+       Same optimistic + realtime shape as monitor events/sources. */
+    case "CREATE_EVENT_LINK":
+      return { ...state, eventLinks: [action.item, ...state.eventLinks] };
+
+    case "UPSERT_EVENT_LINK": {
+      const exists = state.eventLinks.some(l => l.id === action.item.id);
+      return {
+        ...state,
+        eventLinks: exists
+          ? state.eventLinks.map(l => l.id === action.item.id ? action.item : l)
+          : [action.item, ...state.eventLinks],
+      };
+    }
+
+    case "DELETE_EVENT_LINK_BY_ID":
+      return { ...state, eventLinks: state.eventLinks.filter(l => l.id !== action.id) };
+
+    /* reel_dna_assets (card uuid → footage/location/thumbnail/news link).
+       Same optimistic + realtime shape as monitor_event_links above. */
+    case "UPSERT_REEL_DNA_ASSET": {
+      const list = state.reelDnaAssets || [];
+      const exists = list.some(a => a.id === action.item.id);
+      return {
+        ...state,
+        reelDnaAssets: exists
+          ? list.map(a => a.id === action.item.id ? action.item : a)
+          : [action.item, ...list],
+      };
+    }
+
+    case "DELETE_REEL_DNA_ASSET":
+      return {
+        ...state,
+        reelDnaAssets: (state.reelDnaAssets || []).filter(a => a.id !== action.id),
+      };
+
     /* Reel ↔ chat refs — same optimistic + realtime shape as reel_dna. */
     case "CREATE_REEL_CHAT_REF":
       return { ...state, reelChatRefs: [action.item, ...state.reelChatRefs] };
@@ -607,6 +842,10 @@ function workflowReducer(state, action) {
     case "DELETE_REEL_CHAT_REF_BY_ID":
       return { ...state, reelChatRefs: state.reelChatRefs.filter(r => r.id !== action.id) };
 
+    /* ----- Unified Reel DNA card (owner feature flag) ----- */
+    case "SET_UNIFIED_CARDS":
+      return { ...state, unifiedCards: action.enabled };
+
     /* ----- Gamify ----- */
     case "SET_GAMIFY_ENABLED":
       return { ...state, gamifyEnabled: action.enabled };
@@ -619,6 +858,27 @@ function workflowReducer(state, action) {
 
     case "SET_GAMIFY_HIDDEN_SUBSKILLS":
       return { ...state, gamifyHiddenSubskills: action.map || {} };
+
+    /* ----- Pipeline collapse / lane visibility (per-user, persisted to user_preferences) ----- */
+    case "SET_COLLAPSED_REEL_IDS":
+      return { ...state, collapsedReelIds: action.ids || [] };
+
+    case "TOGGLE_REEL_COLLAPSED": {
+      const has = state.collapsedReelIds.includes(action.reelId);
+      return { ...state, collapsedReelIds: has
+        ? state.collapsedReelIds.filter(id => id !== action.reelId)
+        : [...state.collapsedReelIds, action.reelId] };
+    }
+
+    case "SET_HIDDEN_LANE_IDS":
+      return { ...state, hiddenLaneIds: action.ids || [] };
+
+    case "TOGGLE_LANE_HIDDEN": {
+      const has = state.hiddenLaneIds.includes(action.laneId);
+      return { ...state, hiddenLaneIds: has
+        ? state.hiddenLaneIds.filter(id => id !== action.laneId)
+        : [...state.hiddenLaneIds, action.laneId] };
+    }
 
     /* ----- Training module content (owner per-field overrides) ----- */
     case "SET_MODULE_CONTENT": {
@@ -921,6 +1181,29 @@ async function persistDeleteReelDna(id) {
   if (error) throw error;
 }
 
+async function persistCreateThumbnailDna(item) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase.from("thumbnail_dna").insert(thumbnailToDb(item));
+  if (error) throw error;
+}
+
+async function persistUpdateThumbnailDna(id, patch) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  // Remap camelCase patch keys to snake_case; the six gene text fields and
+  // title/channel/status pass through unchanged.
+  const dbPatch = { ...patch };
+  if ("videoUrl" in patch)        { dbPatch.video_url = patch.videoUrl; delete dbPatch.videoUrl; }
+  if ("videoId" in patch)         { dbPatch.video_id = patch.videoId; delete dbPatch.videoId; }
+  if ("thumbnailUrl" in patch)    { dbPatch.thumbnail_url = patch.thumbnailUrl; delete dbPatch.thumbnailUrl; }
+  if ("genesOfInterest" in patch) { dbPatch.genes_of_interest = patch.genesOfInterest; delete dbPatch.genesOfInterest; }
+  if ("quickNotes" in patch)      { dbPatch.quick_notes = patch.quickNotes; delete dbPatch.quickNotes; }
+  if ("capturedBy" in patch)      { dbPatch.captured_by = patch.capturedBy; delete dbPatch.capturedBy; }
+  if ("archivedAt" in patch)      { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
+  if ("deletedAt" in patch)       { dbPatch.deleted_at = patch.deletedAt; delete dbPatch.deletedAt; }
+  const { error } = await supabase.from("thumbnail_dna").update(dbPatch).eq("id", id);
+  if (error) throw error;
+}
+
 async function persistCreateMonitorEvent(item) {
   if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const { error } = await supabase.from("monitor_events").insert(monitorEventToDb(item));
@@ -982,6 +1265,42 @@ async function persistUpdateMonitorSource(id, patch) {
 async function persistDeleteMonitorSource(id) {
   if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
   const { error } = await supabase.from("monitor_sources").delete().eq("id", id);
+  if (error) throw error;
+}
+
+async function persistCreateEventLink(item) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  // Single insert — the parent monitor_events row already exists, so there's no
+  // FK-ordering race (unlike the parent+child sequential-write gotcha).
+  const { error } = await supabase.from("monitor_event_links").insert(eventLinkToDb(item));
+  if (error) throw error;
+}
+
+async function persistDeleteEventLink(id) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase.from("monitor_event_links").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/* ----- reel_dna_assets persistence -----
+   Upsert on the FULL unique index (reel_dna_id, asset_type, asset_id) — the
+   onConflict string MUST name exactly those columns (0061 gotcha: a partial
+   index can't arbitrate). asset_id is String()-coerced by the caller (mixed
+   text/uuid source PKs). ignoreDuplicates keeps a re-attach a silent no-op. */
+async function persistAttachAsset(row) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase
+    .from("reel_dna_assets")
+    .upsert(row, { onConflict: "reel_dna_id,asset_type,asset_id", ignoreDuplicates: true });
+  if (error) throw error;
+}
+
+async function persistDetachAsset(reelDnaId, assetType, assetId) {
+  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
+  const { error } = await supabase
+    .from("reel_dna_assets")
+    .delete()
+    .match({ reel_dna_id: reelDnaId, asset_type: assetType, asset_id: String(assetId) });
   if (error) throw error;
 }
 
@@ -1076,16 +1395,25 @@ const INITIAL_STATE = {
   attachedFootage: [],
   dailyTasks: [],
   reelDna: [],
+  thumbnailDna: [],
   monitorEvents: [],
   monitorSources: [],
+  eventLinks: [],
+  reelDnaAssets: [],   // reel_dna card → footage/location/thumbnail/news links (migration 0067)
+  // No locations table exists yet — kept as a static empty array so the Pulse
+  // event-link picker (Team C) degrades gracefully instead of crashing.
+  locations: [],
   reelChatRefs: [],
   gamifyProgress: [],
   gamifyRubrics: [],
   gamifyEnabled: false,
+  unifiedCards: false,         // owner flag: new unified Reel DNA card vs legacy DnaCard (default = legacy)
   gamifyGradingMode: "editor+reviewer",
   rubricDescMode: "all",   // "off" | "active-only" | "all"
   gamifyHiddenSubskills: {},   // { [reelId]: ["skillKey:subId", ...] } — owner-archived rubric rows, per reel
   moduleContent: {},           // { [moduleId]: { [fieldPath]: value } } — owner training-content overrides
+  collapsedReelIds: [],        // reel IDs the current user has collapsed on the pipeline board
+  hiddenLaneIds: [],           // lane/person IDs the current user has hidden on the pipeline board
   loaded: false,
   error: null,
 };
@@ -1144,6 +1472,21 @@ function WorkflowProvider({ children }) {
           console.warn("reel_dna not available (run migration 0044?):", e?.message || e);
         }
 
+        /* Thumbnail DNA degrades to [] until migration 0063 lands. Same
+           all-or-nothing reasoning as reel_dna above — a missing table must
+           never brick boot. Separate try/catch from reel_dna. */
+        let thumbnailDna = [];
+        try {
+          const thumbnailRes = await supabase
+            .from("thumbnail_dna").select("*")
+            .is("deleted_at", null)
+            .order("created_at", { ascending: false });
+          if (thumbnailRes.error) throw thumbnailRes.error;
+          thumbnailDna = (thumbnailRes.data || []).map(thumbnailFromDb);
+        } catch (e) {
+          console.warn("thumbnail_dna not available (run migration 0063?):", e?.message || e);
+        }
+
         /* Pulse Monitor events degrade to [] until migration 0059 lands. Same
            all-or-nothing reasoning as reel_dna above — the hydrate gates the
            whole app on `loaded`, so we never let a missing table brick boot. */
@@ -1171,6 +1514,34 @@ function WorkflowProvider({ children }) {
           console.warn("monitor_sources not available (run migration 0060?)", e?.message || e);
         }
 
+        /* Monitor event links — event → reel/review_card/location (migration
+           0065). Degrades to [] if the table isn't there yet, same all-or-nothing
+           reasoning as monitor_events above. */
+        let eventLinks = [];
+        try {
+          const linksRes = await supabase
+            .from("monitor_event_links").select("*")
+            .order("created_at", { ascending: false });
+          if (linksRes.error) throw linksRes.error;
+          eventLinks = (linksRes.data || []).map(eventLinkFromDb);
+        } catch (e) {
+          console.warn("monitor_event_links not available (run migration 0065?)", e?.message || e);
+        }
+
+        /* Reel DNA assets — card → footage/location/thumbnail/news links
+           (migration 0067). Degrades to [] if the table isn't there yet, same
+           all-or-nothing reasoning as monitor_event_links above. */
+        let reelDnaAssets = [];
+        try {
+          const assetsRes = await supabase
+            .from("reel_dna_assets").select("*")
+            .order("created_at", { ascending: false });
+          if (assetsRes.error) throw assetsRes.error;
+          reelDnaAssets = (assetsRes.data || []).map(reelDnaAssetFromDb);
+        } catch (e) {
+          console.warn("reel_dna_assets not available (run migration 0067?)", e?.message || e);
+        }
+
         /* Reel ↔ chat refs degrade to [] if migration 0046 hasn't run yet —
            same all-or-nothing reasoning as reel_dna above. */
         let reelChatRefs = [];
@@ -1189,6 +1560,7 @@ function WorkflowProvider({ children }) {
         let gamifyProgress = [];
         let gamifyRubrics = [];
         let gamifyEnabled = false;
+        let unifiedCards = false;
         let gamifyGradingMode = "editor+reviewer";
         let rubricDescMode = "all";
         let gamifyHiddenSubskills = {};
@@ -1197,7 +1569,7 @@ function WorkflowProvider({ children }) {
             supabase.from("gamify_progress").select("*"),
             supabase.from("gamify_rubric").select("*"),
             supabase.from("app_settings").select("key,value")
-              .in("key", ["gamify_enabled", "gamify_grading_mode", "gamify_rubric_desc_mode", "gamify_hidden_subskills"]),
+              .in("key", ["gamify_enabled", "unified_cards", "gamify_grading_mode", "gamify_rubric_desc_mode", "gamify_hidden_subskills"]),
           ]);
           if (gpRes.error) throw gpRes.error;
           if (grRes.error) throw grRes.error;
@@ -1205,6 +1577,7 @@ function WorkflowProvider({ children }) {
           gamifyRubrics = (grRes.data || []).map(gamifyRubricFromDb);
           for (const s of (gsRes.data || [])) {
             if (s.key === "gamify_enabled") gamifyEnabled = !!s.value?.enabled;
+            if (s.key === "unified_cards") unifiedCards = !!s.value?.enabled;
             if (s.key === "gamify_grading_mode" && s.value?.mode) gamifyGradingMode = s.value.mode;
             if (s.key === "gamify_rubric_desc_mode" && s.value?.mode) rubricDescMode = s.value.mode;
             if (s.key === "gamify_hidden_subskills") gamifyHiddenSubskills = normalizeHiddenSubskills(s.value);
@@ -1236,12 +1609,16 @@ function WorkflowProvider({ children }) {
           attachedFootage: footageRes.data || [],
           dailyTasks: (dailyTasksRes.data || []).map(dailyTaskFromDb),
           reelDna,
+          thumbnailDna,
           monitorEvents,
           monitorSources,
+          eventLinks,
+          reelDnaAssets,
           reelChatRefs,
           gamifyProgress,
           gamifyRubrics,
           gamifyEnabled,
+          unifiedCards,
           gamifyGradingMode,
           rubricDescMode,
           gamifyHiddenSubskills,
@@ -1255,6 +1632,29 @@ function WorkflowProvider({ children }) {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  /* Per-user preferences (pipeline collapse state, hidden lanes).
+     Fired separately so auth must be resolved first — depends on _authPerson.id.
+     Degrades gracefully if migration 0070 hasn't been applied yet. */
+  React.useEffect(() => {
+    if (!_authPerson?.id) return;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("user_preferences").select("key, value")
+          .eq("person_id", _authPerson.id)
+          .in("key", ["pipeline_collapsed", "pipeline_hidden_lanes"]);
+        for (const row of (data || [])) {
+          if (row.key === "pipeline_collapsed")
+            dispatch({ type: "SET_COLLAPSED_REEL_IDS", ids: row.value?.ids || [] });
+          if (row.key === "pipeline_hidden_lanes")
+            dispatch({ type: "SET_HIDDEN_LANE_IDS", ids: row.value?.ids || [] });
+        }
+      } catch (e) {
+        console.warn("user_preferences not available (run migration 0070?):", e?.message || e);
+      }
+    })();
+  }, [_authPerson?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Realtime sync — once the initial hydrate completes, open a
      postgres-changes channel for reels / review_lane_cards /
@@ -1335,6 +1735,20 @@ function WorkflowProvider({ children }) {
             }
           })
       .on("postgres_changes",
+          { event: "*", schema: "public", table: "thumbnail_dna" },
+          (payload) => {
+            if (payload.eventType === "DELETE") {
+              dispatch({ type: "DELETE_THUMBNAIL_DNA_BY_ID", id: payload.old?.id });
+            } else if (payload.new?.deleted_at) {
+              // Soft-delete arrives as an UPDATE — drop it from the view rather
+              // than re-adding it.
+              dispatch({ type: "DELETE_THUMBNAIL_DNA_BY_ID", id: payload.new.id });
+            } else if (payload.new) {
+              // A capture made in another tab appears live, no refresh.
+              dispatch({ type: "UPSERT_THUMBNAIL_DNA", item: thumbnailFromDb(payload.new) });
+            }
+          })
+      .on("postgres_changes",
           { event: "*", schema: "public", table: "reel_chat_refs" },
           (payload) => {
             if (payload.eventType === "DELETE") {
@@ -1364,6 +1778,11 @@ function WorkflowProvider({ children }) {
           { event: "*", schema: "public", table: "app_settings", filter: "key=eq.gamify_enabled" },
           (payload) => {
             if (payload.new) dispatch({ type: "SET_GAMIFY_ENABLED", enabled: !!payload.new.value?.enabled });
+          })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "app_settings", filter: "key=eq.unified_cards" },
+          (payload) => {
+            if (payload.new) dispatch({ type: "SET_UNIFIED_CARDS", enabled: !!payload.new.value?.enabled });
           })
       .on("postgres_changes",
           { event: "*", schema: "public", table: "app_settings", filter: "key=eq.gamify_grading_mode" },
@@ -1422,6 +1841,16 @@ function WorkflowProvider({ children }) {
                 dispatch({ type: "UPSERT_MONITOR_SOURCE", item: monitorSourceFromDb(payload.new) });
               }
             })
+        .on("postgres_changes",
+            { event: "*", schema: "public", table: "monitor_event_links" },
+            (payload) => {
+              // Event→card links added/removed by the owner reflect live.
+              if (payload.eventType === "DELETE") {
+                dispatch({ type: "DELETE_EVENT_LINK_BY_ID", id: payload.old?.id });
+              } else if (payload.new) {
+                dispatch({ type: "UPSERT_EVENT_LINK", item: eventLinkFromDb(payload.new) });
+              }
+            })
         .subscribe((status, err) => {
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
             console.warn(
@@ -1435,9 +1864,41 @@ function WorkflowProvider({ children }) {
       console.warn("monitor-events-realtime channel registration failed:", e?.message || e);
     }
 
+    /* reel_dna_assets lives on its OWN channel so a missing table (migration
+       0067 not yet applied) only kills its own realtime — not workflow-realtime,
+       which carries every other tab's live updates. Mirrors the monitor channel
+       pattern above (defensive try/catch around registration). */
+    let reelDnaAssetsChannel = null;
+    try {
+      reelDnaAssetsChannel = supabase
+        .channel("reel-dna-assets-realtime")
+        .on("postgres_changes",
+            { event: "*", schema: "public", table: "reel_dna_assets" },
+            (payload) => {
+              // Attach/detach made on any card by any teammate reflects live.
+              if (payload.eventType === "DELETE") {
+                dispatch({ type: "DELETE_REEL_DNA_ASSET", id: payload.old?.id });
+              } else if (payload.new) {
+                dispatch({ type: "UPSERT_REEL_DNA_ASSET", item: reelDnaAssetFromDb(payload.new) });
+              }
+            })
+        .subscribe((status, err) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn(
+              `reel-dna-assets-realtime ${status} — live asset updates OFF ` +
+              `(reel_dna_assets likely not in supabase_realtime publication; ` +
+              `run migration 0067).`,
+              err || "");
+          }
+        });
+    } catch (e) {
+      console.warn("reel-dna-assets-realtime channel registration failed:", e?.message || e);
+    }
+
     return () => {
       supabase.removeChannel(channel);
       if (monitorChannel) { try { supabase.removeChannel(monitorChannel); } catch (_) {} }
+      if (reelDnaAssetsChannel) { try { supabase.removeChannel(reelDnaAssetsChannel); } catch (_) {} }
     };
   }, [state.loaded, _isDemo]);
 
@@ -1493,16 +1954,23 @@ function WorkflowProvider({ children }) {
     attachedFootage: state.attachedFootage,
     dailyTasks: state.dailyTasks,
     reelDna: state.reelDna,
+    thumbnailDna: state.thumbnailDna,
     monitorEvents: state.monitorEvents,
     monitorSources: state.monitorSources,
+    eventLinks: state.eventLinks,
+    reelDnaAssets: state.reelDnaAssets,
+    locations: state.locations,
     reelChatRefs: state.reelChatRefs,
     gamifyProgress: state.gamifyProgress,
     gamifyRubrics: state.gamifyRubrics,
     gamifyEnabled: state.gamifyEnabled,
+    unifiedCards: state.unifiedCards,
     gamifyGradingMode: state.gamifyGradingMode,
     rubricDescMode: state.rubricDescMode,
     gamifyHiddenSubskills: state.gamifyHiddenSubskills,
     moduleContent: state.moduleContent,
+    collapsedReelIds: state.collapsedReelIds,
+    hiddenLaneIds: state.hiddenLaneIds,
     /* Is this reel locked to its editor? (gamify on + work started or graded).
        UI uses this to disable assign controls / show an owner confirm. */
     isReelLocked: (reelId) => {
@@ -1546,6 +2014,18 @@ function WorkflowProvider({ children }) {
         wrap(
           { type: "MOVE_STAGE", id, lane, stage, scheduledPostDate, systemComment },
           (s) => persistMoveStage(s, id, { lane, stage, scheduledPostDate, systemComment }));
+        if (stage === "in_progress") {
+          const assignee = (lane && isKnownPerson(lane)) ? lane : reel?.owner;
+          supabase.auth.getSession().then(({ data: { session } }) => {
+            const token = session?.access_token;
+            if (!token) return;
+            fetch("/api/ai/suggest?action=discord-notify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+              body: JSON.stringify({ reel_id: id, reel_title: reel?.title, assigned_to: assignee, stage }),
+            }).catch(() => {});
+          });
+        }
       },
 
       updateReel: (id, patch) => {
@@ -1736,6 +2216,15 @@ function WorkflowProvider({ children }) {
         }).catch(e => {
           console.error(e);
           dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+        });
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          const token = session?.access_token;
+          if (!token) return;
+          fetch("/api/ai/suggest?action=discord-notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ reel_id: id, reel_title: r?.title, assigned_to: target, stage: "in_progress", sent_back: true }),
+          }).catch(() => {});
         });
       },
 
@@ -1933,6 +2422,102 @@ function WorkflowProvider({ children }) {
         return items.length;
       },
 
+      /* ----- Thumbnail DNA (separate table, manual YouTube capture) ----- */
+
+      /* Capture a YouTube thumbnail from the manual paste-in form. Optimistic:
+         the card shows instantly, then persists. RETURNS the item SYNCHRONOUSLY
+         so the caller can use item.id for the best-effort oEmbed enrichment
+         patch (title/channel) after the network round-trip. */
+      createThumbnailDnaCapture: ({ videoUrl, videoId = null, thumbnailUrl = null,
+                                    title = null, channel = null, platform = "yt",
+                                    genesOfInterest = [], quickNotes = null,
+                                    capturedBy = null, source = "manual",
+                                    color = null, typography = null, face = null,
+                                    layout = null, mood = null, subject = null }) => {
+        const item = {
+          id: crypto.randomUUID(),
+          videoUrl,
+          videoId,
+          thumbnailUrl,
+          title,
+          channel,
+          platform: platform || "yt",
+          genesOfInterest,
+          quickNotes,
+          status: "captured",
+          source,
+          capturedBy,
+          color, typography, face, layout, mood, subject,
+          createdAt: new Date().toISOString(),
+        };
+        wrap(
+          { type: "CREATE_THUMBNAIL_DNA", item },
+          () => persistCreateThumbnailDna(item));
+        return item;
+      },
+
+      /* Patch any field: status, the six gene text fields, title/channel
+         enrichment, genesOfInterest chips, etc. */
+      updateThumbnailDna: (id, patch) => wrap(
+        { type: "UPDATE_THUMBNAIL_DNA", id, patch },
+        () => persistUpdateThumbnailDna(id, patch)),
+
+      /* Soft-archive (restorable). */
+      archiveThumbnailDna: (id) => {
+        const stamp = new Date().toISOString();
+        wrap(
+          { type: "UPDATE_THUMBNAIL_DNA", id, patch: { archivedAt: stamp } },
+          () => persistUpdateThumbnailDna(id, { archivedAt: stamp }));
+      },
+      restoreThumbnailDna: (id) => wrap(
+        { type: "UPDATE_THUMBNAIL_DNA", id, patch: { archivedAt: null } },
+        () => persistUpdateThumbnailDna(id, { archivedAt: null })),
+
+      /* Permanent delete — implemented as a SOFT delete (stamp deleted_at and
+         KEEP the row), mirroring deleteReelDna. Optimistically removed from
+         local state so the card disappears instantly; not restorable in the UI. */
+      deleteThumbnailDna: (id) => {
+        const stamp = new Date().toISOString();
+        wrap(
+          { type: "DELETE_THUMBNAIL_DNA_BY_ID", id },
+          () => persistUpdateThumbnailDna(id, { deletedAt: stamp }));
+      },
+
+      /* Re-fetch thumbnail_dna from Supabase (manual catch-up). Returns count. */
+      reloadThumbnailDna: async () => {
+        if (isDemoMode()) return (stateRef.current.thumbnailDna || []).length;
+        const { data, error } = await supabase
+          .from("thumbnail_dna").select("*")
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        const items = (data || []).map(thumbnailFromDb);
+        dispatch({ type: "SET_THUMBNAIL_DNA", items });
+        return items.length;
+      },
+
+      /* Force the YouTube-playlist poller to run NOW instead of waiting for the
+         15-min cron, so a video you just dropped into the watched playlist shows
+         up in the Thumbnails tab in seconds. Mirrors triggerIgSync: the
+         SUGGEST_CRON_SECRET stays server-side in /api/ai/suggest; we auth with
+         the owner's Supabase JWT. Returns { ok, items_seen, inserted } (or
+         { ok, skipped, reason } if YT_THUMBNAIL_PLAYLIST_ID is unset). Inserted
+         source='yt_playlist' rows arrive via the existing thumbnail_dna realtime
+         sub, so no reload is required — callers may still reloadThumbnailDna(). */
+      triggerYtSync: async () => {
+        if (isDemoMode()) return { ok: false, demo: true };
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) throw new Error("Not signed in");
+        const res = await fetch("/api/ai/suggest?action=yt-sync", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || `YouTube sync failed (${res.status})`);
+        return body;
+      },
+
       /* Force the Hetzner IG-DM poller to run NOW instead of waiting for the
          15-min cron, so a reel you just DM'd shows up in seconds. The
          IG_SYNC_SECRET stays server-side in the /api/ai/suggest route; we auth
@@ -2122,6 +2707,165 @@ function WorkflowProvider({ children }) {
         }
       },
 
+      /* ----- Monitor event links (event → reel/review_card/location) -----
+         RLS owner-gated. Optimistic wrap: dispatch locally then persist. No
+         FK-order issue — the parent monitor_events row already exists, so this
+         is a single insert. createdBy is supplied by the caller (the Pulse link
+         picker) with the signed-in person id, like createMonitorEvent. */
+      createEventLink: (eventId, { targetType, targetId, label, createdBy } = {}) => {
+        const item = {
+          id: crypto.randomUUID(),
+          eventId,
+          targetType,
+          targetId,
+          label: label ?? null,
+          createdBy: createdBy ?? null,
+          createdAt: new Date().toISOString(),
+        };
+        wrap({ type: "CREATE_EVENT_LINK", item }, () => persistCreateEventLink(item));
+        return item;
+      },
+
+      deleteEventLink: (id) => {
+        wrap({ type: "DELETE_EVENT_LINK_BY_ID", id }, () => persistDeleteEventLink(id));
+      },
+
+      /* ----- reel_dna_assets (card → footage/location/thumbnail/news) -----
+         Team-wide RLS (any user who can edit a card can attach assets). The
+         parent reel_dna card already exists (we only attach to a persisted
+         card), so there's no FK-ordering race on a single attach — it's one
+         upsert. asset_id is String()-coerced (the source PKs are a mix of text
+         and uuid; the column is text). created_by is the signed-in person. */
+      attachAsset: (reelDnaId, assetType, assetId, label) => {
+        const createdBy = _authPerson?.id ?? null;
+        const row = {
+          reel_dna_id: reelDnaId,
+          asset_type: assetType,
+          asset_id: String(assetId),
+          label: label ?? null,
+          created_by: createdBy,
+        };
+        // Optimistic: synthesize a client row so badges update before the
+        // realtime echo. The DB assigns the real id/created_at; the echo
+        // replaces this row by the (reelDnaId, assetType, assetId)-derived id.
+        const optimistic = {
+          id: `${reelDnaId}:${assetType}:${String(assetId)}`,
+          reelDnaId,
+          assetType,
+          assetId: String(assetId),
+          label: label ?? undefined,
+          createdBy: createdBy ?? undefined,
+          createdAt: new Date().toISOString(),
+        };
+        wrap({ type: "UPSERT_REEL_DNA_ASSET", item: optimistic }, () => persistAttachAsset(row));
+        return optimistic;
+      },
+
+      detachAsset: (reelDnaId, assetType, assetId) => {
+        // Drop any local row matching this (card, type, id) — covers both the
+        // optimistic client id and a realtime-hydrated DB id.
+        const key = String(assetId);
+        dispatch({
+          type: "DELETE_REEL_DNA_ASSET",
+          id: `${reelDnaId}:${assetType}:${key}`,
+        });
+        const cur = stateRef.current;
+        for (const a of (cur.reelDnaAssets || [])) {
+          if (a.reelDnaId === reelDnaId && a.assetType === assetType && String(a.assetId) === key) {
+            dispatch({ type: "DELETE_REEL_DNA_ASSET", id: a.id });
+          }
+        }
+        persistDetachAsset(reelDnaId, assetType, assetId).catch(e => {
+          console.error("detachAsset persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+        });
+      },
+
+      /* Seed a card's assets from its linked PIPELINE reel (owner decision 1b).
+         Only fires when the card has a reelId (it was "Sent to Pipeline"). We
+         query Supabase DIRECTLY (do NOT depend on the locations provider, which
+         the store can't read): attached_footage_items by reel_id, locations
+         whose linked_reel_ids contains the reel, and reel-type
+         monitor_event_links. Each match is attached via attachAsset (dedupe is
+         automatic — the upsert ignores duplicates). Sequential awaits keep the
+         writes ordered; no FK-order issue since the card already exists. */
+      seedAssetsFromPipeline: async (reelDnaItem) => {
+        const reelId = reelDnaItem?.reelId;
+        const reelDnaId = reelDnaItem?.id;
+        if (!reelId || !reelDnaId) return;   // no pipeline link → nothing to seed
+        if (isDemoMode()) return;            // demo sandbox: optimistic-only, no DB
+
+        // Local attach helper — same shape as the attachAsset action (optimistic
+        // dispatch + upsert persist), inlined so we don't self-reference `value`
+        // (the object still being constructed in this useMemo).
+        const createdBy = _authPerson?.id ?? null;
+        const attach = async (cardId, assetType, assetId, label) => {
+          const row = {
+            reel_dna_id: cardId,
+            asset_type: assetType,
+            asset_id: String(assetId),
+            label: label ?? null,
+            created_by: createdBy,
+          };
+          dispatch({
+            type: "UPSERT_REEL_DNA_ASSET",
+            item: {
+              id: `${cardId}:${assetType}:${String(assetId)}`,
+              reelDnaId: cardId,
+              assetType,
+              assetId: String(assetId),
+              label: label ?? undefined,
+              createdBy: createdBy ?? undefined,
+              createdAt: new Date().toISOString(),
+            },
+          });
+          await persistAttachAsset(row);
+        };
+
+        // 1) Footage attached to the pipeline reel.
+        try {
+          const { data, error } = await supabase
+            .from("attached_footage_items")
+            .select("id, filename, footage_file_id, reel_id")
+            .eq("reel_id", reelId);
+          if (error) throw error;
+          for (const f of (data || [])) {
+            await attach(reelDnaId, "footage", f.id, f.filename ?? f.footage_file_id ?? "Footage");
+          }
+        } catch (e) {
+          console.warn("seedAssetsFromPipeline footage skipped:", e?.message || e);
+        }
+
+        // 2) Locations whose linked_reel_ids array contains this reel.
+        try {
+          const { data, error } = await supabase
+            .from("locations")
+            .select("id, name, linked_reel_ids")
+            .contains("linked_reel_ids", [reelId]);
+          if (error) throw error;
+          for (const l of (data || [])) {
+            await attach(reelDnaId, "location", l.id, l.name ?? "Location");
+          }
+        } catch (e) {
+          console.warn("seedAssetsFromPipeline locations skipped:", e?.message || e);
+        }
+
+        // 3) News events linked to this reel via monitor_event_links.
+        try {
+          const { data, error } = await supabase
+            .from("monitor_event_links")
+            .select("event_id, target_type, target_id, label")
+            .eq("target_type", "reel")
+            .eq("target_id", reelId);
+          if (error) throw error;
+          for (const link of (data || [])) {
+            await attach(reelDnaId, "news", link.event_id, link.label ?? "News");
+          }
+        } catch (e) {
+          console.warn("seedAssetsFromPipeline news skipped:", e?.message || e);
+        }
+      },
+
       /* Manually run the news-monitor ingest now (the "Refresh now" button).
          Hits the same route the Hetzner cron uses, authed with the owner's
          Supabase JWT. New poller rows arrive live via realtime; this returns
@@ -2138,6 +2882,24 @@ function WorkflowProvider({ children }) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.error || `Ingest failed (${res.status})`);
         return body; // { ok, sources, inserted, errors }
+      },
+
+      /* Manually run the World Monitor free-feed ingest now (Pulse "Refresh
+         now" on the World view). Verbatim clone of triggerNewsIngest — same
+         route, owner JWT auth, demo-guarded. New geo rows arrive live via the
+         monitor_events realtime channel; this returns the summary for a toast. */
+      triggerWorldIngest: async () => {
+        if (isDemoMode()) return { ok: false, demo: true };
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) throw new Error("Not signed in");
+        const res = await fetch("/api/ai/suggest?action=world-ingest", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || `Ingest failed (${res.status})`);
+        return body; // { ok, feeds, inserted, byFeed, pruned, errors }
       },
 
       /* Pre-flight a feed URL before adding it as a monitor source (the "Add
@@ -2204,6 +2966,24 @@ function WorkflowProvider({ children }) {
         });
       },
 
+      /* Owner flag: swap the Reel DNA card grid between the new unified card and
+         the legacy DnaCard. Default off = site renders identically to today.
+         Same app_settings + "owner write app_settings" RLS path as gamify. */
+      setUnifiedCards: (enabled) => {
+        dispatch({ type: "SET_UNIFIED_CARDS", enabled });
+        if (isDemoMode()) return;
+        supabase.from("app_settings").upsert({
+          key: "unified_cards",
+          value: { enabled },
+          updated_at: new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) {
+            console.error("setUnifiedCards persist failed:", error);
+            dispatch({ type: "SET_ERROR", error: error.message || String(error) });
+          }
+        });
+      },
+
       setGamifyGradingMode: (mode) => {
         dispatch({ type: "SET_GAMIFY_GRADING_MODE", mode });
         if (isDemoMode()) return;
@@ -2258,6 +3038,30 @@ function WorkflowProvider({ children }) {
             dispatch({ type: "SET_ERROR", error: error.message || String(error) });
           }
         });
+      },
+
+      /* Per-user pipeline collapse state — persisted to user_preferences (migration 0070).
+         Each user collapses their own reel cards independently. */
+      toggleReelCollapsed: (reelId) => {
+        const ids = stateRef.current.collapsedReelIds;
+        const next = ids.includes(reelId) ? ids.filter(x => x !== reelId) : [...ids, reelId];
+        dispatch({ type: "TOGGLE_REEL_COLLAPSED", reelId });
+        if (isDemoMode() || !_authPerson?.id) return;
+        supabase.from("user_preferences").upsert(
+          { person_id: _authPerson.id, key: "pipeline_collapsed", value: { ids: next }, updated_at: new Date().toISOString() },
+          { onConflict: "person_id,key" }
+        ).then(({ error }) => { if (error) console.error("collapse persist failed:", error); });
+      },
+
+      toggleLaneHidden: (laneId) => {
+        const ids = stateRef.current.hiddenLaneIds;
+        const next = ids.includes(laneId) ? ids.filter(x => x !== laneId) : [...ids, laneId];
+        dispatch({ type: "TOGGLE_LANE_HIDDEN", laneId });
+        if (isDemoMode() || !_authPerson?.id) return;
+        supabase.from("user_preferences").upsert(
+          { person_id: _authPerson.id, key: "pipeline_hidden_lanes", value: { ids: next }, updated_at: new Date().toISOString() },
+          { onConflict: "person_id,key" }
+        ).then(({ error }) => { if (error) console.error("lane hidden persist failed:", error); });
       },
 
       /* Editor self-assessment: store the set of checked sub-item ids for

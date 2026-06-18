@@ -50,34 +50,75 @@ export function PulseSources({ open, onClose, sources, actions, person }) {
   const [region, setRegion]             = useState("");
   const [severityDefault, setSeverity]  = useState("info");
   const [error, setError]               = useState("");
+  const [checking, setChecking]         = useState(false);
+  const [diag, setDiag]                 = useState(null); // validateFeedUrl() result (+ _url)
 
   // Short-circuit AFTER hooks so we never break the Rules of Hooks.
   if (!open) return null;
 
   const list = Array.isArray(sources) ? sources : [];
 
+  // Actually persist the source (used by Add and "Add anyway").
+  const doCreate = async () => {
+    const n = name.trim();
+    const u = url.trim();
+    await actions?.createMonitorSource?.({
+      name: n,
+      url: u,
+      category,
+      platform: platformKey === "__none__" ? null : platformKey,
+      region: region.trim() || null,
+      severityDefault,
+      enabled: true,
+      createdBy: person?.id || null,
+    });
+    // Reset for the next add; keep the modal open so the owner can add several.
+    setName(""); setUrl(""); setRegion(""); setError(""); setDiag(null);
+  };
+
+  // Pre-flight the URL: is it a real feed? If not, why + what to paste instead.
+  const checkFeed = async () => {
+    const u = url.trim();
+    if (!/^https?:\/\//i.test(u)) { setError("Feed URL must start with http(s)://"); return null; }
+    setError(""); setChecking(true); setDiag(null);
+    try {
+      const r = await actions?.validateMonitorFeed?.(u);
+      const withUrl = r ? { ...r, _url: u } : null;
+      setDiag(withUrl);
+      return withUrl;
+    } catch (e) {
+      const d = { ok: false, reason: e?.message || "Could not check this URL.", suggestions: [], _url: u };
+      setDiag(d);
+      return d;
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const addSource = async () => {
     const n = name.trim();
     const u = url.trim();
     if (!n || !u) { setError("Name and feed URL are required."); return; }
     if (!/^https?:\/\//i.test(u)) { setError("Feed URL must start with http(s)://"); return; }
-    try {
-      await actions?.createMonitorSource?.({
-        name: n,
-        url: u,
-        category,
-        platform: platformKey === "__none__" ? null : platformKey,
-        region: region.trim() || null,
-        severityDefault,
-        enabled: true,
-        createdBy: person?.id || null,
-      });
-      // Reset for the next add; keep the modal open so the owner can add several.
-      setName(""); setUrl(""); setRegion(""); setError("");
-    } catch (e) {
-      setError(e?.message || "Could not add source (duplicate URL?).");
+    // Demo mode (or already-validated this exact URL) → skip the round-trip.
+    if (diag?.ok && diag._url === u) {
+      try { await doCreate(); } catch (e) { setError(e?.message || "Could not add source (duplicate URL?)."); }
+      return;
     }
+    const r = await checkFeed();
+    if (r?.ok || r?.demo) {
+      try { await doCreate(); } catch (e) { setError(e?.message || "Could not add source (duplicate URL?)."); }
+    }
+    // Otherwise the diagnostics panel now explains the problem; we don't add.
   };
+
+  // Force-add despite a failed check (validation can be wrong / feed temporarily down).
+  const addAnyway = async () => {
+    try { await doCreate(); } catch (e) { setError(e?.message || "Could not add source (duplicate URL?)."); }
+  };
+
+  // Swap a suggested feed URL into the input and clear the diagnostics.
+  const useSuggestion = (su) => { setUrl(su); setDiag(null); setError(""); };
 
   const toggle = (s) => actions?.updateMonitorSource?.(s.id, { enabled: !s.enabled });
 
@@ -105,9 +146,17 @@ export function PulseSources({ open, onClose, sources, actions, person }) {
           </Field>
           <Field label="Feed URL">
             <input className="m-input" type="url" value={url}
-              onChange={(e) => { setUrl(e.target.value); if (error) setError(""); }}
+              onChange={(e) => { setUrl(e.target.value); if (error) setError(""); if (diag) setDiag(null); }}
               placeholder="https://…/rss.xml" />
           </Field>
+        </div>
+
+        <div className="pulse-check-row">
+          <button type="button" className="pulse-check-btn" onClick={checkFeed}
+            disabled={checking || !url.trim()}>
+            {checking ? "Checking feed…" : "Check feed"}
+          </button>
+          <span className="m-hint">Tests the URL before adding — tells you if it isn't a real RSS/Atom feed.</span>
         </div>
 
         <Field label="Category">
@@ -126,6 +175,45 @@ export function PulseSources({ open, onClose, sources, actions, person }) {
           </Field>
         </div>
         {error && <div className="m-hint" style={{ color: "var(--c-red, #ef4444)" }}>{error}</div>}
+
+        {/* ── Feed diagnostics ─────────────────────────────── */}
+        {diag && !checking && (
+          diag.ok ? (
+            <div className="pulse-diag is-ok">
+              ✓ Valid {diag.kind === "atom" ? "Atom" : "RSS"} feed — {diag.itemCount} item
+              {diag.itemCount === 1 ? "" : "s"} found. Click “Add source” to save it.
+            </div>
+          ) : (
+            <div className="pulse-diag is-err">
+              <div className="pulse-diag-reason">⚠ {diag.reason}</div>
+              {diag.suggestions?.length > 0 ? (
+                <>
+                  <div className="pulse-diag-sughead">Paste one of these working feeds instead:</div>
+                  {diag.suggestions.map((s) => (
+                    <div key={s.url} className="pulse-diag-sug">
+                      <div className="pulse-diag-sug-main">
+                        <div className="pulse-diag-sug-label">
+                          {s.label}{typeof s.items === "number" ? ` · ${s.items} items` : ""}
+                        </div>
+                        <div className="pulse-diag-sug-url">{s.url}</div>
+                      </div>
+                      <button type="button" className="pulse-diag-use"
+                        onClick={() => useSuggestion(s.url)}>Use this</button>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div className="pulse-diag-sughead">
+                  Couldn't find a working feed for this site. Look for an “RSS” link on the
+                  page, or try a URL ending in <code>.xml</code>, <code>/feed</code>, or <code>/rss</code>.
+                </div>
+              )}
+              <button type="button" className="pulse-diag-anyway" onClick={addAnyway}>
+                Add it anyway
+              </button>
+            </div>
+          )
+        )}
 
         {/* ── Existing sources ─────────────────────────────── */}
         <div className="pulse-src-listhead">

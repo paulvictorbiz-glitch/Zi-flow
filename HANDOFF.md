@@ -4,43 +4,42 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- Made **"DM a reel to @paulvictortravels (with a tag note) → it auto-logs to the Reel DNA spreadsheet"** fully **LIVE and automatic**.
-- The **webhook approach dead-ended**: Instagram only delivers real-DM webhooks once the app is **published + App-Review'd**; Development mode emits only the dashboard's synthetic "Test" event. (We proved this end-to-end: handler, signature, parser all work — Meta just never POSTs real DMs.)
-- **Pivoted to polling** the Business-Suite Instagram inbox: new `GET/POST /api/ig/sync` reads the Page's IG conversations, takes each shared reel's permalink from `shares.data[].link`, pairs it with the adjacent tag-note text, and inserts a `reel_dna` row (deduped on the share-message id). `parseTagNote` splits the note into Location/Music/Font columns.
-- Deployed the poller to **Hetzner**, added a **15-min cron**, dedup pre-check keeps Supabase writes ~0, async run dodges nginx's 60s timeout. **33 reels captured live.**
-- Committed `01046fd`; ran `vercel --prod` (frontend unchanged — feature is 100% backend, so the deploy was effectively a no-op).
-- Big lesson: the **Instagram-Login API uses a separate Instagram App Secret** (`IG_APP_SECRET`), and its webhook payload is `entry[].changes[].value`, not `messaging[]`.
+- **YT-sync cron SSH-verified**: `*/15` yt-sync line confirmed present in Hetzner crontab AND actively executing via `journalctl -u cron` (fires :00/:15/:30/:45). Polling is hands-off. Key gotcha: `/var/log/syslog` was frozen/stale (rsyslog lag) — always use `journalctl -u cron` for cron health on this box.
+- **Fresh capture proven**: playlist grew 2 → 15 videos; live poll `{items_seen:15, inserted:7}`, re-poll `{inserted:0}` — dedup correct.
+- **Thumbnails shortcut pill added to the Reel DNA filter bar**: a second "Thumbnails" entry point now sits in the gap between the source and view pill groups — more visible than the header tab-strip.
+- **Deployed to prod**: `vercel --prod` → `dpl_D1QJk7EPHeQLPNDKP8zfDzcihR73`, live at www.footagebrain.com. Build green (811 modules).
 
 ## Where we left off
-Inspiration capture is **working in production**: DM a reel to paulvictortravels and within ~15 min it appears in **Reel DNA → Spreadsheet** with the reel link + parsed tags. The poller (`/api/ig/sync`) is live on Hetzner with a 15-min crontab line; the webhook handler (`/api/ig/webhook`) stays deployed but dormant (only fires if the app is ever published). Branch `bugfix-daily-use-batch` holds this session's commit `01046fd` plus the prior Pulse commit `4455424` — **neither pushed to GitHub/main**.
+Everything is **LIVE on footagebrain.com**. The Thumbnails filter-bar shortcut deployed. The yt-sync poller runs every 15 min hands-off. The large tree of prior LIVE-but-uncommitted work (Assets system, comprehensive views, display toggle, RSS diagnostics, IG-DM ingest, etc.) is still **uncommitted on `bugfix-daily-use-batch`** — it deploys fine from the working tree but the git history doesn't match prod.
 
 ## Open blockers
-- **None functionally.** The feature works via polling.
-- Webhooks (instant push) remain unavailable until the Meta app is **published + App-Review'd** for `instagram_business_manage_messages` — deferred; the poll covers the need.
+- None.
 
-## Pending (written but not yet live / follow-ups)
-- **Rotate secrets pasted in chat:** the `IG_APP_SECRET` (`9d5a…`) and the two Instagram access tokens were pasted into the session — regenerate them in the Meta dashboard (Instagram app secret has a Reset; resetting won't break FB login). Update `IG_APP_SECRET` in `deploy/hetzner/.env` after.
-- **One leftover `(debug — no reel url)` row** from the Test event — delete it from the Reel DNA spreadsheet.
-- **Push `bugfix-daily-use-batch` → GitHub / merge → main** (commits `01046fd` + `4455424` are local only).
+## Pending (written but not yet live)
+- **Nothing new this session** — all changes are deployed.
+- **Ongoing carry-over (non-blocking):**
+  - **Commit the working tree** on `bugfix-daily-use-batch` (lots of LIVE-but-uncommitted work spanning multiple sessions) and **merge → `main`** so the default branch matches prod.
+  - **Visual verification of Assets feature** (shipped last session without a runtime walkthrough): attach one Footage + Location + Thumbnail + News to a card → confirm badges + expand + "Assets →" full-screen page + "Pull from pipeline reel" seed + spreadsheet count-cell + non-owner can see News.
+  - **World Monitor** — activate fires + conflicts: set `FIRMS_MAP_KEY`, `ACLED_KEY`, `ACLED_EMAIL` (Vercel + `.env.local`) + Hetzner cron for `world-ingest`.
+  - **Rotate IG secrets** pasted in chat: `IG_APP_SECRET` + 2 Instagram access tokens — regenerate in Meta dashboard, update Hetzner `deploy/hetzner/.env`, restart backend.
+  - Optional retro `/code-review` on the Assets diff (deployed without review).
 
 ## Next session — start here
-1. **Rotate the IG app secret + access tokens** (pasted in chat), update Hetzner `.env`, restart backend.
-2. **Push the branch to GitHub / merge → main** so the repo matches prod.
-3. Optionally: delete the leftover debug row; tune the cron interval if 15 min feels slow.
+1. **Commit the working tree** on `bugfix-daily-use-batch` (all the LIVE-but-uncommitted files from the last ~4 sessions) and **merge → `main`**.
+2. **Visually verify the Assets feature** on prod (the checklist above — it shipped without a runtime walkthrough).
+3. Optional: activate World Monitor feeds (env keys + Hetzner cron); retro `/code-review` on Assets diff; tighten the empty-Assets-column 240px spacing.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-# Poller healthy + flags
-curl -s https://api.footagebrain.com/api/ig/status
-#  -> {"ok":true,"ingest_enabled":true,"app_secret_set":true,"supabase_configured":true,...}
+# YT-sync cron health (SSH — use journalctl, NOT syslog):
+ssh root@178.105.14.144 'journalctl -u cron --no-pager -n 5'
 
-# Manual sync (synchronous, shows counts; dedup means inserted:0 on a repeat)
-curl -s "https://api.footagebrain.com/api/ig/sync?secret=fb_ig_sync_9f3a2026&wait=1"
-#  -> {"ok":true,"conversations":N,"reels_seen":M,"inserted":0}
+# Live poller (node — curl SSL-fails in this shell):
+node --env-file=.env.local --input-type=module -e "fetch('https://footagebrain.com/api/ai/suggest?action=yt-sync&secret='+encodeURIComponent(process.env.SUGGEST_CRON_SECRET)).then(r=>r.text()).then(console.log)"
 
-# Cron present (3 lines: insights, news-ingest, ig/sync every 15m)
-ssh root@178.105.14.144 "crontab -l"
+# reel_dna_assets table live (0068 applied)
+node --env-file=.env.local -e 'import("@supabase/supabase-js").then(async({createClient})=>{const s=createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SERVICE_ROLE_KEY);const a=await s.from("reel_dna_assets").select("id",{count:"exact",head:true});console.log(a.error?a.error.message:"reel_dna_assets OK rows="+(a.count??0));})'
 
-# Captured reels count (service role; reads .env.local)
-#  Supabase REST: GET /rest/v1/reel_dna?source=eq.ig_dm&select=count  (Prefer: count=exact)
+# Build still green
+npm run build
 ```

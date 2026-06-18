@@ -134,6 +134,254 @@ export function parseFeed(xml) {
   return items.slice(0, ITEMS_PER_FEED);
 }
 
+// ── YouTube playlist Atom feed parser (Thumbnails auto-ingest) ───────────────────
+// A public playlist's feed lives at
+//   https://www.youtube.com/feeds/videos.xml?playlist_id=<ID>
+// and is plain Atom: each <entry> carries <yt:videoId>, <title>,
+// <link href="https://www.youtube.com/watch?v=...">, an <author><name> sub-block
+// (the channel), and a <media:group><media:thumbnail url>. We derive the thumbnail
+// from the canonical i.ytimg hqdefault URL (zero-key, always exists) rather than
+// trusting media:thumbnail. Catalog EVERYTHING (Shorts included) — the videos.xml
+// feed itself only carries ~15 newest entries, so we do NOT slice further.
+const YT_ID = /[\w-]{11}/; // 11-char YouTube video id
+
+/**
+ * Parse a YouTube playlist Atom feed into thumbnail-capture rows, newest first.
+ * Pure (no LLM, no gene classification). Entries without a resolvable 11-char
+ * videoId are dropped (protects thumbnail_dna.video_url NOT NULL downstream).
+ * Returns: [{ videoId, title, channel, thumbnailUrl }]
+ */
+export function parseYouTubePlaylistFeed(xml) {
+  if (!xml) return [];
+  const blocks = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)].map(m => m[0]);
+  const out = [];
+  for (const block of blocks) {
+    // videoId: prefer <yt:videoId>, fall back to the 11-char id in the watch URL.
+    let videoId = firstTag(block, ["yt:videoId", "videoId"]);
+    if (!videoId) {
+      const m = (atomLink(block).match(/[?&]v=([\w-]{11})/) || [])[1];
+      if (m) videoId = m;
+    }
+    if (!videoId || !YT_ID.test(videoId)) continue; // no usable id → drop
+    // Channel comes from the <author><name> sub-block (not the entry <title>).
+    const authorBlock = (block.match(/<author\b[\s\S]*?<\/author>/i) || [])[0] || "";
+    out.push({
+      videoId,
+      title: firstTag(block, ["title"]) || "(untitled)",
+      channel: firstTag(authorBlock, ["name"]) || "",
+      thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    });
+  }
+  return out;
+}
+
+// ── Feed validation + autodiscovery (powers the "Add source" diagnostics) ───────
+// Many feed problems are URL mistakes: the owner pastes a homepage or a social
+// profile instead of the RSS/Atom URL. validateFeedUrl() fetches the pasted URL,
+// reports WHY it isn't usable, and — crucially — returns one or more *verified*
+// feed URLs to paste instead (HTML <link> autodiscovery, common feed paths, and
+// per-host rules for YouTube / Instagram / TikTok / X / Facebook).
+
+const VALIDATE_TIMEOUT_MS = 6000;
+
+// Platforms that simply don't publish RSS for profiles — explain + offer a
+// curated algorithm/creator-news feed the owner can paste instead.
+const NO_RSS_HOSTS = {
+  "instagram.com": "Instagram doesn't publish RSS feeds for profiles or hashtags.",
+  "tiktok.com":    "TikTok doesn't publish RSS feeds for profiles or the Creators page.",
+  "twitter.com":   "X/Twitter no longer offers public RSS feeds.",
+  "x.com":         "X/Twitter no longer offers public RSS feeds.",
+  "facebook.com":  "Facebook doesn't publish RSS feeds for pages.",
+};
+
+// Curated, known-good feeds to suggest when a social profile (no RSS) is pasted.
+const ALGO_FALLBACKS = [
+  { url: "https://www.socialmediatoday.com/feeds/news/", label: "Social Media Today — platform & algorithm news" },
+  { url: "https://techcrunch.com/category/social/feed/",  label: "TechCrunch — Social" },
+];
+
+// Big news sites whose feed lives on a different host/path than the homepage —
+// path-guessing and on-page discovery can't find these, so we keep a short map.
+// (Verified before surfacing, so a stale entry just drops out silently.)
+const NEWS_FEED_DIRECTORY = {
+  "cnn.com":            ["http://rss.cnn.com/rss/edition.rss", "http://rss.cnn.com/rss/edition_world.rss"],
+  "nytimes.com":        ["https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"],
+  "theguardian.com":    ["https://www.theguardian.com/world/rss"],
+  "washingtonpost.com": ["https://feeds.washingtonpost.com/rss/world"],
+  "npr.org":            ["https://feeds.npr.org/1001/rss.xml"],
+  "aljazeera.com":      ["https://www.aljazeera.com/xml/rss/all.xml"],
+  "bbc.com":            ["https://feeds.bbci.co.uk/news/world/rss.xml"],
+  "bbc.co.uk":          ["https://feeds.bbci.co.uk/news/world/rss.xml"],
+};
+
+// Look up a host (and its registrable domain) in the curated news directory.
+function directorySuggestions(host) {
+  const keys = [host];
+  const parts = host.split(".");
+  if (parts.length > 2) keys.push(parts.slice(-2).join("."));
+  for (const k of keys) {
+    if (NEWS_FEED_DIRECTORY[k]) {
+      return NEWS_FEED_DIRECTORY[k].map(u => ({ url: u, label: `Official ${k} feed` }));
+    }
+  }
+  return [];
+}
+
+function absUrl(href, base) {
+  try { return new URL(href, base).toString(); } catch { return null; }
+}
+
+// Pull <link rel="alternate" type="application/rss+xml" href="…"> from an HTML head.
+function discoverFeeds(html, baseUrl) {
+  const out = [];
+  for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = m[0];
+    if (!/rel=["']?alternate/i.test(tag)) continue;
+    if (!/type=["'][^"']*(?:rss|atom)\+xml/i.test(tag)) continue;
+    const href = tag.match(/href=["']([^"']+)["']/i);
+    if (!href) continue;
+    const u = absUrl(href[1], baseUrl);
+    if (!u) continue;
+    const title = tag.match(/title=["']([^"']*)["']/i);
+    out.push({ url: u, label: title ? decodeEntities(title[1]) : "Discovered feed" });
+  }
+  return out;
+}
+
+// Fallback discovery: scan every href on the page for feed-like URLs (catches
+// sites like CNN whose feed lives on another subdomain, not advertised via <link>).
+function discoverFeedLinks(html, baseUrl) {
+  const out = [];
+  for (const m of html.matchAll(/href=["']([^"']+)["']/gi)) {
+    const href = m[1];
+    if (!/(?:rss|atom|feed|\.xml)(?:[/?#"']|$)/i.test(href)) continue;
+    if (/\.(?:css|js|png|jpe?g|svg|gif|ico|woff2?)(?:[?#]|$)/i.test(href)) continue;
+    const u = absUrl(href, baseUrl);
+    if (u) out.push({ url: u, label: "Feed link found on the page" });
+  }
+  return out.slice(0, 10);
+}
+
+// Build the YouTube videos.xml feed URL from a channel/handle/video page.
+function youtubeChannelFeed(parsed, html) {
+  const path = parsed.pathname;
+  const direct = path.match(/\/channel\/(UC[\w-]+)/);
+  if (direct) return `https://www.youtube.com/feeds/videos.xml?channel_id=${direct[1]}`;
+  // /@handle, /c/Name, /user/Name, /watch — the channelId is embedded in the page.
+  if (html) {
+    const id = html.match(/"(?:channelId|externalId)":"(UC[\w-]+)"/);
+    if (id) return `https://www.youtube.com/feeds/videos.xml?channel_id=${id[1]}`;
+  }
+  return null;
+}
+
+// Host-specific candidate feed URLs (verified later before we surface them).
+function knownHostSuggestions(host, parsed, html) {
+  if (/(^|\.)youtube\.com$/.test(host) || host === "youtu.be") {
+    const feed = youtubeChannelFeed(parsed, html);
+    return feed ? [{ url: feed, label: "This YouTube channel's video feed" }] : [];
+  }
+  if (NO_RSS_HOSTS[host]) return [...ALGO_FALLBACKS];
+  return [];
+}
+
+// Fetch a candidate URL and report whether it parses as a feed (and how many items).
+async function quickFeedCheck(url) {
+  if (!/^https?:\/\//i.test(url)) return { ok: false, items: 0 };
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), VALIDATE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { "User-Agent": UA, Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*" },
+    });
+    if (!res.ok) return { ok: false, items: 0 };
+    const items = parseFeed(await res.text());
+    return { ok: items.length > 0, items: items.length };
+  } catch {
+    return { ok: false, items: 0 };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/**
+ * Validate a feed URL for the "Add source" form. Returns one of:
+ *   { ok: true,  itemCount, kind }                      — the URL is a usable feed
+ *   { ok: false, reason, suggestions: [{url,label,items}] }  — why + what to paste instead
+ * `suggestions` only ever contains URLs we re-fetched and confirmed actually parse.
+ */
+export async function validateFeedUrl(rawUrl) {
+  const url = (rawUrl || "").trim();
+  if (!/^https?:\/\//i.test(url)) {
+    return { ok: false, reason: "URL must start with http:// or https://", suggestions: [] };
+  }
+  let parsed;
+  try { parsed = new URL(url); }
+  catch { return { ok: false, reason: "That doesn't look like a valid URL.", suggestions: [] }; }
+  const host = parsed.hostname.replace(/^www\./, "");
+
+  // 1) Fetch the pasted URL.
+  let status = 0, ctype = "", body = "", netErr = null;
+  {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        signal: ctrl.signal,
+        headers: { "User-Agent": UA, Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html, */*" },
+      });
+      status = res.status;
+      ctype = res.headers.get("content-type") || "";
+      body = await res.text();
+    } catch (e) {
+      netErr = /abort/i.test(e.message || "") ? `The site didn't respond within ${FETCH_TIMEOUT_MS / 1000}s.` : `Couldn't reach the site (${e.message}).`;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  // 2) If it already parses as a feed, we're done.
+  if (!netErr) {
+    const items = parseFeed(body);
+    if (items.length) {
+      return { ok: true, itemCount: items.length, kind: /<feed[\s>]/i.test(body) ? "atom" : "rss" };
+    }
+  }
+
+  // 3) Not a feed — assemble candidate replacement URLs (highest-confidence first).
+  let candidates = [...directorySuggestions(host), ...knownHostSuggestions(host, parsed, body)];
+  const isHtml = !netErr && (/<html[\s>]/i.test(body) || /text\/html/i.test(ctype));
+  if (isHtml) {
+    candidates.push(...discoverFeeds(body, url));      // <link rel=alternate> autodiscovery
+    candidates.push(...discoverFeedLinks(body, url));  // any feed-like href on the page
+    for (const p of ["/rss", "/feed", "/rss.xml", "/feed.xml", "/atom.xml", "/index.xml"]) {
+      candidates.push({ url: parsed.origin + p, label: `Common feed path (${p})` });
+    }
+  }
+  // De-dup by URL, keep priority order (host rules → autodiscovery → page links → guesses).
+  const seen = new Set();
+  candidates = candidates.filter(c => c.url && !seen.has(c.url) && seen.add(c.url)).slice(0, 12);
+
+  // Verify candidates concurrently; only surface ones that actually parse.
+  const checked = await Promise.allSettled(
+    candidates.map(c => quickFeedCheck(c.url).then(r => ({ ...c, items: r.items, ok: r.ok })))
+  );
+  const suggestions = checked
+    .filter(x => x.status === "fulfilled" && x.value.ok)
+    .map(x => ({ url: x.value.url, label: x.value.label, items: x.value.items }))
+    .slice(0, 3);
+
+  // 4) Pick the clearest reason.
+  let reason;
+  if (netErr) reason = netErr;
+  else if (status >= 400) reason = `The URL returned HTTP ${status} — it isn't serving a feed.`;
+  else if (NO_RSS_HOSTS[host]) reason = NO_RSS_HOSTS[host];
+  else reason = "This is a web page, not an RSS/Atom feed — no feed items were found at this URL.";
+
+  return { ok: false, reason, suggestions };
+}
+
 // ── Classification (free OpenRouter chain; mirrors _insights-core.js) ────────────
 async function callOpenRouter(key, userMessage) {
   let lastErr = null;

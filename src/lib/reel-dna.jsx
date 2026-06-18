@@ -29,6 +29,7 @@ export const PLATFORMS = [
   { key: "ig",     label: "Instagram" },
   { key: "tiktok", label: "TikTok" },
   { key: "yt",     label: "YouTube" },
+  { key: "fb",     label: "Facebook Reel" },
 ];
 
 export const STATUSES = [
@@ -172,6 +173,80 @@ export function parseTagNote(note) {
     genesOfInterest: [...genes],
     location: location || null,
     leftover: leftoverParts.length ? leftoverParts.join(" · ") : null,
+  };
+}
+
+/* ---------------------------------------------------------------------------
+   resolveBrief(item) — collapse a reel_dna row + any unparsed tag note into the
+   flat set of human values an editor cares about. Structured fields win; the
+   parsed note fills gaps. Pure + provider-free so both the page and the store
+   can call it (the page's resolveTags is the column-subset of this).            */
+export function resolveBrief(item) {
+  const it = item || {};
+  const parsed = parseTagNote(it.quickNotes || "");
+  const g = (key, sub) =>
+    (it[key] && it[key][sub]) || (parsed.fields[key] && parsed.fields[key][sub]) || "";
+  return {
+    location:   it.location || parsed.location || "",
+    musicTrack:  g("music", "track"),
+    musicSource: g("music", "source"),
+    musicLink:   g("music", "link"),
+    fontNames:   g("font", "names"),
+    fontLinks:   g("font", "links"),
+    sfx:         g("sfx", "notes"),
+    story:       g("story", "styleNotes"),
+    hookStart:   g("hook", "startTs"),
+    hookEnd:     g("hook", "endTs"),
+    hookLink:    g("hook", "downloadLink"),
+    leftover:    parsed.leftover || "",
+  };
+}
+
+/* ---------------------------------------------------------------------------
+   reelDnaToPipelineFields(item) — map a captured reel into the pipeline `reels`
+   fields an editor edits, so "Send to Pipeline" produces a brief that lines up
+   1:1 with the Reel detail tabs. The reel_dna row stays the source of truth
+   (linked via reel_id); this is the editable production copy.
+
+   Field map (reel_dna → reels):
+     reelUrl                    → inspo    (reference reel to match)
+     location                   → title    + first brief line
+     music.{track,source,link}  → audio    + brief line
+     leftover note / quickNotes → logline
+     font / sfx / story / hook  → note     (labelled production brief)          */
+export function reelDnaToPipelineFields(item) {
+  const it = item || {};
+  const b = resolveBrief(it);
+
+  const title = b.location ? `${b.location} — reel` : `Reel from ${platformLabel(it.platform)}`;
+  const audio = [b.musicTrack, b.musicSource, b.musicLink].filter(Boolean).join(" · ") || null;
+
+  // Labelled brief — one line per present field, so the editor sees exactly
+  // what to recreate. Mirrors the gene columns on the Reel DNA card.
+  const lines = [];
+  if (b.location) lines.push(`Location: ${b.location}`);
+  if (b.musicTrack || b.musicSource || b.musicLink)
+    lines.push(`Music: ${[b.musicTrack, b.musicSource, b.musicLink].filter(Boolean).join(" — ")}`);
+  if (b.fontNames || b.fontLinks)
+    lines.push(`Font: ${[b.fontNames, b.fontLinks].filter(Boolean).join(" — ")}`);
+  if (b.sfx)   lines.push(`SFX: ${b.sfx}`);
+  if (b.story) lines.push(`Story / pacing: ${b.story}`);
+  if (b.hookStart || b.hookEnd || b.hookLink) {
+    const span = b.hookStart && b.hookEnd ? `${b.hookStart}–${b.hookEnd}` : (b.hookStart || b.hookEnd);
+    lines.push(`Hook: ${[span, b.hookLink].filter(Boolean).join(" — ")}`);
+  }
+  if (it.reelUrl) lines.push(`Reference reel: ${it.reelUrl}`);
+
+  const logline =
+    b.leftover || it.quickNotes ||
+    (b.location ? `Reel inspired by ${b.location}` : "Captured reel to recreate");
+
+  return {
+    title,
+    logline,
+    inspo: it.reelUrl || null,
+    audio,
+    note: lines.join("\n"),
   };
 }
 

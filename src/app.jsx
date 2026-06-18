@@ -29,6 +29,8 @@ import { NotificationsProvider } from "./components/notifications.jsx";
 import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import GamifyWelcomePopup from "./components/GamifyWelcomePopup.jsx";
+import { ThemeProvider } from "./lib/theme.jsx";
+import { PreferencesModal } from "./components/PreferencesModal.jsx";
 import { RolesAdmin } from "./pages/roles-admin.jsx";
 import { Inbox } from "./pages/inbox.jsx";
 import { TeamChat } from "./pages/team-chat.jsx";
@@ -103,6 +105,7 @@ function AppShell() {
   const [focusModule, setFocusModule]   = useState(null);   // training skillKey to auto-expand/scroll
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
+  const [prefsOpen, setPrefsOpen]       = useState(false);   // Display & accessibility modal
   const roleSwitchRef                   = useRef(null);
   const [navOpen, setNavOpen]           = useState(false);   // left slide-in drawer
   const [globalSearch, setGlobalSearch] = useState("");
@@ -426,6 +429,16 @@ function AppShell() {
                   </div>
                 </div>
               )}
+              {isOwner && (
+                <div className="rm-opt"
+                     onClick={() => { setPrefsOpen(true); setRoleMenu(false); }}>
+                  <span className="avatar-chip" style={{ fontSize: 13 }}>🅰</span>
+                  <div>
+                    <div className="rm-name">Display &amp; accessibility</div>
+                    <div className="rm-role">Comfortable mode · text size · font (test)</div>
+                  </div>
+                </div>
+              )}
               <div className="rm-footer" style={{
                 borderTop: isOwner ? "1px dashed var(--line-hard)" : "none",
                 marginTop: isOwner ? 6 : 0,
@@ -670,6 +683,9 @@ function AppShell() {
 
       {/* Global create FAB */}
       <CreateFab />
+
+      {/* Display & accessibility preferences (owner-only entry) */}
+      {prefsOpen && <PreferencesModal onClose={() => setPrefsOpen(false)} />}
     </div>
   );
 }
@@ -748,10 +764,10 @@ function App() {
                             <Space3D />
                           </React.Suspense>
                         ) : (
-                          <>
+                          <ThemeProvider>
                             <AppShell />
                             <GamifyWelcomePopup />
-                          </>
+                          </ThemeProvider>
                         )}
                       </PermissionsProvider>
                     </NotificationsProvider>

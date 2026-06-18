@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-17T22:49:04.288Z",
+  "generated": "2026-06-18T12:59:47.913Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -256,6 +256,46 @@
     {
       "version": "0062_reel_dna_deleted_at.sql",
       "checksum": "1ba5f262774dc350f95db134429c5cbac7cd74818fc45a762133537a301b981a"
+    },
+    {
+      "version": "0063_thumbnail_dna.sql",
+      "checksum": "5b49a2b5503af612db2bf7240c59a0dbe94eb382c9430e4fa6714a5c6f18bbc7"
+    },
+    {
+      "version": "0064_monitor_events_geo.sql",
+      "checksum": "e30ee562ffa9301ea3ec0991a41cf1a10a7c4cde523c053912bdeb1eb8ab2762"
+    },
+    {
+      "version": "0065_monitor_event_links.sql",
+      "checksum": "4997de0d5d313544451e72e9ca4edea687ed4787b50d56d88c2a292593b965a5"
+    },
+    {
+      "version": "0066_world_monitor_settings.sql",
+      "checksum": "d2dd68837a8100d5ce789d6129d6546fe0798fcf7eeb9a461c614864755497c7"
+    },
+    {
+      "version": "0067_thumbnail_dna_video_id_uidx.sql",
+      "checksum": "16b106ba8678ef79fc6e4c11e7da9353e66fa7caa0acbe960dfd79a3ff649ec0"
+    },
+    {
+      "version": "0068_reel_dna_assets.sql",
+      "checksum": "fb05e3af6ce8fde23de0b6d7a59449236e4cba58bf31c7693a7c54ffdbf5fd9b"
+    },
+    {
+      "version": "0069_monitor_events_team_read.sql",
+      "checksum": "f8d3a5bcb486869dd3f04e1535e137fb722ca5c0a13cd95f80a71091a15a4efd"
+    },
+    {
+      "version": "0070_user_preferences.sql",
+      "checksum": "d601b294da767252a48a033fd2c3b0d758e287d27eeccbff7ff37d8847b845a7"
+    },
+    {
+      "version": "0071_reel_dna_platform_fb.sql",
+      "checksum": "c52958455be0b47284b03cc56658adbfca272ad800b0aac85d0b681902946abb"
+    },
+    {
+      "version": "0072_reel_dna_content_type.sql",
+      "checksum": "6badb7cf6797a5eeb480634ed4ca6b21889659027f7b31ffcd61a32d8284f182"
     }
   ]
 }

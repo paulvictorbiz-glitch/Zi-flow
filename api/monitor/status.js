@@ -22,11 +22,12 @@ export default async function handler(req, res) {
     return;
   }
 
-  const [sbResult, hzResult, gcpResult, osResult] = await Promise.allSettled([
+  const [sbResult, hzResult, gcpResult, osResult, wmResult] = await Promise.allSettled([
     fetchSupabaseStats(),
     fetchHetznerStats(),
     fetchGcpStats(),
     fetchHetznerOsMetrics(),
+    fetchWorldMonitorStats(),
   ]);
 
   res.status(200).json({
@@ -35,6 +36,7 @@ export default async function handler(req, res) {
     hetzner:  hzResult.status  === "fulfilled" ? hzResult.value  : { error: hzResult.reason?.message  },
     gcp:      gcpResult.status === "fulfilled" ? gcpResult.value : { error: gcpResult.reason?.message },
     os:       osResult.status  === "fulfilled" ? osResult.value  : { configured: false },
+    worldMonitor: wmResult.status === "fulfilled" ? wmResult.value : { configured: true, error: wmResult.reason?.message },
   });
 }
 
@@ -180,6 +182,70 @@ async function fetchSupabaseStats() {
   return result;
 }
 
+// ── World Monitor ───────────────────────────────────────────────────────────
+// Reads the hybrid World Monitor config (`world_monitor` flags) and usage
+// counters (`world_monitor_usage`) from app_settings. NO live HEAD/fetch here
+// (would risk the function timeout) — embed health rides the stored
+// `embed_ok` flag, which the ingest writer (api/ai/_world-feeds.js) maintains.
+// Team D is the SOLE reader of both keys and the SOLE writer of `world_monitor`
+// (the Monitor card's owner-write toggle); Team B is the sole writer of
+// `world_monitor_usage`.
+
+async function fetchWorldMonitorStats() {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return { configured: false };
+
+  const sb = createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: rows, error } = await sb
+    .from("app_settings")
+    .select("key, value")
+    .in("key", ["world_monitor", "world_monitor_usage"]);
+
+  if (error) return { configured: true, error: error.message };
+
+  const byKey = Object.fromEntries((rows || []).map((r) => [r.key, r.value || {}]));
+  const cfg   = byKey.world_monitor || {};
+  const usage = byKey.world_monitor_usage || {};
+
+  const free = {
+    usgs:  cfg.free?.usgs  === true,
+    firms: cfg.free?.firms === true,
+    acled: cfg.free?.acled === true,
+  };
+  const paid = {
+    finnhub: cfg.paid?.finnhub === true,
+    fred:    cfg.paid?.fred    === true,
+    imf:     cfg.paid?.imf     === true,
+    nasdaq:  cfg.paid?.nasdaq  === true,
+    flights: cfg.paid?.flights === true,
+  };
+
+  const firmsDailyUsed  = Number(usage.firms_daily_used)  || 0;
+  const firmsDailyLimit = Number(usage.firms_daily_limit) || 0;
+  const acledUsed       = Number(usage.acled_used)        || 0;
+  const acledLimit      = Number(usage.acled_limit)       || 0;
+
+  return {
+    configured: true,
+    embedEnabled: cfg.embed_enabled === true,
+    embedOk: usage.embed_ok !== false,   // default healthy unless explicitly false
+    free,
+    paid,
+    firmsDailyUsed,
+    firmsDailyLimit,
+    firmsDailyPct: pct(firmsDailyUsed, firmsDailyLimit),
+    acledUsed,
+    acledLimit,
+    acledPct: pct(acledUsed, acledLimit),
+    usgsCount: Number(usage.usgs_count) || 0,
+    lastIngestAt: usage.last_ingest_at ?? null,
+  };
+}
+
 // ── Hetzner ───────────────────────────────────────────────────────────────────
 
 async function fetchHetznerStats() {
@@ -238,7 +304,10 @@ async function fetchHetznerStats() {
 async function fetchHetznerOsMetrics() {
   const base = process.env.FB_PROXY_TARGET || "https://api.footagebrain.com";
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 6000);
+  // /api/metrics runs `docker stats` (~3s) on the box; allow generous headroom for
+  // TLS + Vercel→Hetzner latency so a slow tick doesn't drop the OS donuts. The
+  // parent handler caps at maxDuration: 45, so 12s here is well within budget.
+  const t = setTimeout(() => controller.abort(), 12000);
   try {
     const r = await fetch(`${base}/api/metrics`, { signal: controller.signal });
     if (!r.ok) return { configured: false };

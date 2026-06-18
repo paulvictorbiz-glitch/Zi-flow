@@ -26,17 +26,33 @@ import { useNow, formatDuration } from "../lib/time.jsx";
 import {
   GENES, GENE_KEYS, PLATFORMS, STATUSES, SOURCES,
   platformLabel, statusLabel, sourceLabel, geneLabel,
-  platformFromUrl, parseTagNote,
+  platformFromUrl, parseTagNote, resolveBrief,
 } from "../lib/reel-dna.jsx";
 import { ReelDeconstructor } from "./reel-deconstructor.jsx";
 import { ReelDnaView } from "../components/reel-dna-view.jsx";
+import { ThumbnailDna } from "./thumbnail-dna.jsx";
+import { ReelDnaComprehensive } from "../components/reel-dna-comprehensive.jsx";
+import { ReelAssetsPanel } from "../components/reel-assets-panel.jsx";
+import { ReelAssetsPage } from "./reel-assets-page.jsx";
+import { useReelDnaAssets } from "../lib/reel-dna-assets.jsx";
+import {
+  RD_TEXT_COLUMNS, RD_SELECT_COLUMNS,
+  emptyColumnFilters, hasActiveColumnFilters, applyColumnFilters,
+} from "../lib/reel-dna-filters.jsx";
 
 /* The bookmarklet shown in the page footer. Navigates to our own origin with
    the current page URL prefilled — no CORS, no API call (the form does the
    Supabase insert client-side). Drag to the bookmarks bar. */
 const BOOKMARKLET = "javascript:(function(){window.open(location.origin+'/?capture=1&url='+encodeURIComponent(location.href),'_blank');})();";
 
-function relTime(iso, now) {
+/* Classic ⇄ Comprehensive view choice, persisted across reloads. */
+const DNA_VIEW_KEY = "reel_dna_view";
+function loadDnaView() {
+  try { return localStorage.getItem(DNA_VIEW_KEY) === "comprehensive" ? "comprehensive" : "classic"; }
+  catch { return "classic"; }
+}
+
+export function relTime(iso, now) {
   if (!iso) return "";
   try {
     const ts = new Date(iso).getTime();
@@ -141,7 +157,7 @@ function CaptureForm({ prefill, onCapture }) {
 }
 
 /* ---------- One gene's structured editor ---------- */
-function GeneEditor({ gene, value, onChange }) {
+export function GeneEditor({ gene, value, onChange }) {
   const v = value || {};
   const set = (patch) => onChange({ ...v, ...patch });
 
@@ -204,19 +220,54 @@ export function resolveTags(item) {
   };
 }
 
+/* The card's "production brief" — the location + gene fields logged on the reel,
+   shown as labelled lines whose wording matches the pipeline reel fields an
+   editor edits (so "Send to Pipeline" carries straight over). Renders nothing
+   when the reel has no tagged fields yet. */
+export function BriefBlock({ item }) {
+  const b = resolveBrief(item);
+  const rows = [];
+  if (b.location) rows.push(["Location", b.location]);
+  const music = [b.musicTrack, b.musicSource, b.musicLink].filter(Boolean).join(" · ");
+  if (music) rows.push(["Music", music]);
+  const font = [b.fontNames, b.fontLinks].filter(Boolean).join(" · ");
+  if (font) rows.push(["Font", font]);
+  if (b.sfx) rows.push(["SFX", b.sfx]);
+  if (b.story) rows.push(["Story", b.story]);
+  const hook = [
+    b.hookStart && b.hookEnd ? `${b.hookStart}–${b.hookEnd}` : (b.hookStart || b.hookEnd),
+    b.hookLink,
+  ].filter(Boolean).join(" · ");
+  if (hook) rows.push(["Hook", hook]);
+  if (b.leftover) rows.push(["Note", b.leftover]);
+  if (!rows.length) return null;
+  return (
+    <div className="rd-brief">
+      {rows.map(([k, v]) => (
+        <div key={k} className="rd-brief-row">
+          <span className="rd-brief-key">{k}</span>
+          <span className="rd-brief-val">{v}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ---------- A captured reel card ---------- */
-function DnaCard({ item, now, actions, onView, onDeconstruct }) {
+export function DnaCard({ item, now, actions, onView, onDeconstruct, onSend, onDelete, onOpenAssets, isOwner }) {
   const [open, setOpen] = useState(false);
   const genes = item.genesOfInterest || [];
   const sourceTone = item.source === "ig_dm" ? "violet" : item.source === "share_target" ? "blue" : undefined;
   const hasTimeline = item.timeline && item.timeline.length > 0;
   const tags = resolveTags(item);
+  const { assets, counts } = useReelDnaAssets(item.id);
 
   const saveGene = (geneKey, val) => actions.updateReelDna(item.id, { [geneKey]: val });
   const setStatus = (s) => actions.updateReelDna(item.id, { status: s });
 
   return (
     <div className={"rd-card rd-status--" + item.status}>
+      <div className="rd-card-main">
       <div className="rd-card-head">
         <div className="rd-card-title rd-card-title--open"
              role="button" tabIndex={0}
@@ -259,7 +310,7 @@ function DnaCard({ item, now, actions, onView, onDeconstruct }) {
         </div>
       )}
 
-      {item.quickNotes && <div className="rd-card-notes">{item.quickNotes}</div>}
+      <BriefBlock item={item} />
 
       {open && (
         <div className="rd-editor">
@@ -283,9 +334,29 @@ function DnaCard({ item, now, actions, onView, onDeconstruct }) {
           <span className="rd-deconstruct" onClick={() => onDeconstruct(item)}>
             {hasTimeline ? `Timeline (${item.timeline.length})` : "Deconstruct"}
           </span>
+          {item.reelId ? (
+            <span className="rd-tag" style={{ color: "var(--c-green)", borderColor: "var(--c-green)" }}>
+              ▸ In pipeline · {item.reelId}
+            </span>
+          ) : (
+            <span className="rd-send" onClick={() => onSend(item)}>→ Send to Pipeline</span>
+          )}
         </div>
-        <span className="rd-archive" onClick={() => actions.archiveReelDna(item.id)}>Archive</span>
+        <div className="rd-card-foot-right">
+          <span className="rd-archive" onClick={() => actions.archiveReelDna(item.id)}>Archive</span>
+          <span className="rd-delete" onClick={() => onDelete(item)}>Delete</span>
+        </div>
       </div>
+      </div>
+
+      <ReelAssetsPanel
+        item={item}
+        assets={assets}
+        counts={counts}
+        isOwner={isOwner}
+        actions={actions}
+        onOpenFull={onOpenAssets}
+      />
     </div>
   );
 }
@@ -310,13 +381,76 @@ function EditableCell({ value, placeholder, onSave }) {
   );
 }
 
+/* ---------- Column-filter header row (Classic spreadsheet) ----------
+   Controlled: `colFilters` + `onColFilter(key, value)` come from the page.
+   A text <input> per text column, a <select> per select column, and a
+   clear-all affordance in the actions cell. Stops row clicks from sorting. */
+function ColumnFilterRow({ colFilters, onColFilter, onClear }) {
+  const sel = (key) => RD_SELECT_COLUMNS.find((c) => c.key === key);
+  const TextCell = ({ k }) => (
+    <td className="rd-colfilter-td">
+      <input
+        className="rd-colfilter-input"
+        value={colFilters[k] || ""}
+        placeholder="filter…"
+        onChange={(e) => onColFilter(k, e.target.value)}
+      />
+    </td>
+  );
+  const SelectCell = ({ k }) => {
+    const c = sel(k);
+    return (
+      <td className="rd-colfilter-td">
+        <select className="rd-colfilter-select" value={colFilters[k] || "all"}
+                onChange={(e) => onColFilter(k, e.target.value)}>
+          <option value="all">All</option>
+          {c.options.map((o) => <option key={o.key} value={o.key}>{c.labelFn(o.key)}</option>)}
+        </select>
+      </td>
+    );
+  };
+  return (
+    <tr className="rd-colfilter-row">
+      <TextCell k="reel" />
+      <TextCell k="location" />
+      <TextCell k="music" />
+      <TextCell k="font" />
+      <TextCell k="sfx" />
+      <TextCell k="story" />
+      <SelectCell k="source" />
+      <SelectCell k="status" />
+      <td className="rd-colfilter-td" />
+      <td className="rd-colfilter-td rd-colfilter-clear-td">
+        <button type="button" className="rd-colfilter-clear" title="Clear column filters" onClick={onClear}>✕</button>
+      </td>
+    </tr>
+  );
+}
+
+/* A single spreadsheet Assets cell — a count badge that opens the full-screen
+   assets page for the row. The hook is called per-row (a component, so the
+   call is unconditional and hook-rules-safe). */
+function AssetCountCell({ item, onOpen }) {
+  const { counts } = useReelDnaAssets(item.id);
+  return (
+    <td className="rd-td-assets">
+      <button className="rd-row-btn" title="View assets" onClick={() => onOpen?.(item)}>
+        ▣ {counts?.total ?? 0}
+      </button>
+    </td>
+  );
+}
+
 /* ---------- Spreadsheet / log view ---------- */
-function DnaTable({ items, now, actions, onView, onDeconstruct }) {
+export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, onDelete,
+                          onOpenAssets, colFilters, onColFilter, onClearColFilters }) {
   // Promote a parsed-on-read tag value to a real structured field on edit, so a
   // note-derived column becomes a first-class field once the user touches it.
   const saveLocation = (item, val) => actions.updateReelDna(item.id, { location: val || null });
   const saveGeneField = (item, geneKey, subKey, val) =>
     actions.updateReelDna(item.id, { [geneKey]: { ...(item[geneKey] || {}), [subKey]: val } });
+
+  const showFilters = !!colFilters && !!onColFilter;
 
   return (
     <div className="rd-table-wrap">
@@ -331,8 +465,12 @@ function DnaTable({ items, now, actions, onView, onDeconstruct }) {
             <th>Story / Pacing</th>
             <th>Source</th>
             <th>Status</th>
+            <th className="rd-th-assets">Assets</th>
             <th className="rd-th-act"></th>
           </tr>
+          {showFilters && (
+            <ColumnFilterRow colFilters={colFilters} onColFilter={onColFilter} onClear={onClearColFilters} />
+          )}
         </thead>
         <tbody>
           {items.map(item => {
@@ -366,12 +504,19 @@ function DnaTable({ items, now, actions, onView, onDeconstruct }) {
                     {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
                   </select>
                 </td>
+                <AssetCountCell item={item} onOpen={onOpenAssets} />
                 <td className="rd-td-act">
                   <button className="rd-row-btn" title="Open the visual DNA breakdown" onClick={() => onView(item)}>DNA</button>
                   <button className="rd-row-btn" title={hasTimeline ? "Edit timeline" : "Build timeline"} onClick={() => onDeconstruct(item)}>
                     {hasTimeline ? `▦ ${item.timeline.length}` : "▦"}
                   </button>
-                  <button className="rd-row-btn rd-row-btn--archive" title="Archive" onClick={() => actions.archiveReelDna(item.id)}>✕</button>
+                  {item.reelId ? (
+                    <span className="rd-row-btn rd-row-btn--linked" title={"In pipeline · " + item.reelId}>▸ {item.reelId}</span>
+                  ) : (
+                    <button className="rd-row-btn rd-row-btn--send" title="Create a pipeline reel from this card" onClick={() => onSend(item)}>→ Pipeline</button>
+                  )}
+                  <button className="rd-row-btn rd-row-btn--archive" title="Archive" onClick={() => actions.archiveReelDna(item.id)}>⧉</button>
+                  <button className="rd-row-btn rd-row-btn--delete" title="Delete permanently" onClick={() => onDelete(item)}>✕</button>
                 </td>
               </tr>
             );
@@ -382,19 +527,50 @@ function DnaTable({ items, now, actions, onView, onDeconstruct }) {
   );
 }
 
+/* Full-screen Assets takeover wrapper. Calls the integration hook in a
+   component context (never conditionally) and feeds the pure ReelAssetsPage. */
+function AssetsPageContainer({ item, onBack, isOwner, actions }) {
+  const { assets, counts } = useReelDnaAssets(item.id);
+  return (
+    <ReelAssetsPage
+      item={item}
+      assets={assets}
+      counts={counts}
+      onBack={onBack}
+      isOwner={isOwner}
+      actions={actions}
+    />
+  );
+}
+
 /* ---------- Page ---------- */
 export function ReelDna({ prefill }) {
   const { reelDna, actions, error } = useWorkflow();
   const { person: me } = useAuth();
+  const isOwner = me?.role === "owner";
   const now = useNow();
 
+  const [tab, setTab] = useState("reels"); // reels | thumbnails
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
   const [viewMode, setViewMode] = useState("cards"); // cards | table
+  // Classic ⇄ Comprehensive top-level view (persisted, like the Pulse toggle).
+  const [dnaView, setDnaView] = useState(loadDnaView); // classic | comprehensive
+  const setView = (v) => {
+    const next = v === "comprehensive" ? "comprehensive" : "classic";
+    setDnaView(next);
+    try { localStorage.setItem(DNA_VIEW_KEY, next); } catch (_) {}
+  };
+  // Per-column filters for the Classic spreadsheet.
+  const [colFilters, setColFilters] = useState(emptyColumnFilters);
+  const onColFilter = (key, value) => setColFilters((f) => ({ ...f, [key]: value }));
+  const clearColFilters = () => setColFilters(emptyColumnFilters());
   // Page-level overlay state so both cards AND table rows open the same
   // ReelDnaView / ReelDeconstructor. Keyed by id so realtime edits flow in.
   const [active, setActive] = useState(null); // { id, mode: "view" | "deconstruct" }
+  // Full-screen Assets page state — resolved from live reelDna by id (like active).
+  const [assetsId, setAssetsId] = useState(null);
 
   const onCapture = (payload) =>
     actions.createReelDnaCapture({ ...payload, capturedBy: me?.id || null });
@@ -403,16 +579,72 @@ export function ReelDna({ prefill }) {
   const onDeconstruct = (item) => setActive({ id: item.id, mode: "deconstruct" });
   const closeOverlay = () => setActive(null);
 
+  // Refresh: force the Hetzner IG poller to run now, then reload from Supabase.
+  // Freshly-pulled rows also arrive via realtime, but we re-poll a couple of
+  // times because that poll takes a few seconds to finish on the backend.
+  const [refreshing, setRefreshing] = useState(false);
+  const [notice, setNotice] = useState(null); // { tone: "ok"|"err", text }
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setNotice(null);
+    try {
+      let igMsg = "";
+      try {
+        const r = await actions.triggerIgSync();
+        if (r?.demo) igMsg = "(demo — no live pull) ";
+      } catch (e) {
+        igMsg = "Instagram pull couldn't start (" + (e.message || "error") + ") — reloaded anyway. ";
+      }
+      const n = await actions.reloadReelDna();
+      // The just-started poll finishes server-side a few seconds later; pull the
+      // new rows in without making the user click again.
+      setTimeout(() => { actions.reloadReelDna().catch(() => {}); }, 7000);
+      setTimeout(() => { actions.reloadReelDna().catch(() => {}); }, 16000);
+      setNotice({ tone: "ok", text: `${igMsg}Reloaded — ${n} reels. New IG DMs appear within a few seconds.` });
+    } catch (e) {
+      setNotice({ tone: "err", text: "Refresh failed · " + (e.message || String(e)) });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // No confirm dialog — Paul wanted to mass-delete quickly. Archive (restorable)
+  // stays the safe option; Delete is the permanent one.
+  const handleDelete = (item) => actions.deleteReelDna(item.id);
+
+  const handleSend = (item) => {
+    if (item.reelId) { setNotice({ tone: "ok", text: `Already in the pipeline as ${item.reelId}.` }); return; }
+    try {
+      const newId = actions.sendReelDnaToPipeline(item.id, { owner: me?.id });
+      setNotice({ tone: "ok", text: `Added to the pipeline as ${newId} — open the Pipeline tab to edit it.` });
+    } catch (e) {
+      setNotice({ tone: "err", text: "Couldn't add to pipeline · " + (e.message || String(e)) });
+    }
+  };
+
+  // Archived-respecting base pool — feeds both the Classic pill/column
+  // filters and the Comprehensive facet rail.
+  const baseList = useMemo(() => (
+    (reelDna || []).filter(d => showArchived ? !!d.archivedAt : !d.archivedAt)
+  ), [reelDna, showArchived]);
+
+  // Classic visible list: pill filters + per-column filters.
   const visible = useMemo(() => {
-    return (reelDna || [])
-      .filter(d => showArchived ? !!d.archivedAt : !d.archivedAt)
+    const byPill = baseList
       .filter(d => statusFilter === "all" || d.status === statusFilter)
       .filter(d => sourceFilter === "all" || d.source === sourceFilter);
-  }, [reelDna, statusFilter, sourceFilter, showArchived]);
+    return applyColumnFilters(byPill, colFilters);
+  }, [baseList, statusFilter, sourceFilter, colFilters]);
 
   const activeItem = useMemo(
     () => (active ? (reelDna || []).find(d => d.id === active.id) || null : null),
     [active, reelDna]
+  );
+
+  const assetsItem = useMemo(
+    () => (assetsId ? (reelDna || []).find(d => d.id === assetsId) || null : null),
+    [assetsId, reelDna]
   );
 
   const counts = useMemo(() => {
@@ -426,6 +658,20 @@ export function ReelDna({ prefill }) {
     };
   }, [reelDna]);
 
+  // Full-screen Assets takeover — replaces the page body while open.
+  if (assetsItem) {
+    return (
+      <div className="reel-dna">
+        <AssetsPageContainer
+          item={assetsItem}
+          onBack={() => setAssetsId(null)}
+          isOwner={isOwner}
+          actions={actions}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="reel-dna">
       <div className="page-head">
@@ -434,11 +680,32 @@ export function ReelDna({ prefill }) {
           <div className="sub">Capture reels you like and break them into their genes — music, font, hook, SFX, story.</div>
         </div>
         <div className="actions">
-          <span className="mono dim" style={{ alignSelf: "center" }}>{counts.total} captured · realtime · live</span>
+          <div className="rd-tabs">
+            <DPill active={tab === "reels"} onClick={() => setTab("reels")}>Reels</DPill>
+            <DPill active={tab === "thumbnails"} onClick={() => setTab("thumbnails")}>Thumbnails</DPill>
+          </div>
+          {tab === "reels" && (
+            <>
+              <span className="mono dim" style={{ alignSelf: "center" }}>{counts.total} captured · realtime · live</span>
+              <DPill primary onClick={handleRefresh}
+                     style={refreshing ? { opacity: 0.6, pointerEvents: "none" } : undefined}>
+                {refreshing ? "Refreshing…" : "↻ Refresh"}
+              </DPill>
+            </>
+          )}
         </div>
       </div>
 
+      {tab === "thumbnails" ? (
+        <ThumbnailDna />
+      ) : (
+      <>
       {error && <div className="rd-error">error · {error}</div>}
+      {notice && (
+        <div className={"rd-notice rd-notice--" + notice.tone} onClick={() => setNotice(null)} title="Dismiss">
+          {notice.text}
+        </div>
+      )}
 
       <div className="rd-body">
         <Card title="Capture a reel" defaultOpen={true}
@@ -447,45 +714,81 @@ export function ReelDna({ prefill }) {
         </Card>
 
         <div className="rd-filterbar">
-          <span className="mono dim">status</span>
-          <DPill active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</DPill>
-          {STATUSES.map(s => (
-            <DPill key={s.key} active={statusFilter === s.key} onClick={() => setStatusFilter(s.key)}>
-              {s.label}{counts.byStatus[s.key] ? " · " + counts.byStatus[s.key] : ""}
-            </DPill>
-          ))}
+          {/* Classic ⇄ Comprehensive view toggle */}
+          <div className="rd-viewtoggle" role="group" aria-label="Reel DNA view">
+            <button type="button" className={"rd-viewtoggle-btn" + (dnaView === "classic" ? " is-on" : "")}
+                    aria-pressed={dnaView === "classic"} onClick={() => setView("classic")}>Classic</button>
+            <button type="button" className={"rd-viewtoggle-btn" + (dnaView === "comprehensive" ? " is-on" : "")}
+                    aria-pressed={dnaView === "comprehensive"} onClick={() => setView("comprehensive")}>Comprehensive</button>
+          </div>
           <span style={{ width: 12 }} />
-          <span className="mono dim">source</span>
-          <DPill active={sourceFilter === "all"} onClick={() => setSourceFilter("all")}>All</DPill>
-          {SOURCES.map(s => (
-            <DPill key={s.key} active={sourceFilter === s.key} onClick={() => setSourceFilter(s.key)}>
-              {s.label}
-            </DPill>
-          ))}
+
+          {dnaView === "classic" && (
+            <>
+              <span className="mono dim">status</span>
+              <DPill active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</DPill>
+              {STATUSES.map(s => (
+                <DPill key={s.key} active={statusFilter === s.key} onClick={() => setStatusFilter(s.key)}>
+                  {s.label}{counts.byStatus[s.key] ? " · " + counts.byStatus[s.key] : ""}
+                </DPill>
+              ))}
+              <span style={{ width: 12 }} />
+              <span className="mono dim">source</span>
+              <DPill active={sourceFilter === "all"} onClick={() => setSourceFilter("all")}>All</DPill>
+              {SOURCES.map(s => (
+                <DPill key={s.key} active={sourceFilter === s.key} onClick={() => setSourceFilter(s.key)}>
+                  {s.label}
+                </DPill>
+              ))}
+            </>
+          )}
           <span style={{ flex: 1 }} />
-          <span className="mono dim">view</span>
-          <DPill active={viewMode === "cards"} onClick={() => setViewMode("cards")}>Cards</DPill>
-          <DPill active={viewMode === "table"} onClick={() => setViewMode("table")}>Spreadsheet</DPill>
+          <DPill active={tab === "thumbnails"} onClick={() => setTab("thumbnails")}>Thumbnails</DPill>
           <span style={{ width: 12 }} />
+          {dnaView === "classic" && (
+            <>
+              <span className="mono dim">view</span>
+              <DPill active={viewMode === "cards"} onClick={() => setViewMode("cards")}>Cards</DPill>
+              <DPill active={viewMode === "table"} onClick={() => setViewMode("table")}>Spreadsheet</DPill>
+              <span style={{ width: 12 }} />
+            </>
+          )}
           <DPill active={showArchived} onClick={() => setShowArchived(a => !a)}>
             {showArchived ? "Archived" : "Live"}{counts.archived ? " · " + counts.archived : ""}
           </DPill>
         </div>
 
-        {visible.length === 0 ? (
+        {dnaView === "comprehensive" ? (
+          baseList.length === 0 ? (
+            <div className="rd-empty">
+              {showArchived ? "No archived reels." : "No reels captured yet — paste a URL above to start your reel genome."}
+            </div>
+          ) : (
+            <ReelDnaComprehensive items={baseList} now={now} actions={actions}
+                                  onView={onView} onDeconstruct={onDeconstruct}
+                                  onSend={handleSend} onDelete={handleDelete} />
+          )
+        ) : visible.length === 0 ? (
           <div className="rd-empty">
-            {showArchived
-              ? "No archived reels."
-              : "No reels captured yet — paste a URL above to start your reel genome."}
+            {hasActiveColumnFilters(colFilters)
+              ? "No reels match the active column filters."
+              : showArchived
+                ? "No archived reels."
+                : "No reels captured yet — paste a URL above to start your reel genome."}
           </div>
         ) : viewMode === "table" ? (
           <DnaTable items={visible} now={now} actions={actions}
-                    onView={onView} onDeconstruct={onDeconstruct} />
+                    onView={onView} onDeconstruct={onDeconstruct}
+                    onSend={handleSend} onDelete={handleDelete}
+                    onOpenAssets={(it) => setAssetsId(it.id)}
+                    colFilters={colFilters} onColFilter={onColFilter} onClearColFilters={clearColFilters} />
         ) : (
           <div className="rd-grid">
             {visible.map(item => (
               <DnaCard key={item.id} item={item} now={now} actions={actions}
-                       onView={onView} onDeconstruct={onDeconstruct} />
+                       onView={onView} onDeconstruct={onDeconstruct}
+                       onSend={handleSend} onDelete={handleDelete}
+                       onOpenAssets={(it) => setAssetsId(it.id)} isOwner={isOwner} />
             ))}
           </div>
         )}
@@ -516,6 +819,8 @@ export function ReelDna({ prefill }) {
           onClose={closeOverlay}
           onSave={(segments) => actions.updateReelDna(activeItem.id, { timeline: segments })}
         />
+      )}
+      </>
       )}
     </div>
   );
