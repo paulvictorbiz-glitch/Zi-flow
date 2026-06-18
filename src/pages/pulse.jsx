@@ -21,6 +21,7 @@ import React, { useMemo, useState, useCallback } from "react";
 import "./pulse.css";
 import { DPill } from "../components/components.jsx";
 import { useAuth } from "../auth.jsx";
+import { useIsOwner } from "../lib/permissions.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { PulseFilters } from "../components/pulse-filters.jsx";
 import { PulseComprehensive, PULSE_LAYOUTS } from "../components/pulse-comprehensive.jsx";
@@ -64,7 +65,7 @@ function loadPulseLayout() {
 
 export function Pulse() {
   const { person } = useAuth();
-  const isOwner = person?.role === "owner";
+  const isOwner = useIsOwner();
 
   const {
     monitorEvents,

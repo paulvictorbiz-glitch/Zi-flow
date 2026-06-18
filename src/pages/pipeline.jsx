@@ -7,8 +7,7 @@ import { DPill, ReelCard } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
-import { usePermissions } from "../lib/permissions.jsx";
-import { useAuth } from "../auth.jsx";
+import { usePermissions, useIsOwner } from "../lib/permissions.jsx";
 
 /* Board columns derived from the canonical STAGES list. Labels are
    upper-cased here because the board column heads use that style;
@@ -24,8 +23,7 @@ function Pipeline({ onOpen }) {
   const { reels, reviewLaneCards, actions, hiddenLaneIds } = useWorkflow();
   const { peopleList } = useRoster();
   const { can } = usePermissions();
-  const { person } = useAuth();
-  const isOwner = person?.role === "owner";
+  const isOwner = useIsOwner();
   const [filter, setFilter] = useState("all");
   const [scheduleModal, setScheduleModal] = useState(null);
   const [scheduleDate, setScheduleDate] = useState("");

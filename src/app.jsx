@@ -26,7 +26,7 @@ import { MODULE_BY_SKILL } from "./lib/training-curriculum.jsx";
 import { VideoEditor } from "./pages/editor.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider } from "./components/notifications.jsx";
-import { PermissionsProvider, usePermissions } from "./lib/permissions.jsx";
+import { PermissionsProvider, usePermissions, useIsOwner, ownsReviewQueue } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import GamifyWelcomePopup from "./components/GamifyWelcomePopup.jsx";
 import { ThemeProvider } from "./lib/theme.jsx";
@@ -98,6 +98,9 @@ function AppShell() {
   const { reels } = useWorkflow();
   const { peopleById, peopleList } = useRoster();
   const { canView, setEffectiveRole, setEffectivePersonId } = usePermissions();
+  // Real-role owner flag (NOT the previewed perspective) — drives owner-only
+  // affordances: the perspective switcher, settings, and the Monitor hub.
+  const isOwner = useIsOwner();
   /* The "monitor" view is the consolidated owner hub — it's reachable if ANY of
      its three sub-views (infra/pulse/ai) is granted. Every other view gates on
      its own catalog key. Used by the nav drawer, the bounce safety-net, and
@@ -174,7 +177,7 @@ function AppShell() {
        queue is theirs to clear. */
   const needsYouCount = useMemo(() => {
     if (!me) return 0;
-    const reviewsAreMine = me.role === "owner" || me.role === "reviewer";
+    const reviewsAreMine = ownsReviewQueue(me);
     return reels.filter(r => {
       if (r.archivedAt) return false;
       if (r.stage === "review") return reviewsAreMine;
@@ -217,11 +220,11 @@ function AppShell() {
   useEffect(() => {
     // `role` is a person ID; non-owners are always their own person.
     // For the owner, role tracks whichever person they're previewing.
-    const personId = me?.role === "owner"
+    const personId = isOwner
       ? (peopleById[role]?.id || me?.id || null)
       : (me?.id || null);
     setEffectivePersonId(personId);
-  }, [role, me?.id, me?.role, peopleById, setEffectivePersonId]);
+  }, [role, me?.id, isOwner, peopleById, setEffectivePersonId]);
 
   /* Safety net: if the current tab isn't visible to the active role,
      bounce to the first allowed tab so a restricted user never lands on
@@ -341,7 +344,6 @@ function AppShell() {
   /* Only the owner may switch perspectives. The avatar in the topbar shows
      the perspective the owner is currently viewing; everyone else sees just
      their own icon. */
-  const isOwner = me?.role === "owner";
   const shownPerson = isOwner ? (peopleById[role] || me) : me;
   // Role key the rest of the app (MyWork, permissions) needs.
   const viewingRoleKey = shownPerson?.role || "skilled";

@@ -36,6 +36,33 @@
 import React from "react";
 import { defaultConfig, defaultPermsForRole, EDITABLE_ROLES, DEMO_VIEWS, DEMO_ACTIONS } from "./permissions-catalog.js";
 import { supabase } from "./supabase-client.js";
+import { useAuth } from "../auth.jsx";
+
+/* ---------------------------------------------------------------
+   Real-role helpers — the single front-end source of truth for
+   "is this the OWNER (or a reviewer)".
+
+   IMPORTANT: these read the SIGNED-IN user's REAL role, NOT the
+   perspective the owner may be previewing. Perspective-driven
+   tab/action gating is canView()/can() (effectiveRole); these are
+   for owner-only affordances (settings, owner UI) that must stay
+   true even while the owner previews a restricted role.
+   --------------------------------------------------------------- */
+function isOwnerRole(person) {
+  return person?.role === "owner";
+}
+
+/* The review queue belongs to the owner AND reviewers — used so the
+   "Needs you" badge and the My Work review list agree by construction. */
+function ownsReviewQueue(person) {
+  return person?.role === "owner" || person?.role === "reviewer";
+}
+
+/* Hook form of isOwnerRole, reading the live auth person. */
+function useIsOwner() {
+  const { person } = useAuth();
+  return isOwnerRole(person);
+}
 
 const PermissionsContext = React.createContext(null);
 
@@ -237,4 +264,4 @@ function usePermissions() {
   return ctx;
 }
 
-export { PermissionsProvider, usePermissions };
+export { PermissionsProvider, usePermissions, useIsOwner, isOwnerRole, ownsReviewQueue };

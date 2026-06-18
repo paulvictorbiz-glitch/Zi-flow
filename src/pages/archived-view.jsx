@@ -8,21 +8,20 @@
 import React from "react";
 import { DPill, Pill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
-import { useAuth } from "../auth.jsx";
+import { useIsOwner } from "../lib/permissions.jsx";
 import { useNow, formatAge, formatDue } from "../lib/time.jsx";
 import { STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
 
 function ArchivedView({ onOpen }) {
   const { reels, actions } = useWorkflow();
-  const { person } = useAuth();
   const { peopleById } = useRoster();
   const now = useNow();
   const archived = reels
     .filter(r => r.archivedAt)
     .sort((a, b) => (b.archivedAt || "").localeCompare(a.archivedAt || ""));
 
-  const isOwner = person?.role === "owner";
+  const isOwner = useIsOwner();
 
   return (
     <div>

@@ -8,7 +8,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import "./analytics.css";
 import { DPill, Card } from "../components/components.jsx";
-import { useAuth } from "../auth.jsx";
+import { useIsOwner } from "../lib/permissions.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import {
   PLATFORMS,
@@ -242,8 +242,7 @@ function buildRealAnalytics({ liveYT, liveIG, liveFB, connections, range, active
 }
 
 function Analytics() {
-  const { person: me } = useAuth();
-  const isOwner = me?.role === "owner";
+  const isOwner = useIsOwner();
 
   const [range, setRange] = useState("30d");
   const [connections, setConnections] = useState(() => getConnections());

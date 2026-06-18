@@ -19,7 +19,7 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { DPill, Pill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
-import { usePermissions } from "../lib/permissions.jsx";
+import { usePermissions, useIsOwner, isOwnerRole } from "../lib/permissions.jsx";
 import { useNow, formatDue, formatDuration } from "../lib/time.jsx";
 import { ROLES } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
@@ -67,7 +67,7 @@ function formatHistoryTs(iso) {
 function useCanAct(requiredRole) {
   const { person } = useAuth();
   if (!person) return false;
-  if (person.role === "owner") return true;
+  if (isOwnerRole(person)) return true;
   if (Array.isArray(requiredRole)) return requiredRole.includes(person.role);
   return person.role === requiredRole;
 }
@@ -574,7 +574,7 @@ function SkilledWork({ me, onOpen, role }) {
   const mine = reels.filter(r => r.owner === me && !r.archivedAt);
   const whoLabel = peopleById[me]?.short || "Editor";
   const roleLabel = ROLES[role]?.short?.toLowerCase() || role || "editor";
-  const isOwner = person?.role === "owner";
+  const isOwner = useIsOwner();
   const viewerPersonId = person?.id || "paul";
 
   // Reel moves gate behind moveReel; moving INTO "completed" also needs moveToCompleted.
@@ -680,7 +680,7 @@ function VariantWork({ me, onOpen }) {
   const myTasks = tasks.filter(t => t.to === me);
   const now = useNow();
   const whoLabel = peopleById[me]?.short || "Variant editor";
-  const isOwner = person?.role === "owner";
+  const isOwner = useIsOwner();
   const viewerPersonId = person?.id || "paul";
 
   return (
@@ -1390,7 +1390,7 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const isOwner = person?.role === "owner";
+  const isOwner = useIsOwner();
   const viewerPersonId = person?.id || me;
 
   return (
@@ -1570,7 +1570,7 @@ function ReviewQueueWork({ me, onOpen }) {
   const inReview = reels.filter(r => r.stage === "review" && !r.archivedAt);
   const viewedPerson = (me && peopleById[me]) || person;
   const heading = viewedPerson?.name || "Reviewer";
-  const isOwner = person?.role === "owner";
+  const isOwner = useIsOwner();
   const viewerPersonId = person?.id || "paul";
 
   // Group cards by the editor who owns (submitted) them

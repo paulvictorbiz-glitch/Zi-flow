@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "../lib/supabase-client.js";
-import { useAuth } from "../auth.jsx";
+import { useIsOwner } from "../lib/permissions.jsx";
 
 export function Resources() {
-  const { person } = useAuth();
-  const isOwner = person?.role === "owner";
+  const isOwner = useIsOwner();
 
   const [columns, setColumns] = useState([]); // sorted by col_index
   const [rows, setRows]       = useState([]); // sorted by row_index
