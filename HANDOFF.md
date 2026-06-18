@@ -1,37 +1,36 @@
-# Handoff — last updated 2026-06-18
+# Handoff — last updated 2026-06-19
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- Took 3 IG asks through `/qa-verified-plan` → `/workflow` and shipped **IG DM reconciliation/monitoring + non-reel content-type ingest** (carousels/photos/stories) + a **FB/YT→IG feasibility writeup** (`docs/ig-crosspost-feasibility.md`).
-- New tables `ig_sync_runs` (0073) + `ig_ingest_log` (0074) + `content_type += story/video` (0075) — **applied to live Supabase**.
-- Frontend (IG Sync Health panel, Type column/filter) **deployed to prod**; updated Hetzner poller **deployed + verified** (first live run reconciled; surfaced `graph_errors: 3` = IG's flaky conversations edge).
-- Added a **🔎 Check IG Sync** button (on-demand reconciliation report: what landed + errors by type) — built inline, deployed.
-- Committed the prior local Reel DNA 7-bug batch as the clean baseline (`f24421f` on `main`), then did all IG work on branch `ig-ingest-reconcile-contenttype`.
-- Learned: the harness classifier hard-blocks prod-backend SSH writes even with verbal OK — needs an **explicit host-named** Bash allow rule (added to `.claude/settings.local.json`).
+- **Resumed** to deploy the prior cleanup batch (`d930896`) + apply migration 0076. Both done — plus an incident along the way.
+- **🔴 INCIDENT (fixed):** applying 0076's `"owner manage people"` policy took the live site down with **`infinite recursion detected in policy for relation people`** — the policy was ON `people` and queried `people`. That's what broke "Instagram IG analyze." Fixed live via a `SECURITY DEFINER` `auth_is_owner()` helper; verified under a real authenticated session (`7 rows, no recursion`). Commit `238759b`.
+- **Migration drift found:** `0049_demo_sandbox.sql` was recorded applied but **never actually ran** (audit proved it — `is_demo_user()` etc. absent). Drift isolated to **0049 only**; all of 0050→0075 are genuinely present.
+- **0076 applied §1/§3/§4** (people priv-esc, `attached_footage` authenticated-only, `reel_dna` owner/self) + verified; **§2 (owner-only DELETE) deferred** (depended on 0049). Un-marked 0049 + added a `DO-NOT-BULK-APPLY` guard. Commit `5ddb520`.
+- **Deployed:** C2 (`vercel --prod`, READY) + C1 (`ig_webhook.py` → Hetzner, `ingest_enabled:true`). **Pushed** `main` + `ig-ingest-reconcile-contenttype` to origin.
 
 ## Where we left off
-On branch `ig-ingest-reconcile-contenttype` (commit `0b244d9`), clean tree, in sync with origin. All three IG features are LIVE on www.footagebrain.com. The IG poller on Hetzner runs the new reconciliation + multi-content-type logic every 15 min and is verified writing run/issue rows.
+On `main` (local == `origin/main` == `238759b`). Everything from this session is **committed, pushed, deployed, and verified live.** Working tree has only the wrap-up doc edits (CHANGELOG/HANDOFF/change-log) uncommitted.
 
 ## Open blockers
-- **Discord notify is broken** (owner flagged, will fix later). The IG mismatch alert (`?action=ig-sync-alert`) is best-effort and silently skips until it's fixed — does not affect ingestion.
-- **Recurring `graph_errors` (subcode 99)** on IG's conversations/messages edge mean some DMs are genuinely invisible to the poller on a given run; reconciliation flags this (amber "coverage incomplete") rather than losing it silently. Not a code bug — an IG API limitation.
+- **None.** Production is healthy (IG analyze restored).
 
 ## Pending (written but not yet live)
-- Branch `ig-ingest-reconcile-contenttype` is **not merged to `main`** yet (prod is deployed from the branch working tree; `main` has only `f24421f`).
-- Discord alert env: once Discord notify is fixed, set `APP_BASE_URL=https://footagebrain.com` in Hetzner `deploy/hetzner/.env` + a `- APP_BASE_URL=${APP_BASE_URL}` passthrough in `docker-compose.yml`.
+- **0076 §2 (owner-only DELETE on reels/cards/tasks)** — deferred. Needs a rewrite against the REAL live policies (drop `"auth write reels/cards/tasks"` → split into team INSERT/UPDATE + owner-only DELETE, no `is_demo_user`).
+- **0049 demo sandbox** — now `[pending]` and intentionally NOT applied (guard header in the file). **DEFERRED until the owner revisits the demo-sandbox project.** Do not bulk-apply.
 
-## Next session — start here
-1. Live-verify content-type capture: DM a **new** carousel + story + photo from a 2nd account → expect one `reel_dna` row each with the right `content_type` (the 24 existing shares were already-captured reels = dedupe, so none reclassified). Use the new **🔎 Check IG Sync** button to inspect.
-2. Decide whether to **merge `ig-ingest-reconcile-contenttype` → `main`** (prod already runs it; main is behind).
-3. Fix the broken Discord notify, then wire `APP_BASE_URL` for the IG mismatch alert.
+## Next session — start here (owner asked to execute items 2–4)
+1. **0076 §2 rewrite + apply** — owner-only DELETE on reels/cards/tasks, written against the live `"auth write"` policies (split into team INSERT/UPDATE + owner-only DELETE). Verify from a non-owner session.
+2. **Local curl-TLS quirk** — the Bash env's `curl` can't TLS to `*.footagebrain.com` (exit 35); confirm/work around (use a node HTTPS client or verify from the Hetzner box) so prod health checks aren't misleading.
+3. **Prune stale branches + ~12 agent worktrees** (`.claude/worktrees/agent-*`) left from prior workflow runs — `git worktree list` / `git worktree prune` + delete merged branches.
+4. **(Deferred, owner will revisit)** the **demo sandbox** project (0049) — leave parked; do not apply.
+5. *(Optional, offered)* security-engineer audit / codebase-restructure analysis — today's self-inflicted RLS hole makes a focused security pass worthwhile.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-git log --oneline -4                      # 0b244d9 Check IG Sync · e4e7823 IG recon · f24421f bug-batch
-git status -sb                            # clean, in sync with origin
-ssh root@178.105.14.144 'curl -s https://api.footagebrain.com/api/ig/status'   # ingest_enabled:true
-# latest poller run (service-role read, keys via .env.local):
-node --env-file=.env.local -e 'const u=process.env.SUPABASE_URL,k=process.env.SUPABASE_SERVICE_ROLE_KEY;fetch(u+"/rest/v1/ig_sync_runs?select=started_at,shares_seen,inserted,dedupe_skip,graph_errors,reconciled&order=started_at.desc&limit=3",{headers:{apikey:k,Authorization:"Bearer "+k}}).then(r=>r.json()).then(d=>console.log(d))'
+git log --oneline -3                      # 238759b rls recursion fix · 5ddb520 drift reconcile · d930896 cleanup batch
+git status -sb                            # main == origin/main (clean apart from doc edits)
+node --env-file=.env.local scripts/migrate.mjs | grep -E "0049|0076"   # 0049 [pending] (deferred), 0076 [applied]
+ssh root@178.105.14.144 "curl -s https://api.footagebrain.com/api/ig/status"   # {"ok":true,"ingest_enabled":true,...}  (run from the BOX — local curl TLS-fails)
 ```

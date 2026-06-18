@@ -4,6 +4,62 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-19 — 🔴 INCIDENT: `people` RLS infinite recursion (caused by 0076), found + fixed live
+
+**What changed:** Restored the live site after migration 0076's `"owner manage people"` policy took it down. The policy was **on** `public.people` yet its `USING`/`WITH CHECK` did `select … from public.people`, so Postgres re-evaluated `people`'s policies while evaluating that one → **"infinite recursion detected in policy for relation people"** on *every authenticated read* of `people`. That's what the owner hit as "Instagram IG analyze won't update." Fixed by moving the owner check into a `SECURITY DEFINER` function `public.auth_is_owner()` (runs as the table owner → bypasses RLS on `people` → no recursion); the policy now calls that function.
+
+**Where:** live DB (dropped + recreated the policy, added `auth_is_owner()`), `supabase/migrations/0076_rls_hardening.sql` (file updated to the helper-based version + re-marked to match live checksum). Committed `238759b`.
+
+**Path we took:** Owner reported the error mid-session → recognized it as a direct consequence of the 0076 §1 owner-manage policy I'd just applied → wrote a staged fix script (drop the recursive policy first to guarantee restore, then re-add via the helper, with a fallback that leaves the safe drop-only state if the helper version still recursed). An anon probe was a false "OK" (the policy is `to authenticated`, so anon never triggers it) — had to verify under a **real authenticated session** minted via the admin `generateLink → verifyOtp` flow (no JWT secret needed): `select people → 7 rows, no recursion`.
+
+**What we learned:** (1) **An RLS policy ON a table must never directly query that same table** — it recurses. The fix is a `SECURITY DEFINER` helper owned by the table owner (bypasses RLS). The same owner-gate `exists(select … from people where … role='owner')` is *fine* on other tables (app_settings etc.) precisely because they're a different relation; it only recurses when the policy and the subquery target the same table. (2) **Test RLS as the right role** — an `anon`-key probe silently passes `to authenticated` policies; reproduce the failing path with an actual authenticated token. (3) The IG *poller* uses the service-role key (bypasses RLS), so ingestion was never affected — only the authenticated app read path.
+
+**Status:** **LIVE — production restored + verified.** Committed `238759b`, pushed to `origin/main`.
+
+---
+
+## 2026-06-19 — Migration 0076 drift reconciliation: phantom-applied 0049 discovered; apply §1/§3/§4, defer §2
+
+**What changed:** Applying 0076 failed with `function public.is_demo_user() does not exist`. A full live-DB audit (tables/functions/indexes/columns/policies/constraints) revealed **`0049_demo_sandbox.sql` was recorded in `schema_migrations` but never actually ran** — `is_demo_user()`, the `demo` columns, the per-operation `reels_delete`/`cards_delete`/`tasks_delete` policies, and `seed_demo`/`reset_demo` are all absent; reels/cards/tasks still carry the older blanket `"auth read"/"auth write"` policies. Drift was **isolated to 0049 only** — every other migration 0050→0075 is genuinely present. Per owner decision, applied 0076 **§1** (people privilege-escalation fix), **§3** (`attached_footage_items` authenticated-only), **§4** (`reel_dna` owner-or-`captured_by`-self) — all verified live — and **deferred §2** (owner-only DELETE), which depended on 0049's absent schema. Un-marked 0049 in tracking (now honestly `[pending]`) and added a `DO-NOT-BULK-APPLY` guard header to the file.
+
+**Where:** live DB (0076 §1/§3/§4 applied; 0049 tracking row removed), `supabase/migrations/0076_rls_hardening.sql` (§2 body replaced with a deferred note), `supabase/migrations/0049_demo_sandbox.sql` (guard header), `api/monitor/migrations.manifest.json` (regenerated, 78 entries). Committed `5ddb520`.
+
+**Path we took:** `npm run migrate:apply` errored mid-file → confirmed via `exec_sql` semantics that each file runs in ONE plpgsql call so the failure rolled back atomically (the "no transaction wrapper" comment was misleading) → wrote throwaway introspection scripts to dump the live catalog and a per-migration signature audit → `AskUserQuestion` to choose reconciliation strategy (owner picked "just fix tracking, defer §2") → edited 0076 to §1/§3/§4 only, applied (sole pending file so 0049 wasn't touched), then deleted the 0049 tracking row.
+
+**What we learned:** (1) **`schema_migrations` can lie** — a migration can be marked applied without its objects existing (likely a past `--mark`/baseline). Don't trust the ledger; the live catalog is ground truth. (2) Un-marking 0049 makes it `[pending]`, so the next bulk `migrate:apply`/`/update-migrations` would build the unused demo sandbox against prod — hence the loud guard header (and item deferred per owner). (3) `exec_sql` (SECURITY DEFINER, `execute sql`) gives each migration file atomic all-or-nothing apply — a real safety net the docs undersold.
+
+**Status:** **LIVE** — 0076 §1/§3/§4 applied + verified; §2 + 0049 demo sandbox deferred. Committed `5ddb520`, pushed.
+
+---
+
+## 2026-06-19 — Cleanup batch DEPLOYED (C1 Hetzner poller + C2 Vercel store fix) + pushed
+
+**What changed:** Took the prior cleanup batch (committed `d930896`) live. **C2** (`persistUpdateReelDna` `contentType`→`content_type` remap) deployed via `vercel --prod` (`dpl_2YX69tRfyUmx1S7PKHocPSwged2p`, READY). **C1** (`ig_webhook.py` cross-platform link ingest: URL-host platform detect + plain-text URL capture) deployed to Hetzner (`scp` → `docker compose build/up backend`), verified `200` with `ingest_enabled:true`. 17 local commits (plus the two fixes above) pushed to `origin/main` + the `ig-ingest-reconcile-contenttype` branch.
+
+**Where:** Hetzner `/srv/footagebrain/footage-brain-test/backend/app/api/ig_webhook.py` (remote backup `.bak-pre-c1` left for rollback) + backend image rebuild; Vercel prod; `origin/main`.
+
+**Path we took:** Validated `ig_webhook.py` syntax + SSH access first, md5-compared remote vs local (confirmed a real change), backed up the remote file, then scp + rebuild + restart + verify `/api/ig/status`. External `curl` from the local Bash env returned `000` (TLS connect error) for BOTH `api.footagebrain.com` and `footagebrain.com` — but the same endpoints return `200` from the Hetzner box and the Vercel/Supabase node calls worked, so it's a **local curl-TLS quirk, not an outage**; the box's own external request is the authoritative check.
+
+**What we learned:** (1) The Bash tool's `curl` can't complete TLS to these domains from this machine (`exit 35`) even though node-based HTTPS works — don't read prod health from local `curl`; verify from the server or via a node client. (2) `docker compose up -d backend` recreates the container but Caddy re-resolves the upstream fine (no proxy reload needed here).
+
+**Status:** **LIVE** — C1 + C2 deployed + verified, `main` + branch pushed.
+
+---
+
+## 2026-06-19 — Cleanup batch: cross-platform IG-DM ingest + content_type persistence + RLS hardening (committed, NOW DEPLOYED — see entries above)
+
+**What changed:** A housekeeping pass via `/workflow` (3 disjoint components, one wave) addressing loose ends from the parallel-agent IG session. **C1 (`backend-handoff/ig_webhook.py`)** — IG-DM ingest now (a) derives `platform` from the URL host (`yt`/`fb`/`tiktok`/`ig`) on all three insert paths instead of hardcoding `"ig"`, (b) gives the webhook path content_type parity with the poller, and (c) **captures plain-text URLs** pasted into a DM — previously the poller acted only on messages with a `shares` edge, so a pasted YouTube/Facebook link was silently dropped. **C2 (`src/store/store.jsx`)** — `persistUpdateReelDna` now maps `contentType` → `content_type`, so in-app content_type corrections actually persist (they updated local state then vanished on reload). **C3 (`supabase/migrations/0076_rls_hardening.sql`, new)** — backs the UI permission gating with real RLS: closes a `people` privilege-escalation hole, makes reel/card/task DELETE owner-only (preserving the demo predicate), fixes `attached_footage_items` `using(true)` → authenticated, and scopes `reel_dna` writes to owner-or-`captured_by`-self.
+
+**Where:** `backend-handoff/ig_webhook.py` (+57/-3: `_detect_platform`, `_content_type_from_url`, text-URL capture in the no-`shares` branch), `src/store/store.jsx` (+1: the `contentType` remap branch), `supabase/migrations/0076_rls_hardening.sql` (new, ~255 lines). Committed `d930896`. Discord→RocketChat alert fix deferred by owner.
+
+**Path we took:** `/qa-verified-plan` (plan `.claude/plans/i-have-a-big-logical-pixel.md`) → 3 parallel Explore agents (Discord/RC bug; git/sync state; bug hunt) → 2 more Explore agents (cross-platform link ingest feasibility; UI-gating-vs-RLS audit) → `/workflow` with one Senior Architect + dedicated adversarial QA per component under locked file ownership. Plan-mode initially blocked the agents from writing (they only designed); after exiting plan mode the same agents re-ran to implement. Integration build green (8.71s).
+
+**What we learned:** (1) **The real reason YT/FB DM links don't appear in Reel DNA is two-fold** — the poller skipped any message without a `shares` edge (so pasted external links were never seen), *and* platform was hardcoded `ig`. Both fixed; but whether Meta's Graph API even returns the DM `message` text body for the Page IG inbox is still UNVERIFIED — only an empirical DM-test after the Hetzner deploy confirms it (inspect `ig_ingest_log`). (2) **The UI's own permission gating was never enforced at the DB** (Roles Admin literally says so) — the highest-risk hole was the `people` table letting any authenticated user INSERT `role='owner'`; a naïve RLS `WITH CHECK (role = role)` self-promotion guard is a no-op because the check only sees the proposed NEW row, so 0076 uses a `BEFORE UPDATE` trigger (service_role exempt) to pin `role`/`id`. (3) **A general verbal "do these steps" does NOT lift the safety system's per-action gates** — applying migration 0076 (live DB) and `git push origin main` (default branch) were both blocked by the classifier this session despite owner authorization; they need explicit per-action authorization or a Bash allow rule. Surfaced rather than routed around.
+
+**Status:** **Committed `d930896` (local main fast-forwarded to it), NOT deployed.** Pending human-gated actions: apply migration `0076` (`/update-migrations`), deploy `ig_webhook.py` to Hetzner, `vercel --prod` for the store fix, and `git push origin main` (15 commits unpushed). See HANDOFF.
+
+---
+
 ## 2026-06-18 — Reel DNA: "Check IG Sync" button — on-demand reconciliation report (LIVE)
 
 **What changed:** A 🔎 **Check IG Sync** button in the Reel DNA toolbar. Clicking it re-pulls the poller's run history + per-message issue log from Supabase and opens a report: **what landed in the sheet** (new / deduped / seen + total IG-DM rows), **coverage this run** (conversations / messages / skipped / graph + insert errors), and **every logged issue** with its type badge + detail text (e.g. the `graph_error` "messages fetch: 500 …subcode 99"). Separate from **Refresh** (which forces a brand-new poll) — Check just inspects what's already recorded.
