@@ -1093,60 +1093,6 @@ function AnthropicSection() {
   );
 }
 
-/* ── DemoSection — owner control to re-seed the demo baseline ─────────────────
-   Demo testers (testuser@gmail.com) run in a per-session sandbox, so they can't
-   actually corrupt the shared demo rows. This button is a manual backstop that
-   restores the demo=true baseline via the owner-gated reset_demo() RPC
-   (migration 0049) — useful if you tweak the baseline or want a clean slate. */
-function DemoSection() {
-  const [state, setState] = useState("idle"); // idle | running | done | error
-  const [err, setErr]     = useState(null);
-
-  async function reset() {
-    if (state === "running") return;
-    setState("running");
-    setErr(null);
-    try {
-      const { error } = await supabase.rpc("reset_demo");
-      if (error) throw error;
-      setState("done");
-      setTimeout(() => setState("idle"), 4000);
-    } catch (e) {
-      setErr(e.message || "Reset failed — owner access required");
-      setState("error");
-    }
-  }
-
-  return (
-    <div className="mon-section-body">
-      <div className="mon-hint" style={{ marginBottom: 10 }}>
-        The shared demo account (testuser@gmail.com) runs in a per-session
-        sandbox — each visitor gets a fresh copy and nothing they do is saved.
-        Use this only to rebuild the demo baseline itself.
-      </div>
-      <div className="mon-killrow">
-        <div className="mon-killrow-text">
-          <div className="mon-killrow-title">Demo baseline</div>
-          <div className="mon-killrow-sub">
-            {state === "running" ? "Re-seeding…"
-              : state === "done" ? "Baseline restored ✓"
-              : "Deletes all demo rows and re-seeds the sample reels/cards/tasks"}
-          </div>
-        </div>
-        <button
-          type="button"
-          className="mon-migcheck-btn"
-          onClick={reset}
-          disabled={state === "running"}
-        >
-          {state === "running" ? "Resetting…" : "Reset demo data"}
-        </button>
-      </div>
-      {err && <div className="mon-killrow-err">{err}</div>}
-    </div>
-  );
-}
-
 /* ── GamifySection — owner toggles + team overlay chart + leaderboard ─────────
    Two toggles persisted to app_settings (via the store actions, which mirror
    the anthropic kill-switch RLS-write pattern). The team spider chart overlays
@@ -1547,10 +1493,6 @@ export function Monitor() {
 
         <Card title="Anthropic (Claude)" footLeft="Generate · AI Brain · FAQ bot">
           <AnthropicSection />
-        </Card>
-
-        <Card title="Demo sandbox" footLeft="testuser@gmail.com · per-session">
-          <DemoSection />
         </Card>
 
         <Card title="🎮 Gamify" footLeft="Skill XP · Spider charts · Rubrics">

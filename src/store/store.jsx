@@ -1516,7 +1516,10 @@ function WorkflowProvider({ children }) {
      Set synchronously before any mutation can fire. RLS (migration 0046)
      is the hard backstop; this is the UX layer. */
   const { person: _authPerson } = useAuth();
-  const _isDemo = _authPerson?.role === "demo";
+  // Demo mode decommissioned 2026-06-19 — the demo-sandbox feature was left
+  // unbuilt/unused (migration 0049 never ran). Force OFF so every isDemoMode()
+  // guard in this store stays an inert no-op regardless of a person's role.
+  const _isDemo = false;
   setDemoMode(_isDemo);
   React.useEffect(() => { setDemoMode(_isDemo); }, [_isDemo]);
 
