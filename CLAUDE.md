@@ -40,6 +40,7 @@ Then give a short orientation and wait for direction. Do not start edits/deploys
 4. **No open signup.** Registration is owner-only via the admin panel (`/api/admin/create-user`). The sign-in screen has no "Create account" option.
 5. **Vercel env vars ≠ `.env.local`.** `vercel dev` reads from the Vercel platform, not `.env.local`. Server-side secrets must be set via `vercel env add` AND in `.env.local`.
 6. **Per-user prefs go in `user_preferences`, NOT `app_settings`.** `app_settings` is owner-write-only. For per-user UI state (e.g. pipeline collapse), use `user_preferences(person_id, key, value)` (migration 0070): upsert with `{ onConflict: "person_id,key" }`, and hydrate in a **separate effect keyed on the auth person's id** — never inside the main all-or-nothing hydrate, or a missing table bricks boot.
+7. **Hetzner backend deploys + live DB migrations are human-gated production actions.** Writing to / restarting the prod backend (`root@178.105.14.144`) and `npm run migrate:apply` (the shared prod Supabase DB) are hard to reverse; the safety system gates them and they require explicit owner authorization or the owner running them. If a denial occurs, surface it to the owner — don't route around it.
 
 ---
 

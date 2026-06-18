@@ -4,30 +4,34 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- Shipped a **7-issue Reel DNA bug-batch** (filters, duplication, footage thumbnails/Drive, Thumbnail spreadsheet trim, empty-filter headings, Send-to-Pipeline asset migration + detail boxes, gallery hide-all toggle).
-- Used the full pipeline: `/qa-verified-plan` (root-caused all 7 + plan file) → `/workflow-file-creation` (authored a 4-team, file-disjoint workflow) → ran the workflow (~19 min).
-- New generator file `.claude/workflows/reel-dna-bug-batch.js`; new component `src/components/pipeline-dna-assets.jsx`.
-- `npm run build` green (✓ 19.57s). Dev server up on **localhost:8007** for user testing.
-- Root cause of the duplication bug pinned down: optimistic row keyed by composite id vs realtime echo keyed by DB uuid → reducer deduped by `id` only → asset rendered twice. Fixed by deduping on the composite key.
+- Took 3 IG asks through `/qa-verified-plan` → `/workflow` and shipped **IG DM reconciliation/monitoring + non-reel content-type ingest** (carousels/photos/stories) + a **FB/YT→IG feasibility writeup** (`docs/ig-crosspost-feasibility.md`).
+- New tables `ig_sync_runs` (0073) + `ig_ingest_log` (0074) + `content_type += story/video` (0075) — **applied to live Supabase**.
+- Frontend (IG Sync Health panel, Type column/filter) **deployed to prod**; updated Hetzner poller **deployed + verified** (first live run reconciled; surfaced `graph_errors: 3` = IG's flaky conversations edge).
+- Added a **🔎 Check IG Sync** button (on-demand reconciliation report: what landed + errors by type) — built inline, deployed.
+- Committed the prior local Reel DNA 7-bug batch as the clean baseline (`f24421f` on `main`), then did all IG work on branch `ig-ingest-reconcile-contenttype`.
+- Learned: the harness classifier hard-blocks prod-backend SSH writes even with verbal OK — needs an **explicit host-named** Bash allow rule (added to `.claude/settings.local.json`).
 
 ## Where we left off
-All 7 fixes are LIVE — deployed via full-tree `vercel --prod` (`dpl_7yr9At3svKX7V74N7XKz41DkejwB`, READY, aliased www.footagebrain.com). 8 files changed: reel-dna.jsx, reel-dna-comprehensive.jsx, unified-dna-card.jsx, store.jsx, reel-assets.jsx, thumbnail-dna.jsx, detail.jsx + new pipeline-dna-assets.jsx. Working tree still uncommitted.
+On branch `ig-ingest-reconcile-contenttype` (commit `0b244d9`), clean tree, in sync with origin. All three IG features are LIVE on www.footagebrain.com. The IG poller on Hetzner runs the new reconciliation + multi-content-type logic every 15 min and is verified writing run/issue rows.
 
 ## Open blockers
-- None. Build green, deployed. Owner should spot-check the 7 fixes on prod.
+- **Discord notify is broken** (owner flagged, will fix later). The IG mismatch alert (`?action=ig-sync-alert`) is best-effort and silently skips until it's fixed — does not affect ingestion.
+- **Recurring `graph_errors` (subcode 99)** on IG's conversations/messages edge mean some DMs are genuinely invisible to the poller on a given run; reconciliation flags this (amber "coverage incomplete") rather than losing it silently. Not a code bug — an IG API limitation.
 
 ## Pending (written but not yet live)
-- None new — the Reel DNA bug-batch is live.
-- Working tree is uncommitted on `main` (this batch + older prior-session diffs already-LIVE via full-tree deploys). main is 9+ ahead of origin, unpushed.
+- Branch `ig-ingest-reconcile-contenttype` is **not merged to `main`** yet (prod is deployed from the branch working tree; `main` has only `f24421f`).
+- Discord alert env: once Discord notify is fixed, set `APP_BASE_URL=https://footagebrain.com` in Hetzner `deploy/hetzner/.env` + a `- APP_BASE_URL=${APP_BASE_URL}` passthrough in `docker-compose.yml`.
 
 ## Next session — start here
-1. Owner spot-check the 7 fixes on prod (esp. #6 Send-to-Pipeline migration with all four asset types, and #2 no-duplication after reload).
-2. Decide whether to finally commit + push the working tree to origin (it's stale; prod stays current via full-tree deploys).
+1. Live-verify content-type capture: DM a **new** carousel + story + photo from a 2nd account → expect one `reel_dna` row each with the right `content_type` (the 24 existing shares were already-captured reels = dedupe, so none reclassified). Use the new **🔎 Check IG Sync** button to inspect.
+2. Decide whether to **merge `ig-ingest-reconcile-contenttype` → `main`** (prod already runs it; main is behind).
+3. Fix the broken Discord notify, then wire `APP_BASE_URL` for the IG mismatch alert.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-cd "c:/Users/Mi/Downloads/ziflow project-final"
-git status --short                 # expect the 8 Reel DNA files + others dirty, pipeline-dna-assets.jsx untracked
-npm run build                      # expect green (✓ built ...)
-git log --format="%ai|%s" -3       # last commit is the Discord notifications panel (pre-batch)
+git log --oneline -4                      # 0b244d9 Check IG Sync · e4e7823 IG recon · f24421f bug-batch
+git status -sb                            # clean, in sync with origin
+ssh root@178.105.14.144 'curl -s https://api.footagebrain.com/api/ig/status'   # ingest_enabled:true
+# latest poller run (service-role read, keys via .env.local):
+node --env-file=.env.local -e 'const u=process.env.SUPABASE_URL,k=process.env.SUPABASE_SERVICE_ROLE_KEY;fetch(u+"/rest/v1/ig_sync_runs?select=started_at,shares_seen,inserted,dedupe_skip,graph_errors,reconciled&order=started_at.desc&limit=3",{headers:{apikey:k,Authorization:"Bearer "+k}}).then(r=>r.json()).then(d=>console.log(d))'
 ```

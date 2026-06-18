@@ -4,6 +4,48 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-18 — Reel DNA: "Check IG Sync" button — on-demand reconciliation report (LIVE)
+
+**What changed:** A 🔎 **Check IG Sync** button in the Reel DNA toolbar. Clicking it re-pulls the poller's run history + per-message issue log from Supabase and opens a report: **what landed in the sheet** (new / deduped / seen + total IG-DM rows), **coverage this run** (conversations / messages / skipped / graph + insert errors), and **every logged issue** with its type badge + detail text (e.g. the `graph_error` "messages fetch: 500 …subcode 99"). Separate from **Refresh** (which forces a brand-new poll) — Check just inspects what's already recorded.
+
+**Where:** `src/store/store.jsx` (`reloadIgSync()` action + `SET_IG_SYNC_RUNS`/`SET_IG_INGEST_LOG` reducers), `src/pages/reel-dna.jsx` (button, handler, `igDmCount`, expandable report; `IgSyncHealth` now takes `igDmCount`/`open`/`onToggle`), `src/pages/reel-dna.css` (report grid + issue-badge styling).
+
+**Path we took:** Modest-scope UI built inline (no workflow) on the reconciliation plumbing from the change below — the panel, state, and realtime channel already existed; this added an explicit fetch + detail view. Build green (8.80s).
+
+**What we learned:** The realtime channel keeps the panel fresh passively, but an owner "check on demand" needs an active DB re-pull because a sleeping tab / dropped socket can miss run rows — so the button doesn't trust in-memory state.
+
+**Status:** **LIVE** — committed `0b244d9`, deployed (`vercel --prod` `dpl_CmqkcozUP93USUyGQqvXita362dH`), pushed.
+
+---
+
+## 2026-06-18 — IG DM reconciliation/monitoring + non-reel content-type ingest (LIVE; Hetzner poller deployed + verified)
+
+**What changed:** Three-part batch on the Reel DNA pipeline. **(A) Reconciliation/monitoring** — every IG DM the Graph API returns is now either captured or logged with the *reason* it wasn't; a new **IG Sync Health** strip shows the last poll's seen-vs-accounted counts, a red Mismatch badge, and an amber "coverage may be incomplete" caveat when Graph caps/errors hit; owner Discord alert on mismatch. **(C)** The IG poller now captures **carousels, photos, and stories** (not just reels) and classifies each via `content_type`; new **Type** column + filter on the spreadsheet. **(B)** `docs/ig-crosspost-feasibility.md` — a writeup of FB/YT→IG cross-post options/limits (no build, by request).
+
+**Where:** new migrations `0073_ig_sync_runs.sql`, `0074_ig_ingest_log.sql`, `0075_reel_dna_content_type_extend.sql` (`content_type += story/video`); `backend-handoff/ig_webhook.py` (Hetzner poller — all-shares capture with composite `external_ref={mid}:{i}`, per-message issue logging, run-summary + reconciliation, `_classify_content_type`, `_post_sync_alert`); `src/store/store.jsx` (`igSyncRuns`/`igIngestLog` state + mappers + reducers + `ig-sync-realtime` channel); `src/pages/reel-dna.jsx`/`.css` (panel, Type column/badge); `src/lib/reel-dna.jsx` (`CONTENT_TYPES`/`contentTypeLabel`); `src/lib/reel-dna-filters.jsx` (Type select); `api/ai/suggest.js` (`?action=ig-sync-alert`).
+
+**Path we took:** `/qa-verified-plan` (3 AskUserQuestion forks: B = writeup-only, C = carousels/photos/stories, A = panel + Discord + error-log) → plan at `.claude/plans/use-qa-verified-plan-for-sending-ethereal-hinton.md` → committed the prior local Reel DNA batch on `main` (`f24421f`) and branched `ig-ingest-reconcile-contenttype` for a clean baseline → `/workflow` (5 disjoint components, 2 waves) built it green → applied migrations to live DB → deployed frontend → deployed the updated poller to Hetzner (`scp` + `docker compose build/up`) and verified a live sync run.
+
+**What we learned:** (1) **IG's true new-DM total is unknowable via the polling API** — reconciliation can only assert "captured == seen *this run*"; conversation/message caps, the ext-ref preload limit, and Graph errors all hide DMs silently, so the panel surfaces an amber coverage caveat rather than letting green imply completeness. (2) The **first live sync proved it**: 24 shares all deduped (healthy) but **`graph_errors: 3`** — Instagram's conversations/messages edge intermittently 500s with `error_subcode:99`, logged as a `graph_error` row. A concrete cause of "some DMs aren't recorded." (3) **Multi-share dedupe**: items past the first need composite `external_ref={mid}:{i}` and the `known`-set check must move off bare `mid`, or every poll re-inserts. (4) **Prod-backend SSH writes and live DB migrations are human-gated** by the safety system — they needed explicit owner authorization this session (a blanket `Bash(*)` allow doesn't cover hard-to-reverse production actions). Surface denials to the owner rather than routing around them.
+
+**Status:** **LIVE** — migrations applied, frontend deployed, Hetzner poller deployed + verified (`/api/ig/status` ingest_enabled:true, first run row reconciled). Committed `e4e7823`, pushed. **Follow-up:** Discord notify is currently broken (owner will fix); the IG mismatch alert then needs `APP_BASE_URL=https://footagebrain.com` set on Hetzner (`.env` + compose passthrough).
+
+---
+
+## 2026-06-18 — Locations map: classic Marker (Maps crash fix) (LIVE)
+
+**What changed:** The Locations map uses the classic Google Maps `Marker` instead of `AdvancedMarker`, fixing a Maps crash.
+
+**Where:** `src/pages/locations.jsx` (committed `532d227`).
+
+**Path we took:** Landed during the IG workflow session window; isolated and unrelated to the IG work, shipped in the same prod deploy.
+
+**What we learned:** `AdvancedMarker` requires a Map ID + the marker library loaded; the classic `Marker` avoids that dependency and the crash.
+
+**Status:** **LIVE** — shipped in the same `vercel --prod`.
+
+---
+
 ## 2026-06-18 — Reel DNA bug-batch: 7 fixes shipped via a generated multi-agent workflow (LOCAL — built green, not deployed)
 
 **What changed:** A 7-issue fix/feature batch on the Reel DNA tab: (1) **column-header filters keep focus** while typing a whole word (were kicking out after 1 char); (2) **attaching one asset no longer spawns duplicates**; (3) **footage rows now render a thumbnail + Google Drive link** when present; (4) the **Thumbnail DNA spreadsheet view** now mirrors the Reels grid (removed the thumbnail image, the "Playlist" badge, and the timestamp); (5) **column filter headers persist when a filter matches 0 rows** (you can still see/clear the filter); (6) **Send-to-Pipeline migrates assets** — footage copied into `attached_footage_items`, locations appended to `linked_reel_ids`, news upserted into `monitor_event_links`, plus new read-only **Thumbnails / News / "From Reel DNA — Notes & Tags"** boxes in the pipeline reel's left column; (7) a **"Hide all assets" toggle** next to the gallery global search collapses every card's assets to main details.
@@ -14,7 +56,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 **What we learned:** (1) The duplication root cause was a **key mismatch**: `reel_dna_assets.id` is `gen_random_uuid()`, but `attachAsset` dispatches an optimistic row keyed `${reelDnaId}:${assetType}:${assetId}` while the realtime echo carries the DB uuid — the reducer deduped by `id` only, so both rows survived and the resolver emitted the asset twice. Fix = dedupe by the composite business key. (2) Issue 5 ("headings disappear") was the comprehensive view replacing the **whole** `DnaTable` (header + filters included) with an empty `<div>` at 0 results. (3) The footage thumbnail/Drive fields already existed (`thumbnail_url`/`drive_url` on `attached_footage_items`) and a working render pattern lived in `AttachedFootageList.jsx` — the fix was reuse, not new data. (4) **Workflow build-gate gotcha:** running `npm run build` from many parallel agents clobbers the shared `dist/` and produces false failures, so the generated workflow centralizes the build to single-agent steps (integration QA + re-QA) only.
 
-**Status:** **LIVE** — deployed via full-tree `vercel --prod` (`dpl_7yr9At3svKX7V74N7XKz41DkejwB`, READY, aliased www.footagebrain.com). Build green; still uncommitted on `main`.
+**Status:** **LIVE** — deployed via full-tree `vercel --prod` (`dpl_7yr9At3svKX7V74N7XKz41DkejwB`, READY, aliased www.footagebrain.com). Build green; **committed `f24421f` on `main`** (2026-06-18, as the clean baseline before the IG-ingest branch).
 
 ---
 
