@@ -24,6 +24,7 @@
    ========================================================= */
 
 import React, { useState, useEffect, useRef } from "react";
+import { linkifyText } from "../lib/linkify";
 import "./editable.css";
 
 export function EditableText({
@@ -33,6 +34,10 @@ export function EditableText({
   placeholder = "",
   onCommit,
   className = "",
+  linkify = false,
+  // Optional persisted-embed wiring forwarded to linkifyText (YouTube links).
+  embeddedUrls,
+  onToggleEmbed,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
@@ -89,7 +94,7 @@ export function EditableText({
         className={"et-readonly " + (multiline ? "et-multiline " : "") + className}
         style={empty ? { opacity: 0.4 } : undefined}
       >
-        {empty ? (placeholder || "—") : value}
+        {empty ? (placeholder || "—") : (linkify ? linkifyText(value, { embeddedUrls, onToggleEmbed }) : value)}
       </span>
     );
   }
@@ -134,6 +139,9 @@ export function EditableText({
   }
 
   // ── Editable, not yet editing ────────────────────────────────────
+  // With `linkify`, the owner still sees clickable links + the embed toggle;
+  // link/button clicks stopPropagation so they don't trigger edit mode, and
+  // the ✎ pencil (or any plain-text run) remains the click-to-edit target.
   const empty = !value;
   return (
     <span
@@ -145,7 +153,7 @@ export function EditableText({
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDraft(value ?? ""); setEditing(true); } }}
       style={empty ? { opacity: 0.55 } : undefined}
     >
-      {empty ? (placeholder || "Click to add…") : value}
+      {empty ? (placeholder || "Click to add…") : (linkify ? linkifyText(value, { embeddedUrls, onToggleEmbed }) : value)}
       <span className="et-pencil" aria-hidden="true">✎</span>
     </span>
   );

@@ -90,7 +90,10 @@
 /* ── Library grid ──────────────────────────────────────── */
 .rd-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  /* Cards are a two-column flex row (main text + ~240px assets column), so the
+     grid cell must be wide enough to hold both — a 340px cell crushed the text
+     column to ~70px and wrapped it one character per line. */
+  grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
   gap: 12px;
 }
 @media (max-width: 720px) { .rd-grid { grid-template-columns: 1fr; } }
@@ -250,7 +253,10 @@
 
 .rd-row-btn--send { color: var(--c-green); border-color: color-mix(in srgb, var(--c-green) 40%, transparent); }
 .rd-row-btn--send:hover { background: color-mix(in srgb, var(--c-green) 14%, transparent); }
-.rd-row-btn--linked { color: var(--c-green); border-color: color-mix(in srgb, var(--c-green) 30%, transparent); cursor: default; }
+/* Already-in-pipeline: orange so sent reels stand out at a glance. */
+.rd-row-btn--linked { color: var(--c-orange); border-color: color-mix(in srgb, var(--c-orange) 40%, transparent); cursor: default; }
+.rd-row-btn--restore { color: var(--c-cyan); border-color: color-mix(in srgb, var(--c-cyan) 40%, transparent); }
+.rd-row-btn--restore:hover { background: color-mix(in srgb, var(--c-cyan) 14%, transparent); }
 .rd-row-btn--delete { color: var(--fg-dim); border-color: var(--line-soft); }
 .rd-row-btn--delete:hover { color: var(--c-red); border-color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }
 
@@ -716,3 +722,68 @@
 }
 .rd-pull-btn:hover { background: color-mix(in srgb, var(--c-green) 12%, transparent); }
 .rd-back-btn:hover { color: var(--fg); border-color: var(--line-hard); }
+
+/* =========================================================
+   COMPREHENSIVE-ONLY OVERHAUL  —  APPEND-ONLY
+   Solo (no-rail) layout, search-in-contentbar, the Grid row "⤢ Card"
+   affordance, asset hyperlinks, and the centered row-open modal.
+   ========================================================= */
+
+/* Rail removed → content fills the width. */
+.rdc-root--solo { grid-template-columns: 1fr; }
+
+/* The global search now lives inside the content bar, left of the count. */
+.rdc-contentbar .rdc-search {
+  flex: 1 1 240px;
+  max-width: 380px;
+  width: auto;
+}
+
+/* Grid row → open-card affordance (reuses .rd-row-btn base). */
+.rd-row-btn--open {
+  color: var(--c-cyan);
+  border-color: color-mix(in srgb, var(--c-cyan) 40%, transparent);
+}
+.rd-row-btn--open:hover { background: color-mix(in srgb, var(--c-cyan) 14%, transparent); }
+
+/* Asset hyperlinks (footage filename, location pin). */
+.rd-asset-link, .rd-asset-pin-link {
+  color: inherit; text-decoration: none;
+}
+.rd-asset-link:hover, .rd-asset-pin-link:hover { text-decoration: underline; }
+.rd-asset-thumb-stub {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  font-family: var(--f-mono); font-size: 9px; color: var(--fg-dim);
+}
+
+/* ── Centered row-open modal (rich UnifiedDnaCard) ── */
+.rdc-modal-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 48px 16px;
+  background: color-mix(in srgb, var(--bg-0) 78%, transparent);
+  backdrop-filter: blur(2px);
+  overflow-y: auto;
+}
+.rdc-modal {
+  position: relative;
+  width: 100%; max-width: 720px;
+  margin: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.rdc-modal-close {
+  position: absolute; top: 8px; right: 10px; z-index: 1;
+  appearance: none; cursor: pointer;
+  background: var(--bg-3); color: var(--fg-mute);
+  border: 1px solid var(--line); border-radius: 6px;
+  font-family: var(--f-mono); font-size: 12px; line-height: 1;
+  padding: 4px 8px;
+}
+.rdc-modal-close:hover { color: var(--c-red); border-color: var(--c-red); }
+/* The card inside the modal gets the full width (no grid cell squeezing it). */
+.rdc-modal .rd-card { margin: 0; }

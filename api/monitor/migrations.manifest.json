@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-18T13:06:53.522Z",
+  "generated": "2026-06-18T17:13:26.021Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -235,67 +235,67 @@
     },
     {
       "version": "0057_reel_series.sql",
-      "checksum": "f50fc0acd2b590f2184a83402fe614d73e3a735136bc1ab90e2a9eefee75affb"
+      "checksum": "233f3358517325a1ad268314a2a9b5af8fcd9b4dce20f9d50b7db0438d9f60bb"
     },
     {
       "version": "0058_reel_dna_location.sql",
-      "checksum": "ef3ebb82ffcc6af255e3c0ee370c184a0742494b87c4767106db455a71ebde31"
+      "checksum": "4a9f629df25b73704346702b2d5754060621878c0397503bee6006b472ee14e0"
     },
     {
       "version": "0059_monitor_events.sql",
-      "checksum": "1d1aa40e3abceba36a53d66bfe04f59b63a3d4aea380d99c777b053567da9712"
+      "checksum": "a713641e4d14d3e5106c41b9b58be98c9e7321f2658c62e570e50add97588862"
     },
     {
       "version": "0060_monitor_sources.sql",
-      "checksum": "04ec407f47ba36b18cc32b35a5bc90373fa2096b0c25ca906f9e7d88213cec49"
+      "checksum": "a065d2450df53a2d66712f96852cd130ae37987d02a3834c63387ad96afaad8a"
     },
     {
       "version": "0061_monitor_events_dedup_full_index.sql",
-      "checksum": "2556f550213e8066b3ffb31c5b3ad9244d4b8c66cea0cbf3e881b85bd508f3e1"
+      "checksum": "a0db01acb2d394e8cee9533de6b4f2ef05b8f4da4529ec4849b506d23cd27278"
     },
     {
       "version": "0062_reel_dna_deleted_at.sql",
-      "checksum": "1ba5f262774dc350f95db134429c5cbac7cd74818fc45a762133537a301b981a"
+      "checksum": "5c78c9a8206e2ef1b4ab4754bf90df6bfc5f3bc1210be38cd02d483baa4f9f55"
     },
     {
       "version": "0063_thumbnail_dna.sql",
-      "checksum": "5b49a2b5503af612db2bf7240c59a0dbe94eb382c9430e4fa6714a5c6f18bbc7"
+      "checksum": "84f1996be2ef1707af54c34f7ff48b1a1b1d8039667aeac489c2dc90ac497b8a"
     },
     {
       "version": "0064_monitor_events_geo.sql",
-      "checksum": "e30ee562ffa9301ea3ec0991a41cf1a10a7c4cde523c053912bdeb1eb8ab2762"
+      "checksum": "a54d4ed34fb72f2e871f863c9799560d953f49a12fa1fff7c16ddfd3674309d7"
     },
     {
       "version": "0065_monitor_event_links.sql",
-      "checksum": "4997de0d5d313544451e72e9ca4edea687ed4787b50d56d88c2a292593b965a5"
+      "checksum": "056b8bfd2e4f7093b7296f232ff0d121646bfdea588cbbe2131b7768141e7fa4"
     },
     {
       "version": "0066_world_monitor_settings.sql",
-      "checksum": "d2dd68837a8100d5ce789d6129d6546fe0798fcf7eeb9a461c614864755497c7"
+      "checksum": "cda0385e3e7237bf0eba8c6d772708418ea829658272bd2cbbec4762c1970e14"
     },
     {
       "version": "0067_thumbnail_dna_video_id_uidx.sql",
-      "checksum": "16b106ba8678ef79fc6e4c11e7da9353e66fa7caa0acbe960dfd79a3ff649ec0"
+      "checksum": "87b647c9dc568dd4d983df17e6307d4c6ada8d7fe40423231ea95917923111cc"
     },
     {
       "version": "0068_reel_dna_assets.sql",
-      "checksum": "fb05e3af6ce8fde23de0b6d7a59449236e4cba58bf31c7693a7c54ffdbf5fd9b"
+      "checksum": "7b3ff6c2b8b5324191fd18def290a06444ed58c88a87769ff7c6b78fdb7ee4c9"
     },
     {
       "version": "0069_monitor_events_team_read.sql",
-      "checksum": "f8d3a5bcb486869dd3f04e1535e137fb722ca5c0a13cd95f80a71091a15a4efd"
+      "checksum": "5ebc2ec3a2acc7c555f0abfd7f75892ae45b030b96430a43e7c29e943eed4856"
     },
     {
       "version": "0070_user_preferences.sql",
-      "checksum": "d601b294da767252a48a033fd2c3b0d758e287d27eeccbff7ff37d8847b845a7"
+      "checksum": "1bdf32350c0b66193e23363b724f1d3c98ed7a276a81f1c5d06a70cc04a3589a"
     },
     {
       "version": "0071_reel_dna_platform_fb.sql",
-      "checksum": "c52958455be0b47284b03cc56658adbfca272ad800b0aac85d0b681902946abb"
+      "checksum": "fc73a97f901cd1754c46ea5a8a26553d929b341c6ba3e98abef2dc3c281240fa"
     },
     {
       "version": "0072_reel_dna_content_type.sql",
-      "checksum": "6badb7cf6797a5eeb480634ed4ca6b21889659027f7b31ffcd61a32d8284f182"
+      "checksum": "ba55536c3aec2fbf9c2d297aa61cce337df2311c5adb03d801cf886b72e7d7e7"
     }
   ]
 }

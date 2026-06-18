@@ -4,6 +4,160 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-18 — Reel DNA bug-batch: 7 fixes shipped via a generated multi-agent workflow (LOCAL — built green, not deployed)
+
+**What changed:** A 7-issue fix/feature batch on the Reel DNA tab: (1) **column-header filters keep focus** while typing a whole word (were kicking out after 1 char); (2) **attaching one asset no longer spawns duplicates**; (3) **footage rows now render a thumbnail + Google Drive link** when present; (4) the **Thumbnail DNA spreadsheet view** now mirrors the Reels grid (removed the thumbnail image, the "Playlist" badge, and the timestamp); (5) **column filter headers persist when a filter matches 0 rows** (you can still see/clear the filter); (6) **Send-to-Pipeline migrates assets** — footage copied into `attached_footage_items`, locations appended to `linked_reel_ids`, news upserted into `monitor_event_links`, plus new read-only **Thumbnails / News / "From Reel DNA — Notes & Tags"** boxes in the pipeline reel's left column; (7) a **"Hide all assets" toggle** next to the gallery global search collapses every card's assets to main details.
+
+**Where:** `src/pages/reel-dna.jsx` (hoisted `TextCell`/`SelectCell` out of `ColumnFilterRow`; `DnaTable` empty-row notice), `src/components/reel-dna-comprehensive.jsx` (grid always renders the table; `hideAllAssets` state + toggle), `src/components/unified-dna-card.jsx` (optional `hideAssetsOverride` prop), `src/store/store.jsx` (`UPSERT_REEL_DNA_ASSET` composite-key dedupe; `sendReelDnaToPipeline` asset migration), `src/components/reel-assets.jsx` (footage thumbnail via `footageBrainThumbnailUrl` + Drive link), `src/pages/thumbnail-dna.jsx` (spreadsheet row trim, `ThumbPreview` export kept), `src/pages/detail.jsx` (left-column hook), `src/components/pipeline-dna-assets.jsx` (NEW — read-only DNA-asset boxes for the pipeline detail). Generator: `.claude/workflows/reel-dna-bug-batch.js` (NEW).
+
+**Path we took:** Ran `/qa-verified-plan` → deep Explore/Read pass root-caused all 7 issues (plan at `.claude/plans/use-qa-verified-plan-in-the-composed-treehouse.md`); two AskUserQuestion forks resolved (physically migrate footage+locations AND add display boxes; hide-toggle default off, session state). Then `/workflow-file-creation` authored a self-contained 4-team workflow under locked disjoint file ownership (Team A grid/gallery, B store, C footage render, D thumbnail+pipeline), with frozen cross-team contracts (K1–K5), per-team adversarial QA + a single integration build gate, and a bounded fix loop. The workflow ran ~19 min; `npm run build` green (✓ 19.57s); user testing on localhost:8007.
+
+**What we learned:** (1) The duplication root cause was a **key mismatch**: `reel_dna_assets.id` is `gen_random_uuid()`, but `attachAsset` dispatches an optimistic row keyed `${reelDnaId}:${assetType}:${assetId}` while the realtime echo carries the DB uuid — the reducer deduped by `id` only, so both rows survived and the resolver emitted the asset twice. Fix = dedupe by the composite business key. (2) Issue 5 ("headings disappear") was the comprehensive view replacing the **whole** `DnaTable` (header + filters included) with an empty `<div>` at 0 results. (3) The footage thumbnail/Drive fields already existed (`thumbnail_url`/`drive_url` on `attached_footage_items`) and a working render pattern lived in `AttachedFootageList.jsx` — the fix was reuse, not new data. (4) **Workflow build-gate gotcha:** running `npm run build` from many parallel agents clobbers the shared `dist/` and produces false failures, so the generated workflow centralizes the build to single-agent steps (integration QA + re-QA) only.
+
+**Status:** **LIVE** — deployed via full-tree `vercel --prod` (`dpl_7yr9At3svKX7V74N7XKz41DkejwB`, READY, aliased www.footagebrain.com). Build green; still uncommitted on `main`.
+
+---
+
+## 2026-06-18 — Training manual: YouTube embed state now persists (LIVE)
+
+**What changed:** In the Training manual, clicking a YouTube link's **Embed** toggle to reveal the inline player now **persists** — the player stays open after clicking away / collapsing the module / refreshing, and the owner's choice shows for every editor. Previously the embed was local component state that reverted the instant the component re-rendered, so it looked like "the setting doesn't save."
+
+**Where:** `src/lib/linkify.jsx` (`YoutubeEmbedLink` now seeds from / re-syncs to an `embedded` prop and fires `onToggleEmbed(url, next)` when flipped; `linkifyText(text, embedOpts)` forwards `{ embeddedUrls, onToggleEmbed }` — both optional, fully backward-compatible); `src/components/EditableText.jsx` (new optional `embeddedUrls`/`onToggleEmbed` props passed through to `linkifyText` in both the read-only and editable-not-editing branches); `src/pages/training.jsx` (`embedUrlsFor`/`toggleEmbed` helpers persist the embedded-URL set as a sibling `training_module_content` row keyed `"<fieldPath>::embed"` — a JSON URL array — riding the existing owner-write RLS + store; threaded a per-field `getEmbedProps()` through `ModuleCard` → `ProseBlock`/`ListBlock` + every inline `EditableText`).
+
+**Path we took:** Read training.jsx → EditableText → linkify to trace the toggle. The link *text* already persisted via `setModuleContent`; only the embed-shown boolean was ephemeral (`useState(false)` in `YoutubeEmbedLink`). Chose to persist per-(module, field) into the same module-content store the text uses (rather than a new table or app_settings), so it shares RLS/load/realtime and shows for all editors. Used a `"::embed"` suffixed field path so the embed row is never rendered as prose (`resolveField` is only called for real field keys). `npm run build` green (815 modules); user verified on localhost; deployed `vercel --prod`.
+
+**What we learned:** (1) The embed toggle and the manual text are two different persistence problems — the text was fine; only the toggle state leaked. (2) Storing UI sub-state as a suffix-keyed sibling row in an existing key/value content table avoids a migration entirely and inherits the table's RLS + realtime for free. (3) `linkifyText`'s new 2nd arg is optional, so the signature change is safe for all other callers (only `EditableText` calls it).
+
+**Status:** **LIVE** — deployed to prod (`dpl_GGuS8FEC5azMBNf7twphPuGkv2Sm`, aliased www.footagebrain.com, 816 modules).
+
+---
+
+## 2026-06-18 — Roles & permissions: "Edit the training manual" capability (LIVE)
+
+**What changed:** Added a per-person/per-role **"Edit the training manual"** toggle under Roles & permissions → Actions. Default **Off** for all editor roles (preserving today's owner-only behavior); the owner flips it On to grant a specific person edit access to the Training course content. Training's edit gate now reads this capability instead of a hard-coded owner check.
+
+**Where:** `src/lib/permissions-catalog.js` (new `editManual` entry in `ACTION_CAPS`; `defaultPermsForRole` sets `actions.editManual = false` so editor roles default to restricted — owner always returns `true` via `can()`); `src/pages/training.jsx` (imports `usePermissions`; `canEdit = can("editManual")` replaces `me?.role === "owner"`). The toggle row auto-renders in the existing admin matrix — no roles-admin.jsx change needed.
+
+**Path we took:** Modeled it as a real capability rather than a one-off button so it slots into the existing `VIEW_CAPS`/`ACTION_CAPS` matrix and persistence (app_settings, fail-open merge). Set the default to `false` for editor roles specifically so switching the gate from `me.role === "owner"` to `can("editManual")` changes nothing for existing users. Bonus: the owner's perspective-preview now correctly shows the restricted (read-only) Training view, matching how every other gated action behaves during QA preview.
+
+**What we learned:** (1) `can(actionKey)` short-circuits to `true` when the effective role is `owner`, so an owner-only default is expressed by defaulting the cap `false` for the editable roles — not by special-casing owner. (2) The demo account stays read-only automatically (`DEMO_ACTIONS` is fail-closed and omits `editManual`). (3) Per the in-app amber disclaimer, this is UI-gating only — not yet DB-enforced.
+
+**Status:** **LIVE** — shipped in the same `vercel --prod` (`dpl_GGuS8FEC5azMBNf7twphPuGkv2Sm`).
+
+---
+
+## 2026-06-18 — Training manual: linkify URLs + YouTube embed everywhere (LIVE)
+
+**What changed:** In the Training manual, pasted URLs now render as clickable cyan links across **every** module section (not just the 3 prose blocks), and YouTube URLs get an inline **Embed** toggle that opens a small, right-aligned 16:9 player. Previously only *Why this matters / Skill definition / What good looks like* linkified — and even there the **owner never saw it** because owners always render in the editable branch. Now the owner sees links + embeds too, and link/embed clicks no longer drop the field into edit mode.
+
+**Where:** `src/lib/linkify.jsx` (NEW — extracted `linkifyText` + `YoutubeEmbedLink` verbatim out of `training.jsx`; added `stopPropagation` on links/buttons; shrank the embed to a 260px right-aligned `min(260px,100%)` block using `<span display:block>` wrappers to avoid invalid `<div>`-in-`<span>` nesting); `src/components/EditableText.jsx` (new `linkify` prop, default off; applied in **both** the read-only branch and the owner editable-not-editing branch); `src/pages/training.jsx` (deleted the inline linkify defs; collapsed `ProseBlock`'s duplicated read-only `<span>` into a single `EditableText … linkify`; added `linkify` to `ListBlock` + every inline `EditableText` — gold/poor examples + breakdowns, exercise, checklist, pro tips).
+
+**Path we took:** Planned in plan-mode (1 Explore + read of the two critical files), built inline (modest ~3-file scope). First pass only wired `linkify` into `EditableText`'s read-only branch — the user (owner) reported seeing nothing. Root-caused it: `canEdit = me?.role === "owner"` (training.jsx:40) means the owner **always** hits the editable branch, so the read-only-only linkify was invisible to them (and had been for the old prose blocks too). Fixed by also linkifying the editable-not-editing branch and `stopPropagation`-ing link/button clicks so the click-to-edit span doesn't fire. Then the user asked for a smaller, right-aligned player; shrank from full-width to 260px right-aligned. Verified the URL/YouTube regex parsing with a standalone node check (all 3 YT URL forms + plain links + mixed text); `npm run build` green; deployed `vercel --prod`.
+
+**What we learned:** (1) `EditableText` has **three** render branches, not two — read-only (`!canEdit`), editing, and **editable-not-editing**; any "viewer-only" treatment is invisible to the owner unless it's also applied to the editable-not-editing branch. (2) `YoutubeEmbedLink` is rendered inside `<span>`/`<li>` contexts, so its expanded player must use `<span display:block>` not `<div>` to stay valid HTML. (3) When a clickable child lives inside a click-to-edit parent, the child needs `stopPropagation` or every link click also opens the editor.
+
+**Status:** **LIVE** — deployed to prod (`dpl_3kuHzejE9WtFg3eTceZK2LEpqG6h`).
+
+---
+
+## 2026-06-18 — Reel DNA: comprehensive-only overhaul + bug batch (LOCAL, not deployed)
+
+**What changed:** Reel DNA was reworked into a single, well-connected view and a batch of comprehensive-mode bugs were fixed. (1) **Removed the Classic view entirely** — no more Classic/Comprehensive toggle, status/source pills, Cards/Spreadsheet sub-toggle, `unified_cards` flag gate, or the legacy `DnaCard` component. Comprehensive is now the only view. (2) **Removed the left facet rail**; filtering is now a single global search box (narrows both Grid + Gallery) plus per-column filter headers in the Grid. (3) **Grid rows get a "⤢ Card" button** that opens the rich `UnifiedDnaCard` in a centered modal so assets can be attached without leaving the grid. (4) **Gallery now uses `UnifiedDnaCard`** (was the legacy `DnaCard`), so the multi-select attach pickers appear everywhere. (5) Bug fixes: the dead "Assets →" / count-badge button now opens the full-screen Assets page; **video thumbnails** fall back to the stored `thumbnailUrl` when `videoId` is missing; **location pins** are now Google-Maps links (lat/lng → address/name search) and **footage filenames** link to their Drive URL; **asset detach (✕)** now rolls back on persist failure; `baseList` also excludes tombstoned (`deletedAt`) rows. Also widened the card grid to `minmax(560px,1fr)` so the two-column card (text + 240px assets column) stops crushing the text into one-char-per-line (the originally-reported "font messed up").
+
+**Where:** `src/pages/reel-dna.jsx` (deleted Classic state/branches/`DnaCard`/`DNA_VIEW_KEY`; added `onOpenCard` to `DnaTable`; `baseList` `!deletedAt`; wired `onOpenAssets`/`isOwner` into the comprehensive view; trimmed now-dead imports); `src/components/reel-dna-comprehensive.jsx` (full rewrite — global search + column filters + `UnifiedDnaCard` for grid-modal & gallery + centered modal); `src/components/reel-assets.jsx` (thumbnail `thumbnailUrl` fallback, location Maps link, footage Drive link); `src/store/store.jsx` (`detachAsset` snapshot-and-rollback); `src/lib/reel-dna-filters.jsx` (`export searchHaystack`); `src/pages/reel-dna.css` (grid width; `.rdc-root--solo`, search-in-bar, `.rd-row-btn--open`, asset-link, `.rdc-modal*`).
+
+**Path we took:** Two passes. First an inline fix for the reported "font messed up" — diagnosed it as a *layout* bug, not a font one (the `.rd-card` flex-row with a fixed 240px assets column was crushed inside `minmax(340px)` grid cells), and surfaced the attach pickers by defaulting to `UnifiedDnaCard`. Then the user reported broader breakage and asked for `/qa-verified-plan`; ran 3 Explore agents + 1 Plan agent which pinpointed the root cause: `reel-dna-comprehensive.jsx` imported the **legacy** `DnaCard`/`DnaTable` directly and never forwarded `onOpenAssets`, so the rich attach UI and the assets page were simply unreachable from Comprehensive — and that the `unified_cards` flag-default change from the prior session never reached Comprehensive at all. Confirmed design choices with the user (column-header filters + top search, centered-modal row-open, UnifiedDnaCard everywhere) before implementing.
+
+**What we learned:** (1) The prior session's `DnaCardComponent = unifiedCards ? UnifiedDnaCard : DnaCard` switch in `reel-dna.jsx` was **dead for the Comprehensive view** — Comprehensive imports `DnaCard` itself and bypasses the page-level switch, so toggling the flag did nothing there. (2) The "delete doesn't work" report was actually two *other* bugs (the dead Assets button + a non-rolling-back detach); reel delete itself was correct (tombstone + `DELETE_REEL_DNA_BY_ID` reducer + hydrate `.is("deleted_at", null)`). (3) The resolved asset rows are **raw source rows** (footage carries `drive_url`/`drive_folder_url`, thumbnails carry `thumbnailUrl`, locations carry `lat`/`lng`/`address`) — the renderers just weren't using those fields. (4) The new `reel-dna → comprehensive → unified-card → reel-dna` import cycle builds fine (same render-time-only pattern as the existing cycle); build went 815→814 modules after deleting `DnaCard`.
+
+**Status:** **Now LIVE (incidentally).** Was built-green-but-not-deployed, but the 2026-06-18 training-linkify `vercel --prod` builds the whole working tree, so this overhaul shipped to prod alongside it (`dpl_3kuHzejE9WtFg3eTceZK2LEpqG6h`). It had NOT received separate owner visual sign-off before going live — re-verify on prod.
+
+---
+
+## 2026-06-18 — Reel DNA: font fix + quick multi-attach + unified card UX (LIVE)
+
+**What changed:** Four Reel DNA improvements shipped together. (1) The Reel DNA page font no longer renders as smeared faux-bold. (2) A new searchable **multi-select attach picker** — a `+` per asset category (Footage/Locations/Thumbnails/News) opens a popover with a search box + checkboxes to attach many existing assets in one go (attaching previously had NO UI, only detach). (3) The new **UnifiedDnaCard** adds the quick-attach pickers, inline "create + attach" for a new YouTube thumbnail and a new news item, a "Hide assets" toggle, and a "↓ Pull from pipeline" shortcut — all behind the owner `unified_cards` flag (default OFF, flip in Roles & Permissions → Feature flags). (4) Fixed a latent bug where detaching a **location or thumbnail silently failed**.
+
+**Where:** `index.html` (Google Fonts link — added the missing weights); `src/components/asset-attach-picker.jsx` + `.css` (NEW reusable popover); `src/components/unified-dna-card.jsx` + `.css` (NEW card, reuses the pure `ReelAssets` renderer + existing store actions); `src/pages/reel-dna.jsx` (exported `relTime`/`resolveTags`/`BriefBlock`/`GeneEditor` for reuse; renderer switch `unifiedCards ? UnifiedDnaCard : DnaCard`); `src/store/store.jsx` (`unified_cards` flag: reducer `SET_UNIFIED_CARDS` + initial state + HYDRATE read + realtime sync + `setUnifiedCards` setter, mirroring `gamify_enabled`); `src/pages/roles-admin.jsx` (`FeatureFlagsPanel` toggle); `src/components/reel-assets.jsx` (detach-type fix).
+
+**Path we took:** Planned via the plan-mode workflow (Explore → Plan agents) but built **directly inline** rather than `/qa-verified-plan` + `/workflow` — judged the ~5-file scope too small to justify the multi-agent token premium (that's reserved for the next-phase pipeline-card merge). Diagnosed the font issue by reading the actual CSS: ~10 `font-weight: 600/700` rules across `reel-dna.css`, almost all on `--f-mono` elements, while `index.html` only loaded `JetBrains Mono:wght@400;500` (+ Inter without 700). Fixed by requesting `;600;700` for both. The detach bug surfaced while tracing types: `ReelAssets` passed **plural** detach labels (`"locations"`, `"thumbnails"`) that never matched the **singular** stored `asset_type` (`"location"`, `"thumbnail"`) used by `attachAsset`/the resolver/`seedAssetsFromPipeline` — so those deletes were silent no-ops. Corrected to singular.
+
+**What we learned:** (1) Google-Fonts faux-bold is the cause of "messed up" mono text — if a CSS `font-weight` isn't in the loaded weight set, the browser synthesizes it and it looks broken; the fix is the font *request*, not the CSS. (2) The asset system's `assetType` is **singular** everywhere that matters (resolver switch in `store.jsx`, `attachAsset`, `seedAssetsFromPipeline`) — any new attach/detach code MUST use singular; the legacy plural detach was a real bug. (3) The page↔component circular import (unified-dna-card imports helpers from reel-dna.jsx which imports the card) resolves cleanly because all the shared symbols are **hoisted function declarations** used only at render time — same pattern as `reel-dna-comprehensive.jsx`. (4) `createMonitorEvent` is `async` (must `await` before attach) while `createThumbnailDnaCapture` is sync and returns the row directly.
+
+**Status:** Live on www.footagebrain.com (deploy `dpl_DoXXLQtF6kz8j8MYPCM7hgGoQFiR`, build green — 815 modules). No DB migration (the `unified_cards` flag rides the existing `app_settings` + owner-write RLS). Owner must flip the toggle on once to see the new card; default OFF keeps the grid identical to before.
+
+---
+
+## 2026-06-18 — Daily-use bug/feature batch: 6 items via /qa-verified-plan (LIVE)
+
+A backlog screenshot of hand-written notes was organized and run through `/qa-verified-plan` (3 domain agents + 1 adversarial QA agent, 1 QA loop), then implemented. Six distinct changes shipped together. Migrations 0070–0072 applied to the live DB; `vercel --prod` green (815 modules), aliased to www.footagebrain.com.
+
+### 1. Pipeline reel collapse — now persists per-user + more compact
+
+**What changed:** Collapsing a reel card on the pipeline board now survives logout/reload (was ephemeral `useState`). Each team member has their own collapse state. Collapsed cards are also visually tighter (~32px vs ~62px — title chip + Expand control only). Per-lane hide/show is now also persisted to the DB (was localStorage-only, so it didn't follow you across devices).
+
+**Where:** new migration `0070_user_preferences.sql` (per-user prefs table, self-RLS via `people.user_id`); `src/store/store.jsx` (`collapsedReelIds`/`hiddenLaneIds` state + reducers + `toggleReelCollapsed`/`toggleLaneHidden` actions + a separate auth-gated hydration effect); `src/components/components.jsx` (ReelCard reads store, dropped local state); `src/pages/pipeline.jsx` (bridges existing localStorage lane-hide to the store); `src/styles.css` (`.reel.collapsed` compact rules).
+
+**Path we took:** QA flagged that `app_settings` is owner-write-only, so a per-user table was required. Chose a new `user_preferences(person_id, key, value)` table over localStorage so state follows the user across devices. Kept `Set` out of reducer state (plain arrays) per QA — Sets aren't JSON-serializable and break React's immutability contract.
+
+**What we learned:** The hydration must be a **separate effect keyed on `_authPerson?.id`**, not folded into the main all-or-nothing hydrate `Promise.all` — a missing 0070 table would otherwise brick boot. Composite PK `(person_id, key)` is a FULL unique index, so it's a valid `onConflict` upsert arbiter (avoids the partial-index 42P10 trap).
+
+**Status:** Live.
+
+### 2. Discord notifications on reel assignment
+
+**What changed:** When a reel moves to **In Progress** (or is **sent back** for revision), a Discord webhook ping fires to the assigned editor + Paul + Leroy. Owner configures per-person webhook URLs and a trigger-mode toggle (**All team members** vs **Owner only**) from a new "Discord notifications" panel in Roles Admin.
+
+**Where:** `api/ai/suggest.js` (`?action=discord-notify` — no new Vercel fn, stays under the 12-fn cap); `src/store/store.jsx` (fire-and-forget fetch in `moveStage` when `stage==="in_progress"` and in `sendBack` with `sent_back:true`, both passing a Bearer JWT); `src/pages/roles-admin.jsx` (new `DiscordConfigPanel`); config stored in `app_settings` key `discord_config` `{ mode, webhooks }`.
+
+**Path we took:** User wanted BOTH trigger modes selectable, so the mode lives in `discord_config.mode` and the toggle writes it via the owner-write `app_settings` RLS. QA caught that the frontend fetch needs `Authorization: Bearer <session.access_token>` — the suggest.js auth gate 401s without it.
+
+**What we learned:** Discord webhook POSTs are kept fully fire-and-forget (`.catch(()=>{})` client-side, `Promise.allSettled` + always-200 server-side) so a webhook failure never surfaces as an app error or blocks the reel move.
+
+**Status:** Live. **Owner action needed:** paste each member's Discord webhook URL into Roles Admin → Discord notifications before pings will fire (no URLs = silent no-op).
+
+### 3. Training module — clickable links + YouTube click-to-embed
+
+**What changed:** URLs typed into training prose fields now render as clickable links in read-only view. YouTube URLs get an inline **Embed** button that expands a responsive 16:9 iframe on demand (click-to-embed, not auto-load).
+
+**Where:** `src/pages/training.jsx` — `linkifyText()` + `YoutubeEmbedLink` component; `ProseBlock` read-only branch now runs text through `linkifyText()`. Edit mode stays plain text.
+
+**What we learned:** Linkify belongs scoped in `training.jsx`'s `ProseBlock`, NOT in the shared `EditableText` primitive (that would linkify every editable field app-wide). The module-level `_URL_RE` regex has the `g` flag so its `lastIndex` must be reset at the top of each `linkifyText()` call.
+
+**Status:** Live.
+
+### 4. Facebook Reels as a Reel DNA platform
+
+**What changed:** "Facebook Reel" is now selectable in the Reel DNA platform dropdown, so FB reels can be tracked like IG/TikTok/YouTube.
+
+**Where:** `src/lib/reel-dna.jsx` (added `{ key: "fb", label: "Facebook Reel" }` to `PLATFORMS`); defensive migration `0071_reel_dna_platform_fb.sql`.
+
+**What we learned:** The 0044 `reel_dna.platform` column never had a real CHECK constraint (the `'ig'|'tiktok'|'yt'` was a comment only) — so `'fb'` was already insertable. 0071 just formalizes the allowed set. FB **auto-ingest** (Graph API polling like the IG inbox) is out of scope / Hetzner-gated for a later session.
+
+**Status:** Live.
+
+### 5. Tasks & Comms — drag-select text in notes
+
+**What changed:** You can now drag to select text in a task's notes textarea to copy/paste (was being hijacked by the row's drag-reorder handler).
+
+**Where:** `src/pages/my-work.jsx` — `onMouseDown={e => e.stopPropagation()}` on both the inline and expanded-modal note textareas.
+
+**What we learned:** Root cause was unconfirmed (the row already disables `draggable` while notes are open and bails on textarea targets) — the `stopPropagation` on mousedown is the safe belt-and-suspenders fix that prevents any ancestor drag gesture from stealing the selection.
+
+**Status:** Live.
+
+### 6. IG carousel groundwork — content_type column
+
+**What changed:** Added a `content_type` column to `reel_dna` (reel/carousel/photo/unknown) and threaded it through the store's `reelDnaToDb()` mapper, prepping for the IG DM poller to distinguish carousels/photo posts from reels.
+
+**Where:** migration `0072_reel_dna_content_type.sql`; `src/store/store.jsx` (`reelDnaToDb` now writes `content_type`).
+
+**What we learned:** The actual poller change (parse DM `message` text for `/p/` and `/reel/` URLs, not just `shares.data[].link`) lives in the **private Hetzner backend repo** — DB + mapper are the in-app half; the poller half is a separate human-gated SSH session.
+
+**Status:** DB + mapper live. Hetzner poller change pending (out of scope this session).
+
+---
+
 ## 2026-06-18 — Thumbnails shortcut pill added to Reel DNA filter bar (LIVE)
 
 **What changed:** Added a **Thumbnails** pill button to the Reel DNA filter bar in the gap between the "source" filter group and the "view" toggle. It lights up when the Thumbnails tab is active and switches to it from any Reels view state — a more discoverable entry point than the header tab-strip which users were missing.

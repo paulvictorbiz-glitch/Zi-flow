@@ -40,10 +40,10 @@ function pickerData(options, attachedRows) {
   return { options, attachedIds };
 }
 
-export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSend, onDelete, onOpenAssets, isOwner }) {
+export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSend, onDelete, onOpenAssets, isOwner, hideAssetsOverride }) {
   // Hooks first, unconditionally (hook-rules-safe regardless of toggles below).
   const { attachedFootage, thumbnailDna, monitorEvents } = useWorkflow();
-  const { locations } = useLocations();
+  const { locations, actions: locationActions } = useLocations();
   const { assets, counts } = useReelDnaAssets(item.id);
 
   const [editGenes, setEditGenes] = useState(false);
@@ -53,6 +53,10 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
   const [nTitle, setNTitle] = useState("");          // new-news title
   const [nUrl, setNUrl] = useState("");              // new-news url
   const [busy, setBusy] = useState(false);
+
+  // Gallery-level "Hide all assets" override wins when provided (compare with
+  // != null so an explicit `false` forces assets shown). Omitted = local toggle.
+  const effectiveHide = hideAssetsOverride != null ? hideAssetsOverride : hideAssets;
 
   const genes = item.genesOfInterest || [];
   const tags = resolveTags(item);
@@ -85,6 +89,15 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
   /* Batched attach — one call per selected source row (upsert-deduped). */
   const attachMany = (assetType, picks) => {
     for (const p of picks) actions.attachAsset(item.id, assetType, p.id, p.label);
+    // If this card is ALREADY live in the pipeline, locations attached now would
+    // otherwise be stranded in reel_dna_assets: sendReelDnaToPipeline only migrates
+    // assets into locations.linked_reel_ids at send time (and early-returns once the
+    // card has a reelId). Propagate the pin to the pipeline reel here so it also
+    // shows on the Reel Detail "Filming location" card. linkReel is optimistic +
+    // persisted and de-dupes, so this is safe to call alongside attachAsset.
+    if (assetType === "location" && item.reelId && typeof locationActions?.linkReel === "function") {
+      for (const p of picks) locationActions.linkReel(p.id, item.reelId);
+    }
   };
 
   /* ── Inline "create new asset, then attach it" ── */
@@ -190,7 +203,7 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
               {hasTimeline ? `Timeline (${item.timeline.length})` : "Deconstruct"}
             </span>
             {item.reelId ? (
-              <span className="rd-tag" style={{ color: "var(--c-green)", borderColor: "var(--c-green)" }}>
+              <span className="rd-tag" style={{ color: "var(--c-orange)", borderColor: "var(--c-orange)" }}>
                 ▸ In pipeline · {item.reelId}
               </span>
             ) : (
@@ -198,7 +211,11 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
             )}
           </div>
           <div className="rd-card-foot-right">
-            <span className="rd-archive" onClick={() => actions.archiveReelDna(item.id)}>Archive</span>
+            {item.archivedAt ? (
+              <span className="rd-archive" onClick={() => actions.restoreReelDna(item.id)}>Restore</span>
+            ) : (
+              <span className="rd-archive" onClick={() => actions.archiveReelDna(item.id)}>Archive</span>
+            )}
             <span className="rd-delete" onClick={() => onDelete(item)}>Delete</span>
           </div>
         </div>
@@ -273,7 +290,7 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
           </div>
         )}
 
-        {!hideAssets && (
+        {!effectiveHide && (
           <div className="udc-assets-body">
             <ReelAssets item={item} assets={assets} allOpen={true} compact={false}
                         isOwner={isOwner} actions={actions} />

@@ -121,7 +121,7 @@ export function computeFacets(items) {
 }
 
 /* Free-text haystack for the global search box — reel URL + every brief field. */
-function searchHaystack(it, b) {
+export function searchHaystack(it, b) {
   return [
     it.reelUrl, b.location, b.musicTrack, b.musicSource, b.fontNames,
     b.sfx, b.story, b.leftover, it.quickNotes,

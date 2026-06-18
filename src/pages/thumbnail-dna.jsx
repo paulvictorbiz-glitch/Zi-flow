@@ -283,7 +283,7 @@ function DnaTable({ items, now, actions, onDelete }) {
       <table className="td-table">
         <thead>
           <tr>
-            <th className="td-th-thumb">Thumbnail</th>
+            <th className="td-th-thumb">Link / Title</th>
             {GENES.map(g => <th key={g.key}>{g.label}</th>)}
             <th>Status</th>
             <th className="td-th-act"></th>
@@ -293,19 +293,12 @@ function DnaTable({ items, now, actions, onDelete }) {
           {items.map(item => (
             <tr key={item.id} className={"td-tr td-status--" + item.status}>
               <td className="td-td-thumb">
-                <a className="td-cell-thumb" href={item.videoUrl} target="_blank" rel="noreferrer"
-                   title={item.videoUrl}>
-                  <ThumbPreview videoId={item.videoId} alt={item.title || item.videoUrl} />
-                </a>
                 <div className="td-cell-sub">
-                  <span className="td-cell-title" title={item.title || item.videoUrl}>
+                  <a className="td-cell-title" href={item.videoUrl} target="_blank" rel="noreferrer"
+                     title={item.title || item.videoUrl}>
                     {item.title || item.videoUrl}
-                  </span>
+                  </a>
                   {item.channel && <span className="td-tag sm dim">{item.channel}</span>}
-                  <span className={"td-tag sm dim" + (item.source === "yt_playlist" ? " td-tag--src" : "")}>
-                    {sourceBadge(item.source)}
-                  </span>
-                  <span className="td-tag sm dim">{relTime(item.createdAt, now)}</span>
                 </div>
               </td>
               {GENES.map(g => (

@@ -24,6 +24,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase-client.js";
 import { useAuth } from "../auth.jsx";
+import { usePermissions } from "../lib/permissions.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import {
   PILLAR_MODULES, MODULE_BY_SKILL, TOTAL_MODULES,
@@ -35,9 +36,13 @@ import "./training.css";
 
 export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
   const { person: me } = useAuth();
+  const { can } = usePermissions();
   const { reels, moduleContent, actions } = useWorkflow();
 
-  const canEdit = me?.role === "owner";
+  // Manual editing is gated by the "editManual" capability (Roles &
+  // permissions). Owner is always allowed; editor roles default to read-only
+  // and the owner grants edit per-person/per-role from the admin matrix.
+  const canEdit = can("editManual");
 
   // Whose progress we show. Defaults to the signed-in person.
   const viewedId = personId || me?.id || null;
@@ -157,6 +162,29 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
     return v !== undefined && v !== null ? v : (fallback ?? "");
   }, [moduleContent]);
 
+  /* Persisted YouTube-embed state. Which links the owner has expanded into
+     an inline player is stored as a sibling module-content field, keyed by
+     the prose field's path + EMBED_SUFFIX (a JSON array of URLs). It rides
+     the same training_module_content store/RLS as the text, so the choice
+     survives a click-away and shows for every editor. The suffixed key is
+     never rendered as prose (resolveField is only called for real fields). */
+  const EMBED_SUFFIX = "::embed";
+
+  const embedUrlsFor = useCallback((moduleId, fieldPath) => {
+    const raw = moduleContent?.[moduleId]?.[fieldPath + EMBED_SUFFIX];
+    if (!raw) return new Set();
+    try {
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+  }, [moduleContent]);
+
+  const toggleEmbed = useCallback((moduleId, fieldPath, url, next) => {
+    const set = embedUrlsFor(moduleId, fieldPath);
+    if (next) set.add(url); else set.delete(url);
+    actions.setModuleContent(moduleId, fieldPath + EMBED_SUFFIX, JSON.stringify([...set]));
+  }, [embedUrlsFor, actions]);
+
   const jumpTo = (id) => {
     setOpen(prev => ({ ...prev, [id]: true }));
     requestAnimationFrame(() => {
@@ -255,6 +283,8 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
             canEdit={canEdit}
             resolveField={resolveField}
             onCommit={(fieldPath, value) => actions.setModuleContent(mod.id, fieldPath, value)}
+            embedUrlsFor={(fieldPath) => embedUrlsFor(mod.id, fieldPath)}
+            onToggleEmbed={(fieldPath, url, next) => toggleEmbed(mod.id, fieldPath, url, next)}
             practiceReels={reelsBySkill[mod.skillKey] || []}
             onOpenReel={onOpen}
             onJumpToModule={jumpTo}
@@ -287,82 +317,22 @@ function Ring({ pct }) {
   );
 }
 
-/* ── Linkify utilities ─────────────────────────────────────────── */
-const _YT_ID_RE = /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
-const _URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
-
-function YoutubeEmbedLink({ url, ytId }) {
-  const [embed, setEmbed] = React.useState(false);
-  if (embed) return (
-    <div style={{ marginTop: 6 }}>
-      <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: 6 }}>
-        <iframe
-          src={"https://www.youtube.com/embed/" + ytId}
-          title="Tutorial"
-          style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
-          loading="lazy"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-        />
-      </div>
-      <button onClick={() => setEmbed(false)}
-        style={{ fontSize: 11, marginTop: 4, cursor: "pointer", background: "none", border: "none", color: "var(--fg-dim)" }}>
-        Hide embed
-      </button>
-    </div>
-  );
-  return (
-    <span>
-      <a href={url} target="_blank" rel="noopener noreferrer"
-        style={{ color: "var(--c-cyan)", wordBreak: "break-all" }}>{url}</a>
-      <button onClick={() => setEmbed(true)}
-        style={{ marginLeft: 6, fontSize: 10, padding: "1px 6px", borderRadius: 3, cursor: "pointer",
-          background: "rgba(127,212,154,0.1)", border: "1px solid rgba(127,212,154,0.3)", color: "var(--c-green, #7fd49a)" }}>
-        Embed
-      </button>
-    </span>
-  );
-}
-
-function linkifyText(text) {
-  if (!text) return text;
-  _URL_RE.lastIndex = 0;
-  const parts = [];
-  let last = 0, m;
-  while ((m = _URL_RE.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    const url = m[0];
-    const ytMatch = url.match(_YT_ID_RE);
-    parts.push(ytMatch
-      ? <YoutubeEmbedLink key={m.index} url={url} ytId={ytMatch[1]} />
-      : <a key={m.index} href={url} target="_blank" rel="noopener noreferrer"
-           style={{ color: "var(--c-cyan)", wordBreak: "break-all" }}>{url}</a>);
-    last = m.index + url.length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return parts.length ? parts : text;
-}
-
 /* A labeled rich-prose block. Wraps the value in EditableText.
    In read-only mode, URLs in the text are rendered as clickable links;
-   YouTube URLs get an optional inline embed toggle. */
-function ProseBlock({ label, fieldPath, value, canEdit, onCommit, className }) {
+   YouTube URLs get an optional inline embed toggle (via `linkify`). */
+function ProseBlock({ label, fieldPath, value, canEdit, onCommit, className, getEmbedProps }) {
   return (
     <>
       <div className="tr-block-label">{label}</div>
       <div className={"tr-prose " + (className || "")}>
-        {canEdit ? (
-          <EditableText
-            value={value}
-            canEdit
-            multiline
-            onCommit={(v) => onCommit(fieldPath, v)}
-          />
-        ) : (
-          <span className="et-readonly et-multiline" style={{ whiteSpace: "pre-wrap" }}>
-            {linkifyText(value) || <span style={{ opacity: 0.4 }}>—</span>}
-          </span>
-        )}
+        <EditableText
+          value={value}
+          canEdit={canEdit}
+          multiline
+          linkify
+          onCommit={(v) => onCommit(fieldPath, v)}
+          {...(getEmbedProps?.(fieldPath) || {})}
+        />
       </div>
     </>
   );
@@ -370,7 +340,7 @@ function ProseBlock({ label, fieldPath, value, canEdit, onCommit, className }) {
 
 /* A labeled editable list (each item is its own EditableText, fieldPath
    = "<base>.<index>"). */
-function ListBlock({ label, base, items, canEdit, onCommit, resolveField, moduleId, liClass }) {
+function ListBlock({ label, base, items, canEdit, onCommit, resolveField, moduleId, liClass, getEmbedProps }) {
   if (!items || items.length === 0) return null;
   return (
     <>
@@ -382,7 +352,9 @@ function ListBlock({ label, base, items, canEdit, onCommit, resolveField, module
               value={resolveField(moduleId, base + "." + i, it)}
               canEdit={canEdit}
               multiline
+              linkify
               onCommit={(v) => onCommit(base + "." + i, v)}
+              {...(getEmbedProps?.(base + "." + i) || {})}
             />
           </li>
         ))}
@@ -395,9 +367,18 @@ function ListBlock({ label, base, items, canEdit, onCommit, resolveField, module
 function ModuleCard({
   mod, progress, expanded, onToggleExpand,
   onToggleLesson, onToggleDone, readOnly, canEdit,
-  resolveField, onCommit, practiceReels, onOpenReel, onJumpToModule,
+  resolveField, onCommit, embedUrlsFor, onToggleEmbed,
+  practiceReels, onOpenReel, onJumpToModule,
 }) {
   const s = mod.sections;
+
+  /* Per-field props that wire EditableText's linkify embeds to persisted
+     module content. Only the owner (canEdit) gets a persist callback; for
+     read-only editors the embedded set still seeds which players show. */
+  const getEmbedProps = (fieldPath) => ({
+    embeddedUrls: embedUrlsFor(fieldPath),
+    onToggleEmbed: canEdit ? (url, next) => onToggleEmbed(fieldPath, url, next) : undefined,
+  });
   const checked = new Set(progress.lessons_done);
   const checklist = s.checklist || [];
   const pct = progress.done
@@ -427,18 +408,20 @@ function ModuleCard({
       {expanded && (
         <div className="tr-mod-body">
           <ProseBlock label="Why this skill matters" fieldPath="whyMatters"
-            value={rf("whyMatters", s.whyMatters)} canEdit={canEdit} onCommit={onCommit} />
+            value={rf("whyMatters", s.whyMatters)} canEdit={canEdit} onCommit={onCommit}
+            getEmbedProps={getEmbedProps} />
 
           <ProseBlock label="Skill definition" fieldPath="definition"
-            value={rf("definition", s.definition)} canEdit={canEdit} onCommit={onCommit} />
+            value={rf("definition", s.definition)} canEdit={canEdit} onCommit={onCommit}
+            getEmbedProps={getEmbedProps} />
 
           <ProseBlock label="What good looks like" fieldPath="goodLooks"
             value={rf("goodLooks", s.goodLooks)} canEdit={canEdit} onCommit={onCommit}
-            className="" />
+            className="" getEmbedProps={getEmbedProps} />
 
           <ListBlock label="Common mistakes" base="commonMistakes"
             items={s.commonMistakes} canEdit={canEdit} onCommit={onCommit}
-            resolveField={resolveField} moduleId={mod.id} />
+            resolveField={resolveField} moduleId={mod.id} getEmbedProps={getEmbedProps} />
 
           {/* Gold standard */}
           {(s.goldExamples?.length || s.goldBreakdown?.length) ? (
@@ -450,7 +433,8 @@ function ModuleCard({
                   {(s.goldExamples || []).map((it, i) => (
                     <li key={i}>
                       <EditableText value={rf("goldExamples." + i, it)} canEdit={canEdit}
-                        multiline onCommit={(v) => onCommit("goldExamples." + i, v)} />
+                        multiline linkify onCommit={(v) => onCommit("goldExamples." + i, v)}
+                        {...getEmbedProps("goldExamples." + i)} />
                     </li>
                   ))}
                 </ul>
@@ -461,7 +445,8 @@ function ModuleCard({
                       {s.goldBreakdown.map((it, i) => (
                         <li key={i}>
                           <EditableText value={rf("goldBreakdown." + i, it)} canEdit={canEdit}
-                            multiline onCommit={(v) => onCommit("goldBreakdown." + i, v)} />
+                            multiline linkify onCommit={(v) => onCommit("goldBreakdown." + i, v)}
+                            {...getEmbedProps("goldBreakdown." + i)} />
                         </li>
                       ))}
                     </ul>
@@ -481,7 +466,8 @@ function ModuleCard({
                   {(s.poorExamples || []).map((it, i) => (
                     <li key={i}>
                       <EditableText value={rf("poorExamples." + i, it)} canEdit={canEdit}
-                        multiline onCommit={(v) => onCommit("poorExamples." + i, v)} />
+                        multiline linkify onCommit={(v) => onCommit("poorExamples." + i, v)}
+                        {...getEmbedProps("poorExamples." + i)} />
                     </li>
                   ))}
                 </ul>
@@ -492,7 +478,8 @@ function ModuleCard({
                       {s.poorBreakdown.map((it, i) => (
                         <li key={i}>
                           <EditableText value={rf("poorBreakdown." + i, it)} canEdit={canEdit}
-                            multiline onCommit={(v) => onCommit("poorBreakdown." + i, v)} />
+                            multiline linkify onCommit={(v) => onCommit("poorBreakdown." + i, v)}
+                            {...getEmbedProps("poorBreakdown." + i)} />
                         </li>
                       ))}
                     </ul>
@@ -507,12 +494,13 @@ function ModuleCard({
           <div className="tr-callout">
             <span className="tr-callout-tag">Exercise</span>
             <EditableText value={rf("exercise", s.exercise)} canEdit={canEdit}
-              multiline onCommit={(v) => onCommit("exercise", v)} />
+              multiline linkify onCommit={(v) => onCommit("exercise", v)}
+              {...getEmbedProps("exercise")} />
           </div>
 
           <ListBlock label="Self-assessment — ask yourself" base="selfAssessment"
             items={s.selfAssessment} canEdit={canEdit} onCommit={onCommit}
-            resolveField={resolveField} moduleId={mod.id} />
+            resolveField={resolveField} moduleId={mod.id} getEmbedProps={getEmbedProps} />
 
           {/* Checklist — TRACKABLE. Checkboxes drive progress; the TEXT is
              owner-editable (independent of ticking). */}
@@ -530,7 +518,9 @@ function ModuleCard({
                   value={rf("checklist." + i, item)}
                   canEdit={canEdit}
                   multiline
+                  linkify
                   onCommit={(v) => onCommit("checklist." + i, v)}
+                  {...getEmbedProps("checklist." + i)}
                 />
               </span>
             </div>
@@ -538,7 +528,7 @@ function ModuleCard({
 
           <ListBlock label="Development plan" base="developmentPlan"
             items={s.developmentPlan} canEdit={canEdit} onCommit={onCommit}
-            resolveField={resolveField} moduleId={mod.id} />
+            resolveField={resolveField} moduleId={mod.id} getEmbedProps={getEmbedProps} />
 
           {/* Pro tips — only when present */}
           {s.proTips?.length > 0 && (
@@ -550,7 +540,8 @@ function ModuleCard({
                   {s.proTips.map((it, i) => (
                     <li key={i}>
                       <EditableText value={rf("proTips." + i, it)} canEdit={canEdit}
-                        multiline onCommit={(v) => onCommit("proTips." + i, v)} />
+                        multiline linkify onCommit={(v) => onCommit("proTips." + i, v)}
+                        {...getEmbedProps("proTips." + i)} />
                     </li>
                   ))}
                 </ul>

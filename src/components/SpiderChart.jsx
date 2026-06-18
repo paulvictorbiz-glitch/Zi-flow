@@ -63,7 +63,8 @@ export default function SpiderChart({
     : [{ label: null, color: fillColor, scores: scores || {} }];
 
   /* Convert a client pointer position to a 0..100 value along axis `i`:
-     project the (pointer - center) vector onto the axis direction, clamp. */
+     project the (pointer - center) vector onto the axis direction, then snap
+     to the nearest concentric ring so dropped points land on a ring. */
   const valueFromPointer = (evt, i) => {
     const svg = svgRef.current;
     if (!svg) return 0;
@@ -73,7 +74,10 @@ export default function SpiderChart({
     const py = ((evt.clientY - rect.top) / rect.height) * size - cy;
     const [dx, dy] = axisDir(i, n);
     const proj = px * dx + py * dy;           // distance along the axis
-    return Math.max(0, Math.min(100, Math.round((proj / maxR) * 100)));
+    const raw = (proj / maxR) * 100;
+    const step = 100 / rings;                 // value span between adjacent rings
+    const snapped = Math.round(raw / step) * step;
+    return Math.max(0, Math.min(100, Math.round(snapped)));
   };
 
   const isEditable = (key) =>

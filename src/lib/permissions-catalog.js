@@ -63,6 +63,7 @@ export const ACTION_CAPS = [
   { key: "bulkMoveReels",   label: "Bulk move / assign reels", hint: "Select multiple reels and move/assign them at once in list view" },
   { key: "tagReelSkills",   label: "Tag reels with syllabus skills", hint: "The skill-tag picker on a reel's detail page (links a reel to a Training module)" },
   { key: "gradeRubric",     label: "Grade Gamify rubric",     hint: "Set Junior Editor/Skilled Editor/Professional per skill on a reel — awards XP" },
+  { key: "editManual",      label: "Edit the training manual", hint: "Inline-edit the Training course content (playbook prose, checklists, examples, embeds). Off = read-only." },
 ];
 
 /* Roles the owner can configure. `owner` is excluded — always full. */
@@ -121,6 +122,7 @@ export function defaultPermsForRole(roleKey) {
   actions.moveToCompleted = false; // owner enables per-person if needed
   actions.editReelId = false;      // owner only
   actions.bulkMoveReels = false;   // owner only by default
+  actions.editManual = false;      // training manual is owner-authored; owner grants edit per-person
 
   /* Gamify rubric grading mirrors review authority: only the reviewer
      role grades (Junior Editor/Skilled Editor/Professional → XP). Editors self-assess. */

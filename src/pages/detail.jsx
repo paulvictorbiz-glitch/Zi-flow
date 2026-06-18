@@ -18,6 +18,7 @@ import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
 import { getFootageFileMetadata, driveDownloadUrl } from "../lib/footage-brain-client.js";
 import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
+import { PipelineDnaAssets } from "../components/pipeline-dna-assets.jsx";
 import { SKILLS } from "../lib/training-curriculum.jsx";
 import GamifyRubricSheet from "../components/GamifyRubricSheet.jsx";
 
@@ -137,7 +138,24 @@ function LocationPicker({ reelId }) {
               borderRadius: 12, padding: "3px 10px",
               fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg)",
             }}>
-              📍 {loc.name}
+              {/* Click the pin → focus it on the in-app Locations map. requestFocus
+                  stashes the id in the provider; the Locations page reads it on
+                  mount to switch to the interactive map, select + pan to the pin. */}
+              <button
+                type="button"
+                onClick={() => {
+                  actions.requestFocus(loc.id);
+                  if (typeof window !== "undefined" && window.__navigate) window.__navigate("locations");
+                }}
+                title={"Show " + loc.name + " on the Locations map"}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  background: "none", border: "none", padding: 0, margin: 0,
+                  font: "inherit", color: "var(--c-cyan)", cursor: "pointer",
+                }}
+              >
+                📍 {loc.name}
+              </button>
               <button onClick={() => detach(loc.id)} title="Remove location link"
                 style={{ background: "none", border: "none", color: "var(--fg-dim)", cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>
                 ✕
@@ -863,6 +881,11 @@ function ReelDetail({ reel, onBack, onLearnSkill }) {
             )}
           </Card>
           <LocationPicker reelId={current.id} />
+          {(stored?.detail?.fromReelDna || current.detail?.fromReelDna) && (
+            <PipelineDnaAssets
+              cardId={stored?.detail?.fromReelDna || current.detail.fromReelDna}
+            />
+          )}
         </div>
 
         {/* ===== CENTER — blueprint + feedback ===== */}

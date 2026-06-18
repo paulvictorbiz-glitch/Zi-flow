@@ -810,13 +810,29 @@ function workflowReducer(state, action) {
        Same optimistic + realtime shape as monitor_event_links above. */
     case "UPSERT_REEL_DNA_ASSET": {
       const list = state.reelDnaAssets || [];
-      const exists = list.some(a => a.id === action.item.id);
-      return {
-        ...state,
-        reelDnaAssets: exists
-          ? list.map(a => a.id === action.item.id ? action.item : a)
-          : [action.item, ...list],
-      };
+      const incoming = action.item;
+      // De-dupe by the COMPOSITE link identity (reelDnaId + assetType + assetId),
+      // NOT by row id: the optimistic row uses a synthetic `${reelDnaId}:${type}:${id}`
+      // id while the realtime echo carries the DB's gen_random_uuid() id, so an
+      // id-only check let BOTH rows coexist and the resolver emitted the asset twice.
+      const sameLink = (a) =>
+        a.reelDnaId === incoming.reelDnaId &&
+        a.assetType === incoming.assetType &&
+        String(a.assetId) === String(incoming.assetId);
+      // A "real" DB id is a uuid (the synthetic optimistic id contains ':').
+      const incomingIsDbRow = typeof incoming.id === "string" && !incoming.id.includes(":");
+      const idx = list.findIndex(sameLink);
+      if (idx === -1) {
+        return { ...state, reelDnaAssets: [incoming, ...list] };
+      }
+      // Replace the existing matching link with a merged row, preferring a real DB
+      // id (and other DB-supplied fields) whenever the incoming row has one so the
+      // optimistic placeholder collapses into the persisted row.
+      const existing = list[idx];
+      const merged = incomingIsDbRow ? { ...existing, ...incoming } : { ...incoming, id: existing.id };
+      const next = list.slice();
+      next[idx] = merged;
+      return { ...state, reelDnaAssets: next };
     }
 
     case "DELETE_REEL_DNA_ASSET":
@@ -2588,7 +2604,81 @@ function WorkflowProvider({ children }) {
           } catch (e) {
             console.error("sendReelDnaToPipeline persist failed:", e);
             dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+            return;   // reel/card persist failed → don't migrate assets onto a row that may not exist
           }
+
+          /* Migrate the card's attached assets into the native pipeline tables so
+             the new reel arrives in the pipeline with its footage/locations/news
+             already wired up (mirrors seedAssetsFromPipeline, but the OTHER
+             direction: Reel DNA link rows → pipeline tables). Each asset type is
+             wrapped in its own try/catch that only warns, so one missing column /
+             RLS denial never aborts the rest. Thumbnails are display-only (6b) and
+             skipped. No-op in demo mode. */
+          if (isDemoMode()) return;
+          const fresh = stateRef.current;
+          const links = (fresh.reelDnaAssets || []).filter(a => a && a.reelDnaId === id);
+          if (links.length === 0) return;
+
+          // 1) Footage → COPY the source attached_footage_items row onto the new
+          //    reel with a fresh text id, skipping any footage_file_id already
+          //    attached to newId. Reuse the optimistic-dispatch + persist path.
+          try {
+            const footageById = new Map();
+            for (const f of (fresh.attachedFootage || [])) {
+              if (f && f.id != null) footageById.set(String(f.id), f);
+            }
+            const alreadyOnNew = new Set(
+              (fresh.attachedFootage || [])
+                .filter(f => f && f.reel_id === newId && f.footage_file_id != null)
+                .map(f => String(f.footage_file_id))
+            );
+            for (const link of links) {
+              if (link.assetType !== "footage") continue;
+              const src = footageById.get(String(link.assetId));
+              if (!src) continue;
+              if (src.footage_file_id != null && alreadyOnNew.has(String(src.footage_file_id))) continue;
+              const clone = {
+                ...src,
+                id: `footage-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                reel_id: newId,
+              };
+              if (src.footage_file_id != null) alreadyOnNew.add(String(src.footage_file_id));
+              dispatch({ type: "ADD_ATTACHED_FOOTAGE", item: clone });
+              await persistAddAttachedFootage(clone);
+            }
+          } catch (e) {
+            console.warn("sendReelDnaToPipeline footage migrate skipped:", e?.message || e);
+          }
+
+          // 2) Locations → handled by the CALLER (reel-dna.jsx handleSend) via the
+          //    LocationsProvider's linkReel, so the pin updates the provider's
+          //    in-memory state (the store can't reach that provider) AND persists.
+          //    A direct Supabase update here wrote the DB but left the provider
+          //    stale + invisible (locations isn't in the realtime publication),
+          //    which is why locations appeared not to migrate. Don't double-write.
+
+          // 3) News → upsert monitor_event_links (event_id, target_type:'reel',
+          //    target_id:newId). The full unique index (0065) makes it idempotent.
+          try {
+            const newsRows = links
+              .filter(link => link.assetType === "news")
+              .map(link => ({
+                event_id: link.assetId,
+                target_type: "reel",
+                target_id: newId,
+                label: link.label ?? null,
+              }));
+            if (newsRows.length) {
+              const { error } = await supabase
+                .from("monitor_event_links")
+                .upsert(newsRows, { onConflict: "event_id,target_type,target_id" });
+              if (error) throw error;
+            }
+          } catch (e) {
+            console.warn("sendReelDnaToPipeline news migrate skipped:", e?.message || e);
+          }
+
+          // 4) Thumbnails → SKIP (display-only via the pipeline detail boxes, 6b).
         })();
         return newId;
       },
@@ -2765,18 +2855,24 @@ function WorkflowProvider({ children }) {
         // Drop any local row matching this (card, type, id) — covers both the
         // optimistic client id and a realtime-hydrated DB id.
         const key = String(assetId);
+        // Snapshot every link row we're about to remove so we can roll the
+        // detach back if the persist fails (otherwise the asset silently
+        // reappears on the next reload but looks gone until then).
+        const cur = stateRef.current;
+        const removed = (cur.reelDnaAssets || []).filter(
+          a => a.reelDnaId === reelDnaId && a.assetType === assetType && String(a.assetId) === key
+        );
         dispatch({
           type: "DELETE_REEL_DNA_ASSET",
           id: `${reelDnaId}:${assetType}:${key}`,
         });
-        const cur = stateRef.current;
-        for (const a of (cur.reelDnaAssets || [])) {
-          if (a.reelDnaId === reelDnaId && a.assetType === assetType && String(a.assetId) === key) {
-            dispatch({ type: "DELETE_REEL_DNA_ASSET", id: a.id });
-          }
+        for (const a of removed) {
+          dispatch({ type: "DELETE_REEL_DNA_ASSET", id: a.id });
         }
         persistDetachAsset(reelDnaId, assetType, assetId).catch(e => {
           console.error("detachAsset persist failed:", e);
+          // Roll the optimistic removal back so the UI matches the DB.
+          for (const a of removed) dispatch({ type: "UPSERT_REEL_DNA_ASSET", item: a });
           dispatch({ type: "SET_ERROR", error: e.message || String(e) });
         });
       },

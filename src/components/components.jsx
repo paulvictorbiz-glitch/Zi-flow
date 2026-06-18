@@ -64,6 +64,11 @@ const CARD_COLORS = ["cyan", "violet", "green", "amber", "red", "blue", "orange"
 
 function ReelCard({ reel, onOpen, state, isSelected }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'
+  /* Per-card action menu (archive / delete) — gated by role permissions.
+     Pulled up here because `collapsed` (derived from store) is read by `cls`
+     below; declaring it later would hit the const TDZ. */
+  const { actions, reelChatRefs, collapsedReelIds } = useWorkflow();
+  const collapsed = (collapsedReelIds || []).includes(reel.id);
   const cls = [
     "reel",
     collapsed ? "collapsed" : "",
@@ -88,9 +93,6 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
   const liveAge = reel.stageEnteredAt ? formatAge(reel, now) : (reel.age || "");
   const pillText = reel.status || liveAge;
 
-  /* Per-card action menu (archive / delete) — gated by role permissions. */
-  const { actions, reelChatRefs, collapsedReelIds } = useWorkflow();
-  const collapsed = (collapsedReelIds || []).includes(reel.id);
   const { can } = usePermissions();
   const { unreadByReel } = useNotifications();
   const unreadCount = unreadByReel[reel.id] || 0;

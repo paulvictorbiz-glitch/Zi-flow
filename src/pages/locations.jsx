@@ -562,7 +562,7 @@ function RoutePlanner({ locations }) {
 }
 
 function Locations() {
-  const { locations, loaded, actions } = useLocations();
+  const { locations, loaded, actions, focusId } = useLocations();
   const { reels } = useWorkflow();
   const [tab, setTab] = useState("mymaps");
   const [showImport, setShowImport] = useState(false);
@@ -570,6 +570,27 @@ function Locations() {
   const [geocoding, setGeocoding] = useState({});
   const [editingPin, setEditingPin] = useState(null);
   const [mapsAuthFailed, setMapsAuthFailed] = useState(false);
+  // Controlled map camera (center + zoom). Controlled rather than imperative
+  // panTo so cross-page focus can move the map without touching the (possibly
+  // not-yet-ready) map instance. onCameraChanged keeps it in sync with drags.
+  const [camera, setCamera] = useState({ center: { lat: 39.5, lng: -98.35 }, zoom: 4 });
+
+  /* Cross-page focus: another page (e.g. the pipeline Reel Detail "Filming
+     location" card) called requestFocus(id) before navigating here. Switch to
+     the interactive map, select that pin, and recenter the camera on it. We
+     consume the provider flag immediately so a stale focusId can't re-fire on
+     later visits. */
+  useEffect(() => {
+    if (!focusId) return;
+    const loc = locations.find(l => l.id === focusId);
+    if (!loc) return;            // wait until locations have loaded
+    setTab("interactive");
+    setSelectedMarker(loc.id);
+    if (loc.lat != null && loc.lng != null) {
+      setCamera({ center: { lat: loc.lat, lng: loc.lng }, zoom: 14 });
+    }
+    actions.consumeFocus();
+  }, [focusId, locations, actions]);
 
   /* Google fires window.gm_authFailure() when the Maps JS API rejects the
      key (bad key, referrer/HTTP-restriction mismatch, API not enabled, or
@@ -693,8 +714,9 @@ function Locations() {
             <div style={{ position: "relative", border: "1px solid var(--line-hard)", borderRadius: 8, overflow: "hidden", background: "#000" }}>
               <APIProvider apiKey={MAPS_API_KEY}>
                 <Map
-                  defaultCenter={{ lat: 39.5, lng: -98.35 }}
-                  defaultZoom={4}
+                  center={camera.center}
+                  zoom={camera.zoom}
+                  onCameraChanged={ev => setCamera({ center: ev.detail.center, zoom: ev.detail.zoom })}
                   mapId="ziflow-locations"
                   gestureHandling="greedy"
                   style={{ width: "100%", height: "calc(100vh - 240px)", minHeight: 420 }}

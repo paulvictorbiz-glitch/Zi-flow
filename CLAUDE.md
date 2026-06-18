@@ -34,11 +34,12 @@ Then give a short orientation and wait for direction. Do not start edits/deploys
 
 ## Critical rules — read before acting
 
-1. **Deploy = `vercel --prod` only.** `git push` does NOT deploy. Never assume a push updated the live site.
+1. **Deploy = `vercel --prod` only.** `git push` does NOT deploy. Never assume a push updated the live site. **`vercel --prod` builds the ENTIRE working tree** — every uncommitted change ships, not just the files you touched. Run `git status` first; flag or stash unrelated unverified work before deploying. See memory `feedback_full-tree-deploy.md`.
 2. **Dev and prod share the same Supabase database.** `npm run dev` on localhost hits the live DB. Never seed or mutate without confirming with user.
 3. **File edits are pre-approved.** No need to ask "is it ok to edit X?" — proceed directly.
 4. **No open signup.** Registration is owner-only via the admin panel (`/api/admin/create-user`). The sign-in screen has no "Create account" option.
 5. **Vercel env vars ≠ `.env.local`.** `vercel dev` reads from the Vercel platform, not `.env.local`. Server-side secrets must be set via `vercel env add` AND in `.env.local`.
+6. **Per-user prefs go in `user_preferences`, NOT `app_settings`.** `app_settings` is owner-write-only. For per-user UI state (e.g. pipeline collapse), use `user_preferences(person_id, key, value)` (migration 0070): upsert with `{ onConflict: "person_id,key" }`, and hydrate in a **separate effect keyed on the auth person's id** — never inside the main all-or-nothing hydrate, or a missing table bricks boot.
 
 ---
 

@@ -18,40 +18,30 @@
 
 import React, { useState, useMemo, useEffect } from "react";
 import "./reel-dna.css";
-import { Card, DPill, Pill } from "../components/components.jsx";
+import { Card, DPill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
-import { personName } from "../lib/roster.jsx";
 import { useNow, formatDuration } from "../lib/time.jsx";
 import {
-  GENES, GENE_KEYS, PLATFORMS, STATUSES, SOURCES,
-  platformLabel, statusLabel, sourceLabel, geneLabel,
+  GENES, PLATFORMS, STATUSES,
+  platformLabel, sourceLabel,
   platformFromUrl, parseTagNote, resolveBrief,
 } from "../lib/reel-dna.jsx";
 import { ReelDeconstructor } from "./reel-deconstructor.jsx";
 import { ReelDnaView } from "../components/reel-dna-view.jsx";
 import { ThumbnailDna } from "./thumbnail-dna.jsx";
 import { ReelDnaComprehensive } from "../components/reel-dna-comprehensive.jsx";
-import { ReelAssetsPanel } from "../components/reel-assets-panel.jsx";
-import { UnifiedDnaCard } from "../components/unified-dna-card.jsx";
 import { ReelAssetsPage } from "./reel-assets-page.jsx";
 import { useReelDnaAssets } from "../lib/reel-dna-assets.jsx";
-import {
-  RD_TEXT_COLUMNS, RD_SELECT_COLUMNS,
-  emptyColumnFilters, hasActiveColumnFilters, applyColumnFilters,
-} from "../lib/reel-dna-filters.jsx";
+import { useLocations } from "../lib/locations-data.jsx";
+// RD_SELECT_COLUMNS feeds ColumnFilterRow's select dropdowns. The other filter
+// helpers (column + facet) now live inside ReelDnaComprehensive.
+import { RD_SELECT_COLUMNS } from "../lib/reel-dna-filters.jsx";
 
 /* The bookmarklet shown in the page footer. Navigates to our own origin with
    the current page URL prefilled — no CORS, no API call (the form does the
    Supabase insert client-side). Drag to the bookmarks bar. */
 const BOOKMARKLET = "javascript:(function(){window.open(location.origin+'/?capture=1&url='+encodeURIComponent(location.href),'_blank');})();";
-
-/* Classic ⇄ Comprehensive view choice, persisted across reloads. */
-const DNA_VIEW_KEY = "reel_dna_view";
-function loadDnaView() {
-  try { return localStorage.getItem(DNA_VIEW_KEY) === "comprehensive" ? "comprehensive" : "classic"; }
-  catch { return "classic"; }
-}
 
 export function relTime(iso, now) {
   if (!iso) return "";
@@ -254,114 +244,6 @@ export function BriefBlock({ item }) {
   );
 }
 
-/* ---------- A captured reel card ---------- */
-export function DnaCard({ item, now, actions, onView, onDeconstruct, onSend, onDelete, onOpenAssets, isOwner }) {
-  const [open, setOpen] = useState(false);
-  const genes = item.genesOfInterest || [];
-  const sourceTone = item.source === "ig_dm" ? "violet" : item.source === "share_target" ? "blue" : undefined;
-  const hasTimeline = item.timeline && item.timeline.length > 0;
-  const tags = resolveTags(item);
-  const { assets, counts } = useReelDnaAssets(item.id);
-
-  const saveGene = (geneKey, val) => actions.updateReelDna(item.id, { [geneKey]: val });
-  const setStatus = (s) => actions.updateReelDna(item.id, { status: s });
-
-  return (
-    <div className={"rd-card rd-status--" + item.status}>
-      <div className="rd-card-main">
-      <div className="rd-card-head">
-        <div className="rd-card-title rd-card-title--open"
-             role="button" tabIndex={0}
-             title="Open the DNA breakdown"
-             onClick={() => onView(item)}
-             onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onView(item); } }}>
-          <a className="rd-card-url" href={item.reelUrl} target="_blank" rel="noreferrer"
-             onClick={e => e.stopPropagation()}>
-            {item.reelUrl}
-          </a>
-          <div className="rd-card-meta">
-            <span className="rd-tag">{platformLabel(item.platform)}</span>
-            {tags.location && <span className="rd-tag" style={{ color: "var(--c-amber)", borderColor: "var(--c-amber)" }}>📍 {tags.location}</span>}
-            <span className={"rd-tag rd-source" + (sourceTone ? " rd-source--" + sourceTone : "")}>
-              {sourceLabel(item.source)}
-            </span>
-            {item.capturedBy && <span className="rd-tag dim">{personName(item.capturedBy)}</span>}
-            <span className="rd-tag dim">{relTime(item.createdAt, now)}</span>
-            {hasTimeline && (
-              <span className="rd-tag" style={{ color: "var(--c-cyan)", borderColor: "var(--c-cyan)" }}>
-                {item.timeline.length} segments
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="rd-status-pick">
-          {STATUSES.map(s => (
-            <button key={s.key}
-                    className={"rd-status-chip" + (item.status === s.key ? " is-on" : "")}
-                    onClick={() => setStatus(s.key)}>
-              {s.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {genes.length > 0 && (
-        <div className="rd-card-genes">
-          {genes.map(g => <span key={g} className="rd-gene-tag">{geneLabel(g)}</span>)}
-        </div>
-      )}
-
-      <BriefBlock item={item} />
-
-      {open && (
-        <div className="rd-editor">
-          {(genes.length ? genes : GENE_KEYS).map(g => (
-            <div key={g} className="rd-editor-block">
-              <div className="rd-editor-label">{geneLabel(g)}</div>
-              <GeneEditor gene={g} value={item[g]} onChange={(val) => saveGene(g, val)} />
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="rd-card-foot">
-        <div className="rd-card-foot-left">
-          <span className="rd-deconstruct" onClick={() => onView(item)}>
-            View DNA
-          </span>
-          <span className="rd-collapse" onClick={() => setOpen(o => !o)}>
-            {open ? "Hide genes" : "Edit genes"}
-          </span>
-          <span className="rd-deconstruct" onClick={() => onDeconstruct(item)}>
-            {hasTimeline ? `Timeline (${item.timeline.length})` : "Deconstruct"}
-          </span>
-          {item.reelId ? (
-            <span className="rd-tag" style={{ color: "var(--c-green)", borderColor: "var(--c-green)" }}>
-              ▸ In pipeline · {item.reelId}
-            </span>
-          ) : (
-            <span className="rd-send" onClick={() => onSend(item)}>→ Send to Pipeline</span>
-          )}
-        </div>
-        <div className="rd-card-foot-right">
-          <span className="rd-archive" onClick={() => actions.archiveReelDna(item.id)}>Archive</span>
-          <span className="rd-delete" onClick={() => onDelete(item)}>Delete</span>
-        </div>
-      </div>
-      </div>
-
-      <ReelAssetsPanel
-        item={item}
-        assets={assets}
-        counts={counts}
-        isOwner={isOwner}
-        actions={actions}
-        onOpenFull={onOpenAssets}
-      />
-    </div>
-  );
-}
-
 /* ---------- Inline-editable spreadsheet cell ---------- */
 function EditableCell({ value, placeholder, onSave }) {
   const [v, setV] = useState(value || "");
@@ -385,10 +267,14 @@ function EditableCell({ value, placeholder, onSave }) {
 /* ---------- Column-filter header row (Classic spreadsheet) ----------
    Controlled: `colFilters` + `onColFilter(key, value)` come from the page.
    A text <input> per text column, a <select> per select column, and a
-   clear-all affordance in the actions cell. Stops row clicks from sorting. */
-function ColumnFilterRow({ colFilters, onColFilter, onClear }) {
-  const sel = (key) => RD_SELECT_COLUMNS.find((c) => c.key === key);
-  const TextCell = ({ k }) => (
+   clear-all affordance in the actions cell. Stops row clicks from sorting.
+
+   ColFilterTextCell / ColFilterSelectCell are hoisted to MODULE SCOPE so they
+   keep a stable component identity across renders — defining them inside
+   ColumnFilterRow remounted the <input>/<select> on every keystroke, which
+   dropped focus and reset the cursor. They receive everything as props. */
+function ColFilterTextCell({ k, colFilters, onColFilter }) {
+  return (
     <td className="rd-colfilter-td">
       <input
         className="rd-colfilter-input"
@@ -398,28 +284,34 @@ function ColumnFilterRow({ colFilters, onColFilter, onClear }) {
       />
     </td>
   );
-  const SelectCell = ({ k }) => {
-    const c = sel(k);
-    return (
-      <td className="rd-colfilter-td">
-        <select className="rd-colfilter-select" value={colFilters[k] || "all"}
-                onChange={(e) => onColFilter(k, e.target.value)}>
-          <option value="all">All</option>
-          {c.options.map((o) => <option key={o.key} value={o.key}>{c.labelFn(o.key)}</option>)}
-        </select>
-      </td>
-    );
-  };
+}
+
+function ColFilterSelectCell({ k, colFilters, onColFilter }) {
+  const c = RD_SELECT_COLUMNS.find((col) => col.key === k);
+  return (
+    <td className="rd-colfilter-td">
+      <select className="rd-colfilter-select" value={colFilters[k] || "all"}
+              onChange={(e) => onColFilter(k, e.target.value)}>
+        <option value="all">All</option>
+        {c.options.map((o) => <option key={o.key} value={o.key}>{c.labelFn(o.key)}</option>)}
+      </select>
+    </td>
+  );
+}
+
+function ColumnFilterRow({ colFilters, onColFilter, onClear }) {
+  const T = (k) => <ColFilterTextCell k={k} colFilters={colFilters} onColFilter={onColFilter} />;
+  const S = (k) => <ColFilterSelectCell k={k} colFilters={colFilters} onColFilter={onColFilter} />;
   return (
     <tr className="rd-colfilter-row">
-      <TextCell k="reel" />
-      <TextCell k="location" />
-      <TextCell k="music" />
-      <TextCell k="font" />
-      <TextCell k="sfx" />
-      <TextCell k="story" />
-      <SelectCell k="source" />
-      <SelectCell k="status" />
+      {T("reel")}
+      {T("location")}
+      {T("music")}
+      {T("font")}
+      {T("sfx")}
+      {T("story")}
+      {S("source")}
+      {S("status")}
       <td className="rd-colfilter-td" />
       <td className="rd-colfilter-td rd-colfilter-clear-td">
         <button type="button" className="rd-colfilter-clear" title="Clear column filters" onClick={onClear}>✕</button>
@@ -444,7 +336,7 @@ function AssetCountCell({ item, onOpen }) {
 
 /* ---------- Spreadsheet / log view ---------- */
 export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, onDelete,
-                          onOpenAssets, colFilters, onColFilter, onClearColFilters }) {
+                          onOpenAssets, onOpenCard, colFilters, onColFilter, onClearColFilters }) {
   // Promote a parsed-on-read tag value to a real structured field on edit, so a
   // note-derived column becomes a first-class field once the user touches it.
   const saveLocation = (item, val) => actions.updateReelDna(item.id, { location: val || null });
@@ -474,6 +366,11 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
           )}
         </thead>
         <tbody>
+          {items.length === 0 && (
+            <tr className="rd-tr rd-tr--empty">
+              <td className="rd-td-empty" colSpan={10}>No reels match these filters.</td>
+            </tr>
+          )}
           {items.map(item => {
             const tags = resolveTags(item);
             const sourceTone = item.source === "ig_dm" ? "violet" : item.source === "share_target" ? "blue" : undefined;
@@ -507,6 +404,9 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                 </td>
                 <AssetCountCell item={item} onOpen={onOpenAssets} />
                 <td className="rd-td-act">
+                  {onOpenCard && (
+                    <button className="rd-row-btn rd-row-btn--open" title="Open the full card to add assets" onClick={() => onOpenCard(item)}>⤢ Card</button>
+                  )}
                   <button className="rd-row-btn" title="Open the visual DNA breakdown" onClick={() => onView(item)}>DNA</button>
                   <button className="rd-row-btn" title={hasTimeline ? "Edit timeline" : "Build timeline"} onClick={() => onDeconstruct(item)}>
                     {hasTimeline ? `▦ ${item.timeline.length}` : "▦"}
@@ -516,7 +416,11 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                   ) : (
                     <button className="rd-row-btn rd-row-btn--send" title="Create a pipeline reel from this card" onClick={() => onSend(item)}>→ Pipeline</button>
                   )}
-                  <button className="rd-row-btn rd-row-btn--archive" title="Archive" onClick={() => actions.archiveReelDna(item.id)}>⧉</button>
+                  {item.archivedAt ? (
+                    <button className="rd-row-btn rd-row-btn--restore" title="Restore to Live" onClick={() => actions.restoreReelDna(item.id)}>↩</button>
+                  ) : (
+                    <button className="rd-row-btn rd-row-btn--archive" title="Archive" onClick={() => actions.archiveReelDna(item.id)}>⧉</button>
+                  )}
                   <button className="rd-row-btn rd-row-btn--delete" title="Delete permanently" onClick={() => onDelete(item)}>✕</button>
                 </td>
               </tr>
@@ -546,29 +450,14 @@ function AssetsPageContainer({ item, onBack, isOwner, actions }) {
 
 /* ---------- Page ---------- */
 export function ReelDna({ prefill }) {
-  const { reelDna, actions, error, unifiedCards } = useWorkflow();
+  const { reelDna, reelDnaAssets, actions, error } = useWorkflow();
+  const { actions: locationActions } = useLocations();
   const { person: me } = useAuth();
   const isOwner = me?.role === "owner";
-  // Owner feature flag: swap the card-grid renderer. Default (off) = legacy DnaCard.
-  const DnaCardComponent = unifiedCards ? UnifiedDnaCard : DnaCard;
   const now = useNow();
 
   const [tab, setTab] = useState("reels"); // reels | thumbnails
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
-  const [viewMode, setViewMode] = useState("cards"); // cards | table
-  // Classic ⇄ Comprehensive top-level view (persisted, like the Pulse toggle).
-  const [dnaView, setDnaView] = useState(loadDnaView); // classic | comprehensive
-  const setView = (v) => {
-    const next = v === "comprehensive" ? "comprehensive" : "classic";
-    setDnaView(next);
-    try { localStorage.setItem(DNA_VIEW_KEY, next); } catch (_) {}
-  };
-  // Per-column filters for the Classic spreadsheet.
-  const [colFilters, setColFilters] = useState(emptyColumnFilters);
-  const onColFilter = (key, value) => setColFilters((f) => ({ ...f, [key]: value }));
-  const clearColFilters = () => setColFilters(emptyColumnFilters());
   // Page-level overlay state so both cards AND table rows open the same
   // ReelDnaView / ReelDeconstructor. Keyed by id so realtime edits flow in.
   const [active, setActive] = useState(null); // { id, mode: "view" | "deconstruct" }
@@ -620,25 +509,30 @@ export function ReelDna({ prefill }) {
     if (item.reelId) { setNotice({ tone: "ok", text: `Already in the pipeline as ${item.reelId}.` }); return; }
     try {
       const newId = actions.sendReelDnaToPipeline(item.id, { owner: me?.id });
+      // Migrate the card's location pins onto the new pipeline reel via the
+      // LocationsProvider's linkReel — it updates the in-memory locations array
+      // (so the pin shows immediately on the pipeline Detail "Filming location"
+      // card) AND persists. The store action can't reach the provider, so doing
+      // it here is the single source of truth for location links (footage + news
+      // still migrate inside sendReelDnaToPipeline). linkReel de-dupes.
+      if (newId && typeof locationActions?.linkReel === "function") {
+        const locLinks = (reelDnaAssets || []).filter(
+          a => a && a.reelDnaId === item.id && a.assetType === "location"
+        );
+        for (const a of locLinks) locationActions.linkReel(a.assetId, newId);
+      }
       setNotice({ tone: "ok", text: `Added to the pipeline as ${newId} — open the Pipeline tab to edit it.` });
     } catch (e) {
       setNotice({ tone: "err", text: "Couldn't add to pipeline · " + (e.message || String(e)) });
     }
   };
 
-  // Archived-respecting base pool — feeds both the Classic pill/column
-  // filters and the Comprehensive facet rail.
+  // Archived-respecting base pool — feeds the Comprehensive view. Also excludes
+  // tombstoned (deletedAt) rows defensively in case a stale realtime echo
+  // carries one before the reducer drops it.
   const baseList = useMemo(() => (
-    (reelDna || []).filter(d => showArchived ? !!d.archivedAt : !d.archivedAt)
+    (reelDna || []).filter(d => (showArchived ? !!d.archivedAt : !d.archivedAt) && !d.deletedAt)
   ), [reelDna, showArchived]);
-
-  // Classic visible list: pill filters + per-column filters.
-  const visible = useMemo(() => {
-    const byPill = baseList
-      .filter(d => statusFilter === "all" || d.status === statusFilter)
-      .filter(d => sourceFilter === "all" || d.source === sourceFilter);
-    return applyColumnFilters(byPill, colFilters);
-  }, [baseList, statusFilter, sourceFilter, colFilters]);
 
   const activeItem = useMemo(
     () => (active ? (reelDna || []).find(d => d.id === active.id) || null : null),
@@ -717,83 +611,21 @@ export function ReelDna({ prefill }) {
         </Card>
 
         <div className="rd-filterbar">
-          {/* Classic ⇄ Comprehensive view toggle */}
-          <div className="rd-viewtoggle" role="group" aria-label="Reel DNA view">
-            <button type="button" className={"rd-viewtoggle-btn" + (dnaView === "classic" ? " is-on" : "")}
-                    aria-pressed={dnaView === "classic"} onClick={() => setView("classic")}>Classic</button>
-            <button type="button" className={"rd-viewtoggle-btn" + (dnaView === "comprehensive" ? " is-on" : "")}
-                    aria-pressed={dnaView === "comprehensive"} onClick={() => setView("comprehensive")}>Comprehensive</button>
-          </div>
-          <span style={{ width: 12 }} />
-
-          {dnaView === "classic" && (
-            <>
-              <span className="mono dim">status</span>
-              <DPill active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</DPill>
-              {STATUSES.map(s => (
-                <DPill key={s.key} active={statusFilter === s.key} onClick={() => setStatusFilter(s.key)}>
-                  {s.label}{counts.byStatus[s.key] ? " · " + counts.byStatus[s.key] : ""}
-                </DPill>
-              ))}
-              <span style={{ width: 12 }} />
-              <span className="mono dim">source</span>
-              <DPill active={sourceFilter === "all"} onClick={() => setSourceFilter("all")}>All</DPill>
-              {SOURCES.map(s => (
-                <DPill key={s.key} active={sourceFilter === s.key} onClick={() => setSourceFilter(s.key)}>
-                  {s.label}
-                </DPill>
-              ))}
-            </>
-          )}
           <span style={{ flex: 1 }} />
-          <DPill active={tab === "thumbnails"} onClick={() => setTab("thumbnails")}>Thumbnails</DPill>
-          <span style={{ width: 12 }} />
-          {dnaView === "classic" && (
-            <>
-              <span className="mono dim">view</span>
-              <DPill active={viewMode === "cards"} onClick={() => setViewMode("cards")}>Cards</DPill>
-              <DPill active={viewMode === "table"} onClick={() => setViewMode("table")}>Spreadsheet</DPill>
-              <span style={{ width: 12 }} />
-            </>
-          )}
           <DPill active={showArchived} onClick={() => setShowArchived(a => !a)}>
             {showArchived ? "Archived" : "Live"}{counts.archived ? " · " + counts.archived : ""}
           </DPill>
         </div>
 
-        {dnaView === "comprehensive" ? (
-          baseList.length === 0 ? (
-            <div className="rd-empty">
-              {showArchived ? "No archived reels." : "No reels captured yet — paste a URL above to start your reel genome."}
-            </div>
-          ) : (
-            <ReelDnaComprehensive items={baseList} now={now} actions={actions}
-                                  onView={onView} onDeconstruct={onDeconstruct}
-                                  onSend={handleSend} onDelete={handleDelete} />
-          )
-        ) : visible.length === 0 ? (
+        {baseList.length === 0 ? (
           <div className="rd-empty">
-            {hasActiveColumnFilters(colFilters)
-              ? "No reels match the active column filters."
-              : showArchived
-                ? "No archived reels."
-                : "No reels captured yet — paste a URL above to start your reel genome."}
+            {showArchived ? "No archived reels." : "No reels captured yet — paste a URL above to start your reel genome."}
           </div>
-        ) : viewMode === "table" ? (
-          <DnaTable items={visible} now={now} actions={actions}
-                    onView={onView} onDeconstruct={onDeconstruct}
-                    onSend={handleSend} onDelete={handleDelete}
-                    onOpenAssets={(it) => setAssetsId(it.id)}
-                    colFilters={colFilters} onColFilter={onColFilter} onClearColFilters={clearColFilters} />
         ) : (
-          <div className="rd-grid">
-            {visible.map(item => (
-              <DnaCardComponent key={item.id} item={item} now={now} actions={actions}
-                       onView={onView} onDeconstruct={onDeconstruct}
-                       onSend={handleSend} onDelete={handleDelete}
-                       onOpenAssets={(it) => setAssetsId(it.id)} isOwner={isOwner} />
-            ))}
-          </div>
+          <ReelDnaComprehensive items={baseList} now={now} actions={actions}
+                                onView={onView} onDeconstruct={onDeconstruct}
+                                onSend={handleSend} onDelete={handleDelete}
+                                onOpenAssets={(it) => setAssetsId(it.id)} isOwner={isOwner} />
         )}
 
         <div className="rd-bookmarklet">

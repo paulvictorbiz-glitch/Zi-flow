@@ -206,14 +206,6 @@ function TaskRow({
   return (
     <li
       className={"mw-task-row" + (isOver ? " is-drop-target" : "")}
-      draggable={canDrag}
-      onDragStart={e => {
-        const tag = (e.target.tagName || "").toLowerCase();
-        if (["input", "textarea", "button", "select"].includes(tag) || e.target.isContentEditable) { e.preventDefault(); return; }
-        if (!canDrag) { e.preventDefault(); return; }
-        e.dataTransfer.effectAllowed = "move";
-        onDragStartTask?.(task.id);
-      }}
       onDragOver={e => { if (dragId && dragId !== task.id && !task.completed) { e.preventDefault(); onDragOverTask?.(task.id); } }}
       onDrop={e => { e.preventDefault(); onDropTask?.(task.id); }}
       onDragEnd={() => onDragEndTask?.()}
@@ -223,6 +215,23 @@ function TaskRow({
         opacity: dragId === task.id ? 0.4 : 1,
       }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
+        {/* Dedicated drag handle — only this grabs the drag, so the row text/notes stay
+            freely selectable for copy/paste. (A draggable <li> hijacks text selection.) */}
+        {canDrag ? (
+          <span
+            className="mw-drag-handle"
+            draggable
+            onDragStart={e => { e.dataTransfer.effectAllowed = "move"; onDragStartTask?.(task.id); }}
+            title="Drag to reorder"
+            style={{
+              cursor: "grab", color: "var(--fg-dim)", fontSize: 13, lineHeight: 1,
+              marginTop: 3, flexShrink: 0, userSelect: "none",
+            }}
+          >⠿</span>
+        ) : (
+          <span style={{ width: 8, flexShrink: 0 }} aria-hidden="true" />
+        )}
+
         <input
           type="checkbox"
           checked={!!task.completed}

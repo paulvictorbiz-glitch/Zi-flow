@@ -13,6 +13,19 @@
 import React from "react";
 import { AssetSection } from "./asset-section.jsx";
 import { ThumbPreview } from "../pages/thumbnail-dna.jsx";
+import { footageBrainThumbnailUrl } from "../lib/footage-brain-client.js";
+
+/* Build a Google Maps link for a location: prefer exact coordinates, fall
+   back to a text search on the address/name. Returns "" when there's nothing
+   to point at. */
+function mapsUrlForLocation(l) {
+  if (l == null) return "";
+  if (l.lat != null && l.lng != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${l.lat},${l.lng}`;
+  }
+  const q = (l.address || l.name || "").trim();
+  return q ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}` : "";
+}
 
 /* Dependency-free relative time: "just now" / "5h ago" / "3d ago". */
 function relAgo(iso) {
@@ -70,15 +83,33 @@ export function ReelAssets({
         compact={compact}
         emptyText="No footage attached"
       >
-        {footage.map(f => (
-          <div className="rd-asset-row" key={f.id}>
-            <span className="rd-asset-name">
-              {f.filename || f.footage_file_id || "Footage"}
-            </span>
-            <span className="rd-tag sm dim">{f.source || "footage"}</span>
-            <DetachBtn type="footage" sourceId={f.id} />
-          </div>
-        ))}
+        {footage.map(f => {
+          const href = f.drive_url || f.drive_folder_url || f.url || "";
+          const name = f.filename || f.footage_file_id || "Footage";
+          const thumbSrc = f.thumbnail_url ? footageBrainThumbnailUrl(f.thumbnail_url) : "";
+          return (
+            <div className="rd-asset-row" key={f.id}>
+              {thumbSrc ? (
+                <img
+                  className="rd-asset-thumb"
+                  src={thumbSrc}
+                  alt={name}
+                  loading="lazy"
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                />
+              ) : null}
+              {href ? (
+                <a className="rd-asset-name rd-asset-link" href={href} target="_blank" rel="noreferrer" title={name}>
+                  {name}
+                </a>
+              ) : (
+                <span className="rd-asset-name">{name}</span>
+              )}
+              <span className="rd-tag sm dim">{f.source || "footage"}</span>
+              <DetachBtn type="footage" sourceId={f.id} />
+            </div>
+          );
+        })}
       </AssetSection>
 
       <AssetSection
@@ -90,16 +121,27 @@ export function ReelAssets({
         emptyText="No locations attached"
       >
         <div className="rd-asset-chips">
-          {locations.map(l => (
-            <span
-              className="rd-tag"
-              key={l.id}
-              style={{ color: "#f59e0b", borderColor: "#f59e0b" }}
-            >
-              📍 {l.name || "Location"}
-              <DetachBtn type="location" sourceId={l.id} />
-            </span>
-          ))}
+          {locations.map(l => {
+            const mapHref = mapsUrlForLocation(l);
+            const name = l.name || "Location";
+            return (
+              <span
+                className="rd-tag"
+                key={l.id}
+                style={{ color: "#f59e0b", borderColor: "#f59e0b" }}
+              >
+                {mapHref ? (
+                  <a className="rd-asset-pin-link" href={mapHref} target="_blank" rel="noreferrer"
+                     title={"Open " + name + " in Google Maps"}>
+                    📍 {name}
+                  </a>
+                ) : (
+                  <>📍 {name}</>
+                )}
+                <DetachBtn type="location" sourceId={l.id} />
+              </span>
+            );
+          })}
         </div>
       </AssetSection>
 
@@ -121,7 +163,14 @@ export function ReelAssets({
                 rel="noreferrer"
                 title={t.title || t.videoUrl}
               >
-                <ThumbPreview videoId={t.videoId} alt={t.title || t.videoUrl} />
+                {t.videoId ? (
+                  <ThumbPreview videoId={t.videoId} alt={t.title || t.videoUrl} />
+                ) : t.thumbnailUrl ? (
+                  <img className="td-thumb-img" src={t.thumbnailUrl}
+                       alt={t.title || t.videoUrl || "Thumbnail"} loading="lazy" />
+                ) : (
+                  <span className="rd-asset-thumb-stub">no preview</span>
+                )}
               </a>
               <DetachBtn type="thumbnail" sourceId={t.id} />
             </div>
