@@ -64,7 +64,6 @@ const CARD_COLORS = ["cyan", "violet", "green", "amber", "red", "blue", "orange"
 
 function ReelCard({ reel, onOpen, state, isSelected }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'
-  const [collapsed, setCollapsed] = useState(false);
   const cls = [
     "reel",
     collapsed ? "collapsed" : "",
@@ -90,7 +89,8 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
   const pillText = reel.status || liveAge;
 
   /* Per-card action menu (archive / delete) — gated by role permissions. */
-  const { actions, reelChatRefs } = useWorkflow();
+  const { actions, reelChatRefs, collapsedReelIds } = useWorkflow();
+  const collapsed = (collapsedReelIds || []).includes(reel.id);
   const { can } = usePermissions();
   const { unreadByReel } = useNotifications();
   const unreadCount = unreadByReel[reel.id] || 0;
@@ -210,7 +210,7 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
         <span>{collapsed ? "" : (reel.foot || "")}</span>
         <span
           className="collapse"
-          onClick={e => { e.stopPropagation(); setCollapsed(c => !c); }}
+          onClick={e => { e.stopPropagation(); actions.toggleReelCollapsed(reel.id); }}
         >{collapsed ? "Expand" : "Collapse"}</span>
       </div>
     </div>

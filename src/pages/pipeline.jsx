@@ -21,7 +21,7 @@ const PIPELINE_STAGES = STAGES.map((key) => ({ key, label: STAGE_LABEL[key].toUp
 const LANE_ROLE_ORDER = { skilled: 0, owner: 1, variant: 2 };
 
 function Pipeline({ onOpen }) {
-  const { reels, reviewLaneCards, actions } = useWorkflow();
+  const { reels, reviewLaneCards, actions, hiddenLaneIds } = useWorkflow();
   const { peopleList } = useRoster();
   const { can } = usePermissions();
   const { person } = useAuth();
@@ -52,6 +52,13 @@ function Pipeline({ onOpen }) {
   useEffect(() => {
     localStorage.setItem("pipeline_hidden_lanes", JSON.stringify([...hiddenLanes]));
   }, [hiddenLanes]);
+
+  /* When user_preferences loads from DB (hiddenLaneIds), merge into local set.
+     DB is authoritative when non-empty; local localStorage is the fallback. */
+  useEffect(() => {
+    if (!hiddenLaneIds || hiddenLaneIds.length === 0) return;
+    setHiddenLanes(new Set(hiddenLaneIds));
+  }, [hiddenLaneIds?.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     localStorage.setItem("pipeline_hidden_cols", JSON.stringify([...hiddenCols]));
   }, [hiddenCols]);
@@ -87,11 +94,14 @@ function Pipeline({ onOpen }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [laneCtxMenu]);
 
-  const toggleLane = (laneId) => setHiddenLanes(prev => {
-    const next = new Set(prev);
-    if (next.has(laneId)) next.delete(laneId); else next.add(laneId);
-    return next;
-  });
+  const toggleLane = (laneId) => {
+    setHiddenLanes(prev => {
+      const next = new Set(prev);
+      if (next.has(laneId)) next.delete(laneId); else next.add(laneId);
+      return next;
+    });
+    actions.toggleLaneHidden(laneId);
+  };
   const toggleCol = (colKey) => setHiddenCols(prev => {
     const next = new Set(prev);
     if (next.has(colKey)) next.delete(colKey); else next.add(colKey);

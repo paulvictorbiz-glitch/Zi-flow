@@ -584,9 +584,28 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .reel.is-blocked { border-color: var(--c-red-soft); }
 .reel.is-warn    { border-color: var(--c-amber-soft); }
 
-/* Collapsed = compact title chip: only the title + Expand control show, so
-   keep the card tight (no big inter-section gap, slimmer vertical padding). */
-.reel.collapsed { gap: 6px; padding-top: 9px; padding-bottom: 9px; }
+/* Collapsed = compact title chip: only the title + Expand control show. */
+.reel.collapsed {
+  gap: 0;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-left: 10px;
+  padding-right: 10px;
+  min-height: 0;
+}
+.reel.collapsed .foot {
+  padding-top: 4px;
+  margin-top: 0;
+  border-top: none;
+}
+.reel.collapsed .title {
+  font-size: 13px;
+  margin-top: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .reel .head {
   display: flex; align-items: flex-start; gap: 8px; justify-content: space-between;

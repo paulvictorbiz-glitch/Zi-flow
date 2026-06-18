@@ -33,6 +33,7 @@ import { ReelDnaView } from "../components/reel-dna-view.jsx";
 import { ThumbnailDna } from "./thumbnail-dna.jsx";
 import { ReelDnaComprehensive } from "../components/reel-dna-comprehensive.jsx";
 import { ReelAssetsPanel } from "../components/reel-assets-panel.jsx";
+import { UnifiedDnaCard } from "../components/unified-dna-card.jsx";
 import { ReelAssetsPage } from "./reel-assets-page.jsx";
 import { useReelDnaAssets } from "../lib/reel-dna-assets.jsx";
 import {
@@ -545,9 +546,11 @@ function AssetsPageContainer({ item, onBack, isOwner, actions }) {
 
 /* ---------- Page ---------- */
 export function ReelDna({ prefill }) {
-  const { reelDna, actions, error } = useWorkflow();
+  const { reelDna, actions, error, unifiedCards } = useWorkflow();
   const { person: me } = useAuth();
   const isOwner = me?.role === "owner";
+  // Owner feature flag: swap the card-grid renderer. Default (off) = legacy DnaCard.
+  const DnaCardComponent = unifiedCards ? UnifiedDnaCard : DnaCard;
   const now = useNow();
 
   const [tab, setTab] = useState("reels"); // reels | thumbnails
@@ -785,7 +788,7 @@ export function ReelDna({ prefill }) {
         ) : (
           <div className="rd-grid">
             {visible.map(item => (
-              <DnaCard key={item.id} item={item} now={now} actions={actions}
+              <DnaCardComponent key={item.id} item={item} now={now} actions={actions}
                        onView={onView} onDeconstruct={onDeconstruct}
                        onSend={handleSend} onDelete={handleDelete}
                        onOpenAssets={(it) => setAssetsId(it.id)} isOwner={isOwner} />
