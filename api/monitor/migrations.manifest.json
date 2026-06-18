@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-18T19:38:20.051Z",
+  "generated": "2026-06-18T21:58:48.098Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -311,7 +311,7 @@
     },
     {
       "version": "0076_rls_hardening.sql",
-      "checksum": "bf3d63280abd44302c3d5eb9f8312c5c0f1020c59b2c840e084fea229eb53ab3"
+      "checksum": "030ba54b3ac025dac19d7a772e8233024f9c335c4b7b650c550384f1b61e607a"
     }
   ]
 }

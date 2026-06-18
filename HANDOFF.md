@@ -1,36 +1,48 @@
-# Handoff — last updated 2026-06-19
+# Handoff — last updated 2026-06-19 (Playwright smoke + Reel DNA verify)
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Resumed** to deploy the prior cleanup batch (`d930896`) + apply migration 0076. Both done — plus an incident along the way.
-- **🔴 INCIDENT (fixed):** applying 0076's `"owner manage people"` policy took the live site down with **`infinite recursion detected in policy for relation people`** — the policy was ON `people` and queried `people`. That's what broke "Instagram IG analyze." Fixed live via a `SECURITY DEFINER` `auth_is_owner()` helper; verified under a real authenticated session (`7 rows, no recursion`). Commit `238759b`.
-- **Migration drift found:** `0049_demo_sandbox.sql` was recorded applied but **never actually ran** (audit proved it — `is_demo_user()` etc. absent). Drift isolated to **0049 only**; all of 0050→0075 are genuinely present.
-- **0076 applied §1/§3/§4** (people priv-esc, `attached_footage` authenticated-only, `reel_dna` owner/self) + verified; **§2 (owner-only DELETE) deferred** (depended on 0049). Un-marked 0049 + added a `DO-NOT-BULK-APPLY` guard. Commit `5ddb520`.
-- **Deployed:** C2 (`vercel --prod`, READY) + C1 (`ig_webhook.py` → Hetzner, `ingest_enabled:true`). **Pushed** `main` + `ig-ingest-reconcile-contenttype` to origin.
+- **Tooling + verification, no app code.** Installed Playwright (`@playwright/test` + Chromium) — the project had **no** browser automation — and built the first smoke-screenshot harness (`scripts/smoke-screenshot.mjs`).
+- **Verified the Reel DNA dashboard tab renders healthy** via real screenshots: capture form, Reels/Thumbnails sub-tabs, IG Sync Health panel, ~28-row captured-reels spreadsheet — no crash, no error boundary, **no uncaught page errors**.
+- Auth solved with a one-time `playwright codegen --save-storage=auth.json` (owner logged in once, session reused). `auth.json` + `screenshots/` are gitignored.
+- **One minor finding:** the Reel DNA "capture a reel" bookmarklet is `<a href="javascript:…">` ([src/pages/reel-dna.jsx:1197](src/pages/reel-dna.jsx#L1197)) → React future-version warning. Non-breaking.
+- **No DB, no deploy.** Live production unchanged. **Note:** during wrap-up a separate commit `ecb3247 fix(demo): decommission demo mode` landed (committed the carried-over `monitor.jsx`/`store.jsx` edits) — `main` is now **1 ahead of `origin/main`, unpushed, not deployed**.
+- This now satisfies the "smoke-harness in progress" item the prior reorg-planning session was waiting on (see below) — the harness exists and works.
 
 ## Where we left off
-On `main` (local == `origin/main` == `238759b`). Everything from this session is **committed, pushed, deployed, and verified live.** Working tree has only the wrap-up doc edits (CHANGELOG/HANDOFF/change-log) uncommitted.
+Two threads are open:
+1. **(This session — done)** Playwright + `scripts/smoke-screenshot.mjs` exist locally (uncommitted); Reel DNA confirmed working. Dev server may still be on port **8001** (8000 was already in use).
+2. **(Prior reorg-planning session — still paused on owner input)** A tabs/monitor/permissions **reorganization plan** is drafted but unapproved, awaiting two decisions (below). Plan file: `C:\Users\Mi\.claude\plans\analyze-the-all-tabs-curious-dongarra.md`. Key discovery there: `monitor`/`pulse`/`ai` tabs are hard-gated `isOwner &&` at render ([app.jsx:676-678](src/app.jsx#L676-L678)), not via `canView()` — see memory `reference_owner-monitor-hardgate.md`.
 
 ## Open blockers
-- **None.** Production is healthy (IG analyze restored).
+- **None** for production. The reorg is paused on owner input, not a technical blocker.
+
+## Awaiting owner decision (to finalize the reorg plan)
+1. **Smoke harness** — fold a minimal Playwright smoke (boot + per-role tab visibility) into the reorg plan as "Part 0"? ✅ The harness now exists (`scripts/smoke-screenshot.mjs`) and is proven — just needs extending to per-role tab checks. (Recommended — only safety net; repo has zero tests.)
+2. **Restructure coordination** — is the nav reorg *part of* the contemplated full restructure ([[reference_restructure-readiness]]) or independent and done first? It rewrites `app.jsx` `TABS`/`DEFAULT_TAB_GROUPS` heavily, so order matters.
 
 ## Pending (written but not yet live)
-- **0076 §2 (owner-only DELETE on reels/cards/tasks)** — deferred. Needs a rewrite against the REAL live policies (drop `"auth write reels/cards/tasks"` → split into team INSERT/UPDATE + owner-only DELETE, no `is_demo_user`).
-- **0049 demo sandbox** — now `[pending]` and intentionally NOT applied (guard header in the file). **DEFERRED until the owner revisits the demo-sandbox project.** Do not bulk-apply.
+- **Playwright harness uncommitted** — `scripts/smoke-screenshot.mjs` + `@playwright/test` devDep in `package.json`/`package-lock.json` + `.gitignore` edits are local only. Looks like a coherent unit; commit or stash before any deploy.
+- **Demo-decommission commit unpushed/undeployed** — `ecb3247` (the former carried-over `monitor.jsx`/`store.jsx` edits) is committed but `main` is 1 ahead of origin and **not deployed**. `git push` + `vercel --prod` when ready (full-tree deploy will also ship the Playwright batch + docs below — review first).
+- **Still-dirty tree:** the Playwright batch (above) + `CHANGELOG.md`/`change-log.md`/`HANDOFF.md` docs + `api/monitor/migrations.manifest.json` (prebuild regen). Commit or stash before deploying.
+- **0076 §2** (owner-only DELETE reels/cards/tasks) — rewrite against live `"auth write"` policies.
+- **0049 demo sandbox** — `[pending]`, guarded, DEFERRED until owner revisits.
 
-## Next session — start here (owner asked to execute items 2–4)
-1. **0076 §2 rewrite + apply** — owner-only DELETE on reels/cards/tasks, written against the live `"auth write"` policies (split into team INSERT/UPDATE + owner-only DELETE). Verify from a non-owner session.
-2. **Local curl-TLS quirk** — the Bash env's `curl` can't TLS to `*.footagebrain.com` (exit 35); confirm/work around (use a node HTTPS client or verify from the Hetzner box) so prod health checks aren't misleading.
-3. **Prune stale branches + ~12 agent worktrees** (`.claude/worktrees/agent-*`) left from prior workflow runs — `git worktree list` / `git worktree prune` + delete merged branches.
-4. **(Deferred, owner will revisit)** the **demo sandbox** project (0049) — leave parked; do not apply.
-5. *(Optional, offered)* security-engineer audit / codebase-restructure analysis — today's self-inflicted RLS hole makes a focused security pass worthwhile.
+## Next session — start here
+1. **Answer the two decisions above**, then resequence the reorg plan (owner-only Monitor hub, flat Infra/Pulse/World/AI Brain sub-tabs, centralized `useIsOwner()` role check).
+2. Decide whether to **commit the Playwright harness** (and extend `smoke-screenshot.mjs` into a per-role multi-tab smoke test — the restructure audit's highest-leverage gap).
+3. **Triage the deploy surface** — push `ecb3247` (demo decommission) + commit/stash the Playwright batch + docs before any `vercel --prod` (full-tree deploy ships everything).
+4. Optionally fix the `javascript:` bookmarklet warning in [src/pages/reel-dna.jsx:1197](src/pages/reel-dna.jsx#L1197).
+5. 0076 §2 rewrite + apply (verify from a non-owner session); local curl-TLS quirk; (deferred) demo sandbox 0049.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-git log --oneline -3                      # 238759b rls recursion fix · 5ddb520 drift reconcile · d930896 cleanup batch
-git status -sb                            # main == origin/main (clean apart from doc edits)
-node --env-file=.env.local scripts/migrate.mjs | grep -E "0049|0076"   # 0049 [pending] (deferred), 0076 [applied]
-ssh root@178.105.14.144 "curl -s https://api.footagebrain.com/api/ig/status"   # {"ok":true,"ingest_enabled":true,...}  (run from the BOX — local curl TLS-fails)
+git status -sb                            # main ahead 1 of origin; dirty = Playwright batch + docs + manifest
+git log --oneline -1                      # expect ecb3247 (demo decommission, unpushed)
+npx playwright --version                  # confirms Playwright installed
+npm run dev                               # starts Vite (falls back to :8001 if :8000 busy)
+node scripts/smoke-screenshot.mjs http://localhost:8000   # re-run the Reel DNA smoke (needs auth.json)
 ```
+Plan under review: `C:\Users\Mi\.claude\plans\analyze-the-all-tabs-curious-dongarra.md`

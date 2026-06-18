@@ -4,6 +4,34 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-19 — Playwright installed + first smoke-screenshot harness; Reel DNA tab verified healthy
+
+**What changed:** Stood up browser automation for the project (it had none) and used it to visually verify the **Reel DNA** dashboard tab. Added `@playwright/test` + Chromium as a devDependency and a small ad-hoc script that loads a saved login session, opens the authed dashboard at `/app`, waits out the "LOADING WORKFLOW…" hydrate splash, clicks/lands on Reel DNA, screenshots it, and reports console + uncaught page errors. Outcome: **Reel DNA renders fine — capture form, Reels/Thumbnails sub-tabs, IG Sync Health panel, and the ~28-row captured-reels spreadsheet all paint correctly; no crash, no error boundary, no uncaught page errors.** This is the first concrete piece of the Playwright smoke harness the 2026-06-19 restructure audit flagged as the highest-leverage missing gate.
+
+**Where:** `package.json` / `package-lock.json` (devDep), `scripts/smoke-screenshot.mjs` (new, the harness), `.gitignore` (added `auth.json` + `screenshots/`). No app code, no DB, no deploy. `auth.json` (saved Supabase session, 11 cookies + localStorage for localhost:8000) and `screenshots/` are gitignored.
+
+**Path we took:** Confirmed first that there were **no Playwright browser tools in this session** (only the vidIQ MCP) **and no Playwright in the project** — so a screenshot was impossible without installing it; said so instead of faking output. Owner approved install. Auth was the wall: the dashboard is behind Supabase login, so used `npx playwright codegen http://localhost:8000 --save-storage=auth.json` (run in background so it wouldn't time out) — owner logged in once in the real browser window and closed it, persisting the session to `auth.json`. First authed run hit `/app` but screenshotted "LOADING WORKFLOW…" (store still hydrating); fixed by polling for the tab strip / shell-ready instead of a fixed wait. The app restored the owner's last view, so it opened directly on Reel DNA.
+
+**What we learned:** (1) **Root `/` is the public 3D landing page; the authed dashboard is `/app`** (lazy `Landing` outside the `AuthGate` in `app.jsx`; `isLanding = pathname === "/"`). (2) **`networkidle` never fires** on this app — the R3F landing keeps a render/animation loop busy; use `domcontentloaded` + an explicit wait for a real element. (3) The shell gates on an **all-or-nothing store hydrate** ("LOADING WORKFLOW…"), so screenshot scripts must wait for the tab strip to appear, not a timer. (4) **One real (minor) finding:** the Reel DNA drag-to-bookmark "capture a reel" control is an `<a href="javascript:…">` ([src/pages/reel-dna.jsx:1197](src/pages/reel-dna.jsx#L1197)) → React logs *"A future version of React will block javascript: URLs"*. Works today; non-breaking; worth migrating before a React major. (5) Reminder honored: dev (port 8000) hits the **live shared Supabase DB**, so this was read-only navigation/screenshots — no writes.
+
+**Status:** **Done (local only).** Playwright + script present, not committed, not deployed. Reel DNA verified healthy. Follow-ups: optionally flesh the script into a multi-tab smoke test; fix the `javascript:` bookmarklet warning.
+
+---
+
+## 2026-06-19 — Repo hygiene (worktree prune) + codebase-restructure readiness audit
+
+**What changed:** No application code, DB, or deploy. Two things: (1) pruned all **10 stale `.claude/worktrees/agent-*` worktrees** plus their 10 `worktree-agent-*` branches, and (2) ran a **4-subagent audit** of the codebase to produce a prioritized "critical things to note before restructuring the entire codebase" inventory (the session's durable output).
+
+**Where:** `.claude/worktrees/` (all removed) + local git branches; findings logged to `obsidian-vault/05 - Roadmap/Session Log.md` and memory `reference_restructure-readiness.md`. Working tree clean, `main == origin/main == 747c4cd`.
+
+**Path we took:** Inspected each worktree with `git -C <wt> status --short` before removing — all 10 were based on old commits (`2c29b06`/`e3a345c`, far behind main) with edits referencing long-superseded migrations 0036–0038, so confirmed throwaway → `git worktree remove --force` ×10 + `prune`, then `git branch -D` the matching `worktree-agent-*` branches. For the audit, dispatched 4 parallel agents (build/deploy/infra · app architecture & import graph · DB/RLS/migration coupling · git/worktree/hidden hazards) and synthesized. When the owner asked "will the steps leave red flags?", gave a second-order risk analysis distinguishing the git/build/path failure class (the steps fix it) from the runtime-regression class (inherent — no tests, no staging, full-tree deploy, shared live DB).
+
+**What we learned:** (1) **`refactor/folder-structure` is a trap** — 61 commits behind main, 0 ahead; merging it would delete migrations 0068–0076, `tools/capcut-agent/`, and the current `vercel.json` (~63k deletions). Branch fresh from `main`. (2) **`npm run build` is the only gate and it's necessary-but-not-sufficient** — it proves imports compile but can't see runtime regressions (realtime channel names, deep-link parsing, reducer side-effects, person-slot fallbacks are all string/runtime-coupled). (3) **Add a `@/` Vite alias + `jsconfig.json` as step 1** before any file moves, else every move cascades through `../` rewrites (hubs: `store.jsx` ~34 importers, `roster.jsx` ~17, `shared-data.jsx` ~9). (4) Migration paths are hardcoded in 3 scripts + regenerated into the shipped `api/monitor/migrations.manifest.json`; never relocate `supabase/migrations/`-or rename applied files (keyed on filename + SHA256). (5) Vercel function cap is at **12/12** — the `api/` layer can be moved but not expanded. (6) The single highest-leverage addition *not* in the plan is a thin Playwright smoke-test harness to convert "trust manual testing" into an objective gate. (7) `git worktree remove --force` discards a dirty worktree's edits permanently — scan status first (did so).
+
+**Status:** **Done** — worktrees pruned, audit documented. No deploy. Restructure itself not started (awaiting owner go-ahead).
+
+---
+
 ## 2026-06-19 — 🔴 INCIDENT: `people` RLS infinite recursion (caused by 0076), found + fixed live
 
 **What changed:** Restored the live site after migration 0076's `"owner manage people"` policy took it down. The policy was **on** `public.people` yet its `USING`/`WITH CHECK` did `select … from public.people`, so Postgres re-evaluated `people`'s policies while evaluating that one → **"infinite recursion detected in policy for relation people"** on *every authenticated read* of `people`. That's what the owner hit as "Instagram IG analyze won't update." Fixed by moving the owner check into a `SECURITY DEFINER` function `public.auth_is_owner()` (runs as the table owner → bypasses RLS on `people` → no recursion); the policy now calls that function.
