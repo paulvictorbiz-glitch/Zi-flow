@@ -122,22 +122,35 @@ create trigger trg_pin_people_claim_columns
   execute procedure public.pin_people_claim_columns();
 
 -- Owner can manage any people row from an authenticated session.
+--
+-- CRITICAL: this policy is ON public.people, so its USING/WITH CHECK expression
+-- must NOT directly `select ... from public.people` -- doing so makes Postgres
+-- re-evaluate people's policies while evaluating this one => "infinite recursion
+-- detected in policy for relation people" on EVERY authenticated read of people
+-- (this broke the live site on 2026-06-19). The owner check is therefore wrapped
+-- in a SECURITY DEFINER function: it runs as the function owner (the table owner),
+-- which bypasses RLS on people, so the inner lookup does not recurse.
+create or replace function public.auth_is_owner()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.people
+    where user_id = auth.uid() and role = 'owner'
+  );
+$$;
+revoke all on function public.auth_is_owner() from public, anon;
+grant execute on function public.auth_is_owner() to authenticated, service_role;
+
 drop policy if exists "owner manage people" on public.people;
 create policy "owner manage people" on public.people
   for all
   to authenticated
-  using (
-    exists (
-      select 1 from public.people
-      where user_id = auth.uid() and role = 'owner'
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.people
-      where user_id = auth.uid() and role = 'owner'
-    )
-  );
+  using ( public.auth_is_owner() )
+  with check ( public.auth_is_owner() );
 
 
 -- ---------------------------------------------------------
