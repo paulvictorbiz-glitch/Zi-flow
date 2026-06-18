@@ -644,16 +644,33 @@ export async function replyToThread(thread, text) {
       if (r.ok && d.ok) return { ok: true, reply: { author: "you", text, minsAgo: 0, replyId: d.reply_id } };
       return { ok: false, error: d.error || "Instagram reply failed" };
     }
+    // YouTube + TikTok: the frontend/proxy contract is wired so manual replies
+    // work the moment the Hetzner endpoint exists (these APIs require business
+    // verification + app review). Until the backend route is live, the call
+    // returns 404/501 and we surface a clear "pending verification" state rather
+    // than a generic failure. See TODO Backlog → "YouTube replies".
+    if (platform === "youtube" || platform === "tiktok") {
+      const base = platform === "youtube" ? YT_API : TIKTOK_API;
+      const r = await fetch(`${base}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment_id: t.id, message: text, kind: t.kind || "comment" }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok) return { ok: true, reply: { author: "you", text, minsAgo: 0, replyId: d.reply_id } };
+      const label = platform === "youtube" ? "YouTube" : "TikTok";
+      if (r.status === 404 || r.status === 501) {
+        return { ok: false, pending: true, error: `${label} replies are pending business verification — not sent yet. Reply on ${label} directly for now.` };
+      }
+      return { ok: false, error: d.error || `${label} reply failed` };
+    }
   } catch {
     // network/transport error — fall through to mock so the draft isn't lost
     return mock();
   }
 
-  // YouTube / TikTok replies are not yet wired to a backend endpoint.
-  // Return an explicit error so the UI surfaces a clear message instead of
-  // silently pretending the reply was posted.
-  const platformLabel = t.platform === "youtube" ? "YouTube" : "TikTok";
-  return { ok: false, error: `${platformLabel} replies are not yet supported — your reply was NOT sent. Use ${platformLabel} directly to reply.` };
+  // Unknown platform — explicit error so the UI never silently "succeeds".
+  return { ok: false, error: `Replies for ${t.platform || "this platform"} are not supported yet — your reply was NOT sent.` };
 }
 
 /* ── Live data (real platform APIs) ─────────────────────────────────────────
@@ -832,6 +849,41 @@ export async function classifyInboxThreads(threads, accessToken) {
     if (!r.ok) return {};
     const d = await r.json();
     return d.classifications || {};
+  } catch {
+    return {};
+  }
+}
+
+/* ── AI reply suggestions for inbox threads ─────────────────────────────────
+   On-demand (the inbox ✨ "Suggest replies" button) — NOT fire-and-forget on
+   load, to avoid doubling the shared free-OpenRouter burn the classify call
+   already incurs per refresh. Posts to the same /api/ai/monitor route (folded
+   in under the Vercel 12-function cap) with suggest_replies:true. Returns
+   { [threadId]: string[] } (2-3 drafts each); resolves to {} on any failure so
+   the inbox never breaks. The drafts only seed the editable compose box — the
+   human always edits + sends. */
+export async function suggestInboxReplies(threads, accessToken) {
+  if (!Array.isArray(threads) || !threads.length) return {};
+  const payload = threads.slice(0, 8).map(t => ({
+    id: t.id,
+    platform: t.platform || "",
+    kind: t.kind || "comment",
+    text: (t.text || "").slice(0, 500),
+    postTitle: t.postTitle || "",
+    author: t.author?.handle || t.author?.name || "",
+    sentiment: t.sentiment || "neutral",
+  }));
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+    const r = await fetch("/api/ai/monitor", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ suggest_replies: true, threads: payload }),
+    });
+    if (!r.ok) return {};
+    const d = await r.json();
+    return d.suggestions || {};
   } catch {
     return {};
   }

@@ -21,6 +21,7 @@ import {
   fetchLiveInstagramInbox,
   fetchLiveYouTubeInbox,
   classifyInboxThreads,
+  suggestInboxReplies,
 } from "../lib/social-client.js";
 import { SocialStatusCards } from "../components/social-status.jsx";
 import { useAuth } from "../auth.jsx";
@@ -107,7 +108,7 @@ const DM_TEMPLATES = [
 ];
 
 /* ── one thread row (comment or DM) ───────────────────────────────────────── */
-function ThreadRow({ thread, onReplied, isActive, onActivate, tabIndex, aiTopic }) {
+function ThreadRow({ thread, onReplied, isActive, onActivate, tabIndex, aiTopic, suggestions, suggestLoading, onSuggest }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -150,6 +151,14 @@ function ThreadRow({ thread, onReplied, isActive, onActivate, tabIndex, aiTopic 
     setShowTemplates(false);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
+
+  /* Click an AI draft → seed the editable compose box (never auto-send), then
+     focus so the human can tweak before Send. Clone of applyTemplate. */
+  const applySuggestion = (text) => {
+    setDraft(text);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+  const hasSuggestions = Array.isArray(suggestions) && suggestions.length > 0;
 
   return (
     <div
@@ -228,13 +237,59 @@ function ThreadRow({ thread, onReplied, isActive, onActivate, tabIndex, aiTopic 
             </button>
           </div>
         )}
+
+        {/* AI reply suggestions — opt-in per thread. Drafts only seed the
+            editable box above; the human always edits + clicks Send. */}
+        {!thread.replied && onSuggest && (
+          <div className="ib-suggest" role="group" aria-label="AI reply suggestions">
+            {suggestLoading ? (
+              <span className="ib-suggest-loading">✨ thinking…</span>
+            ) : hasSuggestions ? (
+              <>
+                {suggestions.map((s, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className="ib-suggest-pill"
+                    title={s}
+                    onClick={(e) => { e.stopPropagation(); applySuggestion(s); }}
+                  >
+                    {s}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="ib-suggest-regen"
+                  title="Regenerate suggestions"
+                  onClick={(e) => { e.stopPropagation(); onSuggest(thread, true); }}
+                >↻</button>
+              </>
+            ) : Array.isArray(suggestions) ? (
+              <>
+                <span className="ib-suggest-loading">No suggestions.</span>
+                <button
+                  type="button"
+                  className="ib-suggest-btn"
+                  onClick={(e) => { e.stopPropagation(); onSuggest(thread, true); }}
+                >try again</button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="ib-suggest-btn"
+                title="Draft 2-3 reply options with AI"
+                onClick={(e) => { e.stopPropagation(); onSuggest(thread); }}
+              >✨ Suggest replies</button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 /* ── one reel group ───────────────────────────────────────────────────────── */
-function ReelGroup({ group, onReplied, onReplyAll, onLinkPost, reelOptions, sort, activeIdx, onThreadClick, aiTags }) {
+function ReelGroup({ group, onReplied, onReplyAll, onLinkPost, reelOptions, sort, activeIdx, onThreadClick, aiTags, suggestions, suggestLoading, onSuggest }) {
   /* Collapse replied by default — unreplied threads stay prominent */
   const [showReplied, setShowReplied] = useState(false);
   const [open, setOpen] = useState(true);
@@ -383,6 +438,9 @@ function ReelGroup({ group, onReplied, onReplyAll, onLinkPost, reelOptions, sort
               onActivate={() => onThreadClick && onThreadClick(t.id)}
               tabIndex={0}
               aiTopic={aiTags?.[t.id]?.topic}
+              suggestions={suggestions?.[t.id]}
+              suggestLoading={!!suggestLoading?.[t.id]}
+              onSuggest={onSuggest}
             />
           ))}
 
@@ -422,6 +480,11 @@ function Inbox() {
 
   const [threads, setThreads] = useState([]);
   const [aiTags, setAiTags] = useState({});  // {[threadId]: {topic, tags, severity}}
+  /* AI reply suggestions — on-demand only (✨ button), NOT fetched on load, so
+     we don't double the shared free-OpenRouter burn classify already incurs.
+     {[threadId]: string[]} drafts · {[threadId]: true} while a fetch is in flight. */
+  const [suggestions, setSuggestions] = useState({});
+  const [suggestLoading, setSuggestLoading] = useState({});
   const [source, setSource] = useState("loading");
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState(null);
@@ -471,6 +534,24 @@ function Inbox() {
     try { await loadThreads(); }
     finally { setRefreshing(false); }
   };
+
+  /* On-demand AI reply suggestions for a single thread (the ✨ button).
+     `force` re-fetches even if drafts are already cached (regenerate). The
+     drafts only seed the editable compose box — the human always edits + sends. */
+  const onSuggest = useCallback(async (thread, force = false) => {
+    const id = thread?.id;
+    if (!id) return;
+    if (!force && Array.isArray(suggestions[id])) return; // cached
+    setSuggestLoading((p) => ({ ...p, [id]: true }));
+    try {
+      const map = await suggestInboxReplies([thread], session?.access_token);
+      setSuggestions((p) => ({ ...p, [id]: map[id] || [] }));
+    } catch {
+      setSuggestions((p) => ({ ...p, [id]: [] }));
+    } finally {
+      setSuggestLoading((p) => { const n = { ...p }; delete n[id]; return n; });
+    }
+  }, [suggestions, session?.access_token]);
 
   /* socialSource lookup: platform post → pipeline card */
   const linkedPosts = useMemo(() => {
@@ -853,6 +934,9 @@ function Inbox() {
               activeIdx={activeThreadId}
               onThreadClick={setActiveThreadId}
               aiTags={aiTags}
+              suggestions={suggestions}
+              suggestLoading={suggestLoading}
+              onSuggest={onSuggest}
             />
           ))
         )}
