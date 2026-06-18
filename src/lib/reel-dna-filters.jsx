@@ -16,8 +16,8 @@
    ========================================================= */
 
 import {
-  GENES, PLATFORMS, STATUSES, SOURCES,
-  platformLabel, statusLabel, sourceLabel, geneLabel,
+  GENES, PLATFORMS, STATUSES, SOURCES, CONTENT_TYPES,
+  platformLabel, statusLabel, sourceLabel, contentTypeLabel, geneLabel,
   resolveBrief,
 } from "./reel-dna.jsx";
 
@@ -37,6 +37,7 @@ export const RD_TEXT_COLUMNS = [
 export const RD_SELECT_COLUMNS = [
   { key: "platform", label: "Platform", field: "platform", options: PLATFORMS, labelFn: platformLabel },
   { key: "source",   label: "Source",   field: "source",   options: SOURCES,   labelFn: sourceLabel },
+  { key: "contentType", label: "Type", field: "contentType", options: CONTENT_TYPES, labelFn: contentTypeLabel },
   { key: "status",   label: "Status",   field: "status",   options: STATUSES,  labelFn: statusLabel },
 ];
 

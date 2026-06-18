@@ -292,6 +292,62 @@ export default async function handler(req, res) {
     return;
   }
 
+  // ── Dispatch: IG-sync mismatch alert → owner Discord ───────────────────────
+  // The Hetzner IG-DM poller POSTs here (authed above by SUGGEST_CRON_SECRET)
+  // when a sync run's reconciliation fails, so the owner is pinged with the
+  // mismatch count + a by-issue-type breakdown. Reads cfg.webhooks.paul from
+  // app_settings.discord_config, same as discord-notify. ALWAYS returns 200 —
+  // a Discord failure (or missing webhook) must NEVER break the poller.
+  if (action === "ig-sync-alert") {
+    const body = req.body || {};
+    const { run_id, mismatch_count, issues } = body;
+    try {
+      const cfgRes = await adminClient()
+        .from("app_settings").select("value").eq("key", "discord_config").maybeSingle();
+      const cfg = cfgRes.data?.value || {};
+      const webhook = cfg.webhooks?.paul;
+      if (!webhook) {
+        res.status(200).json({ ok: true, skipped: true, reason: "no paul webhook configured" });
+        return;
+      }
+      // Build a concise by-issue-type breakdown. `issues` may be an object map
+      // { issue_type: count } OR an array of { issue_type } / { issueType } rows;
+      // tolerate both so the poller's exact shape isn't a hard contract.
+      let breakdown = "";
+      if (issues && typeof issues === "object" && !Array.isArray(issues)) {
+        breakdown = Object.entries(issues)
+          .map(([k, v]) => `${k}: ${v}`).join(", ");
+      } else if (Array.isArray(issues)) {
+        const counts = {};
+        for (const it of issues) {
+          const t = (it && (it.issue_type || it.issueType || it.type)) || "unknown";
+          counts[t] = (counts[t] || 0) + 1;
+        }
+        breakdown = Object.entries(counts).map(([k, v]) => `${k}: ${v}`).join(", ");
+      }
+      const msg =
+        `⚠️ **IG DM sync mismatch** — run \`${run_id ?? "?"}\`\n` +
+        `Mismatch count: **${mismatch_count ?? "?"}**` +
+        (breakdown ? `\nBy issue type: ${breakdown}` : "");
+      try {
+        await fetch(webhook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: msg }),
+        });
+      } catch (postErr) {
+        // Discord post failed — non-fatal, the poller must not see an error.
+        res.status(200).json({ ok: true, skipped: true, error: postErr.message });
+        return;
+      }
+      res.status(200).json({ ok: true, sent: true });
+    } catch (e) {
+      console.error("ig-sync-alert error:", e.message);
+      res.status(200).json({ ok: true, skipped: true, error: e.message });
+    }
+    return;
+  }
+
   // ── Guard: an unrecognized action must NOT fall through to the daily Claude
   // suggestions run below. That run makes a slow LLM call and on Vercel Hobby
   // (~10s ceiling) it times out into a non-JSON 500 — which is exactly how a

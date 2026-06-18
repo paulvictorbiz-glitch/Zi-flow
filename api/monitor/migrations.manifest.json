@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-18T17:13:26.021Z",
+  "generated": "2026-06-18T17:46:52.775Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -296,6 +296,18 @@
     {
       "version": "0072_reel_dna_content_type.sql",
       "checksum": "ba55536c3aec2fbf9c2d297aa61cce337df2311c5adb03d801cf886b72e7d7e7"
+    },
+    {
+      "version": "0073_ig_sync_runs.sql",
+      "checksum": "28fb93a3517196e659c7ac14d7ff4562b358aacb7b2c57606cb4a5f354e0a4c0"
+    },
+    {
+      "version": "0074_ig_ingest_log.sql",
+      "checksum": "452f527fc113440d93313c033b2cc61acb78ca252025b194a865c28ec58dd4e5"
+    },
+    {
+      "version": "0075_reel_dna_content_type_extend.sql",
+      "checksum": "da1f8045d6748c92676cd27488fa097eb94458d35cad061c8e0c5064b57a239a"
     }
   ]
 }

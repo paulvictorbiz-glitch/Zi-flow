@@ -244,6 +244,42 @@ function monitorEventFromDb(row) {
     starred: rest.starred ?? false,
   };
 }
+
+function igSyncRunFromDb(row) {
+  if (!row) return row;
+  const { started_at, finished_at, messages_seen, shares_seen, dedupe_skip,
+          skipped_no_link, multi_extra, parse_fail, insert_error, graph_errors,
+          mismatch_count, created_at, ...rest } = row;
+  return {
+    ...rest,   // carries id, trigger, conversations, inserted, reconciled, note through untouched
+    startedAt: started_at ?? undefined,
+    finishedAt: finished_at ?? undefined,
+    messagesSeen: messages_seen ?? undefined,
+    sharesSeen: shares_seen ?? undefined,
+    dedupeSkip: dedupe_skip ?? undefined,
+    skippedNoLink: skipped_no_link ?? undefined,
+    multiExtra: multi_extra ?? undefined,
+    parseFail: parse_fail ?? undefined,
+    insertError: insert_error ?? undefined,
+    graphErrors: graph_errors ?? undefined,
+    mismatchCount: mismatch_count ?? undefined,
+    createdAt: created_at ?? undefined,
+  };
+}
+
+function igIngestLogFromDb(row) {
+  if (!row) return row;
+  const { run_id, conversation_id, message_id, issue_type, occurred_at, ...rest } = row;
+  return {
+    ...rest,   // carries id, detail through untouched
+    runId: run_id ?? undefined,
+    conversationId: conversation_id ?? undefined,
+    messageId: message_id ?? undefined,
+    issueType: issue_type ?? undefined,
+    occurredAt: occurred_at ?? undefined,
+  };
+}
+
 function monitorEventToDb(item) {
   // Only columns that exist in public.monitor_events. Drops undefined keys so
   // partial updates don't overwrite columns the caller didn't mean to touch.
@@ -765,6 +801,34 @@ function workflowReducer(state, action) {
 
     case "DELETE_MONITOR_EVENT_BY_ID":
       return { ...state, monitorEvents: state.monitorEvents.filter(e => e.id !== action.id) };
+
+    /* IG DM sync runs — same upsert/delete-by-id shape as monitor_events. */
+    case "UPSERT_IG_SYNC_RUN": {
+      const exists = state.igSyncRuns.some(r => r.id === action.item.id);
+      return {
+        ...state,
+        igSyncRuns: exists
+          ? state.igSyncRuns.map(r => r.id === action.item.id ? action.item : r)
+          : [action.item, ...state.igSyncRuns],
+      };
+    }
+
+    case "DELETE_IG_SYNC_RUN_BY_ID":
+      return { ...state, igSyncRuns: state.igSyncRuns.filter(r => r.id !== action.id) };
+
+    /* IG DM ingest log — per-message non-happy-path reasons; same shape. */
+    case "UPSERT_IG_INGEST_LOG": {
+      const exists = state.igIngestLog.some(l => l.id === action.item.id);
+      return {
+        ...state,
+        igIngestLog: exists
+          ? state.igIngestLog.map(l => l.id === action.item.id ? action.item : l)
+          : [action.item, ...state.igIngestLog],
+      };
+    }
+
+    case "DELETE_IG_INGEST_LOG_BY_ID":
+      return { ...state, igIngestLog: state.igIngestLog.filter(l => l.id !== action.id) };
 
     /* Pulse Monitor sources — owner-curated feed list; same shape as above. */
     case "CREATE_MONITOR_SOURCE":
@@ -1416,6 +1480,8 @@ const INITIAL_STATE = {
   monitorSources: [],
   eventLinks: [],
   reelDnaAssets: [],   // reel_dna card → footage/location/thumbnail/news links (migration 0067)
+  igSyncRuns: [],     // ig_sync_runs — one row per IG DM poller run (migration 0073)
+  igIngestLog: [],    // ig_ingest_log — per-message non-happy-path reasons (migration 0074)
   // No locations table exists yet — kept as a static empty array so the Pulse
   // event-link picker (Team C) degrades gracefully instead of crashing.
   locations: [],
@@ -1515,6 +1581,35 @@ function WorkflowProvider({ children }) {
           monitorEvents = (monitorRes.data || []).map(monitorEventFromDb);
         } catch (e) {
           console.warn("monitor_events not available (run migration 0059?)", e?.message || e);
+        }
+
+        /* IG DM sync runs — panel headline + mismatch math (migration 0073).
+           Degrades to [] if the table isn't there yet, same all-or-nothing
+           reasoning as monitor_events above — a missing table must not brick boot. */
+        let igSyncRuns = [];
+        try {
+          const igRunsRes = await supabase
+            .from("ig_sync_runs").select("*")
+            .order("started_at", { ascending: false })
+            .limit(50);
+          if (igRunsRes.error) throw igRunsRes.error;
+          igSyncRuns = (igRunsRes.data || []).map(igSyncRunFromDb);
+        } catch (e) {
+          console.warn("ig_sync_runs not available (run migration 0073?)", e?.message || e);
+        }
+
+        /* IG DM ingest log — per-message non-happy-path reasons (migration 0074).
+           Degrades to [] if the table isn't there yet, same as ig_sync_runs above. */
+        let igIngestLog = [];
+        try {
+          const igLogRes = await supabase
+            .from("ig_ingest_log").select("*")
+            .order("occurred_at", { ascending: false })
+            .limit(200);
+          if (igLogRes.error) throw igLogRes.error;
+          igIngestLog = (igLogRes.data || []).map(igIngestLogFromDb);
+        } catch (e) {
+          console.warn("ig_ingest_log not available (run migration 0074?)", e?.message || e);
         }
 
         /* Pulse Monitor sources — owner-curated feed list (migration 0060).
@@ -1630,6 +1725,8 @@ function WorkflowProvider({ children }) {
           monitorSources,
           eventLinks,
           reelDnaAssets,
+          igSyncRuns,
+          igIngestLog,
           reelChatRefs,
           gamifyProgress,
           gamifyRubrics,
@@ -1911,10 +2008,49 @@ function WorkflowProvider({ children }) {
       console.warn("reel-dna-assets-realtime channel registration failed:", e?.message || e);
     }
 
+    /* IG DM sync runs + ingest log live on their OWN channel so a missing table
+       (migrations 0073/0074 not yet applied) only kills its own realtime — not
+       workflow-realtime. Mirrors the monitor-events-realtime pattern above. */
+    let igSyncChannel = null;
+    try {
+      igSyncChannel = supabase
+        .channel("ig-sync-realtime")
+        .on("postgres_changes",
+            { event: "*", schema: "public", table: "ig_sync_runs" },
+            (payload) => {
+              if (payload.eventType === "DELETE") {
+                dispatch({ type: "DELETE_IG_SYNC_RUN_BY_ID", id: payload.old?.id });
+              } else if (payload.new) {
+                dispatch({ type: "UPSERT_IG_SYNC_RUN", item: igSyncRunFromDb(payload.new) });
+              }
+            })
+        .on("postgres_changes",
+            { event: "*", schema: "public", table: "ig_ingest_log" },
+            (payload) => {
+              if (payload.eventType === "DELETE") {
+                dispatch({ type: "DELETE_IG_INGEST_LOG_BY_ID", id: payload.old?.id });
+              } else if (payload.new) {
+                dispatch({ type: "UPSERT_IG_INGEST_LOG", item: igIngestLogFromDb(payload.new) });
+              }
+            })
+        .subscribe((status, err) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn(
+              `ig-sync-realtime ${status} — live IG-sync updates OFF ` +
+              `(ig_sync_runs/ig_ingest_log likely not in supabase_realtime publication; ` +
+              `run migrations 0073/0074).`,
+              err || "");
+          }
+        });
+    } catch (e) {
+      console.warn("ig-sync-realtime channel registration failed:", e?.message || e);
+    }
+
     return () => {
       supabase.removeChannel(channel);
       if (monitorChannel) { try { supabase.removeChannel(monitorChannel); } catch (_) {} }
       if (reelDnaAssetsChannel) { try { supabase.removeChannel(reelDnaAssetsChannel); } catch (_) {} }
+      if (igSyncChannel) { try { supabase.removeChannel(igSyncChannel); } catch (_) {} }
     };
   }, [state.loaded, _isDemo]);
 

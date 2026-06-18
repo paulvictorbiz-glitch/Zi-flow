@@ -24,7 +24,7 @@ import { useAuth } from "../auth.jsx";
 import { useNow, formatDuration } from "../lib/time.jsx";
 import {
   GENES, PLATFORMS, STATUSES,
-  platformLabel, sourceLabel,
+  platformLabel, sourceLabel, contentTypeLabel,
   platformFromUrl, parseTagNote, resolveBrief,
 } from "../lib/reel-dna.jsx";
 import { ReelDeconstructor } from "./reel-deconstructor.jsx";
@@ -50,6 +50,79 @@ export function relTime(iso, now) {
     if (Number.isNaN(ts)) return "";
     return formatDuration((now?.getTime?.() ?? Date.now()) - ts) + " ago";
   } catch { return ""; }
+}
+
+/* ---------- IG Sync Health strip ----------
+   A quiet presentational summary of the latest IG poller run. Reconciliation:
+   green "Reconciled" only when run.reconciled === true; red banner (grouped
+   issue counts) only when run.reconciled === false; an AMBER caveat shows
+   whenever a Graph cap may have been hit or graphErrors > 0 — even on green,
+   because green must never imply complete coverage. Everything is guarded so a
+   missing field or empty array can never crash the page. */
+function IgSyncHealth({ runs, log }) {
+  const [open, setOpen] = useState(false);
+  const list = Array.isArray(runs) ? runs : [];
+  const run = list[0] || null;
+
+  if (!run) {
+    return (
+      <div className="rd-igsync rd-igsync--empty">
+        <span className="rd-igsync-title">IG Sync Health</span>
+        <span className="rd-igsync-muted">No syncs recorded yet.</span>
+      </div>
+    );
+  }
+
+  const seen = run.sharesSeen ?? 0;
+  const accounted = (run.inserted ?? 0) + (run.dedupeSkip ?? 0);
+  const when = relTime(run.finishedAt || run.startedAt, new Date());
+
+  const capHit = (run.conversations ?? 0) >= 40 || (run.messagesSeen ?? 0) >= 50;
+  const graphErr = (run.graphErrors ?? 0) > 0;
+  const incomplete = capHit || graphErr;
+
+  // Group the latest run's per-message issues by issueType → count.
+  const runLog = (Array.isArray(log) ? log : []).filter(l => l && l.runId === run.id);
+  const grouped = {};
+  for (const l of runLog) {
+    const t = l.issueType || "unknown";
+    grouped[t] = (grouped[t] ?? 0) + 1;
+  }
+  const groupedEntries = Object.entries(grouped);
+
+  return (
+    <div className="rd-igsync">
+      <span className="rd-igsync-title">IG Sync Health</span>
+      <span className="rd-igsync-muted">
+        Last sync {when || "—"} · {run.trigger || "—"} — seen {seen}, accounted {accounted}
+      </span>
+      {run.reconciled === true && <span className="rd-igsync-ok">Reconciled</span>}
+      {run.reconciled === false && (
+        <span className="rd-igsync-bad">Mismatch · {run.mismatchCount ?? 0}</span>
+      )}
+
+      {run.reconciled === false && (
+        <div className="rd-igsync-banner rd-igsync-banner--red" style={{ width: "100%" }}>
+          <div className="rd-igsync-banner-head" style={{ cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
+            {open ? "▾" : "▸"} Mismatch · {run.mismatchCount ?? 0} unaccounted
+          </div>
+          {open && (
+            <div className="rd-igsync-issues">
+              {groupedEntries.length > 0
+                ? groupedEntries.map(([t, c]) => <div key={t}>{t} · {c}</div>)
+                : <div>no per-message detail logged</div>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {incomplete && (
+        <div className="rd-igsync-banner rd-igsync-banner--amber" style={{ width: "100%" }}>
+          coverage may be incomplete — Graph limits hit{graphErr ? ` · ${run.graphErrors} graph errors` : ""}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ---------- Capture form ---------- */
@@ -311,6 +384,7 @@ function ColumnFilterRow({ colFilters, onColFilter, onClear }) {
       {T("sfx")}
       {T("story")}
       {S("source")}
+      {S("contentType")}
       {S("status")}
       <td className="rd-colfilter-td" />
       <td className="rd-colfilter-td rd-colfilter-clear-td">
@@ -357,6 +431,7 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
             <th>SFX</th>
             <th>Story / Pacing</th>
             <th>Source</th>
+            <th>Type</th>
             <th>Status</th>
             <th className="rd-th-assets">Assets</th>
             <th className="rd-th-act"></th>
@@ -368,7 +443,7 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
         <tbody>
           {items.length === 0 && (
             <tr className="rd-tr rd-tr--empty">
-              <td className="rd-td-empty" colSpan={10}>No reels match these filters.</td>
+              <td className="rd-td-empty" colSpan={11}>No reels match these filters.</td>
             </tr>
           )}
           {items.map(item => {
@@ -396,6 +471,7 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                     {sourceLabel(item.source)}
                   </span>
                 </td>
+                <td><span className="rd-tag sm rd-type-badge">{contentTypeLabel(item.contentType)}</span></td>
                 <td>
                   <select className="rd-cell-status" value={item.status}
                           onChange={e => actions.updateReelDna(item.id, { status: e.target.value })}>
@@ -450,7 +526,7 @@ function AssetsPageContainer({ item, onBack, isOwner, actions }) {
 
 /* ---------- Page ---------- */
 export function ReelDna({ prefill }) {
-  const { reelDna, reelDnaAssets, actions, error } = useWorkflow();
+  const { reelDna, reelDnaAssets, actions, error, igSyncRuns, igIngestLog } = useWorkflow();
   const { actions: locationActions } = useLocations();
   const { person: me } = useAuth();
   const isOwner = me?.role === "owner";
@@ -603,6 +679,8 @@ export function ReelDna({ prefill }) {
           {notice.text}
         </div>
       )}
+
+      <IgSyncHealth runs={igSyncRuns} log={igIngestLog} />
 
       <div className="rd-body">
         <Card title="Capture a reel" defaultOpen={true}

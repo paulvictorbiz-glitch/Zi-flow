@@ -251,6 +251,56 @@
   color: var(--c-red);
 }
 
+/* ── Content-type badge (reels table "Type" column) ─────── */
+.rd-type-badge {
+  font-size: 9.5px;
+  color: var(--c-cyan);
+  border-color: color-mix(in srgb, var(--c-cyan) 40%, transparent);
+}
+
+/* ── IG Sync Health strip + reconciliation banners ─────── */
+.rd-igsync {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px 12px; margin-bottom: 10px;
+  border: 1px solid var(--line); border-radius: 6px;
+  font-family: var(--f-mono); font-size: 11.5px;
+}
+.rd-igsync-title {
+  font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  font-size: 10px; color: var(--fg-mute);
+}
+.rd-igsync--empty { color: var(--fg-dim); }
+.rd-igsync-muted { color: var(--fg-dim); }
+.rd-igsync-ok {
+  color: var(--c-green);
+  border: 1px solid color-mix(in srgb, var(--c-green) 40%, transparent);
+  border-radius: 4px; padding: 1px 8px;
+}
+.rd-igsync-bad {
+  color: var(--c-red);
+  border: 1px solid color-mix(in srgb, var(--c-red) 45%, transparent);
+  border-radius: 4px; padding: 1px 8px;
+}
+.rd-igsync-banner {
+  border-radius: 6px; padding: 8px 12px; margin-top: 6px;
+  font-family: var(--f-sans); font-size: 12px; line-height: 1.4;
+}
+.rd-igsync-banner--red {
+  border: 1px dashed var(--c-red);
+  background: color-mix(in srgb, var(--c-red) 8%, transparent);
+  color: var(--c-red);
+}
+.rd-igsync-banner--red .rd-igsync-banner-head { cursor: pointer; }
+.rd-igsync-banner--amber {
+  border: 1px solid color-mix(in srgb, var(--c-orange) 40%, transparent);
+  background: color-mix(in srgb, var(--c-orange) 8%, transparent);
+  color: var(--c-orange);
+}
+.rd-igsync-issues {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 4px; font-size: 11px;
+}
+
 .rd-row-btn--send { color: var(--c-green); border-color: color-mix(in srgb, var(--c-green) 40%, transparent); }
 .rd-row-btn--send:hover { background: color-mix(in srgb, var(--c-green) 14%, transparent); }
 /* Already-in-pipeline: orange so sent reels stand out at a glance. */

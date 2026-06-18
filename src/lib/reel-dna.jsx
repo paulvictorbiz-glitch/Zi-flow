@@ -44,15 +44,26 @@ export const SOURCES = [
   { key: "share_target", label: "Shared" },
 ];
 
+export const CONTENT_TYPES = [
+  { key: "reel",     label: "Reel" },
+  { key: "carousel", label: "Carousel" },
+  { key: "photo",    label: "Photo" },
+  { key: "story",    label: "Story" },
+  { key: "video",    label: "Video" },
+  { key: "unknown",  label: "Unknown" },
+];
+
 const LABELS = (arr) => Object.fromEntries(arr.map(x => [x.key, x.label]));
 const PLATFORM_LABEL = LABELS(PLATFORMS);
 const STATUS_LABEL   = LABELS(STATUSES);
 const SOURCE_LABEL    = LABELS(SOURCES);
+const CONTENT_TYPE_LABEL = LABELS(CONTENT_TYPES);
 const GENE_LABEL      = LABELS(GENES);
 
 export const platformLabel = (k) => PLATFORM_LABEL[k] || k || "—";
 export const statusLabel   = (k) => STATUS_LABEL[k] || k || "—";
 export const sourceLabel   = (k) => SOURCE_LABEL[k] || k || "—";
+export const contentTypeLabel = (k) => CONTENT_TYPE_LABEL[k] || k || "—";
 export const geneLabel     = (k) => GENE_LABEL[k] || k;
 
 /* Sniff the platform from a pasted/shared URL. Returns a PLATFORMS key,
