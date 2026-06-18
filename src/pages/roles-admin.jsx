@@ -921,11 +921,101 @@ function FeatureFlagsPanel() {
    Main page
    ========================================================= */
 
+/* =========================================================
+   Discord Notifications panel — owner sets webhook URLs + trigger mode
+   ========================================================= */
+function DiscordConfigPanel() {
+  const { peopleList } = useRoster();
+  const [cfg, setCfg] = React.useState(null);      // { mode, webhooks: { personId: url } }
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+
+  React.useEffect(() => {
+    supabase.from("app_settings").select("value").eq("key", "discord_config").maybeSingle()
+      .then(({ data }) => setCfg(data?.value || { mode: "all", webhooks: {} }));
+  }, []);
+
+  const persist = async (next) => {
+    setSaving(true);
+    await supabase.from("app_settings").upsert(
+      { key: "discord_config", value: next, updated_at: new Date().toISOString() }
+    );
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1800);
+  };
+
+  const setMode = (mode) => {
+    const next = { ...cfg, mode };
+    setCfg(next);
+    persist(next);
+  };
+
+  const setWebhook = (personId, url) => {
+    const next = { ...cfg, webhooks: { ...(cfg?.webhooks || {}), [personId]: url } };
+    setCfg(next);
+  };
+
+  if (!cfg) return <div style={{ color: "var(--fg-dim)", fontSize: 12 }}>Loading…</div>;
+
+  const editors = (peopleList || []).filter(p => p.role !== "reviewer");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Trigger mode */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ fontSize: 12, color: "var(--fg-dim)", fontFamily: "var(--f-mono)" }}>
+          WHO TRIGGERS DISCORD PING ON "IN PROGRESS"
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[{ key: "all", label: "All team members" }, { key: "owner", label: "Owner only" }].map(opt => (
+            <button key={opt.key} onClick={() => setMode(opt.key)}
+              style={{
+                padding: "5px 14px", borderRadius: 4, cursor: "pointer", fontSize: 12,
+                border: cfg.mode === opt.key ? "1px solid var(--c-cyan)" : "1px dashed var(--line-hard)",
+                background: cfg.mode === opt.key ? "rgba(96,212,240,0.1)" : "var(--bg-2)",
+                color: cfg.mode === opt.key ? "var(--c-cyan)" : "var(--fg-dim)",
+              }}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Webhook URLs per person */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 12, color: "var(--fg-dim)", fontFamily: "var(--f-mono)" }}>
+          DISCORD WEBHOOK URLS (SETTINGS → INTEGRATIONS → WEBHOOKS)
+        </div>
+        {editors.map(p => (
+          <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontFamily: "var(--f-mono)", fontSize: 12, color: "var(--fg)", width: 80, flexShrink: 0 }}>
+              {p.name?.split(" ")[0] || p.id}
+            </span>
+            <input
+              type="url"
+              value={cfg.webhooks?.[p.id] || ""}
+              onChange={e => setWebhook(p.id, e.target.value)}
+              onBlur={() => persist(cfg)}
+              placeholder="https://discord.com/api/webhooks/…"
+              style={{ ...inputStyle, flex: 1, fontSize: 11 }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {saving && <span style={{ fontSize: 11, color: "var(--fg-dim)" }}>Saving…</span>}
+      {saved  && <span style={{ fontSize: 11, color: "var(--c-green)" }}>Saved ✓</span>}
+    </div>
+  );
+}
+
 function RolesAdmin({ onBack }) {
   const { save, dirty, savedAt, resetAll } = usePermissions();
   const [flash, setFlash]           = React.useState(false);
   const [showTeam, setShowTeam]     = React.useState(false);
   const [showSocial, setShowSocial] = React.useState(false);
+  const [showDiscord, setShowDiscord] = React.useState(false);
 
   const onSave = async () => {
     await save();
@@ -950,6 +1040,9 @@ function RolesAdmin({ onBack }) {
           <DPill onClick={() => setShowSocial(s => !s)}>
             {showSocial ? "▾ Social accounts" : "▸ Social accounts"}
           </DPill>
+          <DPill onClick={() => setShowDiscord(s => !s)}>
+            {showDiscord ? "▾ Discord notifications" : "▸ Discord notifications"}
+          </DPill>
         </div>
       </div>
 
@@ -962,6 +1055,14 @@ function RolesAdmin({ onBack }) {
       {showSocial && (
         <div style={{ padding: "0 22px 12px" }}>
           <SocialAccountsPanel />
+        </div>
+      )}
+      {showDiscord && (
+        <div style={{ padding: "0 22px 16px" }}>
+          <div style={{ marginBottom: 8, fontSize: 13, fontFamily: "var(--f-sans)", color: "var(--fg)" }}>
+            Send a Discord ping when a reel moves to <strong>In Progress</strong> or is <strong>sent back</strong> for revision.
+          </div>
+          <DiscordConfigPanel />
         </div>
       )}
 
