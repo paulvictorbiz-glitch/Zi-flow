@@ -35,9 +35,7 @@ import { RolesAdmin } from "./pages/roles-admin.jsx";
 import { Inbox } from "./pages/inbox.jsx";
 import { TeamChat } from "./pages/team-chat.jsx";
 import { LosslessCut } from "./pages/lossless.jsx";
-import { Monitor } from "./pages/monitor.jsx";
-import { Pulse } from "./pages/pulse.jsx";
-import { AIBrain } from "./pages/ai-brain.jsx";
+import { MonitorHub } from "./pages/monitor-hub.jsx";
 import { ReelDna } from "./pages/reel-dna.jsx";
 import { extractUrl } from "./lib/reel-dna.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
@@ -51,7 +49,9 @@ const FEEDBACK_FORM_URL =
 /* Priority order for picking a safe landing tab when a role can't see the
    current view. Excludes "detail" (needs a selected reel) and "settings"
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor", "pulse", "ai"];
+// "monitor" is the consolidated owner hub (Infra/Pulse/AI Brain sub-tabs); the
+// former standalone "pulse"/"ai" views now live inside it (see monitor-hub.jsx).
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -74,9 +74,7 @@ const TABS = [
   { key: "training",  label: "Training" },
   { key: "activity",  label: "Activity" },
   { key: "resources", label: "Resources" },
-  { key: "monitor",   label: "Monitor" },
-  { key: "pulse",     label: "Pulse" },
-  { key: "ai",        label: "AI Brain" },
+  { key: "monitor",   label: "Monitor" },   // consolidated hub: Infra / Pulse / AI Brain sub-tabs
 ];
 
 const DEFAULT_TAB_GROUPS = [
@@ -98,7 +96,20 @@ function AppShell() {
   const { reels } = useWorkflow();
   const { peopleById, peopleList } = useRoster();
   const { canView, setEffectiveRole, setEffectivePersonId } = usePermissions();
-  const [view, setView]                 = useState(() => localStorage.getItem("wb_view") || "pipeline");
+  /* The "monitor" view is the consolidated owner hub — it's reachable if ANY of
+     its three sub-views (infra/pulse/ai) is granted. Every other view gates on
+     its own catalog key. Used by the nav drawer, the bounce safety-net, and
+     programmatic navigation so all three agree on hub visibility. */
+  const canViewView = (v) =>
+    v === "monitor"
+      ? (canView("monitor") || canView("pulse") || canView("ai"))
+      : canView(v);
+  const [view, setView]                 = useState(() => {
+    // "pulse"/"ai" are no longer standalone views — they're sub-tabs of the
+    // Monitor hub. Alias any persisted value so an old wb_view doesn't dead-end.
+    const v = localStorage.getItem("wb_view") || "pipeline";
+    return (v === "pulse" || v === "ai") ? "monitor" : v;
+  });
   const [viewStack, setViewStack]       = useState([]);
   const [pipelineMode, setPipelineMode] = useState(() => localStorage.getItem("wb_pipeline_mode") || "board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
@@ -216,8 +227,8 @@ function AppShell() {
      role-gated tabs, so they're left alone. */
   useEffect(() => {
     if (view === "settings") return;
-    if (!canView(view)) {
-      const firstAllowed = VIEW_ORDER.find(v => canView(v));
+    if (!canViewView(view)) {
+      const firstAllowed = VIEW_ORDER.find(v => canViewView(v));
       if (firstAllowed) setView(firstAllowed);
     }
   }, [view, canView]);
@@ -232,7 +243,7 @@ function AppShell() {
      links (e.g. a reel card's location coords) switch top-level views. */
   useEffect(() => {
     window.__openReel = openReel;
-    window.__navigate = (key) => { if (canView(key)) goView(key); };
+    window.__navigate = (key) => { if (canViewView(key)) goView(key); };
   });
 
   /* Close the nav drawer on Escape (only while it's open). */
@@ -542,7 +553,7 @@ function AppShell() {
           {sortedGroups.map((group) => {
             const groupTabs = group.tabs
               .map(k => TABS.find(t => t.key === k))
-              .filter(t => t && canView(t.key));
+              .filter(t => t && canViewView(t.key));
             if (groupTabs.length === 0) return null;
 
             const isSingle = groupTabs.length === 1;
@@ -673,9 +684,7 @@ function AppShell() {
       {view === "training"  && <Training onOpen={openReel} personId={shownPerson?.id} focusModule={focusModule} onFocusConsumed={() => setFocusModule(null)} />}
       {view === "activity"  && <Activity />}
       {view === "resources" && <Resources />}
-      {view === "monitor"   && isOwner && <Monitor />}
-      {view === "pulse"     && isOwner && <Pulse />}
-      {view === "ai"        && isOwner && <AIBrain />}
+      {view === "monitor"   && isOwner && <MonitorHub canView={canView} />}
       {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
 
       {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}
