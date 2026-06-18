@@ -57,38 +57,40 @@ const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "cove
    the permission catalog's view keys, so canView() gates each tab. Numbers
    are assigned dynamically over the *visible* set so they stay contiguous
    when a role has tabs removed. */
+// Tab order follows the group order below so the drawer's dynamic numbering
+// stays contiguous. Tab keys/labels are unchanged — only their grouping moved.
 const TABS = [
   { key: "mywork",    label: "My work" },
   { key: "pipeline",  label: "Pipeline" },
+  { key: "generate",  label: "Generate" },
+  { key: "reeldna",   label: "Reel DNA" },
   { key: "footage",   label: "Footage" },
+  { key: "coverage",  label: "Coverage" },
+  { key: "locations", label: "Locations" },
   { key: "editor",    label: "Editor" },
   { key: "lossless",  label: "Lossless" },
   { key: "export",    label: "Export" },
-  { key: "analytics", label: "Analytics" },
+  { key: "training",  label: "Training" },
+  { key: "resources", label: "Resources" },
   { key: "inbox",     label: "Inbox" },
   { key: "team",      label: "Team" },
-  { key: "locations", label: "Locations" },
-  { key: "coverage",  label: "Coverage" },
-  { key: "generate",  label: "Generate" },
-  { key: "reeldna",   label: "Reel DNA" },
-  { key: "training",  label: "Training" },
-  { key: "activity",  label: "Activity" },
-  { key: "resources", label: "Resources" },
+  { key: "analytics", label: "Analytics" },
   { key: "monitor",   label: "Monitor" },   // consolidated hub: Infra / Pulse / AI Brain sub-tabs
+  { key: "activity",  label: "Activity" },
 ];
 
+// 7 workflow-domain groups (was 11; killed 5 singletons). Existing users'
+// saved nav_group_order references the old keys — the merge logic below
+// (filter(Boolean) on stale keys + append-missing) resolves them to this
+// order without wiping prefs. Tones reuse the existing palette.
 const DEFAULT_TAB_GROUPS = [
-  { key: "mywork_group",    label: "My Work",                 tone: "cyan",   tabs: ["mywork"] },
-  { key: "pipeline_group",  label: "Pipeline",                tone: "amber",  tabs: ["pipeline", "generate"] },
-  { key: "reeldna_group",   label: "Reel DNA",                tone: "violet", tabs: ["reeldna"] },
-  { key: "training_group",  label: "Training",                tone: "violet", tabs: ["training"] },
-  { key: "footage_group",   label: "Footage",                 tone: "green",  tabs: ["footage", "coverage", "editor", "lossless", "export"] },
-  { key: "analytics_group", label: "Analytics & Monitoring",  tone: "blue",   tabs: ["analytics", "monitor", "pulse"] },
-  { key: "ai_group",        label: "AI Brain",                tone: "pink",   tabs: ["ai"] },
-  { key: "comms_group",     label: "Communications",          tone: "orange", tabs: ["inbox", "team"] },
-  { key: "activity_group",  label: "Activity",                tone: "red",    tabs: ["activity"] },
-  { key: "locations_group", label: "Locations",               tone: "green",  tabs: ["locations"] },
-  { key: "resources_group", label: "Resources",               tone: "blue",   tabs: ["resources"] },
+  { key: "mywork_group",  label: "My Work",     tone: "cyan",   tabs: ["mywork"] },
+  { key: "produce_group", label: "Produce",     tone: "amber",  tabs: ["pipeline", "generate"] },
+  { key: "library_group", label: "Library",     tone: "violet", tabs: ["reeldna", "footage", "coverage", "locations"] },
+  { key: "edit_group",    label: "Edit & Ship", tone: "green",  tabs: ["editor", "lossless", "export"] },
+  { key: "learn_group",   label: "Learn",       tone: "pink",   tabs: ["training", "resources"] },
+  { key: "engage_group",  label: "Engage",      tone: "orange", tabs: ["inbox", "team", "analytics"] },
+  { key: "monitor_group", label: "Monitor",     tone: "blue",   tabs: ["monitor", "activity"] },
 ];
 
 function AppShell() {
