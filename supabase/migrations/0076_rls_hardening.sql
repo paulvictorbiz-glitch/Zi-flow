@@ -7,8 +7,9 @@
 --                           claim-UPDATE so a user may only claim their OWN
 --                           unclaimed slot and CANNOT change `role`.
 --    2. CRITICAL  reels / review_lane_cards / tasks — DELETE is owner-only
---                           (INSERT/UPDATE/SELECT stay team-open). Preserves
---                           the 0049 demo-sandbox predicate.
+--                           >>> DEFERRED 2026-06-19, NOT APPLIED <<< 0049 was
+--                           never actually run (audit), so the assumed schema
+--                           is absent; see the section-2 note below.
 --    3. HIGH      attached_footage_items — replace `using (true)` (anon could
 --                           write) with `auth.role()='authenticated'`.
 --    4. HIGH      reel_dna — tighten authenticated INSERT/UPDATE to owner OR
@@ -141,49 +142,24 @@ create policy "owner manage people" on public.people
 
 -- ---------------------------------------------------------
 -- 2. CRITICAL — DELETE is owner-only on reels / review_lane_cards / tasks
+--    >>> DEFERRED — NOT APPLIED IN THIS MIGRATION <<<
 -- ---------------------------------------------------------
--- Live policies are the 0049 per-operation names (reels_delete / cards_delete /
--- tasks_delete), guarded by the demo-sandbox predicate. We replace each DELETE
--- policy with one that additionally requires the caller to be the owner, while
--- preserving the demo predicate so the demo persona keeps its constrained access
--- to demo=true rows. INSERT/UPDATE/SELECT (reels_insert/update/select etc.) are
--- left untouched - the team still edits reels/cards/tasks.
-
-drop policy if exists "reels_delete" on public.reels;
-create policy "reels_delete" on public.reels
-  for delete
-  using (
-    auth.role() = 'authenticated'
-    and (not public.is_demo_user() or demo = true)
-    and exists (
-      select 1 from public.people
-      where user_id = auth.uid() and role = 'owner'
-    )
-  );
-
-drop policy if exists "cards_delete" on public.review_lane_cards;
-create policy "cards_delete" on public.review_lane_cards
-  for delete
-  using (
-    auth.role() = 'authenticated'
-    and (not public.is_demo_user() or demo = true)
-    and exists (
-      select 1 from public.people
-      where user_id = auth.uid() and role = 'owner'
-    )
-  );
-
-drop policy if exists "tasks_delete" on public.tasks;
-create policy "tasks_delete" on public.tasks
-  for delete
-  using (
-    auth.role() = 'authenticated'
-    and (not public.is_demo_user() or demo = true)
-    and exists (
-      select 1 from public.people
-      where user_id = auth.uid() and role = 'owner'
-    )
-  );
+-- This section was written against the schema 0049_demo_sandbox.sql was assumed
+-- to have produced (per-operation policies reels_delete/cards_delete/tasks_delete
+-- + the is_demo_user() demo predicate). A 2026-06-19 live-DB audit found that
+-- 0049 was recorded in schema_migrations but NEVER ACTUALLY RAN: is_demo_user()
+-- does not exist, there are no `demo` columns, and reels/review_lane_cards/tasks
+-- still carry the older blanket "auth read X" / "auth write X" policies (where
+-- "auth write" grants DELETE to every authenticated user).
+--
+-- Because the assumed objects are absent, the original section here both (a)
+-- referenced a nonexistent function and (b) would not have removed the broad
+-- "auth write" delete grant. Owner DECISION (2026-06-19): defer the owner-only
+-- DELETE hardening. When revisited, rewrite it against the REAL policies — drop
+-- "auth write reels/cards/tasks" and split into team INSERT/UPDATE + owner-only
+-- DELETE (no is_demo_user dependency). See HANDOFF.md / CHANGELOG.md.
+--
+-- (Sections 1, 3, and 4 below match the live schema and ARE applied.)
 
 
 -- ---------------------------------------------------------

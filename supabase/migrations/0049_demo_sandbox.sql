@@ -1,6 +1,20 @@
 -- =========================================================
 --  0049 — Demo / test-user sandbox
 --
+--  ⚠⚠⚠  DO NOT BULK-APPLY  ⚠⚠⚠  (2026-06-19)
+--  A live-DB audit found this migration was recorded in schema_migrations but
+--  NEVER ACTUALLY RAN (no is_demo_user(), no `demo` columns, reels/cards/tasks
+--  still have the blanket "auth read/write" policies). The tracking row was
+--  removed so status is honest, which means this now shows as [ pending ].
+--  The demo-sandbox feature is UNUSED and was intentionally left UNBUILT by the
+--  owner. DO NOT let `npm run migrate:apply` / `/update-migrations` apply it
+--  blindly — applying it would restructure reels/cards/tasks RLS + add unused
+--  demo scaffolding. Apply ONLY on a deliberate owner decision. See HANDOFF.md.
+--
+--  =========================================================
+--  (original header below)
+--  0049 — Demo / test-user sandbox
+--
 --  Adds a real, DB-enforced "demo" persona so the live site can
 --  be shared with friends for feedback under one shared login
 --  (testuser@gmail.com) WITHOUT them being able to touch real

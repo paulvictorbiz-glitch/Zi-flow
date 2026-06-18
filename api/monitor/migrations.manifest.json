@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-18T19:09:47.400Z",
+  "generated": "2026-06-18T19:38:20.051Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -203,7 +203,7 @@
     },
     {
       "version": "0049_demo_sandbox.sql",
-      "checksum": "9470cf178c3303d0b597c32e19df50e2eb004b7396663407cf75ad1d57f46ae6"
+      "checksum": "08c7dfcbdeaf8bc19d9d1180380f1f3f683031097d5f1689d752091cc7a006a7"
     },
     {
       "version": "0050_gamify.sql",
@@ -299,19 +299,19 @@
     },
     {
       "version": "0073_ig_sync_runs.sql",
-      "checksum": "28fb93a3517196e659c7ac14d7ff4562b358aacb7b2c57606cb4a5f354e0a4c0"
+      "checksum": "57b0d3c8d93fc57a8cf8c7b62d3b0f1258a28f02d21437a814a319b9ed2dca31"
     },
     {
       "version": "0074_ig_ingest_log.sql",
-      "checksum": "452f527fc113440d93313c033b2cc61acb78ca252025b194a865c28ec58dd4e5"
+      "checksum": "7b806408e133f60498d7ec55ae02c41a47ae3a0c9382b628bf1daeddfc794491"
     },
     {
       "version": "0075_reel_dna_content_type_extend.sql",
-      "checksum": "da1f8045d6748c92676cd27488fa097eb94458d35cad061c8e0c5064b57a239a"
+      "checksum": "586419355522364b1edad3b5de7abdfb3ce988adb309d470cce950f54111c798"
     },
     {
       "version": "0076_rls_hardening.sql",
-      "checksum": "53fb5e0b9bcaa375e68377f41b2acd219735c3c3b3aaef22df6f7790d212c2eb"
+      "checksum": "bf3d63280abd44302c3d5eb9f8312c5c0f1020c59b2c840e084fea229eb53ab3"
     }
   ]
 }
