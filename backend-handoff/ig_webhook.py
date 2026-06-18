@@ -48,6 +48,7 @@ include_router(prefix="/api"), change the prefix below to "/api/ig".
 from __future__ import annotations
 
 import os
+import re
 import json
 import hmac
 import hashlib
@@ -135,6 +136,31 @@ def _classify_content_type(attach_type: str | None, share: dict | None = None) -
         return _CONTENT_TYPE_MAP[t]
     # Future calibration hook: once the live carousel/photo share shape is known,
     # inspect `share` (e.g. media_type / child counts) here. Until then → unknown.
+    return "unknown"
+
+
+def _detect_platform(url: str | None) -> str:
+    """Sniff platform from a URL host. Mirrors the frontend platformFromUrl()
+    in src/lib/reel-dna.jsx so the two stay consistent. Defaults to 'ig'
+    (the most common capture); guards None → 'ig'."""
+    u = (url or "").lower()
+    if "youtube.com" in u or "youtu.be" in u:
+        return "yt"
+    if "facebook.com" in u or "fb.watch" in u:
+        return "fb"
+    if "tiktok.com" in u:
+        return "tiktok"
+    return "ig"
+
+
+def _content_type_from_url(url: str | None) -> str:
+    """Best-effort content_type for a plain-text (non-share) URL. A YouTube or
+    Facebook video host maps to 'video'; everything else is 'unknown' (within
+    the 0075 enum: reel/carousel/photo/story/video/unknown)."""
+    u = (url or "").lower()
+    if ("youtube.com" in u or "youtu.be" in u
+            or "facebook.com" in u or "fb.watch" in u):
+        return "video"
     return "unknown"
 
 
@@ -239,10 +265,11 @@ async def _handle_event(event: dict[str, Any]) -> None:
             return  # debug-only mode: we logged the raw shape above, don't insert
         row = {
             "reel_url": reel_url,
-            "platform": "ig",
+            "platform": _detect_platform(reel_url),
             "source": "ig_dm",
             "status": "captured",
             "external_ref": mid,            # dedupe key
+            "content_type": _classify_content_type(attach_type),
             "quick_notes": text,            # parseTagNote() fills the columns frontend-side
         }
         await _insert_reel_dna(row)
@@ -254,10 +281,11 @@ async def _handle_event(event: dict[str, Any]) -> None:
     if _debug_on():
         row = {
             "reel_url": "(debug — no reel url; raw payload in notes)",
-            "platform": "ig",
+            "platform": _detect_platform(reel_url),
             "source": "ig_dm",
             "status": "captured",
             "external_ref": (mid + "-dbg") if mid else None,
+            "content_type": _classify_content_type(attach_type),
             "quick_notes": ("RAW_IG_EVENT: " + json.dumps(event))[:1800],
         }
         await _insert_reel_dna(row)
@@ -553,6 +581,32 @@ async def _do_sync(trigger: str = "cron") -> dict:
                             log.info("ig_webhook sync: NON-SHARE shape mid=%s attachments=%s story=%s",
                                      mid, json.dumps(attachments)[:600] if attachments else None,
                                      json.dumps(story)[:600] if story else None)
+                        m_text = (m.get("message") or "").strip()
+                        match = re.search(r"https?://\S+", m_text)
+                        if match and mid and mid not in known:
+                            url = match.group(0).rstrip(".,;:!?)]}>\"'“”‘’")
+                            run["shares_seen"] += 1
+                            status = await _insert_reel_dna({
+                                "reel_url": url,
+                                "platform": _detect_platform(url),
+                                "source": "ig_dm",
+                                "status": "captured",
+                                "external_ref": mid,
+                                "content_type": _content_type_from_url(url),
+                                "quick_notes": m_text,
+                            })
+                            if status == "inserted":
+                                run["inserted"] += 1
+                                known.add(mid)
+                            elif status == "dedupe":
+                                run["dedupe_skip"] += 1
+                                known.add(mid)
+                            else:  # "error"
+                                run["insert_error"] += 1
+                                await _log_ingest_issue(
+                                    client, run_id, "insert_error",
+                                    detail=f"text-link insert failed for mid={mid}",
+                                    conversation_id=cid, message_id=mid)
                         continue
                     # nearest same-sender text note within 25s becomes the tag note
                     cand = sorted((abs(nt - ts), tx) for nt, ns, tx in notes
@@ -581,7 +635,7 @@ async def _do_sync(trigger: str = "cron") -> dict:
                             continue
                         content_type = _classify_content_type(sh.get("type"), sh)
                         status = await _insert_reel_dna({
-                            "reel_url": link, "platform": "ig", "source": "ig_dm",
+                            "reel_url": link, "platform": _detect_platform(link), "source": "ig_dm",
                             "status": "captured", "external_ref": ref,
                             "content_type": content_type,
                             "quick_notes": note,

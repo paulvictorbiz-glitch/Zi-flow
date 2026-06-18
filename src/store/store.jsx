@@ -1258,6 +1258,7 @@ async function persistUpdateReelDna(id, patch) {
   if ("reelId" in patch)          { dbPatch.reel_id = patch.reelId; delete dbPatch.reelId; }
   if ("archivedAt" in patch)      { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
   if ("deletedAt" in patch)       { dbPatch.deleted_at = patch.deletedAt; delete dbPatch.deletedAt; }
+  if ("contentType" in patch)     { dbPatch.content_type = patch.contentType; delete dbPatch.contentType; }
   const { error } = await supabase.from("reel_dna").update(dbPatch).eq("id", id);
   if (error) throw error;
 }

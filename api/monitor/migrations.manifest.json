@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-18T18:15:05.865Z",
+  "generated": "2026-06-18T19:09:47.400Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -308,6 +308,10 @@
     {
       "version": "0075_reel_dna_content_type_extend.sql",
       "checksum": "da1f8045d6748c92676cd27488fa097eb94458d35cad061c8e0c5064b57a239a"
+    },
+    {
+      "version": "0076_rls_hardening.sql",
+      "checksum": "53fb5e0b9bcaa375e68377f41b2acd219735c3c3b3aaef22df6f7790d212c2eb"
     }
   ]
 }
