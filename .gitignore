@@ -31,3 +31,7 @@ footage-brain-database-*.json
 # Python bytecode cache (e.g. backend-handoff/ webhook drafts)
 __pycache__/
 *.pyc
+
+# Playwright saved auth session (never commit)
+auth.json
+screenshots/
