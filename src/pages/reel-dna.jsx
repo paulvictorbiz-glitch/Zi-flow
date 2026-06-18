@@ -59,8 +59,7 @@ export function relTime(iso, now) {
    whenever a Graph cap may have been hit or graphErrors > 0 — even on green,
    because green must never imply complete coverage. Everything is guarded so a
    missing field or empty array can never crash the page. */
-function IgSyncHealth({ runs, log }) {
-  const [open, setOpen] = useState(false);
+function IgSyncHealth({ runs, log, igDmCount, open, onToggle }) {
   const list = Array.isArray(runs) ? runs : [];
   const run = list[0] || null;
 
@@ -68,7 +67,7 @@ function IgSyncHealth({ runs, log }) {
     return (
       <div className="rd-igsync rd-igsync--empty">
         <span className="rd-igsync-title">IG Sync Health</span>
-        <span className="rd-igsync-muted">No syncs recorded yet.</span>
+        <span className="rd-igsync-muted">No syncs recorded yet — click “🔎 Check IG Sync”.</span>
       </div>
     );
   }
@@ -81,14 +80,9 @@ function IgSyncHealth({ runs, log }) {
   const graphErr = (run.graphErrors ?? 0) > 0;
   const incomplete = capHit || graphErr;
 
-  // Group the latest run's per-message issues by issueType → count.
+  // The latest run's per-message issues (shown in the report regardless of
+  // reconciled — graph errors etc. matter even when the count balances).
   const runLog = (Array.isArray(log) ? log : []).filter(l => l && l.runId === run.id);
-  const grouped = {};
-  for (const l of runLog) {
-    const t = l.issueType || "unknown";
-    grouped[t] = (grouped[t] ?? 0) + 1;
-  }
-  const groupedEntries = Object.entries(grouped);
 
   return (
     <div className="rd-igsync">
@@ -100,25 +94,52 @@ function IgSyncHealth({ runs, log }) {
       {run.reconciled === false && (
         <span className="rd-igsync-bad">Mismatch · {run.mismatchCount ?? 0}</span>
       )}
-
-      {run.reconciled === false && (
-        <div className="rd-igsync-banner rd-igsync-banner--red" style={{ width: "100%" }}>
-          <div className="rd-igsync-banner-head" style={{ cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
-            {open ? "▾" : "▸"} Mismatch · {run.mismatchCount ?? 0} unaccounted
-          </div>
-          {open && (
-            <div className="rd-igsync-issues">
-              {groupedEntries.length > 0
-                ? groupedEntries.map(([t, c]) => <div key={t}>{t} · {c}</div>)
-                : <div>no per-message detail logged</div>}
-            </div>
-          )}
-        </div>
-      )}
+      <button type="button" className="rd-igsync-toggle" onClick={onToggle}>
+        {open ? "▾ Hide report" : "▸ Show report"}
+      </button>
 
       {incomplete && (
         <div className="rd-igsync-banner rd-igsync-banner--amber" style={{ width: "100%" }}>
-          coverage may be incomplete — Graph limits hit{graphErr ? ` · ${run.graphErrors} graph errors` : ""}
+          coverage may be incomplete — Graph limits hit{graphErr ? ` · ${run.graphErrors} graph errors` : ""}.
+          Reconciled means “captured everything we saw this run”, not “everything that exists”.
+        </div>
+      )}
+
+      {open && (
+        <div className="rd-igsync-report" style={{ width: "100%" }}>
+          <div className="rd-igsync-report-grid">
+            <div className="rd-igsync-card">
+              <b>What landed in the spreadsheet</b>
+              <div>New rows this run: <span className="mono">{run.inserted ?? 0}</span></div>
+              <div>Already captured (deduped): <span className="mono">{run.dedupeSkip ?? 0}</span></div>
+              <div>Shares the API showed us: <span className="mono">{seen}</span></div>
+              <div>Total IG-DM rows in sheet: <span className="mono">{igDmCount ?? "—"}</span></div>
+            </div>
+            <div className="rd-igsync-card">
+              <b>Coverage this run</b>
+              <div>Conversations scanned: <span className="mono">{run.conversations ?? 0}</span></div>
+              <div>Messages examined: <span className="mono">{run.messagesSeen ?? 0}</span></div>
+              <div>Skipped (no link): <span className="mono">{run.skippedNoLink ?? 0}</span></div>
+              <div>Graph API errors: <span className="mono">{run.graphErrors ?? 0}</span></div>
+              <div>Insert errors: <span className="mono">{run.insertError ?? 0}</span></div>
+            </div>
+          </div>
+
+          <div className="rd-igsync-report-issues">
+            <b>Errors / issues this run ({runLog.length})</b>
+            {runLog.length === 0 ? (
+              <div className="rd-igsync-muted">No errors logged for the latest run. 🎉</div>
+            ) : (
+              runLog.map(l => (
+                <div key={l.id} className="rd-igsync-issue">
+                  <span className={"rd-tag sm rd-issue rd-issue-" + (l.issueType || "unknown")}>
+                    {l.issueType || "unknown"}
+                  </span>
+                  <span className="rd-igsync-issue-detail">{l.detail || "—"}</span>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -552,6 +573,32 @@ export function ReelDna({ prefill }) {
   // times because that poll takes a few seconds to finish on the backend.
   const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState(null); // { tone: "ok"|"err", text }
+  // "Check IG Sync": re-pull the poller's run history + issue log on demand and
+  // open the report so the owner can see what the last poll saw vs what landed
+  // in the spreadsheet, plus any errors. Separate from Refresh (which forces a
+  // brand-new poll) — this just inspects what's already recorded.
+  const [checking, setChecking] = useState(false);
+  const [igReportOpen, setIgReportOpen] = useState(false);
+  const handleCheckIgSync = async () => {
+    if (checking) return;
+    setChecking(true);
+    setNotice(null);
+    try {
+      const r = await actions.reloadIgSync();
+      await actions.reloadReelDna().catch(() => {});
+      setIgReportOpen(true);
+      const run = r.latest;
+      const summary = run
+        ? `seen ${run.sharesSeen ?? 0}, ${run.inserted ?? 0} new + ${run.dedupeSkip ?? 0} already captured, ${r.issues} issue(s) logged${run.reconciled ? "" : " · MISMATCH"}`
+        : "no sync runs recorded yet";
+      setNotice({ tone: run && run.reconciled === false ? "err" : "ok",
+                  text: `IG sync checked — ${summary}. See the report below.` });
+    } catch (e) {
+      setNotice({ tone: "err", text: "Couldn't check IG sync · " + (e.message || String(e)) });
+    } finally {
+      setChecking(false);
+    }
+  };
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -631,6 +678,13 @@ export function ReelDna({ prefill }) {
     };
   }, [reelDna]);
 
+  // How many IG-DM-sourced rows are live in the spreadsheet — the "what landed"
+  // figure the IG Sync report compares against the poller's seen/accounted.
+  const igDmCount = useMemo(
+    () => (reelDna || []).filter(d => d && d.source === "ig_dm" && !d.deletedAt).length,
+    [reelDna]
+  );
+
   // Full-screen Assets takeover — replaces the page body while open.
   if (assetsItem) {
     return (
@@ -660,6 +714,11 @@ export function ReelDna({ prefill }) {
           {tab === "reels" && (
             <>
               <span className="mono dim" style={{ alignSelf: "center" }}>{counts.total} captured · realtime · live</span>
+              <DPill onClick={handleCheckIgSync}
+                     style={checking ? { opacity: 0.6, pointerEvents: "none" } : undefined}
+                     title="Check the IG poller: what came in, what landed in the sheet, and any errors">
+                {checking ? "Checking…" : "🔎 Check IG Sync"}
+              </DPill>
               <DPill primary onClick={handleRefresh}
                      style={refreshing ? { opacity: 0.6, pointerEvents: "none" } : undefined}>
                 {refreshing ? "Refreshing…" : "↻ Refresh"}
@@ -680,7 +739,8 @@ export function ReelDna({ prefill }) {
         </div>
       )}
 
-      <IgSyncHealth runs={igSyncRuns} log={igIngestLog} />
+      <IgSyncHealth runs={igSyncRuns} log={igIngestLog} igDmCount={igDmCount}
+                    open={igReportOpen} onToggle={() => setIgReportOpen(o => !o)} />
 
       <div className="rd-body">
         <Card title="Capture a reel" defaultOpen={true}

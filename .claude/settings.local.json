@@ -8,7 +8,9 @@
       "Grep(**)",
       "Bash(*)",
       "PowerShell(*)",
-      "Bash(node scripts/gen-migration-manifest.mjs)"
+      "Bash(node scripts/gen-migration-manifest.mjs)",
+      "Bash(ssh root@178.105.14.144:*)",
+      "Bash(scp:*)"
     ]
   }
 }

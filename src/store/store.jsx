@@ -830,6 +830,13 @@ function workflowReducer(state, action) {
     case "DELETE_IG_INGEST_LOG_BY_ID":
       return { ...state, igIngestLog: state.igIngestLog.filter(l => l.id !== action.id) };
 
+    /* Full-replace on manual reload (the "Check IG Sync" button). Realtime can
+       miss events (tab asleep, dropped socket), so the button re-pulls both. */
+    case "SET_IG_SYNC_RUNS":
+      return { ...state, igSyncRuns: action.items };
+    case "SET_IG_INGEST_LOG":
+      return { ...state, igIngestLog: action.items };
+
     /* Pulse Monitor sources — owner-curated feed list; same shape as above. */
     case "CREATE_MONITOR_SOURCE":
       return { ...state, monitorSources: [action.item, ...state.monitorSources] };
@@ -2572,6 +2579,33 @@ function WorkflowProvider({ children }) {
         const items = (data || []).map(reelDnaFromDb);
         dispatch({ type: "SET_REEL_DNA", items });
         return items.length;
+      },
+
+      /* Re-pull the IG poller's run history + per-message issue log straight
+         from Supabase — behind the "Check IG Sync" button. Lets the owner
+         verify, on demand, what the last poll(s) saw vs what landed in the
+         spreadsheet and surface any errors (graph errors, insert failures,
+         skipped shares) even when the realtime socket missed them. Degrades to
+         the current in-memory counts if the tables aren't there yet. Returns
+         { runs, issues, latest } for the click handler's notice. */
+      reloadIgSync: async () => {
+        if (isDemoMode()) {
+          return { runs: (stateRef.current.igSyncRuns || []).length,
+                   issues: (stateRef.current.igIngestLog || []).length, latest: null };
+        }
+        const [runsRes, logRes] = await Promise.all([
+          supabase.from("ig_sync_runs").select("*")
+            .order("started_at", { ascending: false }).limit(50),
+          supabase.from("ig_ingest_log").select("*")
+            .order("occurred_at", { ascending: false }).limit(200),
+        ]);
+        if (runsRes.error) throw runsRes.error;
+        if (logRes.error) throw logRes.error;
+        const runs = (runsRes.data || []).map(igSyncRunFromDb);
+        const log = (logRes.data || []).map(igIngestLogFromDb);
+        dispatch({ type: "SET_IG_SYNC_RUNS", items: runs });
+        dispatch({ type: "SET_IG_INGEST_LOG", items: log });
+        return { runs: runs.length, issues: log.length, latest: runs[0] || null };
       },
 
       /* ----- Thumbnail DNA (separate table, manual YouTube capture) ----- */

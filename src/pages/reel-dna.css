@@ -301,6 +301,41 @@
   margin-top: 4px; font-size: 11px;
 }
 
+/* "Show report" toggle + the on-demand IG Sync report (Check IG Sync button) */
+.rd-igsync-toggle {
+  font-family: var(--f-mono); font-size: 11px; cursor: pointer;
+  color: var(--fg-mute); background: transparent;
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px;
+}
+.rd-igsync-toggle:hover { color: var(--fg); border-color: var(--fg-mute); }
+.rd-igsync-report {
+  margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 10px;
+  font-family: var(--f-sans); font-size: 12px;
+}
+.rd-igsync-report-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;
+}
+.rd-igsync-card {
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.rd-igsync-card b { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-mute); margin-bottom: 2px; }
+.rd-igsync-report-issues { display: flex; flex-direction: column; gap: 4px; }
+.rd-igsync-report-issues > b { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-mute); }
+.rd-igsync-issue {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 4px 0; border-bottom: 1px dashed var(--line);
+}
+.rd-igsync-issue:last-child { border-bottom: 0; }
+.rd-igsync-issue-detail { font-family: var(--f-mono); font-size: 11px; color: var(--fg-dim); word-break: break-word; }
+.rd-tag.rd-issue { white-space: nowrap; }
+.rd-issue-graph_error    { color: var(--c-orange); border-color: color-mix(in srgb, var(--c-orange) 40%, transparent); }
+.rd-issue-insert_error   { color: var(--c-red);    border-color: color-mix(in srgb, var(--c-red) 45%, transparent); }
+.rd-issue-skipped_no_link { color: var(--c-cyan);  border-color: color-mix(in srgb, var(--c-cyan) 40%, transparent); }
+.rd-issue-parse_fail     { color: var(--c-red);    border-color: color-mix(in srgb, var(--c-red) 45%, transparent); }
+.rd-issue-multi_share_extra { color: var(--fg-mute); border-color: var(--line); }
+
 .rd-row-btn--send { color: var(--c-green); border-color: color-mix(in srgb, var(--c-green) 40%, transparent); }
 .rd-row-btn--send:hover { background: color-mix(in srgb, var(--c-green) 14%, transparent); }
 /* Already-in-pipeline: orange so sent reels stand out at a glance. */
