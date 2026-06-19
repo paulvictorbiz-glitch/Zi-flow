@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-18T23:22:23.933Z",
+  "generated": "2026-06-19T18:04:39.084Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -51,187 +51,187 @@
     },
     {
       "version": "0013_generated_drafts.sql",
-      "checksum": "4f1f71ed9e7c703d39644d23609352feba64f3a4e3bad79aa1b6b2f0748f67e3"
+      "checksum": "e4406a0cb4161a1d047412b3817fb05f4ec2c620da4a9fd86b0924f738791aa9"
     },
     {
       "version": "0014_app_settings.sql",
-      "checksum": "5ad2520f4065b71c11e43b1f9c19e64100a852bbf6379a131a868c4b828d7f86"
+      "checksum": "de9e7eea834daee34427e5b5010f8ec3195bcd7d128c31e641499292d445a302"
     },
     {
       "version": "0015_fix_jay_email.sql",
-      "checksum": "cf1a589e44ef042512e117474723805c26efbef677950dd54e34b1783d684df6"
+      "checksum": "babb9d8e8177499dd53ee984cde357fa6b12f1d302b189199d05ec560f7d8964"
     },
     {
       "version": "0015_update_jay_email.sql",
-      "checksum": "461cd98886ebbd04508dda6249075005d2914edfa28c7bd246ed382c92f0ab4c"
+      "checksum": "819c0aebc1b0f381c6a2b7aa3352aa54a6c07d012f841fa7c6ff3a3fcd07ffef"
     },
     {
       "version": "0016_clear_stale_user_ids.sql",
-      "checksum": "a8ea4924e2b435e590e980523d791eb8fdf2d18f2be54cecb70492e2f96d8a8f"
+      "checksum": "ca8d59aca77e5b67cd519f6206734062cefa232cbc253619300a7df8c2b828b2"
     },
     {
       "version": "0017_sync_canonical_people.sql",
-      "checksum": "e4928ee6b0cab196e8233badd3dc51dbe20688b7cb242762d19651ba07eea584"
+      "checksum": "b0a3ab47d4dc10747bc8d20841925a49cf6db2e6cee0c87943ae8d8a1dd44083"
     },
     {
       "version": "0018_service_role_people_access.sql",
-      "checksum": "2ef405065b97418c95cfd6dd44ad1cd00602eea240893c7b1f9926be26d9d44e"
+      "checksum": "e86a404410f03944778b3a67e05c519150e25a9aee532cf5866ade71ccd6f0f1"
     },
     {
       "version": "0019_capcut_activity.sql",
-      "checksum": "dc55721a2b12d67c28e564ada05a705d689e12b0f608de88f4abb9c2b805a4fe"
+      "checksum": "87b2f8630d9692fb6602b73fe0ab2f295bc7284e3ec0d1b88b88b8f5e9585284"
     },
     {
       "version": "0020_reel_extensions.sql",
-      "checksum": "07f13c46ac9a5219fc3205e164086611fde967ac3e48632d2c02077d6110787b"
+      "checksum": "56c19a31e58ad7a12d660c29bd584945410e1e0f584c6630fc4358671d825f90"
     },
     {
       "version": "0021_daily_tasks.sql",
-      "checksum": "47c223336833ca7e7536371caa3478cb646ea8c97cf53cba2f95eea0d30cd8c1"
+      "checksum": "453c8d945ea4539117cd17c7d5cf6432e6cdb498a0d00e00b739cb041cea943f"
     },
     {
       "version": "0022_resources.sql",
-      "checksum": "e6ef3aade67d4d70254f64c8a4def4043b8a549c69bf921becac63ae848140e3"
+      "checksum": "436ce5a3573f1e489428354815ea72438a5a167982d2f217b5c8bfaebd786040"
     },
     {
       "version": "0023_footage_framerate.sql",
-      "checksum": "7d5bdad83393a34841082047d5d975be09e3e136c60e9beb0e0f4f6ac9bfae1d"
+      "checksum": "bd66242d49aed2438c7ab1b8bf7172eacd7972b9eadc0a405068434b7ff82f85"
     },
     {
       "version": "0024_footage_transcripts.sql",
-      "checksum": "8691a180213366ddb254286d560da9b4f3ff0c1c2a6daa661519772702087380"
+      "checksum": "9c01d45da36f08e66ad053039fbf231db7b76968e508879e5c257415999e2b84"
     },
     {
       "version": "0025_edit_sessions.sql",
-      "checksum": "c97c276de1e48b0cb7df6e56213287bbe607b2f2ef31dfd1dec7c16bbdb6763e"
+      "checksum": "2aded3c560efd56e6f1ce305d0a3b8f05fde2500a7e008e492928e458ff15dbf"
     },
     {
       "version": "0026_vision_tags.sql",
-      "checksum": "132710679e4a8e09ffa7d1479c264318b7a61b4e6206445a4a2ac84bad045333"
+      "checksum": "48671e713b328c856da1c08ee7cbeaa4fba78871d58194550e906d86ca2bb894"
     },
     {
       "version": "0027_social_connections.sql",
-      "checksum": "bf735b003dd6d75f056aeb00288d91b649fcc57d558fa1d6650da353c5707db2"
+      "checksum": "d4a472fa630ddd573366fbad92eb8d76c0add02faec36413960950076410e119"
     },
     {
       "version": "0028_social_connection_health.sql",
-      "checksum": "53ba146cf38d3c12efb4d948a1409d3d2b27181baeed9d775d5f144cdf675786"
+      "checksum": "7cde96ff9214cabbb7b3703d3affda275564798d89dc7433a796a63e8a2c7149"
     },
     {
       "version": "0029_locations.sql",
-      "checksum": "7644db8a01428622fc19e1910ed91248de8d071b0df4e97589a114f4e4a5d868"
+      "checksum": "47f8cb5db61b5aba6f834f92bfd3b6aeba511e3a3aef902f5f8c4a02d5e8afee"
     },
     {
       "version": "0030_youtube_oauth_note.sql",
-      "checksum": "f1329893a55a3a79c5967de5b0d18210d559d64e955ee9973836a24d11cb9f41"
+      "checksum": "73db89d8d959f17036d89aa4981adae773e0343cc51c6c99e53f00ea1fffe651"
     },
     {
       "version": "0031_whatsapp_messages.sql",
-      "checksum": "067bf35cfb10266507fe8a4ceec12d3887b0aa5a52eb7143c76cf0caf4ee64ac"
+      "checksum": "36354fb8ed406399b4d200bb733b92a15146336dad747f98d18d925114d7c8a3"
     },
     {
       "version": "0032_whatsapp_social_connection.sql",
-      "checksum": "db0ef5613ae93c04f7d39ff577694e11e93dfd19ee1e010724f13b4e436dd582"
+      "checksum": "2e2bf83b658c4e1aaca875a9362efc75986d52be2a458157e4592f6e47bc88da"
     },
     {
       "version": "0033_locations_row_color.sql",
-      "checksum": "eab9a1994c1a2f28fa4718f7c9ee748f9ad0023dc987c20eb4f8e68ec1eede9d"
+      "checksum": "4b2e60a464955111f97a736a9091235c5c4767e42194fa6759202d5ed9b706e2"
     },
     {
       "version": "0034_resource_row_color.sql",
-      "checksum": "e3c87eeb22e64ef879c41c7a8ec2550ef897c987fe079d21d822f310ba442d4c"
+      "checksum": "960b6336aad51c3134ab6af0231a02fd730415d2347e4fd18f0176f18567a277"
     },
     {
       "version": "0035_location_reel_links.sql",
-      "checksum": "99087233dc1f6cfb2b196e885d25621d5af3be72017a9fa5d683b2c76a4c4c88"
+      "checksum": "3317e6f6e4d6684da7a483023a4d920822a41a4b0cfbd03ef6f80c5e367ad0ba"
     },
     {
       "version": "0036_daily_tasks_notes.sql",
-      "checksum": "88d373518e4dd4e858faa5e2996640b7851c644d97e2427d4708133425dacbc4"
+      "checksum": "125edac2f8b34600824259604bbe7e441d92ea69b9a48b3db0938beb037687f0"
     },
     {
       "version": "0036_location_photos.sql",
-      "checksum": "8aa4206d3a68b2702f94273fe5cff145623d60134f9b4bd7a1e26f40877abad5"
+      "checksum": "3ada0101fa84014ab73454ece8d7086e8cd10421f104bd2c408dab100c2d7bdc"
     },
     {
       "version": "0037_processing_jobs.sql",
-      "checksum": "7c1d3d8a9f9572939938598896f5226cfa19f5908c1cc758437827e76d294c1b"
+      "checksum": "71621d11dfc0579b21286c65b64e92f94b40c5a3288daace843d169706ce7908"
     },
     {
       "version": "0038_resource_row_hidden.sql",
-      "checksum": "dbd1f8c752c9955477faf6a1a59ecf6a0fea60ae05b5bc2abb1b43434fdd71fa"
+      "checksum": "6d99ee5ac8174f0e29736f45e2244cfe8e5b330dc7f1b103d5a0d6339edee01e"
     },
     {
       "version": "0039_ai_brain.sql",
-      "checksum": "9b7af8316263b48263c35c38567e0125616fb681c916de9b49c5394c947b3ae8"
+      "checksum": "dadd2c8dbed5b1cb0293f6bb0559f7e5060a72acec01385af44a66876c88dc54"
     },
     {
       "version": "0040_match_faq_pairs_rpc.sql",
-      "checksum": "9d412ee343d3588f4e1a3b81f99aad00a64f0d9e7949e6d041d426ed2f9d3c0e"
+      "checksum": "6256b558bf0c298f7fcb70a162e8a0aebae23ca3e91470c1ad64aebe52c6ea66"
     },
     {
       "version": "0041_faq_vector_1024.sql",
-      "checksum": "bce53cdea8705337944f9c96158abdee014b63c7abcf202a60b7d8df704719f8"
+      "checksum": "3d5c7f40ff34f03e6867b29a0fc14803732fb106dbb55dfee39249c95e7fc135"
     },
     {
       "version": "0042_workflow_insights.sql",
-      "checksum": "cadb8304b3bf6d4d1e8236bbafc19e134387a6794eaec23ab2ea5d63ade69ccb"
+      "checksum": "80c13c1fcea228060f7f6095c8f60dc1a9529ac301c57022d59c47a00572d033"
     },
     {
       "version": "0043_anthropic_killswitch.sql",
-      "checksum": "56b8483f0766747783a5f17957ce3da82f17c46f77dcae29cc78f08b7c3af7cd"
+      "checksum": "8c8543dee4f4be3b06d5cbd97f639b6e64386a8d7014adc65b0795b67107895a"
     },
     {
       "version": "0044_reel_dna.sql",
-      "checksum": "6de2edb1a038e6394c97c5cc0a3f7c9a2aa06105e12c3eba4dbbff7533e15e80"
+      "checksum": "fc61ecbc579b701ec963aa6b8891787898c97e8c9098cbebe177c3522f007c47"
     },
     {
       "version": "0045_reel_dna_timeline.sql",
-      "checksum": "c7143c4632227b4a8bfb5d6664a2e0149ab580c72ef8efef022c586f81de1319"
+      "checksum": "64373417e2dd3edd919243d832f2ce5423d6032bf7da39ca248c494e06152239"
     },
     {
       "version": "0046_reel_chat_refs.sql",
-      "checksum": "fe8b7279db7512bcc471b56d17f6b6c4a2824f178aaa059e3da4c71081f8f431"
+      "checksum": "15c5e5db0741177a2f17ee4bad5089fbc04118713f990e97177fa011dca845d6"
     },
     {
       "version": "0047_training_progress.sql",
-      "checksum": "6b22a46a6c9e19d91d06e289541212a5afcd445b8e28b4979c971dc1d69fd46a"
+      "checksum": "6e56951502b6185ad96c1342e57ef901de1c8dbadc03f7dce31d5bdb35507cbe"
     },
     {
       "version": "0048_reel_skill_tags.sql",
-      "checksum": "c05424d3c9239c84566967ffa225ea5a0533bf02d2f62dfa6b0a340f4ff42288"
+      "checksum": "1783944b2796df29e93e3509459715555837143e5299e3326839d2333206b011"
     },
     {
       "version": "0049_demo_sandbox.sql",
-      "checksum": "f55b16c2948086cafd9ceeecfd399ec2c6c787d0fa1a877d73964384948712a0"
+      "checksum": "08c7dfcbdeaf8bc19d9d1180380f1f3f683031097d5f1689d752091cc7a006a7"
     },
     {
       "version": "0050_gamify.sql",
-      "checksum": "1446e10841554a3a2c534636b01b7a64e669d4836dd3227e25915a87a10bfd09"
+      "checksum": "be960ef27c9bb3db6c2686ed707f24438c0779c29efc6b51abde4c1ab692b0b7"
     },
     {
       "version": "0051_gamify_rubric_per_row.sql",
-      "checksum": "54a211812d3da81f0f693e36b3e711d293854e6111d621e8b56f195ca52044a8"
+      "checksum": "3d9eaf2f0c88da645a88913a88e3733eda9cac21a166fee046a3028420163b90"
     },
     {
       "version": "0052_reel_gamify_difficulty.sql",
-      "checksum": "2db0830f07e8f0e4b012f77ad4aa0589a49ae0b28fa7e379c3b52c90e4ab2a17"
+      "checksum": "7c8e4cd2c4796a24f375750345ad62540e7965e86591b6630c82a4049b3bba30"
     },
     {
       "version": "0053_rubric_revamp.sql",
-      "checksum": "fef86ff999dc56c028921f7f24698c869cac24709e1b4c1e1f39d5f23d014114"
+      "checksum": "7baba4cf19bb69f44a76ed0e7280f0c6d508f3b62721f35685525e6e65ddb531"
     },
     {
       "version": "0054_attached_footage_realtime.sql",
-      "checksum": "ec3c578272c9bafb0b93a07b44f38602112699ff527762c271b3ec49adfcb104"
+      "checksum": "a16143c268d12b029efa5ec3e6b1ffda8d7eddfd7128c652511f71f637db9482"
     },
     {
       "version": "0055_training_module_content.sql",
-      "checksum": "cb4936c1804f329a3ae3d5aa9ec81751cf35701335da10f325c40d4c6efa3214"
+      "checksum": "ee415e6970f8bec64bea207e9abeaf486df83206bb677713d20add5e89ddc0f5"
     },
     {
       "version": "0056_daily_tasks_sort_order.sql",
-      "checksum": "16f75d2c303972600c412b4d846d87fd3779f5e52a26d374a6f766408d19fa08"
+      "checksum": "a175391788f593c1658b94004e318a62941f497c9ced9576e14e8a21fb1b6252"
     },
     {
       "version": "0057_reel_series.sql",
@@ -314,8 +314,16 @@
       "checksum": "030ba54b3ac025dac19d7a772e8233024f9c335c4b7b650c550384f1b61e607a"
     },
     {
+      "version": "0077_fix_yt_fb_content_type.sql",
+      "checksum": "628111af627be85a590d77a740232c961d2e68d545e0cb4c4a8db32499e8ab05"
+    },
+    {
       "version": "0078_training_quiz_attempts.sql",
       "checksum": "2552770cdc17129e292760c91d839d6771f315637dc8ec3983038b20096617ee"
+    },
+    {
+      "version": "0079_reel_dna_longform.sql",
+      "checksum": "edc085d36c814410441297ee0bd7f3f188b11374938db84ca4f1dbe9472a72e7"
     }
   ]
 }
