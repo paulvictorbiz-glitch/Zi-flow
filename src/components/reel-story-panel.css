@@ -1,0 +1,261 @@
+/* =========================================================
+   ReelStoryPanel — scoped styles (all `.rsp-` prefixed). Matches
+   the Reel DNA dark/dense/cinematic palette (styles.css tokens:
+   --bg-*, --line*, --fg*, --c-*, --f-mono). The panel mounts inside
+   the unified card's main column, below the foot, only for
+   format==='long' rows.
+   ========================================================= */
+
+.rsp-panel {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--dash);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Shared block scaffold ── */
+.rsp-block { display: flex; flex-direction: column; gap: 6px; }
+.rsp-block-head {
+  display: flex; align-items: baseline; gap: 8px;
+}
+.rsp-block-label {
+  font-family: var(--f-mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--fg-mute);
+}
+.rsp-block-note {
+  font-family: var(--f-mono); font-size: 9.5px; color: var(--fg-dim);
+}
+.rsp-ts {
+  font-family: var(--f-mono); font-size: 10px; color: var(--c-cyan);
+}
+.rsp-ts.dim { color: var(--fg-dim); }
+
+/* ── Chips ── */
+.rsp-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--f-mono); font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line-hard); color: var(--fg);
+  background: var(--bg-2);
+}
+.rsp-chip-ts { color: var(--c-cyan); font-weight: 700; }
+.rsp-chip-meta { color: var(--fg-mute); }
+.rsp-chip--cyan  { color: var(--c-cyan);  border-color: var(--c-cyan-soft); }
+.rsp-chip--green { color: var(--c-green); border-color: var(--c-green-soft); }
+.rsp-chip--blue  { color: var(--c-blue);  border-color: var(--c-blue-soft); }
+.rsp-chip--ghost { color: var(--fg-dim);  border-style: dashed; border-color: var(--line); }
+
+/* ── Strength meter ── */
+.rsp-meter {
+  width: 90px; height: 6px; border-radius: 999px;
+  background: var(--bg-3); overflow: hidden;
+}
+.rsp-meter-fill { height: 100%; border-radius: 999px; transition: width .2s ease; }
+
+/* ── Hook ── */
+.rsp-hook-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rsp-hook-strength { display: flex; align-items: center; gap: 7px; }
+.rsp-strength-val { font-family: var(--f-mono); font-size: 10px; color: var(--fg-mute); }
+.rsp-quote {
+  margin: 2px 0 0; padding: 6px 10px;
+  border-left: 2px solid var(--c-cyan-soft);
+  font-family: var(--f-serif); font-style: italic; font-size: 13.5px;
+  color: var(--fg); background: var(--bg-2); border-radius: 0 5px 5px 0;
+}
+
+/* ── Arc timeline bar ── */
+.rsp-arc-bar {
+  position: relative; height: 26px; width: 100%;
+  background: var(--bg-3); border-radius: 5px; overflow: hidden;
+  border: 1px solid var(--line);
+}
+.rsp-arc-seg {
+  position: absolute; top: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-right: 1px solid var(--bg-0);
+  background: color-mix(in srgb, var(--c-cyan) 12%, transparent);
+  overflow: hidden;
+}
+.rsp-arc-seg:nth-child(even) { background: color-mix(in srgb, var(--c-violet) 14%, transparent); }
+.rsp-arc-seg-label {
+  font-family: var(--f-mono); font-size: 9px; letter-spacing: .03em;
+  color: var(--fg); white-space: nowrap; padding: 0 4px;
+  text-transform: uppercase;
+}
+.rsp-arc-legend {
+  display: flex; flex-direction: column; gap: 3px; margin-top: 2px;
+}
+.rsp-arc-legend-item {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 11px; color: var(--fg-mute);
+}
+.rsp-arc-legend-beat {
+  font-family: var(--f-mono); font-size: 9.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--c-cyan);
+  min-width: 56px;
+}
+.rsp-arc-legend-sum { color: var(--fg-mute); }
+
+/* ── Emotion sparkline ── */
+.rsp-spark-wrap { position: relative; width: 100%; }
+.rsp-spark { display: block; width: 100%; height: 44px; }
+.rsp-spark-line { stroke: var(--c-cyan); }
+.rsp-spark-mid { stroke: var(--line-hard); stroke-width: 1; stroke-dasharray: 3 3; }
+.rsp-rehook {
+  position: absolute; top: 0; bottom: 0; width: 0;
+  border-left: 1.5px dashed var(--c-amber);
+  pointer-events: none;
+}
+.rsp-rehook::after {
+  content: ""; position: absolute; top: -1px; left: -2.5px;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--c-amber);
+}
+.rsp-emotion-labels { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+
+/* ── Open loops ── */
+.rsp-loop-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.rsp-loop {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 11.5px; color: var(--fg-mute);
+}
+.rsp-loop-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; align-self: center; }
+.rsp-loop-dot.paid { background: var(--c-green); }
+.rsp-loop-dot.open { background: var(--c-amber); }
+.rsp-loop-span { font-family: var(--f-mono); font-size: 10.5px; color: var(--fg); }
+.rsp-loop-arrow { color: var(--fg-dim); }
+.rsp-loop-unpaid { color: var(--c-amber); font-weight: 700; }
+.rsp-loop-desc { color: var(--fg-mute); }
+
+/* ── Retention flags ── */
+.rsp-flag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.rsp-flag {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 4px 8px; border-radius: 5px;
+  background: color-mix(in srgb, var(--c-red) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-red) 28%, transparent);
+}
+.rsp-flag-ts { font-family: var(--f-mono); font-size: 10.5px; font-weight: 700; color: var(--c-red); }
+.rsp-flag-reason { font-size: 11.5px; color: var(--fg-mute); }
+
+/* ── Payoff + CTA ── */
+.rsp-payoff-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ── Scorecard ── */
+.rsp-overall {
+  margin-left: auto;
+  font-family: var(--f-mono); font-size: 18px; font-weight: 800; line-height: 1;
+}
+.rsp-overall-max { font-size: 10px; font-weight: 600; color: var(--fg-dim); }
+.rsp-score-grid { display: flex; flex-direction: column; gap: 5px; }
+.rsp-score-row { display: grid; grid-template-columns: 56px 1fr 30px; align-items: center; gap: 8px; }
+.rsp-score-label {
+  font-family: var(--f-mono); font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--fg-mute);
+}
+.rsp-score-track { height: 7px; border-radius: 999px; background: var(--bg-3); overflow: hidden; }
+.rsp-score-fill { height: 100%; border-radius: 999px; transition: width .25s ease; }
+.rsp-score-val { font-family: var(--f-mono); font-size: 10.5px; color: var(--fg); text-align: right; }
+.rsp-verdict {
+  margin: 4px 0 0; padding: 8px 10px;
+  font-family: var(--f-serif); font-style: italic; font-size: 13px;
+  color: var(--fg); background: var(--bg-2); border-radius: 6px;
+  border: 1px solid var(--line);
+}
+
+/* ── Provenance footer ── */
+.rsp-provenance {
+  display: flex; gap: 6px; align-items: center;
+  font-family: var(--f-mono); font-size: 9px; color: var(--fg-faint);
+}
+.rsp-prov-sep { color: var(--fg-faint); }
+
+/* ── Progress (deconstructing) state ── */
+.rsp-progress {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 10px; border-radius: 6px;
+  background: var(--bg-2); border: 1px solid var(--line);
+}
+.rsp-progress-head { display: flex; align-items: center; gap: 8px; }
+.rsp-progress-title { font-family: var(--f-mono); font-size: 11.5px; font-weight: 700; color: var(--c-cyan); }
+.rsp-progress-step {
+  margin-left: auto; font-family: var(--f-mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--fg-mute);
+}
+.rsp-progress-track { height: 6px; border-radius: 999px; background: var(--bg-3); overflow: hidden; }
+.rsp-progress-bar {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--c-cyan-soft), var(--c-cyan));
+  transition: width .3s ease;
+}
+.rsp-progress-foot {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-family: var(--f-mono); font-size: 10px;
+}
+.rsp-progress-msg { color: var(--fg-mute); }
+.rsp-progress-msg.dim { color: var(--fg-dim); }
+.rsp-progress-pct { color: var(--c-cyan); font-weight: 700; }
+.rsp-spinner {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid var(--c-cyan-soft); border-top-color: var(--c-cyan);
+  animation: rsp-spin .7s linear infinite;
+}
+@keyframes rsp-spin { to { transform: rotate(360deg); } }
+
+/* ── Failed state ── */
+.rsp-failed {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px; border-radius: 6px;
+  background: color-mix(in srgb, var(--c-red) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-red) 30%, transparent);
+}
+.rsp-failed-title { font-family: var(--f-mono); font-size: 11.5px; font-weight: 700; color: var(--c-red); }
+.rsp-failed-msg { font-size: 11.5px; color: var(--fg); word-break: break-word; }
+.rsp-failed-hint { font-family: var(--f-mono); font-size: 9.5px; color: var(--fg-dim); }
+
+/* ── Empty hint ── */
+.rsp-empty {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px; border-radius: 6px;
+  background: var(--bg-2); border: 1px dashed var(--dash);
+}
+.rsp-empty-icon { font-size: 18px; flex: 0 0 auto; }
+.rsp-empty-text { font-size: 12px; color: var(--fg-mute); line-height: 1.4; }
+.rsp-empty-text strong { color: var(--c-cyan); }
+
+/* =========================================================
+   Card-side controls (format toggle + Analyze button) injected
+   into unified-dna-card.jsx's foot. Lives here (not in
+   unified-dna-card.css) because this stylesheet is always loaded
+   alongside the card via the ReelStoryPanel import, and these
+   classes belong to the longform Story feature.
+   ========================================================= */
+.udc-story-controls { display: inline-flex; align-items: center; gap: 8px; }
+
+.udc-fmt-toggle {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--line-hard); border-radius: 6px; overflow: hidden;
+  background: var(--bg-2);
+}
+.udc-fmt {
+  appearance: none; cursor: pointer; border: 0; background: transparent;
+  font-family: var(--f-mono); font-size: 10px; font-weight: 600;
+  letter-spacing: .04em; color: var(--fg-dim);
+  padding: 3px 9px; transition: color .12s ease, background .12s ease;
+}
+.udc-fmt + .udc-fmt { border-left: 1px solid var(--line-hard); }
+.udc-fmt:hover { color: var(--fg); }
+.udc-fmt.is-on { color: var(--bg-0); background: var(--c-cyan); }
+
+.udc-analyze {
+  appearance: none; cursor: pointer;
+  font-family: var(--f-mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .04em;
+  border-radius: 6px; padding: 3px 11px;
+  color: var(--c-cyan); background: color-mix(in srgb, var(--c-cyan) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-cyan) 50%, transparent);
+  transition: background .12s ease;
+}
+.udc-analyze:hover:not(:disabled) { background: color-mix(in srgb, var(--c-cyan) 22%, transparent); }
+.udc-analyze:disabled { opacity: .5; cursor: progress; }

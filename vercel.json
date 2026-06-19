@@ -6,6 +6,12 @@
         { "key": "Content-Type", "value": "application/octet-stream" },
         { "key": "Content-Disposition", "value": "attachment" }
       ]
+    },
+    {
+      "source": "/fb/reels/:path*",
+      "headers": [
+        { "key": "Content-Disposition", "value": "attachment" }
+      ]
     }
   ],
   "rewrites": [

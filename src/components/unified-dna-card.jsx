@@ -33,6 +33,10 @@ import { useReelDnaAssets } from "../lib/reel-dna-assets.jsx";
 import { ReelAssets } from "./reel-assets.jsx";
 import { AssetAttachPicker } from "./asset-attach-picker.jsx";
 import { relTime, resolveTags, BriefBlock, GeneEditor } from "../pages/reel-dna.jsx";
+import { ReelStoryPanel } from "./reel-story-panel.jsx";
+import { isAnalyzing, progressPct, progressStep, progressMsg } from "../lib/reel-narrative.jsx";
+import { ReelAssetsAuto } from "./reel-assets-auto.jsx";
+import { PacingSparkline } from "./pacing-sparkline.jsx";
 
 /* Build the {options, attachedIds} a picker needs for one category. */
 function pickerData(options, attachedRows) {
@@ -65,6 +69,33 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
 
   const saveGene = (geneKey, val) => actions.updateReelDna(item.id, { [geneKey]: val });
   const setStatus = (s) => actions.updateReelDna(item.id, { status: s });
+
+  /* ── Longform "Story" analysis (Phase 0) ── owner-gated controls.
+     format defaults to 'short' so existing captures are unchanged. */
+  const isLong = item.format === "long";
+  const mediaStatus = item.mediaStatus || "idle";
+  const analyzing = isAnalyzing(mediaStatus);          // pending_analyze | analyzing
+  const analyzeLabel =
+    mediaStatus === "analyzed" || mediaStatus === "analyze_failed" ? "Re-analyze" : "Analyze";
+  const setFormat = (fmt) => {
+    if (fmt === item.format) return;
+    if (typeof actions.setReelDnaFormat === "function") actions.setReelDnaFormat(item.id, fmt);
+  };
+  const runAnalyze = () => {
+    if (analyzing) return;
+    if (typeof actions.analyzeReelDna === "function") actions.analyzeReelDna(item.id);
+  };
+
+  /* ── Phase 1 reel deconstruction (format==='short') ──
+     Reels reuse the SAME media_status state machine + Analyze button as
+     longform (H6) but render a downloadable Assets layer + cut-pacing
+     metrics instead of the Story panel. assetManifest (H3) / pacing (H4)
+     arrive via the three-mapper guarantee (H5); both are null-safe so the
+     section renders nothing until the worker writes them. */
+  const isShort = !isLong;                       // format defaults to 'short'
+  const failed = typeof mediaStatus === "string" && mediaStatus.endsWith("_failed");
+  const acquireFailed = mediaStatus === "acquire_failed";
+  const hasReelAssets = !!item.assetManifest || !!item.pacing;
 
   /* ── Normalized option lists for the four quick-attach pickers ── */
   const footageOpts = useMemo(() => (attachedFootage || []).map(f => ({
@@ -209,6 +240,33 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
             ) : (
               <span className="rd-send" onClick={() => onSend(item)}>→ Send to Pipeline</span>
             )}
+            {isOwner && (
+              <span className="udc-story-controls">
+                <span className="udc-fmt-toggle" role="group" aria-label="Capture format">
+                  <button type="button"
+                          className={"udc-fmt" + (!isLong ? " is-on" : "")}
+                          onClick={() => setFormat("short")}
+                          title="Short-form capture (no story analysis)">
+                    Short
+                  </button>
+                  <button type="button"
+                          className={"udc-fmt" + (isLong ? " is-on" : "")}
+                          onClick={() => setFormat("long")}
+                          title="Longform — enables auto story deconstruction">
+                    Long
+                  </button>
+                </span>
+                {isLong && (
+                  <button type="button"
+                          className="udc-analyze"
+                          disabled={analyzing}
+                          onClick={runAnalyze}
+                          title={analyzing ? "Deconstruction in progress…" : "Deconstruct this longform video"}>
+                    {analyzing ? "Analyzing…" : analyzeLabel}
+                  </button>
+                )}
+              </span>
+            )}
           </div>
           <div className="rd-card-foot-right">
             {item.archivedAt ? (
@@ -219,6 +277,63 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
             <span className="rd-delete" onClick={() => onDelete(item)}>Delete</span>
           </div>
         </div>
+
+        {/* ── Longform Story panel — ONLY for format==='long' (short cards
+              render exactly as before). Presentational + null-safe. ── */}
+        {isLong && <ReelStoryPanel item={item} />}
+
+        {/* ── Phase 1 reel deconstruction — ONLY for format==='short'.
+              While analyzing: live progress. On *_failed: error + (when the
+              source couldn't be acquired) an "upload the file" CTA. When the
+              worker has written assetManifest/pacing: downloadable asset
+              layers + cut-pacing sparkline. All children are null-safe. ── */}
+        {isShort && (analyzing || failed || hasReelAssets) && (
+          <div className="udc-reel-deconstruct">
+            {analyzing && (
+              <div className="udc-reel-progress" role="status" aria-live="polite">
+                <div className="udc-reel-progress-head">
+                  <span className="udc-reel-progress-label">
+                    {progressStep(item.progress) || "Deconstructing reel…"}
+                  </span>
+                  <span className="udc-reel-progress-pct">{progressPct(item.progress)}%</span>
+                </div>
+                <div className="udc-reel-progress-track">
+                  <div className="udc-reel-progress-fill"
+                       style={{ width: `${progressPct(item.progress)}%` }} />
+                </div>
+                {progressMsg(item.progress) && (
+                  <div className="udc-reel-progress-msg">{progressMsg(item.progress)}</div>
+                )}
+              </div>
+            )}
+
+            {!analyzing && failed && (
+              <div className="udc-reel-failed" role="alert">
+                <div className="udc-reel-failed-msg">
+                  ⚠ {item.mediaError || "Reel deconstruction failed."}
+                </div>
+                {acquireFailed && (
+                  <div className="udc-reel-failed-cta">
+                    Couldn't fetch the source video.{" "}
+                    {isOwner && typeof actions.analyzeReelDna === "function" && (
+                      <button type="button" className="udc-reel-retry" onClick={runAnalyze}>
+                        Retry
+                      </button>
+                    )}
+                    {" "}Or upload the file and re-analyze.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!analyzing && hasReelAssets && (
+              <>
+                <ReelAssetsAuto item={item} isOwner={isOwner} />
+                <PacingSparkline pacing={item.pacing} />
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Assets column: attach toolbar + (collapsible) attached display ── */}

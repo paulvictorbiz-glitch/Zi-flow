@@ -1,0 +1,142 @@
+/* =========================================================
+   ReelAssetsAuto — scoped styles (all `.raa-` prefixed). Renders the
+   worker-produced downloadable asset layers (NOT the manual asset join
+   table). Matches the Reel DNA dark/dense/cinematic palette.
+   ========================================================= */
+
+.raa-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--dash);
+}
+
+/* ── header ── */
+.raa-head,
+.raa-keys-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.raa-label {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.raa-dir {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  color: var(--fg-faint);
+}
+
+.raa-err {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--c-red);
+}
+
+/* ── asset rows ── */
+.raa-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.raa-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.raa-kind {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--fg-mute);
+  width: 48px;
+  flex: 0 0 48px;
+}
+.raa-file {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.raa-meta {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* ── download control (button + locked span share the look) ── */
+.raa-dl {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-cyan);
+  background: transparent;
+  border: 1px solid var(--c-cyan);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.raa-dl:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--c-cyan) 16%, transparent);
+}
+.raa-dl:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.raa-dl--locked {
+  color: var(--fg-faint);
+  border-color: var(--line-hard);
+  cursor: default;
+}
+
+/* ── keyframe grid ── */
+.raa-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.raa-keys-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 4px;
+}
+.raa-key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 6px 4px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.raa-key-idx {
+  font-size: 10px;
+  font-weight: 700;
+}
+.raa-key-ts {
+  font-size: 9px;
+  color: var(--fg-dim);
+}

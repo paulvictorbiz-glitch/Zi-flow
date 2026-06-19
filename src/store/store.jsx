@@ -139,7 +139,11 @@ function reelDnaFromDb(row) {
   if (!row) return row;
   const { reel_url, genes_of_interest, quick_notes, captured_by,
           external_ref, reel_id, archived_at, deleted_at, location,
-          created_at, updated_at, ...rest } = row;
+          created_at, updated_at,
+          media_status, source_url_resolved, media_error, analyzed_at,
+          asset_manifest, pacing,
+          ...rest } = row;
+  // format / narrative / progress are same-name (snake==camel) → pass through ...rest.
   return {
     ...rest,
     reelUrl: reel_url,
@@ -153,6 +157,17 @@ function reelDnaFromDb(row) {
     location: location ?? undefined,
     createdAt: created_at ?? undefined,
     updatedAt: updated_at ?? undefined,
+    // Reel DNA longform (Phase 0) — C1 columns
+    mediaStatus: media_status ?? undefined,
+    sourceUrlResolved: source_url_resolved ?? undefined,
+    mediaError: media_error ?? undefined,
+    analyzedAt: analyzed_at ?? undefined,
+    // Reel DNA Phase 1 — downloadable asset layers (H3) + cut-pacing (H4).
+    // asset_manifest → assetManifest is a real camel↔snake remap; `pacing` is
+    // same-name but was destructured above (so it would NOT survive ...rest) →
+    // re-add it explicitly here.
+    assetManifest: asset_manifest ?? undefined,
+    pacing: pacing ?? undefined,
   };
 }
 function reelDnaToDb(item) {
@@ -160,7 +175,9 @@ function reelDnaToDb(item) {
   // (music/hook/font/story/sfx) pass through untouched.
   const { reelUrl, genesOfInterest, quickNotes, capturedBy, externalRef,
           reelId, archivedAt, deletedAt, location, id, platform, status, source,
-          music, hook, font, story, sfx, contentType } = item;
+          music, hook, font, story, sfx, contentType,
+          format, mediaStatus, sourceUrlResolved, narrative, progress,
+          mediaError, analyzedAt, assetManifest, pacing } = item;
   const out = { id, platform, status, source, music, hook, font, story, sfx,
     reel_url: reelUrl,
     genes_of_interest: genesOfInterest ?? [],
@@ -172,6 +189,23 @@ function reelDnaToDb(item) {
     deleted_at: deletedAt ?? null,
     location: location ?? null,
     content_type: contentType ?? null };
+  // Reel DNA longform (Phase 0) — C1 columns. Only emit a key when present so
+  // an insert from the existing capture form keeps the DB defaults
+  // (format='short', media_status='idle') instead of writing null over them.
+  // format / narrative / progress are same-name; narrative & progress are jsonb
+  // passed through untouched.
+  if (format !== undefined)            out.format = format;
+  if (mediaStatus !== undefined)       out.media_status = mediaStatus;
+  if (sourceUrlResolved !== undefined) out.source_url_resolved = sourceUrlResolved;
+  if (narrative !== undefined)         out.narrative = narrative;
+  if (progress !== undefined)          out.progress = progress;
+  if (mediaError !== undefined)        out.media_error = mediaError;
+  if (analyzedAt !== undefined)        out.analyzed_at = analyzedAt;
+  // Reel DNA Phase 1 — asset_manifest (H3) + pacing (H4) jsonb. Conditional-emit:
+  // the worker writes these post-analysis; a capture-form insert never carries
+  // them, so we keep the NULL DB defaults instead of overwriting with null.
+  if (assetManifest !== undefined)     out.asset_manifest = assetManifest;
+  if (pacing !== undefined)            out.pacing = pacing;
   return out;
 }
 
@@ -1259,6 +1293,15 @@ async function persistUpdateReelDna(id, patch) {
   if ("archivedAt" in patch)      { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
   if ("deletedAt" in patch)       { dbPatch.deleted_at = patch.deletedAt; delete dbPatch.deletedAt; }
   if ("contentType" in patch)     { dbPatch.content_type = patch.contentType; delete dbPatch.contentType; }
+  // Reel DNA longform (Phase 0) — C1 columns. format/narrative/progress are
+  // same-name (pass through via {...patch}); the rest remap to snake_case.
+  if ("mediaStatus" in patch)       { dbPatch.media_status = patch.mediaStatus; delete dbPatch.mediaStatus; }
+  if ("sourceUrlResolved" in patch) { dbPatch.source_url_resolved = patch.sourceUrlResolved; delete dbPatch.sourceUrlResolved; }
+  if ("mediaError" in patch)        { dbPatch.media_error = patch.mediaError; delete dbPatch.mediaError; }
+  if ("analyzedAt" in patch)        { dbPatch.analyzed_at = patch.analyzedAt; delete dbPatch.analyzedAt; }
+  // Reel DNA Phase 1 — asset_manifest (H3) remaps; pacing (H4) is same-name and
+  // passes through {...patch} untouched (jsonb).
+  if ("assetManifest" in patch)     { dbPatch.asset_manifest = patch.assetManifest; delete dbPatch.assetManifest; }
   const { error } = await supabase.from("reel_dna").update(dbPatch).eq("id", id);
   if (error) throw error;
 }
@@ -2544,6 +2587,52 @@ function WorkflowProvider({ children }) {
       updateReelDna: (id, patch) => wrap(
         { type: "UPDATE_REEL_DNA", id, patch },
         () => persistUpdateReelDna(id, patch)),
+
+      /* Reel DNA longform (Phase 0) — flip a capture between short/long format.
+         Thin wrapper over the updateReelDna path; format is 'short' | 'long'. */
+      setReelDnaFormat: (id, format) => wrap(
+        { type: "UPDATE_REEL_DNA", id, patch: { format } },
+        () => persistUpdateReelDna(id, { format })),
+
+      /* Reel DNA longform (Phase 0) — kick off the LLM deconstruction pipeline.
+         (1) Optimistically flip media_status to 'pending_analyze' via the normal
+         updateReelDna/persist path, so the UI reflects it instantly AND it
+         persists — the Hetzner cron drains 'pending_analyze' rows even if the
+         trigger fetch below never lands. (2) Fire-and-forget a POST to the
+         Vercel proxy (?action=deconstruct) with the owner's Supabase JWT, modeled
+         on triggerIgSync. A failed trigger must NOT throw uncaught: the row is
+         already queued, so we swallow + surface the error like triggerIgSync and
+         the cron picks it up. Returns the proxy body (or a degraded result). */
+      analyzeReelDna: async (id) => {
+        // Optimistic + persisted: row is queued before we ever hit the network.
+        // Same dispatch+persist path as updateReelDna(id, { mediaStatus }).
+        wrap(
+          { type: "UPDATE_REEL_DNA", id, patch: { mediaStatus: "pending_analyze" } },
+          () => persistUpdateReelDna(id, { mediaStatus: "pending_analyze" }));
+        if (isDemoMode()) return { ok: false, demo: true };
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) throw new Error("Not signed in");
+          const res = await fetch("/api/ai/suggest?action=deconstruct", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ id }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body?.error || `Analyze trigger failed (${res.status})`);
+          return body;
+        } catch (e) {
+          // Tolerate trigger failure — the row is already pending_analyze and the
+          // Hetzner cron will drain it. Surface the error like triggerIgSync does.
+          console.error("analyzeReelDna trigger failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          return { ok: false, queued: true, error: e.message || String(e) };
+        }
+      },
 
       /* Soft-archive (restorable). */
       archiveReelDna: (id) => {

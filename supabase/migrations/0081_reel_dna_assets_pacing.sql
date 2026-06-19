@@ -1,0 +1,59 @@
+-- Reel DNA — Phase 1 (Reel MVP) downloadable asset layers + cut-pacing metrics.
+-- Extends the auto-deconstruct spine to SHORT-format reels: flag a capture
+-- format='short' (DB default) + media_status='pending_analyze' (the SAME sentinel
+-- Phase 0 longform uses — format-agnostic) → a Hetzner worker acquires the video
+-- (manual-upload-first → yt-dlp), extracts audio, runs PySceneDetect for cut
+-- detection, dumps keyframes, computes pacing math, retains the media on disk, and
+-- writes the analysis back via the service role. The owner downloads the layered
+-- assets through short-lived HMAC-signed /fb/reels/<id>/<file> URLs.
+--
+-- Both columns are additive + nullable so every EXISTING reel_dna row degrades
+-- safely (NULL = un-deconstructed; capture-form inserts keep the NULL defaults via
+-- store.jsx's conditional-emit allow-list mapper — they are NEVER null-overwritten).
+--
+-- Column roles + jsonb shapes (FROZEN contracts H3 / H4 — worker writes, store
+-- round-trips camelCase as item.assetManifest / item.pacing, UI reads them):
+--
+--   asset_manifest  jsonb (H3) — the downloadable layer index the worker produces.
+--     {
+--       base_video: { file, bytes, duration },        -- file = BARE name e.g. 'base.mp4'
+--       audio:      { file, bytes } | null,            -- null if extraction failed (silent reels)
+--       keyframes:  [ { file, cutIndex, ts }, ... ],   -- one per detected cut, bare 'cut_0.jpg'
+--       scenes:     { file, shotCount },               -- 'scenes.csv' + count
+--       base_dir:   'reels/<id>',                      -- NO /fb/ prefix; the /fb/ is added
+--                                                      --   ONLY in the signed download URL,
+--                                                      --   NEVER in the HMAC message
+--       version:    1
+--     }
+--     ALL file values are BARE names (no path, no /fb/). version pins the shape.
+--
+--   pacing          jsonb (H4) — cut-rhythm metrics from scenes.csv (seconds).
+--     {
+--       asl,            -- average shot length = total_duration / shot_count (guard >0)
+--       median_shot,    -- median of per-shot durations
+--       cuts_per_sec,   -- (shot_count - 1) / total_duration (guard >0 else 0)
+--       shot_count,     -- number of detected shots (<1 detected → synthesize ONE shot)
+--       total_duration, -- max(end) - min(start)
+--       rhythm_label,   -- asl<1.0 frenetic | 1.0-2.0 punchy | 2.0-4.0 steady | >4.0 languid
+--       front_loaded,   -- mean(first_third) < mean(last_third)*0.8 (guard len>=3 else false)
+--       pacing_curve,   -- [] raw per-shot durations (UI caps render length)
+--       detector,       -- 'ContentDetector'
+--       threshold,      -- 27.0 (PySceneDetect ContentDetector default)
+--       computed_at     -- ISO-8601 UTC timestamp
+--     }
+--
+-- Phase 1 reuses Phase 0's media_status='pending_analyze' sentinel + the
+-- reel_dna_media_status_idx index from 0079 (the worker disambiguates reel vs
+-- longform by reading row['format'] AFTER the atomic status-guarded claim) — so this
+-- migration adds NO new status value and NO new index.
+--
+-- No CHECK constraint (mirrors 0079 — vocabulary stays flexible). No RLS change: the
+-- existing reel_dna policies (team read/write + service-role insert + owner-all)
+-- already cover these new columns row-by-row.
+-- Idempotent (IF NOT EXISTS) — safe to re-run.
+--
+-- Apply via `npm run migrate:apply` — HUMAN-GATED; do NOT run from this workflow.
+
+ALTER TABLE public.reel_dna
+  ADD COLUMN IF NOT EXISTS asset_manifest jsonb,
+  ADD COLUMN IF NOT EXISTS pacing         jsonb;

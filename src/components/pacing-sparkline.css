@@ -1,0 +1,102 @@
+/* =========================================================
+   PacingSparkline — scoped styles (all `.ps-` prefixed). Matches the
+   Reel DNA dark/dense/cinematic palette (styles.css tokens). Pure
+   presentational; mounts inside the unified card's reel Assets section.
+   ========================================================= */
+
+.ps-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+/* ── sparkline ── */
+.ps-spark {
+  width: 100%;
+  height: 40px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ps-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.ps-base {
+  stroke: var(--line);
+  stroke-width: 0.5;
+}
+.ps-bar {
+  fill: var(--c-cyan);
+  opacity: 0.85;
+}
+/* rhythm-tinted bars */
+.ps-wrap[data-rhythm="frenetic"] .ps-bar { fill: var(--c-red); }
+.ps-wrap[data-rhythm="punchy"]   .ps-bar { fill: var(--c-amber); }
+.ps-wrap[data-rhythm="steady"]   .ps-bar { fill: var(--c-cyan); }
+.ps-wrap[data-rhythm="languid"]  .ps-bar { fill: var(--c-blue); }
+
+.ps-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+/* ── label strip ── */
+.ps-labels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 8px;
+}
+.ps-metric {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.ps-metric b {
+  color: var(--fg-mute);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-right: 1px;
+}
+
+/* rhythm chip */
+.ps-chip {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-hard);
+}
+.ps-chip--frenetic { color: var(--c-red);   border-color: var(--c-red);   background: color-mix(in srgb, var(--c-red) 12%, transparent); }
+.ps-chip--punchy   { color: var(--c-amber); border-color: var(--c-amber); background: color-mix(in srgb, var(--c-amber) 12%, transparent); }
+.ps-chip--steady   { color: var(--c-cyan);  border-color: var(--c-cyan);  background: color-mix(in srgb, var(--c-cyan) 12%, transparent); }
+.ps-chip--languid  { color: var(--c-blue);  border-color: var(--c-blue);  background: color-mix(in srgb, var(--c-blue) 12%, transparent); }
+
+/* front-loaded badge */
+.ps-badge {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--c-violet);
+  border: 1px solid var(--c-violet);
+  background: color-mix(in srgb, var(--c-violet) 12%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}

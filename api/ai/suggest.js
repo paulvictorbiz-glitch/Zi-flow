@@ -27,8 +27,9 @@
  *   30 8 * * * curl -s "https://footagebrain.com/api/ai/suggest?action=insights&secret=YOUR_SECRET" > /dev/null
  */
 
+import { createHmac } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
-import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED } from "../admin/_auth.js";
+import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED, classifyCaller } from "../admin/_auth.js";
 import { runInsights } from "./_insights-core.js";
 import { ingestSources, validateFeedUrl, parseYouTubePlaylistFeed } from "./_rss.js";
 import { ingestWorldEvents } from "./_world-feeds.js";
@@ -93,6 +94,90 @@ export default async function handler(req, res) {
     } finally {
       clearTimeout(t);
     }
+    return;
+  }
+
+  // ── Dispatch: force the Hetzner reel-deconstruction worker to run now ──────
+  // Fire-and-forget — we hit /api/reel/deconstruct WITHOUT waiting so it returns
+  // instantly (the deconstruction pipeline runs in the background on Hetzner,
+  // well under our function timeout); the narrative/progress writes arrive
+  // client-side via Supabase realtime. An optional { id } in the JSON body
+  // targets one reel_dna row; omitted, the worker claims the next queued row.
+  if (action === "deconstruct") {
+    const deconstructSecret = process.env.REEL_DECONSTRUCT_SECRET;
+    if (!deconstructSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
+    const id = req.body?.id;
+    // Truly fire-and-forget: abort our wait after 8s so a slow Hetzner run can
+    // never push us past the Vercel function timeout (Hobby ~10s). If the run
+    // is still going when we abort, that's fine — it finishes server-side and
+    // the narrative/progress writes arrive via Supabase realtime / the drain cron.
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/reel/deconstruct?secret=${encodeURIComponent(deconstructSecret)}` +
+          (id ? `&id=${encodeURIComponent(id)}` : ""),
+        { method: "POST", signal: ctrl.signal });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Hetzner deconstruct HTTP ${r.status}`, ...body }); return; }
+      res.status(200).json({ ok: true, started: true, ...body });
+    } catch (e) {
+      if (e.name === "AbortError") {
+        // Run is taking >8s but is going — report success, not failure.
+        res.status(202).json({ ok: true, started: true, pending: true });
+        return;
+      }
+      console.error("deconstruct error:", e.message);
+      res.status(502).json({ error: `Couldn't reach the reel deconstruction worker: ${e.message}` });
+    } finally {
+      clearTimeout(t);
+    }
+    return;
+  }
+
+  // ── Dispatch: mint a short-lived signed download URL for a reel asset ──────
+  // POST /api/ai/suggest?action=sign-download  (owner Bearer JWT — authed above)
+  // Body { id, file } → 200 { url: "/fb/reels/<id>/<file>?t=<hmac>&exp=<exp>" }.
+  // The /fb/ rewrite (vercel.json) proxies that to api.footagebrain.com which
+  // serves the retained reel asset; the Hetzner worker re-mints the SAME HMAC
+  // and constant-time-compares before streaming the file (defense in depth).
+  //
+  // CANONICAL HMAC MESSAGE (H1 — MUST byte-match the Python validator in
+  // backend-handoff/reel_deconstruct.py). NO "/fb/" prefix, NO leading slash,
+  // NO query string, file = BARE name, exp = unix SECONDS as a plain decimal int:
+  //     message = `reels/${id}/${file}:${exp}`
+  //     JS:     createHmac('sha256', SECRET).update(message).digest('hex')
+  //     Python: hmac.new(SECRET.encode(), f'reels/{id}/{file}:{exp}'.encode(),
+  //                       hashlib.sha256).hexdigest()
+  // Parity vector (in DEPLOY-PHASE1.md): secret='test-secret-do-not-use',
+  //   id='abc123', file='base.mp4', exp=1750000000
+  //   → message='reels/abc123/base.mp4:1750000000' → identical lowercase hex.
+  if (action === "sign-download") {
+    // Demo callers get NO download access (quota/abuse gate). classifyCaller is
+    // non-throwing; the generic Bearer-JWT auth above already rejected anon.
+    const { isDemo } = await classifyCaller(req);
+    if (isDemo) { res.status(403).json({ error: "Downloads are not available on demo accounts." }); return; }
+
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+    const id = body.id;
+    const file = body.file;
+    // Reject anything that could escape the reels/<id>/<file> path: no slashes,
+    // backslashes, "..", query chars — only bare path-segment characters.
+    const SEG = /^[A-Za-z0-9._-]+$/;
+    if (typeof id !== "string" || typeof file !== "string" || !SEG.test(id) || !SEG.test(file)) {
+      res.status(400).json({ error: "Invalid id or file" }); return;
+    }
+
+    const secret = process.env.FB_DOWNLOAD_SIGNING_SECRET;
+    if (!secret) { res.status(500).json({ error: "FB_DOWNLOAD_SIGNING_SECRET not configured" }); return; }
+
+    const exp = Math.floor(Date.now() / 1000) + 300; // unix SECONDS, 300s TTL
+    const message = `reels/${id}/${file}:${exp}`;     // H1 canonical — no /fb/, no leading slash
+    const t = createHmac("sha256", secret).update(message).digest("hex");
+    // The /fb/ prefix is added ONLY here in the returned URL, never in the HMAC.
+    res.status(200).json({ url: `/fb/reels/${id}/${file}?t=${t}&exp=${exp}` });
     return;
   }
 
