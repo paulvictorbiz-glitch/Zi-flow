@@ -31,6 +31,7 @@
 
 /* ── Header ── */
 .rdv-header {
+  flex: 0 0 auto;                 /* never shrink: keeps the close ✕ pinned + always visible */
   display: flex; align-items: center; justify-content: space-between;
   gap: 14px; padding: 14px 18px;
   border-bottom: 1px solid var(--line);
@@ -68,10 +69,16 @@
 
 /* ── Stage ── */
 .rdv-stage {
+  flex: 1 1 auto;                 /* take the remaining height under the header... */
+  min-height: 0;                  /* ...and allow shrinking so overflow:auto can scroll */
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.18fr);
   gap: 20px; align-items: start;
-  padding: 20px; overflow: auto;
+  padding: 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .rdv-stage-cap {

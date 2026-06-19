@@ -4,13 +4,16 @@ import { getChatNotifyPref, setChatNotifyPref, shareReelToChannel } from "../lib
 import { useWorkflow } from "../store/store.jsx";
 import { supabase } from "../lib/supabase-client.js";
 
+// Origin of the embedded Rocket.Chat iframe (used for postMessage validation).
+const RC_ORIGIN = "https://chat.footagebrain.com";
+
 /* Share-a-reel picker: a search-as-you-type dropdown over pipeline reels.
    Pick a reel (scroll / arrow keys / Enter / click), add feedback, send.
    Sending posts a reference card into the chosen Rocket.Chat channel AND
    saves the feedback as a comment on the reel (via the JWT-gated backend
    endpoint /fb/api/rocketchat/dashboard/reel-feedback). This is the
    dashboard-side equivalent of the native /reel slash command. */
-function ReelSharePicker() {
+function ReelSharePicker({ openRoom }) {
   const { reels, reelChatRefs, actions } = useWorkflow();
   const { person: me } = useAuth();
 
@@ -22,8 +25,16 @@ function ReelSharePicker() {
   const [feedback, setFeedback] = useState("");
   const [channels, setChannels] = useState([]);
   const [channel, setChannel] = useState("pipeline");
+  const [userOverride, setUserOverride] = useState(false); // user manually picked a channel?
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState(null);       // {ok, text}
+
+  // Auto-follow the channel currently open in the chat iframe, unless the user
+  // has manually picked one (override stays until the next successful send).
+  useEffect(() => {
+    if (!openRoom?.name || userOverride) return;
+    setChannel(openRoom.name);
+  }, [openRoom?.name, userOverride]);
 
   const boxRef = useRef(null);
 
@@ -62,7 +73,11 @@ function ReelSharePicker() {
         if (cancelled) return;
         const names = (j.channels || []).map(c => c.name);
         setChannels(names);
-        if (names.length && !names.includes("pipeline")) setChannel(names[0]);
+        // Only fall back to names[0] when we have no better signal (no open
+        // room observed and the user hasn't manually chosen).
+        if (names.length && !names.includes("pipeline") && !openRoom?.name && !userOverride) {
+          setChannel(names[0]);
+        }
       } catch (_) { /* leave default channel */ }
     })();
     return () => { cancelled = true; };
@@ -98,6 +113,17 @@ function ReelSharePicker() {
   const reelCount = (rid) =>
     (reelChatRefs || []).filter(r => (r.reelId ?? r.reel_id) === rid).length;
 
+  // Channel dropdown options — always include the current value (open room or a
+  // manual pick) even if the channels endpoint didn't enumerate it, so <select>
+  // never references a missing <option>.
+  const channelOptions = useMemo(() => {
+    const base = channels.length ? channels : ["pipeline", "general"];
+    const extras = [];
+    if (openRoom?.name && !base.includes(openRoom.name)) extras.push(openRoom.name);
+    if (channel && !base.includes(channel) && channel !== openRoom?.name) extras.push(channel);
+    return [...extras, ...base];
+  }, [channels, openRoom?.name, channel]);
+
   const send = async () => {
     if (!selected || sending) return;
     setSending(true);
@@ -117,6 +143,7 @@ function ReelSharePicker() {
       setFeedback("");
       setSelected(null);
       setQuery("");
+      setUserOverride(false); // resume following the open chat room
     }
     setSending(false);
   };
@@ -230,14 +257,14 @@ function ReelSharePicker() {
             <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>to</span>
             <select
               value={channel}
-              onChange={e => setChannel(e.target.value)}
+              onChange={e => { setChannel(e.target.value); setUserOverride(true); }}
               style={{
                 background: "var(--bg-2)", border: "1px solid var(--line-hard)",
                 borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)",
                 fontSize: 12, padding: "5px 8px",
               }}
             >
-              {(channels.length ? channels : ["pipeline", "general"]).map(c => (
+              {channelOptions.map(c => (
                 <option key={c} value={c}>#{c}</option>
               ))}
             </select>
@@ -274,6 +301,30 @@ export function TeamChat({ active }) {
   // (deferred — see memory rocketchat-integration.md).
   const [notify, setNotify] = useState(false);
   const [showHint, setShowHint] = useState(false);
+
+  // Track which Rocket.Chat room is currently open inside the iframe so the
+  // reel-share picker can default to it. The chat is a cross-origin iframe, so
+  // the only way to know is RC's iframe-integration "send" API, which posts a
+  // `room-opened` message to the parent when `Iframe_Integration_send_enable`
+  // is ON in RC admin. If that setting is off, no messages arrive and the
+  // picker quietly keeps its default — no breakage.
+  const [openRoom, setOpenRoom] = useState(null); // { name, t } | null
+  useEffect(() => {
+    const handler = (event) => {
+      if (event.origin !== RC_ORIGIN) return;          // origin gate first
+      let payload = event.data;
+      if (typeof payload === "string") {
+        try { payload = JSON.parse(payload); } catch { return; }
+      }
+      if (!payload || payload.event !== "room-opened") return;
+      const { name, t } = payload.data || {};
+      if (!name) return;
+      // Only real channels/groups — ignore DMs ('d') and omnichannel ('l').
+      if (t === "c" || t === "p") setOpenRoom({ name, t });
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
 
   // Reflect the persisted pref on load.
   useEffect(() => {
@@ -334,7 +385,7 @@ export function TeamChat({ active }) {
       </div>
 
       {/* Share-a-reel picker (dashboard-side /reel autocomplete) */}
-      <ReelSharePicker />
+      <ReelSharePicker openRoom={openRoom} />
 
       {showHint && (
         <div style={{
