@@ -42,6 +42,7 @@ export const VIEW_CAPS = [
   { key: "monitor",   label: "Monitor (infra usage)" },
   { key: "pulse",     label: "Pulse (real-time alerts)" },
   { key: "ai",        label: "AI Brain (bot & notes)" },
+  { key: "scout",     label: "Scout (MicroSaaS radar)" },
 ];
 
 /* Actions wired in Phase 1. Every key here maps to a real, gated
@@ -114,6 +115,7 @@ export function defaultPermsForRole(roleKey) {
   views.monitor  = false; // infra usage — owner only
   views.pulse    = false; // real-time alerts — owner only
   views.ai       = false; // AI Brain — owner only
+  views.scout    = false; // MicroSaaS radar — owner only
 
   const actions = {};
   for (const a of ACTION_CAPS) actions[a.key] = true;

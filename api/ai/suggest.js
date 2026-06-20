@@ -29,7 +29,7 @@
 
 import { createHmac } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
-import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED, classifyCaller } from "../admin/_auth.js";
+import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED, classifyCaller, verifyOwner } from "../admin/_auth.js";
 import { runInsights } from "./_insights-core.js";
 import { ingestSources, validateFeedUrl, parseYouTubePlaylistFeed } from "./_rss.js";
 import { ingestWorldEvents } from "./_world-feeds.js";
@@ -129,6 +129,49 @@ export default async function handler(req, res) {
       }
       console.error("deconstruct error:", e.message);
       res.status(502).json({ error: `Couldn't reach the reel deconstruction worker: ${e.message}` });
+    } finally {
+      clearTimeout(t);
+    }
+    return;
+  }
+
+  // ── Dispatch: trigger the MicroSaaS Scout scraper on Hetzner ───────────────
+  // POST /api/ai/suggest?action=scout-scrape  (owner Bearer JWT — authed above)
+  // Fire-and-forget proxy to the Scout FastAPI at {SCOUT_BACKEND_URL}/scrape-all.
+  // The SCOUT_SCRAPE_SECRET is kept server-side and injected as a header here;
+  // the browser never sees the Scout URL or the secret. The scrape takes ~2 min;
+  // we abort our wait after 8s (Hobby fn timeout ~10s) and the run continues on
+  // Hetzner. The owner manually clicks "Reload" in the Scout tab when done.
+  if (action === "scout-scrape") {
+    // Owner-only gate: even though the UI is already isOwner-gated, enforce at
+    // the API layer too so a non-owner with a valid JWT can't hit this directly.
+    try {
+      await verifyOwner(req);
+    } catch {
+      res.status(403).json({ error: "Owner only" }); return;
+    }
+    const scoutUrl = process.env.SCOUT_BACKEND_URL;
+    const scoutSecret = process.env.SCOUT_SCRAPE_SECRET;
+    if (!scoutUrl || !scoutSecret) {
+      res.status(500).json({ error: "Scout not configured (SCOUT_BACKEND_URL / SCOUT_SCRAPE_SECRET)" }); return;
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const r = await fetch(`${scoutUrl}/scrape-all`, {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: { "x-scout-secret": scoutSecret },
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Scout HTTP ${r.status}`, ...body }); return; }
+      res.status(200).json({ ok: true, started: true, ...body });
+    } catch (e) {
+      if (e.name === "AbortError") {
+        res.status(202).json({ ok: true, started: true, pending: true }); return;
+      }
+      console.error("scout-scrape error:", e.message);
+      res.status(502).json({ error: `Couldn't reach Scout: ${e.message}` });
     } finally {
       clearTimeout(t);
     }

@@ -18,15 +18,17 @@ import { DPill } from "../components/components.jsx";
 import { Monitor } from "./monitor.jsx";
 import { Pulse } from "./pulse.jsx";
 import { AIBrain } from "./ai-brain.jsx";
+import { Scout } from "./scout.jsx";
 
 const MONITOR_MODE_KEY = "wb_monitor_mode";
 
 // view = the permission-catalog key each sub-view is gated by (preserved
 // verbatim from when these were top-level tabs, so gating never changes).
 const SUBVIEWS = [
-  { key: "infra", label: "Infra",    view: "monitor", Comp: Monitor },
-  { key: "pulse", label: "Pulse",    view: "pulse",   Comp: Pulse },
-  { key: "ai",    label: "AI Brain", view: "ai",      Comp: AIBrain },
+  { key: "infra",  label: "Infra",    view: "monitor", Comp: Monitor },
+  { key: "pulse",  label: "Pulse",    view: "pulse",   Comp: Pulse },
+  { key: "ai",     label: "AI Brain", view: "ai",      Comp: AIBrain },
+  { key: "scout",  label: "Scout",    view: "scout",   Comp: Scout },
 ];
 
 export function MonitorHub({ canView }) {
