@@ -24,7 +24,7 @@ import { useWorkflow } from "../store/store.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
 import { getConnections } from "../lib/social-client.js";
 
-import { FACES, PAGES, FACE_BY_KEY, PAGE_BY_KEY, openInApp, QUALITY, pickQuality } from "../lib/space-cube-config.jsx";
+import { FACES, PAGES, FACE_BY_KEY, PAGE_BY_KEY, openInApp, QUALITY, pickQuality, CAM } from "../lib/space-cube-config.jsx";
 import { buildMetrics, pageDetail } from "../components/space/widgets.jsx";
 import RubikCube from "../components/space/RubikCube.jsx";
 import Galaxy from "../components/space/Galaxy.jsx";
@@ -35,8 +35,9 @@ import DetailPanel from "../components/space/DetailPanel.jsx";
 import SpaceFallback from "../components/space/SpaceFallback.jsx";
 import SpaceSettings from "../components/space/SpaceSettings.jsx";
 import SpaceControls from "../components/space/SpaceControls.jsx";
+import GravLens from "../components/space/GravLens.jsx";
 import { SpaceAudio } from "../components/space/space-audio.js";
-import { DEFAULT_SCENE, BODIES, hydrateScene } from "../lib/space-scene-params.jsx";
+import { DEFAULT_SCENE, BODIES, hydrateScene, posFromAED } from "../lib/space-scene-params.jsx";
 import "./space3d.css";
 
 /* ---- capability checks (same recipe as dna-helix.jsx) ---- */
@@ -121,7 +122,18 @@ function Space3DInner() {
   // ── Scene Studio: per-body params + procedural audio ──
   const [scene, setScene] = useState(loadScene);
   const [studioOpen, setStudioOpen] = useState(false);
+  const [studioSel, setStudioSel] = useState(null);
   const audioRef = useRef(null);
+
+  // ── Gravitational-lens warp: idle → warping → atSun → returning → idle ──
+  const [warpPhase, setWarpPhase] = useState("idle");
+  const requestWarp = useCallback(() => setWarpPhase((p) => (p === "idle" ? "warping" : p)), []);
+  const onWarpArrive = useCallback((ph) => setWarpPhase(ph === "warping" ? "atSun" : "idle"), []);
+  const exitWarp = useCallback(() => setWarpPhase((p) => (p === "atSun" ? "returning" : p)), []);
+  const sunPos = useMemo(
+    () => posFromAED(scene.sun.az, scene.sun.el, scene.sun.dist),
+    [scene.sun.az, scene.sun.el, scene.sun.dist]
+  );
 
   // push the whole scene's audio settings to the engine
   const syncAudio = useCallback((sc) => {
@@ -156,6 +168,14 @@ function Space3DInner() {
       if (open && audioRef.current) { audioRef.current.resume(); syncAudio(scene); }
       return open;
     });
+  }, [scene, syncAudio]);
+
+  // open the studio focused on a body picked in the 3D scene
+  const openStudioAt = useCallback((id) => {
+    setStudioSel(id);
+    setStudioOpen(true);
+    if (!audioRef.current) { audioRef.current = new SpaceAudio(); audioRef.current.init(); }
+    if (audioRef.current) { audioRef.current.resume(); syncAudio(scene); }
   }, [scene, syncAudio]);
 
   useEffect(() => () => { if (audioRef.current) audioRef.current.dispose(); }, []);
@@ -196,11 +216,15 @@ function Space3DInner() {
   // (Scroll is now owned by OrbitControls for continuous zoom.)
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape" || e.key === "Backspace") { e.preventDefault(); setSelectedKey(null); }
+      if (e.key === "Escape" || e.key === "Backspace") {
+        e.preventDefault();
+        if (warpPhase === "atSun") setWarpPhase("returning");
+        else setSelectedKey(null);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [warpPhase]);
 
   const exitToClassic = () => window.location.assign("/app");
   const onOpen = (link) => (link ? openInApp(link) : null);
@@ -236,23 +260,32 @@ function Space3DInner() {
         visible={state !== "assembled"}
       />
 
-      {state === "assembled" && (
+      {state === "assembled" && warpPhase === "idle" && (
         <div className="s3d-hero-hint">
           <div className="s3d-hero-title">FootageBrain · Space</div>
           <div className="s3d-hero-sub">drag to rotate · scroll or click a box to explore</div>
         </div>
       )}
 
+      {warpPhase === "atSun" && (
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 30, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, zIndex: 30, pointerEvents: "none" }}>
+          <button type="button" className="s3d-exit" style={{ position: "static", pointerEvents: "auto" }} onClick={exitWarp}>← Back to the cube</button>
+          <span style={{ color: "#cdd9ee", fontSize: 12, letterSpacing: ".04em", textShadow: "0 1px 6px #000" }}>
+            Above the Sun · look to the centre for your spinning cube
+          </span>
+        </div>
+      )}
+
       <div className="s3d-canvas-wrap">
         <Canvas
           dpr={[1, 2]}
-          camera={{ position: [0, 0, 9], fov: 50 }}
+          camera={{ position: [0, 0, 12], fov: 50 }}
           gl={{ antialias: true, alpha: true }}
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}
           style={{ background: "transparent" }}
         >
           <Skydome bg={prefs.bg} />
-          <Galaxy reduced={caps.reduced} bg={prefs.bg} quality={quality} scene={scene} />
+          <Galaxy reduced={caps.reduced} bg={prefs.bg} quality={quality} scene={scene} onPick={openStudioAt} />
           <RubikCube
             mode={state}
             selectedKey={selectedKey}
@@ -260,9 +293,17 @@ function Space3DInner() {
             metrics={metrics}
             prefs={prefs}
             autoRotateSpeed={scene.global.autoRotate}
+            maxDistance={warpPhase === "idle" ? CAM.MAX : 140}
             onSelectPage={openPage}
             onHoverFace={setHoveredFace}
             onZone={setZone}
+          />
+          <GravLens
+            sunPos={sunPos}
+            phase={warpPhase}
+            params={scene.lens}
+            onRequestWarp={requestWarp}
+            onArrive={onWarpArrive}
           />
           {bloomOn && scene.global.bloom > 0.02 && (
             <EffectComposer disableNormalPass>
@@ -278,7 +319,7 @@ function Space3DInner() {
         </Canvas>
       </div>
 
-      <SpaceControls open={studioOpen} onToggle={toggleStudio} scene={scene} onChange={onSceneChange} />
+      <SpaceControls open={studioOpen} onToggle={toggleStudio} scene={scene} onChange={onSceneChange} sel={studioSel} onSel={setStudioSel} />
 
       {state === "detail" && (
         <DetailPanel

@@ -538,6 +538,16 @@
 .s3d-ctrl-tab:hover { color: #fff; border-color: #36507a; }
 .s3d-ctrl-tab.is-active { background: linear-gradient(180deg, #1d3a63, #16263f); color: #fff; border-color: #4f7bb8; }
 
+/* accordion list of cosmic bodies — click a head to drop its settings down */
+.s3d-acc { display: flex; flex-direction: column; gap: 8px; }
+.s3d-acc-item { border: 1px solid #1d2839; border-radius: 12px; background: rgba(18, 26, 41, 0.5); overflow: hidden; }
+.s3d-acc-item.is-open { border-color: #4f7bb8; }
+.s3d-acc-head { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 11px 12px; background: none; border: 0; color: #d4e0f2; font-size: 13.5px; font-weight: 600; cursor: pointer; text-align: left; }
+.s3d-acc-head:hover { color: #fff; }
+.s3d-acc-item.is-open .s3d-acc-head { background: linear-gradient(180deg, #1d3a63, #16263f); color: #fff; }
+.s3d-acc-caret { color: #7fd9ff; font-size: 11px; flex: 0 0 auto; }
+.s3d-acc-body { padding: 12px 12px 4px; border-top: 1px solid #1d2839; }
+
 .s3d-ctrl-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 13px; color: #c4d2e6; }
 .s3d-ctrl-rowtop { display: flex; justify-content: space-between; align-items: baseline; }
 .s3d-ctrl-rowtop em { font-style: normal; color: #7fd9ff; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }

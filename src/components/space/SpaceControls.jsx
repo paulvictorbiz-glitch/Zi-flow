@@ -1,13 +1,14 @@
 /* =========================================================
    SpaceControls — slide-in "Scene Studio" sidebar for /space.
 
-   Expand the handle → a panel slides in with a Global section + a tab per
-   celestial body. Pick a body and its sliders / colour pickers / toggles
-   (speed, lighting, angle/direction, colour, texture detail, size, sound,
-   volume) appear. Pure presentation: every change calls onChange(bodyId,
-   key, value); the parent owns the scene-params state + audio.
+   Expand the handle → a panel slides in with a Global section + an
+   ACCORDION list of every major cosmic system. Click a body to drop
+   down its settings (speed, lighting, angle/direction, colour, detail,
+   size, sound, volume). Clicking a body in the 3D scene also opens its
+   drawer (parent drives `sel`). Pure presentation: every change calls
+   onChange(bodyId, key, value); the parent owns scene-params + audio.
    ========================================================= */
-import React, { useState } from "react";
+import React from "react";
 import { BODIES, GLOBAL_CONTROLS } from "../../lib/space-scene-params.jsx";
 
 function Control({ bodyId, c, vals, onChange }) {
@@ -44,10 +45,7 @@ function Control({ bodyId, c, vals, onChange }) {
   );
 }
 
-export default function SpaceControls({ open, onToggle, scene, onChange }) {
-  const [sel, setSel] = useState("sun");
-  const body = BODIES.find((b) => b.id === sel) || BODIES[0];
-
+export default function SpaceControls({ open, onToggle, scene, onChange, sel = null, onSel = () => {} }) {
   return (
     <>
       <button type="button" className="s3d-ctrl-handle" onClick={onToggle} aria-expanded={open}>
@@ -64,25 +62,32 @@ export default function SpaceControls({ open, onToggle, scene, onChange }) {
           ))}
         </section>
 
-        <div className="s3d-ctrl-tabs">
-          {BODIES.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              className={"s3d-ctrl-tab" + (b.id === sel ? " is-active" : "")}
-              onClick={() => setSel(b.id)}
-            >
-              {b.label}
-            </button>
-          ))}
+        <div className="s3d-ctrl-title">Cosmic systems</div>
+        <div className="s3d-acc">
+          {BODIES.map((b) => {
+            const isOpen = b.id === sel;
+            return (
+              <div key={b.id} className={"s3d-acc-item" + (isOpen ? " is-open" : "")}>
+                <button
+                  type="button"
+                  className="s3d-acc-head"
+                  aria-expanded={isOpen}
+                  onClick={() => onSel(isOpen ? null : b.id)}
+                >
+                  <span>{b.label}</span>
+                  <span className="s3d-acc-caret">{isOpen ? "▾" : "▸"}</span>
+                </button>
+                {isOpen && (
+                  <div className="s3d-acc-body">
+                    {b.controls.map((c) => (
+                      <Control key={c.key} bodyId={b.id} c={c} vals={scene[b.id]} onChange={onChange} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-
-        <section className="s3d-ctrl-sec s3d-ctrl-panel">
-          <div className="s3d-ctrl-title">{body.label}</div>
-          {body.controls.map((c) => (
-            <Control key={c.key} bodyId={sel} c={c} vals={scene[sel]} onChange={onChange} />
-          ))}
-        </section>
       </aside>
     </>
   );

@@ -268,26 +268,38 @@ export function makeAccretionDiskMaterial({ rIn, rOut, inner = "#dff0ff", outer 
    warped fbm density, 3-colour mix, radial falloff so it stays cloud-
    shaped, slow drift via uTime. Additive. */
 const NEBULA_FRAG = `
-uniform float uTime; uniform float uDensity; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3;
+uniform float uTime; uniform float uDensity; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3; uniform vec3 uC4;
 varying vec2 vUv;
 ${GLSL_NOISE}
 void main(){
   vec2 uv = vUv*2.0 - 1.0;
-  vec3 p = vec3(uv*1.6, uTime*0.025);
+  float L = length(uv);
+  vec3 p = vec3(uv*1.7, uTime*0.025);
   float w = fbm(p);
   float d = fbm(p*1.7 + w*1.2);
   float density = fbm(p*2.6 + d*1.5);
-  density = smoothstep(0.05, 0.8, density + 0.2);
-  density *= smoothstep(1.15, 0.1, length(uv));     // radial cloud falloff
-  vec3 col = mix(uC1, uC2, clamp(w*0.5+0.5, 0.0, 1.0));
-  col = mix(col, uC3, clamp(d*0.5+0.5, 0.0, 1.0));
-  gl_FragColor = vec4(col, density*0.85*uDensity);
+  density = smoothstep(0.0, 0.72, density + 0.30);
+  // even-perimeter diffusion: spread gas mid→rim instead of spiking at
+  // the centre, then a soft outer edge fade so it stays cloud-shaped.
+  float perim = 0.45 + 0.55 * smoothstep(0.15, 0.92, L);
+  density *= perim;
+  density *= smoothstep(1.18, 0.02, L);
+  // patchy low-frequency hue fields → soft gaseous regions tinted with
+  // different colour hints (no visible dots), all within the same gas.
+  float h1 = fbm(p*0.55 + 12.0);
+  float h2 = fbm(p*0.85 + 31.0);
+  float h3 = fbm(p*1.10 + 47.0);
+  vec3 col = uC1;
+  col = mix(col, uC2, smoothstep(-0.25, 0.45, h1));
+  col = mix(col, uC3, smoothstep(0.05, 0.60, h2) * 0.7);
+  col = mix(col, uC4, smoothstep(0.15, 0.65, h3) * 0.6);
+  gl_FragColor = vec4(col, density*0.8*uDensity);
 }`;
-export function makeNebulaMaterial({ c1 = "#9650dc", c2 = "#3ca0d2", c3 = "#e678c8" }) {
+export function makeNebulaMaterial({ c1 = "#9650dc", c2 = "#3ca0d2", c3 = "#e678c8", c4 = "#8ef0b8" }) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 }, uDensity: { value: 1 },
-      uC1: { value: new THREE.Color(c1) }, uC2: { value: new THREE.Color(c2) }, uC3: { value: new THREE.Color(c3) },
+      uC1: { value: new THREE.Color(c1) }, uC2: { value: new THREE.Color(c2) }, uC3: { value: new THREE.Color(c3) }, uC4: { value: new THREE.Color(c4) },
     },
     vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: NEBULA_FRAG,

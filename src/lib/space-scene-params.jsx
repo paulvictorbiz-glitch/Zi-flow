@@ -18,12 +18,14 @@ export function posFromAED(az, el, dist) {
 /* Defaults chosen to match the current hand-placed scene. */
 export const DEFAULT_SCENE = {
   global:     { autoRotate: 0.5, bloom: 0.85, masterVolume: 0.6, muted: true },
-  sun:        { visible: true, az: 40.6, el: 14.6, dist: 95, scale: 1, speed: 1, planetSpeed: 1, intensity: 1, turbulence: 1, prominence: 1, hot: "#fff0c2", mid: "#ff8c26", sound: true, volume: 0.5 },
-  pulsar:     { visible: true, az: 129.6, el: 26.7, dist: 67, scale: 1.1, spin: 5.5, beamLength: 1, jet: 1, beamColor: "#bcd2ff", coreColor: "#6a4cff", sound: true, volume: 0.45 },
-  binaryBH:   { visible: true, az: -62.7, el: -10.7, dist: 76, scale: 1, loopSpeed: 1, diskSpin: 1, diskInner: "#dff0ff", diskOuter: "#ff7a26", sound: true, volume: 0.5 },
-  nebula:     { visible: true, az: -140.7, el: 7.2, dist: 143, scale: 1, drift: 1, density: 1, c1: "#9650dc", c2: "#3ca0d2", c3: "#e678c8", sound: true, volume: 0.4 },
+  sun:        { visible: true, az: 35, el: 22, dist: 88, scale: 1, speed: 1, planetSpeed: 1, intensity: 1, turbulence: 1, prominence: 1, hot: "#fff0c2", mid: "#ff8c26", sound: true, volume: 0.5 },
+  pulsar:     { visible: true, az: 125, el: -28, dist: 70, scale: 1.1, spin: 5.5, beamLength: 1, jet: 1, beamColor: "#bcd2ff", coreColor: "#6a4cff", sound: true, volume: 0.45 },
+  binaryBH:   { visible: true, az: -145, el: 30, dist: 120, scale: 1, loopSpeed: 1, diskSpin: 1, diskInner: "#dff0ff", diskOuter: "#ff7a26", sound: true, volume: 0.5 },
+  nebula:     { visible: true, az: -55, el: -18, dist: 150, scale: 1, drift: 1, density: 1, c1: "#9650dc", c2: "#3ca0d2", c3: "#e678c8", c4: "#8ef0b8", sound: true, volume: 0.4 },
   galaxyCore: { visible: true, spin: 1, intensity: 1, sound: true, volume: 0.4 },
-  fleet:      { visible: true, scale: 0.85, fireRate: 1, sound: true, volume: 0.35 },
+  fleet:      { visible: true, scale: 0.85, fireRate: 1, color: "#9fe6ff", sound: true, volume: 0.35 },
+  lens:       { visible: true, opacity: 0.78, size: 1, warpSpeed: 1, angle: 1, az: 35, el: 22, dist: 22, sound: false, volume: 0 },
+  astronaut:  { visible: true, scale: 1, spin: 0.6, bob: 1, suit: "#e8edf4", visor: "#0a1830", az: -22, el: -6, dist: 30, sound: false, volume: 0 },
 };
 
 const AED = (label) => [
@@ -34,6 +36,12 @@ const AED = (label) => [
 const SOUND = [
   { key: "sound", type: "toggle", label: "Sound on" },
   { key: "volume", type: "slider", label: "Volume", min: 0, max: 1, step: 0.02 },
+];
+/* az/el/dist for close-in set-pieces (lens, astronaut) — allows nearer distances. */
+const AED2 = () => [
+  { key: "az", type: "slider", label: "Direction (azimuth)", min: -180, max: 180, step: 1 },
+  { key: "el", type: "slider", label: "Elevation", min: -90, max: 90, step: 1 },
+  { key: "dist", type: "slider", label: "Distance", min: 8, max: 220, step: 1 },
 ];
 
 /* The bodies shown in the sidebar + the controls each exposes. */
@@ -81,9 +89,10 @@ export const BODIES = [
       { key: "drift", type: "slider", label: "Drift speed", min: 0, max: 3, step: 0.05 },
       { key: "density", type: "slider", label: "Density", min: 0.2, max: 2.5, step: 0.05 },
       { key: "scale", type: "slider", label: "Size", min: 0.4, max: 2.5, step: 0.05 },
-      { key: "c1", type: "color", label: "Colour 1" },
-      { key: "c2", type: "color", label: "Colour 2" },
-      { key: "c3", type: "color", label: "Colour 3" },
+      { key: "c1", type: "color", label: "Colour · purple" },
+      { key: "c2", type: "color", label: "Colour · blue" },
+      { key: "c3", type: "color", label: "Colour · pink" },
+      { key: "c4", type: "color", label: "Colour · green" },
       ...AED(), ...SOUND,
     ],
   },
@@ -100,7 +109,29 @@ export const BODIES = [
       { key: "visible", type: "toggle", label: "Visible" },
       { key: "fireRate", type: "slider", label: "Fire rate", min: 0, max: 3, step: 0.05 },
       { key: "scale", type: "slider", label: "Size", min: 0.3, max: 2, step: 0.05 },
+      { key: "color", type: "color", label: "Laser colour" },
       ...SOUND,
+    ],
+  },
+  {
+    id: "lens", label: "✧  Gravitational Lens", controls: [
+      { key: "visible", type: "toggle", label: "Visible" },
+      { key: "opacity", type: "slider", label: "Ring opacity", min: 0, max: 1, step: 0.02 },
+      { key: "size", type: "slider", label: "Ring size", min: 0.3, max: 3, step: 0.05 },
+      { key: "warpSpeed", type: "slider", label: "Warp speed", min: 0.3, max: 3, step: 0.05 },
+      { key: "angle", type: "slider", label: "Appears across angle", min: 0.2, max: 3, step: 0.05 },
+      ...AED2(),
+    ],
+  },
+  {
+    id: "astronaut", label: "🧑‍🚀  Astronaut", controls: [
+      { key: "visible", type: "toggle", label: "Visible" },
+      { key: "scale", type: "slider", label: "Size", min: 0.3, max: 4, step: 0.05 },
+      { key: "spin", type: "slider", label: "Spin speed", min: 0, max: 3, step: 0.05 },
+      { key: "bob", type: "slider", label: "Float bob", min: 0, max: 3, step: 0.05 },
+      { key: "suit", type: "color", label: "Suit colour" },
+      { key: "visor", type: "color", label: "Visor tint" },
+      ...AED2(),
     ],
   },
 ];

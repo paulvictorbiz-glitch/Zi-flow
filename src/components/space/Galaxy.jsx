@@ -27,14 +27,15 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
 import { makeHaloTexture, makePointMaterial } from "./celestial-shared.js";
-import { QUALITY } from "../../lib/space-cube-config.jsx";
-import { DEFAULT_SCENE } from "../../lib/space-scene-params.jsx";
+import { QUALITY, SCENE } from "../../lib/space-cube-config.jsx";
+import { DEFAULT_SCENE, posFromAED } from "../../lib/space-scene-params.jsx";
 import Nebula from "./Nebula.jsx";
 import Sun from "./Sun.jsx";
 import NeutronStar from "./NeutronStar.jsx";
 import SpaceBattle from "./SpaceBattle.jsx";
 import BinaryBlackHole from "./BinaryBlackHole.jsx";
 import AmbientEvents from "./AmbientEvents.jsx";
+import Astronaut from "./Astronaut.jsx";
 
 const GALAXY_Z = -140;
 const DISK_TILT = [THREE.MathUtils.degToRad(62), 0, THREE.MathUtils.degToRad(8)];
@@ -241,8 +242,18 @@ function Asteroids({ reduced }) {
   );
 }
 
+/* Invisible click target around a body → opens its Scene-Studio drawer. */
+function Hit({ id, pos, r, onPick }) {
+  return (
+    <mesh position={pos} onClick={(e) => { e.stopPropagation(); onPick(id); }}>
+      <sphereGeometry args={[r, 16, 16]} />
+      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+    </mesh>
+  );
+}
+
 /* ================================ Galaxy ================================= */
-export function Galaxy({ reduced = false, bg, quality = "high", scene }) {
+export function Galaxy({ reduced = false, bg, quality = "high", scene, onPick }) {
   const sc = scene || DEFAULT_SCENE;
   const gc = sc.galaxyCore || DEFAULT_SCENE.galaxyCore;
   const q = QUALITY[quality] || QUALITY.high;
@@ -288,6 +299,19 @@ export function Galaxy({ reduced = false, bg, quality = "high", scene }) {
       <SpaceBattle reduced={reduced} params={sc.fleet} />
       <BinaryBlackHole reduced={reduced} params={sc.binaryBH} />
       <AmbientEvents reduced={reduced} quality={quality} />
+      <Astronaut reduced={reduced} params={sc.astronaut} />
+
+      {onPick && (
+        <>
+          <Hit id="sun"        pos={posFromAED(sc.sun.az, sc.sun.el, sc.sun.dist)}              r={16 * sc.sun.scale}      onPick={onPick} />
+          <Hit id="pulsar"     pos={posFromAED(sc.pulsar.az, sc.pulsar.el, sc.pulsar.dist)}     r={11 * sc.pulsar.scale}   onPick={onPick} />
+          <Hit id="binaryBH"   pos={posFromAED(sc.binaryBH.az, sc.binaryBH.el, sc.binaryBH.dist)} r={18 * sc.binaryBH.scale} onPick={onPick} />
+          <Hit id="nebula"     pos={posFromAED(sc.nebula.az, sc.nebula.el, sc.nebula.dist)}     r={42 * sc.nebula.scale}   onPick={onPick} />
+          <Hit id="galaxyCore" pos={[0, 0, GALAXY_Z]}                                            r={24}                     onPick={onPick} />
+          <Hit id="fleet"      pos={SCENE.fleet.position}                                        r={12}                     onPick={onPick} />
+          <Hit id="astronaut"  pos={posFromAED(sc.astronaut.az, sc.astronaut.el, sc.astronaut.dist)} r={2.2 * sc.astronaut.scale} onPick={onPick} />
+        </>
+      )}
     </>
   );
 }

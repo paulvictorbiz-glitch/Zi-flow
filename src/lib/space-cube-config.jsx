@@ -107,7 +107,7 @@ export function metalForKey(key) {
    from origin). MIN/MAX clamp OrbitControls dolly; D_NEAR/D_FAR mark
    the stacked↔assembled↔free zone boundaries; HYST is the deadband
    that prevents flicker at a boundary; START is the initial distance. */
-export const CAM = { MIN: 4.5, MAX: 60, D_NEAR: 6.8, D_FAR: 16, HYST: 1.1, START: 9 };
+export const CAM = { MIN: 4.5, MAX: 60, D_NEAR: 9.5, D_FAR: 18, HYST: 0.9, START: 12 };
 
 /* ─────────────────────────────────────────────────────────
    SCENE — placement of the decorative deep-space set-pieces.
@@ -137,7 +137,6 @@ export const AMBIENT = [
   { key: "comet2", kind: "comet",       position: [-92, -30, -60],  dir: [0.7, 0.5, 0.6],  speed: 7,  color: "#d9fff0", span: 150 },
   { key: "comet3", kind: "comet",       position: [24, -84, 72],    dir: [0.2, 1, -0.3],   speed: 11, color: "#fff0c0", span: 150 },
   { key: "nova",   kind: "supernova",   position: [-124, 72, -34],  scale: 11, color: "#ffe2a8", period: 13 },
-  { key: "flyby",  kind: "ringedPlanet", position: [40, -24, 50],   scale: 4.4, color: "#cda06a", ringColor: "#e8d2a0" },
 
   // ── extra fill so no octant is empty from any orbit angle ──
   { key: "gal5",  kind: "galaxy",       position: [70, 120, 90],    scale: 34, color: "#ffd9a0", spin: 0.018 },
@@ -146,8 +145,6 @@ export const AMBIENT = [
   { key: "comet4", kind: "comet",       position: [-60, 90, 30],    dir: [0.6, -1, 0.3],   speed: 8,  color: "#cfeaff", span: 160 },
   { key: "comet5", kind: "comet",       position: [110, -10, -90],  dir: [-0.8, 0.2, 0.7], speed: 10, color: "#fff4d0", span: 170 },
   { key: "nova2",  kind: "supernova",   position: [90, 50, -120],   scale: 9,  color: "#a8d8ff", period: 17 },
-  { key: "flyby2", kind: "ringedPlanet", position: [-50, 40, 70],   scale: 3.4, color: "#8a6fb0", ringColor: "#cdbce8" },
-  { key: "flyby3", kind: "ringedPlanet", position: [60, -70, -30],  scale: 5.2, color: "#6f9bb0", ringColor: "#b0d4e0" },
 ];
 
 /* ─────────────────────────────────────────────────────────
