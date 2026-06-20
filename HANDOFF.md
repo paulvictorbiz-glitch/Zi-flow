@@ -4,34 +4,36 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Executed the Reel DNA Phase 1 activation runbook STEP 0→9** (`.claude/plans/reel-dna-phase1-activation-pyscene.md`) — short-reel deconstruction (PySceneDetect cut-detection + downloadable asset layers + cut-pacing) is now **LIVE and proven end-to-end**, alongside the already-live Wave 1 longform Story.
-- **Backend merged + rebuilt on Hetzner**: merged worker (cv2 4.13 + scenedetect 0.7, longform path intact, claim now format-agnostic), `serve_router` registered, Caddy `/reels/*` → `backend:8000`, `REELS_DIR=/app/data/reels` on a persisted volume (B1 closed), `FB_DOWNLOAD_SIGNING_SECRET` set (byte-parity 3 ways).
-- **DB**: 0081 columns confirmed present (B2 was a stale PostgREST cache, not a ledger lie — refreshed via `NOTIFY pgrst`).
-- **Vercel**: owner ran `vercel --prod` (reachability fix live — short Analyze button reachable; minter secret wired). **HMAC parity** Python==JS==`34010c33…`.
-- **Calibrated all 4 reel types**, capped by the decisive proof: a signed download **streamed HTTP 200** through the live Caddy→uvicorn chain.
-- **Discussed commit/merge safety** — confirmed `feat/reel-dna-phase1 → main` is a clean fast-forward; git ops don't deploy; nothing breaks. Wrap-up + grouped commit + ff-merge planned.
+- **Built a NEW standalone product — "MicroSaaS Scout"** — in its own repo `C:/Users/Mi/Downloads/microsaas-scout` (NOT part of FootageBrain). Python(FastAPI) scrapers + React(Vite) UI + its own new Supabase project. Scrapes Product Hunt + Hacker News + GitHub → AI "opportunity dossier" per product → browse/filter/shortlist + pipeline kanban.
+- **Built via a generated workflow file** `.claude/workflows/microsaas-scout-build.js` (4 disjoint-ownership teams, Opus leads/QA). Ran autonomously end-to-end; schema auto-applied to the new Supabase via the **Management-API PAT**, then live Phase-1 ingest.
+- **Data is LIVE:** 97 products (HN 40, GitHub 37, PH 20) + 97 dossiers (1:1), DB 11 MB. Phase 2/3 sources coded but `enabled=false`. Anthropic deep-dive seam coded but disabled.
+- **Fixed 3 dedup bugs + dossier dedup** in the Scout repo (PH recovered 1→20, GitHub 16→37, total 38→97, dossiers de-duped to 1 per product via migration `0003`). Root cause: domain-dedup collapsed distinct products onto the aggregator domain (producthunt.com / github.com).
+- **Committed the Scout repo** — initial commit `c473b45` (62 files; secrets git-ignored, real `.env` confirmed untracked). No remote; not pushed.
+- **Hardened the full-tree-deploy rule** (CLAUDE.md Rule #1 + memory) into a mandatory pre-deploy tree-conflict gate, and **cleaned 2 stray Scout artifacts** from the FootageBrain folder.
 
 ## Where we left off
-Phase 1 is fully LIVE. Queue clean (0 pending_analyze, 0 analyzing), `*/2` drain cron re-enabled, `/api/reel/status` all green (`download_signing_set:true`, `reels_dir:/app/data/reels`). Branch `feat/reel-dna-phase1` is build-green + proven but **not yet committed/pushed/merged** (owner-gated). Host backups tagged `phase1-20260620_003139`.
+MicroSaaS Scout MVP is **functionally complete, live with real data, and now committed** as a standalone repo. It is NOT integrated into FootageBrain and nothing is deployed to Hetzner/Vercel for it. FootageBrain itself is unchanged this session except documentation + the hardened deploy rule; the owner's **Monitor WIP** (`src/pages/monitor.jsx`/`monitor.css` + `api/monitor/*`) sits uncommitted in the FB tree, untouched.
 
 ## Open blockers
 - None.
 
-## Pending (written/done but not yet committed-to-git)
-- `feat/reel-dna-phase1` not committed/pushed. The reachability fix (`unified-dna-card.jsx`) + 0081 manifest entry are the Phase-1-thread uncommitted bits (the reachability fix IS already live via the owner's `vercel --prod`).
-- Grid-view trio (`pipeline.jsx`/`components.jsx`/`styles.css`) + `ig_webhook.py` + `ig-sync-diagnose.mjs` remain uncommitted (separate, already-live threads — leave to owner).
-- `.env.local` now holds `FB_DOWNLOAD_SIGNING_SECRET` (gitignored — never committed).
+## Pending (written but not yet live / not committed)
+- **FootageBrain tree is dirty by design** — this session's doc edits (`CHANGELOG.md`, `HANDOFF.md`, `change-log.md`, `CLAUDE.md`) + the owner's Monitor WIP (`monitor.jsx`/`monitor.css`/`api/monitor/*`) + known prior threads (`backend-handoff/*`, grid trio, `scripts/ig-sync-diagnose.mjs`) are all uncommitted. ⚠️ Do NOT `vercel --prod` FootageBrain until the Monitor WIP is finished or stashed — a full-tree deploy would ship it.
+- **Scout repo:** committed locally (`c473b45`) but has **no git remote** — push to a remote (e.g. a private GitHub repo) if off-machine backup is wanted.
+- **FootageBrain: `feat/reel-dna-phase1` already merged to main** (commits `8b5eeb4`/`c8d3417` present) but origin not pushed — owner-gated.
 
 ## Next session — start here
-1. **Commit + merge (owner-gated):** tidy grouped commit of the Phase-1 thread → fast-forward merge `feat/reel-dna-phase1` → `main`. Stop before `push` (owner's call). Clean ff, no conflicts.
-2. **Optional Phase-1 hardening:** add a single-flight guard to the worker (no concurrency guard → parallel analyzes could OOM the 5.2GB box); add yt-dlp cookies (`IG_COOKIES_FILE`/`YTDLP_COOKIES`) if auto-acquire is wanted (manual upload is the current backbone).
-3. **Optional Phase 5:** swap PySceneDetect → TransNetV2 behind the intact `_detect_scenes(video,work):764` seam (torch-CPU, TransNetV2-primary + PySceneDetect-fallback) — touches only the detector + deps.
+1. **Make the plan to incorporate MicroSaaS Scout into FootageBrain** (the explicit goal): an owner-gated **"Scout" view** + a **button next to Pulse** in `src/pages/monitor-hub.jsx`, reading the Scout Supabase via a **2nd supabase-js client**; **daily auto-refresh** via a Hetzner cron hitting the Scout backend `POST /scrape-all`; deploy the Scout Python backend to Hetzner behind a Caddy route (human-gated). Likely another `/workflow-file-creation` run. See memory `[[project_microsaas-scout]]`.
+2. **(Optional) Give the Scout repo a remote** + push for backup. **Rotate the Scout secrets** (owner flagged).
+3. **(Owner-gated) Finish or stash the Monitor WIP** before any FootageBrain deploy.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-git rev-parse --abbrev-ref HEAD                                  # feat/reel-dna-phase1
-git log --oneline main..feat/reel-dna-phase1 | wc -l            # 4 (clean ff to main)
-curl -s https://api.footagebrain.com/api/reel/status            # ok:true, download_signing_set:true, reels_dir:/app/data/reels
-# read-only signed-download proof: mint reels/<id>/<file>:<exp> HMAC with FB_DOWNLOAD_SIGNING_SECRET, curl https://api.footagebrain.com/reels/... → 200
-ssh root@178.105.14.144 'crontab -l | grep reel/deconstruct'    # */2 active (un-paused)
+# Scout data is live (from microsaas-scout/backend; uses the Management-API PAT in .env):
+cd /c/Users/Mi/Downloads/microsaas-scout/backend
+REF=$(grep '^SUPABASE_URL=' .env | sed -E 's#.*//([a-z0-9]+)\.supabase\.co.*#\1#'); TOKEN=$(grep '^SUPABASE_ACCESS_TOKEN=' .env | cut -d= -f2)
+curl -s -X POST "https://api.supabase.com/v1/projects/$REF/database/query" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data '{"query":"select source,count(*) from products group by source;"}'
+git -C /c/Users/Mi/Downloads/microsaas-scout log --oneline   # -> c473b45 Initial commit
+# Scout runs locally (no Docker):  .venv/Scripts/python -m app.cli serve  then  curl localhost:8787/health
+# Re-ingest:  .venv/Scripts/python -m app.cli scrape-all --limit 50
 ```
