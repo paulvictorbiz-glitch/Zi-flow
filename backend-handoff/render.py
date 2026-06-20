@@ -295,7 +295,7 @@ async def _render_job(job_id: str) -> None:
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
-@render_router.post("/api/render/submit")
+@render_router.post("/render/submit")
 async def submit_render(request: Request, background_tasks: BackgroundTasks):
     """
     POST /api/render/submit?secret=<REEL_DECONSTRUCT_SECRET>
@@ -373,7 +373,7 @@ async def submit_render(request: Request, background_tasks: BackgroundTasks):
     return {"ok": True, "job_id": job_id}
 
 
-@render_router.get("/api/render/status/{job_id}")
+@render_router.get("/render/status/{job_id}")
 async def render_status(job_id: str, request: Request):
     """
     GET /api/render/status/{job_id}?secret=<REEL_DECONSTRUCT_SECRET>
@@ -405,7 +405,7 @@ async def render_status(job_id: str, request: Request):
     return result
 
 
-@render_router.get("/api/render/health")
+@render_router.get("/render/health")
 async def render_health():
     return {
         "ok":              True,
