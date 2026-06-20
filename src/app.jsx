@@ -126,6 +126,7 @@ function AppShell() {
   const [navOpen, setNavOpen]           = useState(false);   // left slide-in drawer
   const [globalSearch, setGlobalSearch] = useState("");
   const [capturePrefill, setCapturePrefill] = useState(null);   // Reel DNA share-target/bookmarklet
+  const [autoCompare, setAutoCompare]     = useState(false);   // ?compare=1 deep-link
   const searchRef                       = useRef(null);
 
   /* Close perspective dropdown on outside click */
@@ -317,7 +318,8 @@ function AppShell() {
     if (!reels || reels.length === 0) return; // wait for the store to hydrate
     const match = reels.find(r => String(r.id).toLowerCase() === wantId.toLowerCase());
     reelDeepLinkDone.current = true;
-    if (match) openReel(match);
+    const wantCompare = new URLSearchParams(window.location.search).get("compare") === "1";
+    if (match) { openReel(match); if (wantCompare) setAutoCompare(true); }
     const clean = window.location.pathname + window.location.hash;
     window.history.replaceState({}, "", clean);
   }, [reels]);
@@ -673,7 +675,7 @@ function AppShell() {
       {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
       {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
-      {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} />}
+      {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} openCompare={autoCompare} onCompareMounted={() => setAutoCompare(false)} />}
       {view === "footage"   && <FootageLibrary onOpen={openReel} />}
       {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
       {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}

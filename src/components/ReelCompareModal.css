@@ -1,0 +1,154 @@
+.rcm-overlay {
+  position: fixed; inset: 0; z-index: 1100;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex; flex-direction: column;
+}
+
+.rcm-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  flex-shrink: 0;
+}
+
+.rcm-title {
+  font-size: 12px; font-family: var(--f-mono);
+  color: var(--fg-dim); letter-spacing: 0.06em; text-transform: uppercase;
+}
+
+.rcm-close {
+  background: none; border: 1px solid var(--line-soft);
+  color: var(--fg-dim); cursor: pointer; font-size: 14px;
+  border-radius: 4px; padding: 2px 8px; line-height: 1.4;
+}
+.rcm-close:hover { color: var(--c-red); border-color: var(--c-red); }
+
+/* Share-to-channel button in header */
+.rcm-share-btn {
+  background: none; border: 1px solid color-mix(in srgb, var(--c-green) 40%, transparent);
+  color: var(--c-green); cursor: pointer; font-size: 11px; font-family: var(--f-mono);
+  border-radius: 4px; padding: 3px 10px; line-height: 1.4;
+}
+.rcm-share-btn:hover, .rcm-share-btn.is-open {
+  background: color-mix(in srgb, var(--c-green) 10%, transparent);
+}
+
+/* Inline share panel below header */
+.rcm-share-panel {
+  background: var(--bg-1); border-bottom: 1px solid var(--line-soft);
+  padding: 8px 16px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;
+}
+.rcm-share-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.rcm-share-label {
+  font-size: 10px; font-family: var(--f-mono); color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;
+}
+.rcm-share-input {
+  background: var(--bg-2); border: 1px solid var(--line-soft);
+  color: var(--fg); border-radius: 4px; font-family: var(--f-mono);
+  font-size: 11px; padding: 4px 8px; outline: none;
+}
+.rcm-share-input:focus { border-color: var(--c-green); }
+.rcm-share-channel { width: 100px; }
+.rcm-share-send {
+  background: var(--c-green); color: #000; border: none; border-radius: 4px;
+  font-family: var(--f-mono); font-size: 11px; font-weight: 600;
+  padding: 4px 12px; cursor: pointer; white-space: nowrap;
+}
+.rcm-share-send:disabled { opacity: 0.5; cursor: default; }
+.rcm-share-status { font-size: 11px; font-family: var(--f-mono); }
+.rcm-share-status.ok { color: var(--c-green); }
+.rcm-share-status.err { color: var(--c-red); }
+.rcm-share-hint {
+  font-size: 10px; color: var(--fg-dim); font-family: var(--f-mono); line-height: 1.5;
+}
+
+.rcm-body {
+  flex: 1; display: grid; grid-template-columns: 1fr 1fr;
+  gap: 12px; padding: 12px; min-height: 0; overflow: hidden;
+}
+
+.rcm-panel {
+  display: flex; flex-direction: column;
+  background: var(--bg-card); border: 1px solid var(--line-soft);
+  border-radius: 8px; overflow: hidden; min-height: 0;
+}
+
+.rcm-panel-label {
+  font-size: 10px; font-family: var(--f-mono); letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--fg-dim);
+  padding: 6px 12px; border-bottom: 1px solid var(--line-soft);
+  flex-shrink: 0;
+}
+
+.rcm-panel > .rpl-wrap {
+  flex: 1; min-height: 0; overflow: hidden;
+}
+
+/* Right panel blank state (no URL yet) */
+.rcm-blank {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; padding: 24px;
+}
+
+.rcm-url-input {
+  width: 100%; padding: 8px 10px;
+  background: var(--bg-2); border: 1px solid var(--line-soft);
+  color: var(--fg); border-radius: 4px; font-size: 12px;
+  font-family: var(--f-mono);
+}
+.rcm-url-input:focus { outline: none; border-color: var(--c-cyan); }
+
+.rcm-url-hint {
+  font-size: 11px; color: var(--fg-dim); text-align: center; line-height: 1.5;
+}
+
+/* Primary "Attach local file" button in the blank state */
+.rcm-file-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 18px; cursor: pointer;
+  background: var(--c-amber); color: #000;
+  border: none; border-radius: 6px;
+  font-family: var(--f-mono); font-size: 12px; font-weight: 600;
+  transition: opacity 0.15s;
+}
+.rcm-file-btn:hover { opacity: 0.85; }
+.rcm-file-btn input[type="file"] { display: none; }
+
+/* "or paste a URL" divider */
+.rcm-divider {
+  font-size: 10px; color: var(--fg-dim); text-transform: uppercase;
+  letter-spacing: 0.08em; margin: 4px 0;
+}
+
+/* "↺ Swap file" link shown below the player once a file is loaded */
+.rcm-swap-file {
+  display: block; text-align: center; margin: 4px 8px 0;
+  font-family: var(--f-mono); font-size: 10px; color: var(--fg-dim);
+  cursor: pointer; padding: 3px;
+}
+.rcm-swap-file:hover { color: var(--c-amber); }
+.rcm-swap-file input[type="file"] { display: none; }
+
+/* Trigger button used in detail.jsx inspiration section */
+.rcm-trigger-btn {
+  width: 100%; padding: 5px; background: none;
+  border: 1px dashed var(--line-hard);
+  color: var(--c-amber); font-family: var(--f-mono); font-size: 11px;
+  cursor: pointer; border-radius: 4px;
+}
+.rcm-trigger-btn:hover {
+  background: color-mix(in srgb, var(--c-amber) 8%, transparent);
+  border-color: var(--c-amber);
+}
+
+@media (max-width: 720px) {
+  .rcm-body {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+  .rcm-panel { min-height: 320px; }
+}

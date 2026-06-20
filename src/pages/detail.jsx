@@ -10,6 +10,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Card, DPill } from "../components/components.jsx";
 import { ReelPlayer } from "../components/reel-player.jsx";
+import { ReelCompareModal } from "../components/ReelCompareModal.jsx";
+import { shareReelToChannel } from "../lib/social-client.js";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { usePermissions, useIsOwner } from "../lib/permissions.jsx";
@@ -199,7 +201,7 @@ function LocationPicker({ reelId }) {
   );
 }
 
-function ReelDetail({ reel, onBack, onLearnSkill }) {
+function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompareMounted }) {
   /* reel is passed from Pipeline when a card is clicked. Default to REEL-201. */
   const current = reel || { id: "REEL-201", title: "Temple crowd sequence" };
 
@@ -230,6 +232,15 @@ function ReelDetail({ reel, onBack, onLearnSkill }) {
     const next = cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key];
     actions.updateReel(current.id, { skill_tags: next });
   };
+
+  const [showCompare, setShowCompare] = useState(false);
+  // Auto-open compare when app was navigated to via ?reel=X&compare=1 deep-link.
+  useEffect(() => {
+    if (openCompare && stored) {
+      setShowCompare(true);
+      onCompareMounted?.();
+    }
+  }, [openCompare, stored]);
 
   const [blueprintTab, setBlueprintTab] = useState("script");
   const [logline, setLogline]     = useState(stored?.logline ?? DEFAULT_LOGLINE);
@@ -1127,7 +1138,26 @@ function ReelDetail({ reel, onBack, onLearnSkill }) {
                 + Add an inspiration link to preview the reference reel here
               </div>
             )}
+            {inspoUrl && (
+              <button className="rcm-trigger-btn" onClick={() => setShowCompare(true)}>
+                ⇔ Compare with current edit
+              </button>
+            )}
           </div>
+          {showCompare && (
+            <ReelCompareModal
+              leftLabel="Inspiration"
+              leftUrl={inspoUrl}
+              rightLabel={reelStateUrl ? `Current edit` : "Current edit (paste URL)"}
+              rightUrl={reelStateUrl}
+              onClose={() => setShowCompare(false)}
+              reelId={current?.id}
+              reelTitle={stored?.title || current?.title}
+              shareToChannel={(channel, feedback) =>
+                shareReelToChannel({ reelId: current.id, feedback, channel })
+              }
+            />
+          )}
 
           {/* Keep-in-mind-while-editing — yellow bullet notes, saved per reel. */}
           <div className="editnotes ref-card">

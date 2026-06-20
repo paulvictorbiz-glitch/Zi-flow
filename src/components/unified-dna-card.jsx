@@ -23,6 +23,7 @@
 import React, { useMemo, useState } from "react";
 import "./unified-dna-card.css";
 import { useWorkflow } from "../store/store.jsx";
+import { ReelCompareModal } from "./ReelCompareModal.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
 import { personName } from "../lib/roster.jsx";
 import {
@@ -46,10 +47,11 @@ function pickerData(options, attachedRows) {
 
 export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSend, onDelete, onOpenAssets, isOwner, hideAssetsOverride }) {
   // Hooks first, unconditionally (hook-rules-safe regardless of toggles below).
-  const { attachedFootage, thumbnailDna, monitorEvents } = useWorkflow();
+  const { attachedFootage, thumbnailDna, monitorEvents, reels } = useWorkflow();
   const { locations, actions: locationActions } = useLocations();
   const { assets, counts } = useReelDnaAssets(item.id);
 
+  const [showCompare, setShowCompare] = useState(false);
   const [editGenes, setEditGenes] = useState(false);
   const [hideAssets, setHideAssets] = useState(false);
   const [addKind, setAddKind] = useState(null);     // null | "thumbnail" | "news"
@@ -226,6 +228,7 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
 
         <div className="rd-card-foot">
           <div className="rd-card-foot-left">
+            <span className="rd-compare" onClick={() => setShowCompare(true)} title="Side-by-side compare with current edit">⇔ Compare</span>
             <span className="rd-deconstruct" onClick={() => onView(item)}>View DNA</span>
             <span className="rd-collapse" onClick={() => setEditGenes(o => !o)}>
               {editGenes ? "Hide genes" : "Edit genes"}
@@ -414,6 +417,18 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
           </div>
         )}
       </div>
+      {showCompare && (() => {
+        const linked = item.reelId ? reels.find(r => r.id === item.reelId) : null;
+        return (
+          <ReelCompareModal
+            leftLabel="Inspiration"
+            leftUrl={item.reelUrl}
+            rightLabel={linked ? `${linked.id} — current edit` : "Current edit"}
+            rightUrl={linked?.attachUrl || ""}
+            onClose={() => setShowCompare(false)}
+          />
+        );
+      })()}
     </div>
   );
 }

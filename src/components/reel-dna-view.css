@@ -60,6 +60,8 @@
   transition: background 0.14s, border-color 0.14s, color 0.14s;
 }
 .rdv-btn:hover { border-color: var(--c-cyan-soft); color: var(--c-cyan); }
+.rdv-btn--compare { color: var(--c-amber); border-color: color-mix(in srgb, var(--c-amber) 40%, transparent); }
+.rdv-btn--compare:hover { background: color-mix(in srgb, var(--c-amber) 10%, transparent); }
 .rdv-close {
   width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
   border: 1px solid var(--line-hard); background: var(--bg-3); color: var(--fg-mute);

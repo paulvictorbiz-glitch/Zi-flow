@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "../auth.jsx";
 import { getChatNotifyPref, setChatNotifyPref, shareReelToChannel } from "../lib/social-client.js";
+// shareReelToChannel is also used inside ReelComparePanel below.
 import { useWorkflow } from "../store/store.jsx";
 import { supabase } from "../lib/supabase-client.js";
+import { ReelCompareModal } from "../components/ReelCompareModal.jsx";
 
 // Origin of the embedded Rocket.Chat iframe (used for postMessage validation).
 const RC_ORIGIN = "https://chat.footagebrain.com";
@@ -289,6 +291,299 @@ function ReelSharePicker({ openRoom }) {
   );
 }
 
+/* Compare panel: pick a pipeline reel → auto-loads its inspiration link on the
+   left; upload a screen recording of the current edit on the right; opens
+   ReelCompareModal side-by-side. Sits just below the share-a-reel picker. */
+function ReelComparePanel() {
+  const { reels } = useWorkflow();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [dropOpen, setDropOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const [selected, setSelected] = useState(null);   // chosen pipeline reel
+  const [fileName, setFileName] = useState("");
+  const [blobUrl, setBlobUrl] = useState("");
+  const [showModal, setShowModal] = useState(false);
+  const [shareChannel, setShareChannel] = useState("pipeline");
+  const [shareNote, setShareNote] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const [shareStatus, setShareStatus] = useState(null);
+  const boxRef = useRef(null);
+  const blobRef = useRef(null);
+
+  // Revoke blob URL when panel closes or on unmount.
+  useEffect(() => {
+    if (!open && blobRef.current) {
+      URL.revokeObjectURL(blobRef.current);
+      blobRef.current = null;
+      setBlobUrl("");
+      setFileName("");
+    }
+  }, [open]);
+  useEffect(() => () => { if (blobRef.current) URL.revokeObjectURL(blobRef.current); }, []);
+
+  const activeReels = useMemo(
+    () => (reels || []).filter(r => !r.archivedAt),
+    [reels]);
+
+  const matches = useMemo(() => {
+    const q = selected ? "" : query.trim().toLowerCase();
+    const list = !q
+      ? activeReels
+      : activeReels.filter(r =>
+          String(r.id).toLowerCase().includes(q) ||
+          String(r.title || "").toLowerCase().includes(q));
+    return list.slice(0, 100);
+  }, [query, activeReels, selected]);
+
+  // Click-outside closes dropdown.
+  useEffect(() => {
+    if (!dropOpen) return;
+    const h = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setDropOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [dropOpen]);
+
+  const choose = (r) => {
+    setSelected(r);
+    setQuery(`${r.id} — ${r.title || ""}`);
+    setDropOpen(false);
+  };
+
+  const onKeyDown = (e) => {
+    if (!dropOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) { setDropOpen(true); return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); setHighlight(h => Math.min(h + 1, matches.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight(h => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter") { if (dropOpen && matches[highlight]) { e.preventDefault(); choose(matches[highlight]); } }
+    else if (e.key === "Escape") setDropOpen(false);
+  };
+
+  const onFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (blobRef.current) URL.revokeObjectURL(blobRef.current);
+    const blob = URL.createObjectURL(file);
+    blobRef.current = blob;
+    setBlobUrl(blob);
+    setFileName(file.name);
+  };
+
+  const inspoUrl = selected?.inspo || "";
+  const canCompare = !!(inspoUrl || blobUrl);
+
+  const panelStyle = {
+    marginTop: 6, padding: 12, background: "var(--bg-1)",
+    border: "1px solid var(--line-hard)", borderRadius: 8,
+    display: "flex", flexDirection: "column", gap: 8,
+  };
+  const inputStyle = {
+    width: "100%", boxSizing: "border-box",
+    background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+    borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)",
+    fontSize: 12, padding: "7px 10px", outline: "none",
+  };
+
+  return (
+    <div style={{ flexShrink: 0, margin: "6px 16px 0" }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: "flex", alignItems: "center", gap: 8, width: "100%",
+          background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+          borderRadius: 6, color: "var(--fg)", cursor: "pointer",
+          fontFamily: "var(--f-mono)", fontSize: 12, padding: "8px 12px",
+        }}
+      >
+        <span style={{ color: "var(--c-amber)" }}>⇔</span>
+        <span style={{ flex: 1, textAlign: "left" }}>Compare inspiration vs. your cut</span>
+        <span style={{ opacity: 0.6 }}>{open ? "▾" : "▸"}</span>
+      </button>
+
+      {open && (
+        <div style={panelStyle}>
+          {/* Step 1: pick a pipeline reel */}
+          <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            1 · Pick the reel you're editing
+          </div>
+          <div ref={boxRef} style={{ position: "relative" }}>
+            <input
+              value={query}
+              placeholder="Search reel by id or title…"
+              style={inputStyle}
+              onChange={e => { setQuery(e.target.value); setSelected(null); setDropOpen(true); setHighlight(0); }}
+              onFocus={() => setDropOpen(true)}
+              onKeyDown={onKeyDown}
+            />
+            {dropOpen && matches.length > 0 && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30,
+                marginTop: 2, background: "var(--bg-1)", border: "1px solid var(--line-hard)",
+                borderRadius: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+                maxHeight: 220, overflowY: "auto",
+              }}>
+                {matches.map((r, i) => (
+                  <div
+                    key={r.id}
+                    onMouseEnter={() => setHighlight(i)}
+                    onMouseDown={e => { e.preventDefault(); choose(r); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+                      padding: "7px 10px", fontFamily: "var(--f-mono)", fontSize: 12,
+                      background: i === highlight ? "var(--bg-3, #1a2335)" : "transparent",
+                      borderBottom: "1px solid var(--line-soft, var(--line-hard))",
+                    }}
+                  >
+                    <span style={{ color: "var(--c-cyan)", minWidth: 64 }}>{r.id}</span>
+                    <span style={{ flex: 1, color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.title || "(untitled)"}
+                    </span>
+                    {r.inspo && <span style={{ fontSize: 10, color: "var(--c-amber)" }}>✦ inspo</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Inspo link status */}
+          {selected && (
+            <div style={{ fontFamily: "var(--f-mono)", fontSize: 11 }}>
+              {inspoUrl
+                ? <span style={{ color: "var(--c-amber)" }}>✦ Inspiration: <a href={inspoUrl} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>{inspoUrl.replace(/^https?:\/\//, "").slice(0, 48)}{inspoUrl.length > 55 ? "…" : ""}</a></span>
+                : <span style={{ color: "var(--fg-dim)" }}>No inspiration link on this reel — you can still upload both files below.</span>
+              }
+            </div>
+          )}
+
+          {/* Step 2: upload screen recording */}
+          <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 4 }}>
+            2 · Upload your screen recording / current cut
+          </div>
+          <label style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 12px", cursor: "pointer",
+            background: blobUrl ? "color-mix(in srgb, var(--c-amber) 8%, transparent)" : "var(--bg-2)",
+            border: `1px solid ${blobUrl ? "var(--c-amber)" : "var(--line-hard)"}`,
+            borderRadius: 6, fontFamily: "var(--f-mono)", fontSize: 12,
+            color: blobUrl ? "var(--c-amber)" : "var(--fg-dim)",
+            transition: "background 0.15s, border-color 0.15s",
+          }}>
+            <span>{blobUrl ? "✓" : "📁"}</span>
+            <span style={{ flex: 1 }}>{fileName || "Attach screen recording or video file…"}</span>
+            {blobUrl && <span style={{ fontSize: 10, opacity: 0.7 }}>tap to swap</span>}
+            <input type="file" accept="video/*" style={{ display: "none" }} onChange={onFileChange} />
+          </label>
+
+          {/* Compare button */}
+          <button
+            onClick={() => setShowModal(true)}
+            disabled={!canCompare}
+            style={{
+              padding: "8px 0", cursor: canCompare ? "pointer" : "not-allowed",
+              background: canCompare ? "var(--c-amber)" : "var(--bg-3)",
+              border: "none", borderRadius: 6,
+              fontFamily: "var(--f-mono)", fontSize: 12, fontWeight: 600,
+              color: canCompare ? "#000" : "var(--fg-dim)",
+              opacity: canCompare ? 1 : 0.6, transition: "opacity 0.15s",
+            }}
+          >
+            ⇔ Open side-by-side compare
+          </button>
+          {!canCompare && (
+            <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", textAlign: "center" }}>
+              Pick a reel with an inspiration link, or upload a file to enable compare.
+            </div>
+          )}
+
+          {/* Step 3: post comparison link to a channel */}
+          {selected && canCompare && (
+            <>
+              <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 4 }}>
+                3 · Post to channel so teammates can open it
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--fg-dim)" }}>#</span>
+                <input
+                  value={shareChannel}
+                  onChange={e => setShareChannel(e.target.value.replace(/^#/, ""))}
+                  placeholder="pipeline"
+                  style={{
+                    width: 110, background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+                    borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)",
+                    fontSize: 11, padding: "5px 8px", outline: "none",
+                  }}
+                />
+                <input
+                  value={shareNote}
+                  onChange={e => setShareNote(e.target.value)}
+                  placeholder="Optional note…"
+                  style={{
+                    flex: 1, minWidth: 80, background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+                    borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)",
+                    fontSize: 11, padding: "5px 8px", outline: "none",
+                  }}
+                />
+                <button
+                  onClick={async () => {
+                    if (!selected || sharing) return;
+                    setSharing(true); setShareStatus(null);
+                    const deepLink = `https://footagebrain.com/?reel=${encodeURIComponent(selected.id)}&compare=1`;
+                    const isBlob = blobUrl.startsWith("blob:");
+                    const lines = [
+                      `⇔ Compare: ${selected.id}${selected.title ? ` — ${selected.title}` : ""}`,
+                      inspoUrl ? `✦ Inspiration: ${inspoUrl}` : null,
+                      blobUrl && !isBlob ? `📹 Current cut: ${blobUrl}` : null,
+                      isBlob && fileName ? `📹 Current cut: ${fileName} (local file — share via Frame.io to link it)` : null,
+                      `🔗 Open compare in app: ${deepLink}`,
+                      shareNote.trim() ? `\n${shareNote.trim()}` : null,
+                    ].filter(Boolean).join("\n");
+                    const r = await shareReelToChannel({ reelId: selected.id, feedback: lines, channel: shareChannel });
+                    setSharing(false);
+                    if (r.ok) {
+                      setShareStatus({ ok: true, text: `Posted to #${shareChannel} ✓` });
+                      setShareNote("");
+                      setTimeout(() => setShareStatus(null), 4000);
+                    } else {
+                      setShareStatus({ ok: false, text: r.error || "Send failed." });
+                    }
+                  }}
+                  disabled={sharing}
+                  style={{
+                    padding: "5px 14px", cursor: sharing ? "default" : "pointer",
+                    background: "var(--c-green)", border: "none", borderRadius: 4,
+                    fontFamily: "var(--f-mono)", fontSize: 11, fontWeight: 600,
+                    color: "#000", opacity: sharing ? 0.6 : 1,
+                  }}
+                >
+                  {sharing ? "Posting…" : "Post to channel ↗"}
+                </button>
+              </div>
+              {shareStatus && (
+                <div style={{
+                  fontFamily: "var(--f-mono)", fontSize: 11,
+                  color: shareStatus.ok ? "var(--c-green)" : "var(--c-red)",
+                }}>{shareStatus.text}</div>
+              )}
+              <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--fg-dim)", lineHeight: 1.5 }}>
+                Teammates who click the link in chat will land directly on the comparison view in the app.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {showModal && (
+        <ReelCompareModal
+          leftLabel={selected ? `${selected.id} — Inspiration` : "Inspiration"}
+          leftUrl={inspoUrl}
+          rightLabel={fileName || "Your current cut"}
+          rightUrl={blobUrl}
+          onClose={() => setShowModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 export function TeamChat({ active }) {
   const [loaded, setLoaded] = useState(false);
   const { person: me } = useAuth();
@@ -386,6 +681,9 @@ export function TeamChat({ active }) {
 
       {/* Share-a-reel picker (dashboard-side /reel autocomplete) */}
       <ReelSharePicker openRoom={openRoom} />
+
+      {/* Side-by-side compare: pick inspiration reel + upload screen recording */}
+      <ReelComparePanel />
 
       {showHint && (
         <div style={{

@@ -831,6 +831,21 @@
 }
 .rd-row-btn--open:hover { background: color-mix(in srgb, var(--c-cyan) 14%, transparent); }
 
+/* Compare button — table row + gallery card footer. */
+.rd-row-btn--compare {
+  color: var(--c-amber);
+  border-color: color-mix(in srgb, var(--c-amber) 40%, transparent);
+}
+.rd-row-btn--compare:hover { background: color-mix(in srgb, var(--c-amber) 12%, transparent); }
+
+.rd-compare {
+  font-family: var(--f-mono); font-size: 10.5px; cursor: pointer;
+  color: var(--c-amber);
+  border: 1px solid color-mix(in srgb, var(--c-amber) 35%, transparent);
+  border-radius: 4px; padding: 1px 8px;
+}
+.rd-compare:hover { background: color-mix(in srgb, var(--c-amber) 12%, transparent); }
+
 /* Asset hyperlinks (footage filename, location pin). */
 .rd-asset-link, .rd-asset-pin-link {
   color: inherit; text-decoration: none;

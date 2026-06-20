@@ -28,8 +28,10 @@ import { HelixFlat } from "./helix-flat.jsx";
 import { AssetFan } from "./asset-fan.jsx";
 import { TimelineView } from "./timeline-view.jsx";
 import { ReelPlayer } from "./reel-player.jsx";
+import { ReelCompareModal } from "./ReelCompareModal.jsx";
 import { GENES, geneLabel, platformLabel } from "../lib/reel-dna.jsx";
 import { GENE_COLOR, parseTs } from "../pages/reel-deconstructor.jsx";
+import { useWorkflow } from "../store/store.jsx";
 import "./reel-dna-view.css";
 
 /* Resolve a deconstructor CSS var (e.g. "var(--c-cyan)") to a raw hex so
@@ -141,6 +143,9 @@ export function deriveReel(item) {
 export function ReelDnaView({ item, onClose, onDeconstruct }) {
   const { genes, lanes, timeline, totalSec } = useMemo(() => deriveReel(item), [item]);
   const [hoveredGene, setHoveredGene] = useState(null);
+  const [showCompare, setShowCompare] = useState(false);
+  const { reels } = useWorkflow();
+  const linkedReel = item.reelId ? reels.find(r => r.id === item.reelId) : null;
 
   const clearTimer = useRef(null);
   const cancelClear = () => {
@@ -156,12 +161,17 @@ export function ReelDnaView({ item, onClose, onDeconstruct }) {
 
   useEffect(() => () => cancelClear(), []);
 
-  // Esc to close.
+  // Esc to close — inner compare modal takes the first Esc, outer view takes the second.
   useEffect(() => {
-    const h = (e) => { if (e.key === "Escape") onClose(); };
+    const h = (e) => {
+      if (e.key === "Escape") {
+        if (showCompare) { setShowCompare(false); return; }
+        onClose();
+      }
+    };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
+  }, [onClose, showCompare]);
 
   const activeGene = useMemo(
     () => genes.find((g) => g.key === hoveredGene) || null,
@@ -188,6 +198,9 @@ export function ReelDnaView({ item, onClose, onDeconstruct }) {
                 {hasTimeline ? "Edit timeline" : "Build timeline"}
               </button>
             )}
+            <button className="rdv-btn rdv-btn--compare" onClick={() => setShowCompare(true)} title="Side-by-side compare with current edit">
+              ⇔ Compare
+            </button>
             <button className="rdv-close" onClick={onClose} title="Close (Esc)">✕</button>
           </div>
         </div>
@@ -247,6 +260,15 @@ export function ReelDnaView({ item, onClose, onDeconstruct }) {
           </div>
         </div>
       </div>
+      {showCompare && (
+        <ReelCompareModal
+          leftLabel="Inspiration"
+          leftUrl={item.reelUrl}
+          rightLabel={linkedReel ? `${linkedReel.id} — current edit` : "Current edit"}
+          rightUrl={linkedReel?.attachUrl || ""}
+          onClose={() => setShowCompare(false)}
+        />
+      )}
     </div>
   );
 }

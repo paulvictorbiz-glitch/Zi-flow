@@ -29,6 +29,7 @@ import {
 } from "../lib/reel-dna.jsx";
 import { ReelDeconstructor } from "./reel-deconstructor.jsx";
 import { ReelDnaView } from "../components/reel-dna-view.jsx";
+import { ReelCompareModal } from "../components/ReelCompareModal.jsx";
 import { ThumbnailDna } from "./thumbnail-dna.jsx";
 import { ReelDnaComprehensive } from "../components/reel-dna-comprehensive.jsx";
 import { ReelAssetsPage } from "./reel-assets-page.jsx";
@@ -432,6 +433,9 @@ function AssetCountCell({ item, onOpen }) {
 /* ---------- Spreadsheet / log view ---------- */
 export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, onDelete,
                           onOpenAssets, onOpenCard, colFilters, onColFilter, onClearColFilters }) {
+  const { reels } = useWorkflow();
+  const [compareItem, setCompareItem] = useState(null);
+
   // Promote a parsed-on-read tag value to a real structured field on edit, so a
   // note-derived column becomes a first-class field once the user touches it.
   const saveLocation = (item, val) => actions.updateReelDna(item.id, { location: val || null });
@@ -504,6 +508,7 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                   {onOpenCard && (
                     <button className="rd-row-btn rd-row-btn--open" title="Open the full card to add assets" onClick={() => onOpenCard(item)}>⤢ Card</button>
                   )}
+                  <button className="rd-row-btn rd-row-btn--compare" title="Side-by-side compare with current edit" onClick={() => setCompareItem(item)}>⇔</button>
                   <button className="rd-row-btn" title="Open the visual DNA breakdown" onClick={() => onView(item)}>DNA</button>
                   <button className="rd-row-btn" title={hasTimeline ? "Edit timeline" : "Build timeline"} onClick={() => onDeconstruct(item)}>
                     {hasTimeline ? `▦ ${item.timeline.length}` : "▦"}
@@ -525,6 +530,18 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
           })}
         </tbody>
       </table>
+      {compareItem && (() => {
+        const linked = compareItem.reelId ? reels.find(r => r.id === compareItem.reelId) : null;
+        return (
+          <ReelCompareModal
+            leftLabel="Inspiration"
+            leftUrl={compareItem.reelUrl}
+            rightLabel={linked ? `${linked.id} — current edit` : "Current edit"}
+            rightUrl={linked?.attachUrl || ""}
+            onClose={() => setCompareItem(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
