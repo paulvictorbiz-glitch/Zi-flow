@@ -123,19 +123,27 @@ _CONTENT_TYPE_MAP = {
 }
 
 
-def _classify_content_type(attach_type: str | None, share: dict | None = None) -> str:
+def _classify_content_type(
+    attach_type: str | None,
+    share: dict | None = None,
+    url_override: str | None = None,
+) -> str:
     """Best-effort map of an Instagram share/attachment to the reel_dna content_type
     enum. Returns one of ('reel','carousel','photo','story','video','unknown').
 
-    The attachment/story sub-field shapes on the conversations edge are UNKNOWN
-    until observed against a live token, so this is deliberately conservative:
-    a confident vocabulary hit wins; everything else falls through to 'unknown'
-    rather than guessing a shape we have not yet seen."""
+    When the attachment type maps to 'unknown' (e.g. media_share/share, which is
+    ambiguous for IG carousels, photos, or external-platform video links), we fall
+    back to URL-based classification via _content_type_from_url(). This ensures
+    YouTube and Facebook links shared via IG DM get content_type='video' even
+    though Instagram's attachment type is the generic 'media_share'."""
     t = (attach_type or "").strip().lower()
     if t in _CONTENT_TYPE_MAP:
         return _CONTENT_TYPE_MAP[t]
-    # Future calibration hook: once the live carousel/photo share shape is known,
-    # inspect `share` (e.g. media_type / child counts) here. Until then → unknown.
+    # URL fallback: if the URL identifies a known video platform, use that.
+    if url_override:
+        url_result = _content_type_from_url(url_override)
+        if url_result != "unknown":
+            return url_result
     return "unknown"
 
 
@@ -159,7 +167,8 @@ def _content_type_from_url(url: str | None) -> str:
     the 0075 enum: reel/carousel/photo/story/video/unknown)."""
     u = (url or "").lower()
     if ("youtube.com" in u or "youtu.be" in u
-            or "facebook.com" in u or "fb.watch" in u):
+            or "facebook.com" in u or "fb.watch" in u
+            or "tiktok.com" in u):
         return "video"
     return "unknown"
 
@@ -269,7 +278,7 @@ async def _handle_event(event: dict[str, Any]) -> None:
             "source": "ig_dm",
             "status": "captured",
             "external_ref": mid,            # dedupe key
-            "content_type": _classify_content_type(attach_type),
+            "content_type": _classify_content_type(attach_type, url_override=reel_url),
             "quick_notes": text,            # parseTagNote() fills the columns frontend-side
         }
         await _insert_reel_dna(row)
@@ -285,7 +294,7 @@ async def _handle_event(event: dict[str, Any]) -> None:
             "source": "ig_dm",
             "status": "captured",
             "external_ref": (mid + "-dbg") if mid else None,
-            "content_type": _classify_content_type(attach_type),
+            "content_type": _classify_content_type(attach_type, url_override=reel_url),
             "quick_notes": ("RAW_IG_EVENT: " + json.dumps(event))[:1800],
         }
         await _insert_reel_dna(row)
@@ -334,6 +343,64 @@ async def _insert_reel_dna(row: dict[str, Any]) -> str:
 # share message id is the dedupe key, so re-runs are cheap (409 → skip).
 GRAPH = "https://graph.facebook.com/v21.0"
 
+# ── Graph sweep tuning ────────────────────────────────────────────────────────
+# A single messages.limit(50){...,attachments{type,payload},story} fetch on a
+# heavy IG thread makes Graph 500 with code 1 "Please reduce the amount of data
+# you're asking for" (and sometimes the subcode-99 "unknown error"). The old code
+# dropped the ENTIRE conversation on that 500, losing every reel in it — the root
+# cause of "not all my reels show up". So: keep the steady-state payload SMALL
+# (only the fields we actually use — `shares{link}`), page it, and ADAPTIVELY
+# shrink the page when Graph still says it's too much.
+MSGS_PAGE_LIMIT = 25      # messages per page (was an inline limit(50))
+MSGS_MIN_LIMIT  = 5       # adaptive floor when a thread is too heavy to fetch
+MSGS_PAGE_CAP   = 20      # max message-pages to follow per conversation (safety)
+GRAPH_RETRY_ATTEMPTS = 4
+GRAPH_BACKOFF = (0.0, 1.0, 2.5, 5.0)   # seconds slept BEFORE attempt i (i=0 → no wait)
+
+# Single-flight guard: only ONE sweep at a time. The */15 cron + a manual Refresh
+# (or several) can otherwise overlap and hammer the Graph conversations edge into
+# rate-limited 500s ("reduce the amount of data") — and race on the same run rows.
+_SYNC_RUNNING = False
+
+
+def _is_transient(status: int, body: str) -> bool:
+    """Whether a Graph failure is worth retrying with the same request. IG's
+    conversations/messages edges intermittently 500 with 'reduce the amount of
+    data' or subcode-99 EVEN ON tiny (limit=1, fields=id) requests — that's flaky
+    rate-limiting, not a deterministic size error, so we DO retry. The messages
+    fetch additionally shrinks its page between attempts (see _fetch_messages) to
+    also cover the genuinely-too-big thread."""
+    if status in (429, 500, 502, 503, 504):
+        return True
+    return '"error_subcode":99' in body or 'subcode":99' in body
+
+
+async def _graph_request(client, *, url: str | None = None, path: str | None = None,
+                         token: str | None = None, params: dict | None = None) -> dict:
+    """One Graph GET with bounded retry on transient errors (5xx / 429 / subcode 99).
+    Pass either a full signed `url` (a paging.next cursor) OR path+token(+params).
+    Returns parsed JSON on success, or {"_err": status_or_exc, "body": ...} on final
+    failure. Permanent errors (400/403/404, or a 'reduce the amount of data' 500)
+    return immediately without burning retries."""
+    p = dict(params or {})
+    if token and not url:
+        p["access_token"] = token
+    last: dict = {"_err": "unknown"}
+    for attempt in range(GRAPH_RETRY_ATTEMPTS):
+        if GRAPH_BACKOFF[attempt]:
+            await asyncio.sleep(GRAPH_BACKOFF[attempt])
+        try:
+            r = await (client.get(url) if url else client.get(f"{GRAPH}/{path}", params=p))
+            if r.status_code == 200:
+                return r.json()
+            body = r.text[:300]
+            last = {"_err": r.status_code, "body": body}
+            if not _is_transient(r.status_code, body):
+                return last
+        except Exception as e:  # noqa: BLE001 — network blip, retry
+            last = {"_err": str(e), "body": ""}
+    return last
+
 
 def _parse_ts(s: str) -> float:
     try:
@@ -354,44 +421,42 @@ def _page_tokens() -> list[tuple[str, str]]:
 
 
 async def _graph_get(client, path: str, token: str, **params) -> dict:
-    params["access_token"] = token
-    try:
-        r = await client.get(f"{GRAPH}/{path}", params=params)
-        if r.status_code != 200:
-            return {"_err": r.status_code, "body": r.text[:200]}
-        return r.json()
-    except Exception as e:  # noqa: BLE001
-        return {"_err": str(e)}
+    # Thin wrapper kept for callers; retries transient failures via _graph_request.
+    return await _graph_request(client, path=path, token=token, params=params)
 
 
-async def _list_ig_conversations(client, pid: str, tok: str, cap: int = 25, run: dict | None = None) -> list[str]:
+async def _list_ig_conversations(client, pid: str, tok: str, cap: int = 25,
+                                 run: dict | None = None, run_id=None) -> list[str]:
     """List Instagram conversation ids for a Page, ONE per page-request following
     the `next` cursor. The conversations edge 500s when asked for many at once
     (subcode 99), but limit=1 + pagination is reliable."""
     ids: list[str] = []
     next_url = None
     for _ in range(cap):
-        try:
-            if next_url:
-                r = await client.get(next_url)
-            else:
-                r = await client.get(
-                    f"{GRAPH}/{pid}/conversations",
-                    params={"platform": "instagram", "fields": "id",
-                            "limit": 1, "access_token": tok})
-        except Exception as e:  # noqa: BLE001
-            log.warning("ig_webhook sync: conversations fetch error: %s", e)
-            if run is not None:
-                run["graph_errors"] += 1
+        if next_url:
+            j = await _graph_request(client, url=next_url)
+        else:
+            j = await _graph_request(
+                client, path=f"{pid}/conversations", token=tok,
+                params={"platform": "instagram", "fields": "id", "limit": 1})
+        if j.get("_err") is not None:
+            # 400 = this Page has no linked IG professional account (code 100). That's
+            # EXPECTED for non-IG Pages in the token store — skip silently and do NOT
+            # count it as an error (else it permanently inflates graph_errors / forces
+            # a false mismatch). Any OTHER error is real: it TRUNCATES the conversation
+            # list (threads past this cursor go unseen), so count + log it with detail.
+            if j.get("_err") != 400:
+                if run is not None:
+                    run["graph_errors"] += 1
+                log.warning("ig_webhook sync: conversations error %s: %s",
+                            j.get("_err"), str(j.get("body", ""))[:160])
+                await _log_ingest_issue(
+                    client, run_id, "graph_error",
+                    detail=(f"conversations list truncated after {len(ids)} thread(s) "
+                            f"on page={'cursor' if next_url else 'first'}: "
+                            f"{j.get('_err')} {str(j.get('body',''))[:140]}"),
+                    conversation_id=pid)
             break
-        if r.status_code != 200:
-            # 400 = page has no IG account (skip silently); else log once
-            if run is not None:
-                run["graph_errors"] += 1
-            if r.status_code != 400:
-                log.warning("ig_webhook sync: conversations HTTP %s: %s", r.status_code, r.text[:160])
-            break
-        j = r.json()
         for c in (j.get("data") or []):
             if c.get("id"):
                 ids.append(c["id"])
@@ -399,6 +464,65 @@ async def _list_ig_conversations(client, pid: str, tok: str, cap: int = 25, run:
         if not next_url:
             break
     return ids
+
+
+def _msg_fields(limit: int) -> str:
+    """The messages-edge field spec. In steady state we request ONLY what we use to
+    capture a reel — `shares{link}` plus id/time/from/message for note-pairing —
+    because the bulky `attachments{type,payload}` was the payload that tripped
+    Graph's 'reduce the amount of data' 500 and got whole conversations dropped.
+    attachments/story are fetched ONLY in debug mode (the NON-SHARE shape logging
+    below consumes them); production never read them anyway."""
+    base = "id,created_time,from,message,shares{link}"
+    if _debug_on():
+        base += ",attachments{type,payload},story"
+    return f"messages.limit({limit}){{{base}}}"
+
+
+async def _fetch_messages(client, cid: str, tok: str, run: dict, run_id) -> list:
+    """Fetch ALL messages for one conversation. Paginates the messages edge AND
+    adaptively shrinks the page size when Graph rejects the request as too large
+    ('reduce the amount of data' / subcode 99). Previously a single 500 dropped the
+    whole conversation and lost every reel in it. Returns whatever was retrieved
+    (possibly partial); logs a graph_error only when even the smallest page fails."""
+    msgs: list = []
+    limit = MSGS_PAGE_LIMIT
+    md: dict = {}
+    # First page: shrink the limit until Graph accepts it (or we hit the floor).
+    while True:
+        md = await _graph_request(
+            client, path=cid, token=tok, params={"fields": _msg_fields(limit)})
+        if md.get("_err") is None:
+            break
+        body = str(md.get("body", ""))
+        too_big = ("reduce the amount of data" in body
+                   or '"error_subcode":99' in body or 'subcode":99' in body)
+        if too_big and limit > MSGS_MIN_LIMIT:
+            limit = max(MSGS_MIN_LIMIT, limit // 2)
+            continue
+        run["graph_errors"] += 1
+        await _log_ingest_issue(
+            client, run_id, "graph_error",
+            detail=f"messages fetch: {md.get('_err')} {body}"[:300],
+            conversation_id=cid)
+        return msgs
+    node = md.get("messages") or {}
+    msgs.extend(node.get("data") or [])
+    next_url = (node.get("paging") or {}).get("next")
+    pages = 1
+    while next_url and pages < MSGS_PAGE_CAP:
+        j = await _graph_request(client, url=next_url)
+        if j.get("_err") is not None:
+            run["graph_errors"] += 1
+            await _log_ingest_issue(
+                client, run_id, "graph_error",
+                detail=f"messages page {pages}: {j.get('_err')} {str(j.get('body',''))[:160]}",
+                conversation_id=cid)
+            break
+        msgs.extend(j.get("data") or [])
+        next_url = (j.get("paging") or {}).get("next")
+        pages += 1
+    return msgs
 
 
 async def _existing_ext_refs(client) -> set:
@@ -540,26 +664,32 @@ def _new_run_counters() -> dict:
 
 
 async def _do_sync(trigger: str = "cron") -> dict:
+    """Single-flight wrapper: skip if a sweep is already in progress, so the cron
+    and manual Refreshes never overlap (overlap = Graph rate-limit 500s + run-row
+    races). Always clears the flag, even on error."""
+    global _SYNC_RUNNING
+    if _SYNC_RUNNING:
+        log.info("ig_webhook sync: skipped (%s) — a sweep is already running", trigger)
+        return {"ok": True, "skipped": "already_running"}
+    _SYNC_RUNNING = True
+    try:
+        return await _do_sync_inner(trigger)
+    finally:
+        _SYNC_RUNNING = False
+
+
+async def _do_sync_inner(trigger: str = "cron") -> dict:
     run = _new_run_counters()
     async with httpx.AsyncClient(timeout=40) as client:
         run_id = await _open_sync_run(client, trigger)
         known = await _existing_ext_refs(client)   # skip already-captured reels
         for pid, tok in _page_tokens():
-            cids = await _list_ig_conversations(client, pid, tok, cap=40, run=run)
+            cids = await _list_ig_conversations(client, pid, tok, cap=40, run=run, run_id=run_id)
             run["conversations"] += len(cids)
             for cid in cids:
-                md = await _graph_get(
-                    client, cid, tok,
-                    fields=("messages.limit(50){id,created_time,from,message,"
-                            "shares{link},attachments{type,payload},story}"))
-                if md.get("_err") is not None:
-                    run["graph_errors"] += 1
-                    await _log_ingest_issue(
-                        client, run_id, "graph_error",
-                        detail=f"messages fetch: {md.get('_err')} {md.get('body', '')}"[:300],
-                        conversation_id=cid)
-                    continue
-                msgs = ((md.get("messages") or {}).get("data")) or []
+                # Paginated + adaptively-shrinking fetch so a heavy thread no longer
+                # 500s-and-drops; returns all messages it could retrieve.
+                msgs = await _fetch_messages(client, cid, tok, run, run_id)
                 # index the text notes by sender for nearest-time pairing
                 notes = [(_parse_ts(m.get("created_time", "")),
                           (m.get("from") or {}).get("id"),
@@ -633,7 +763,7 @@ async def _do_sync(trigger: str = "cron") -> dict:
                         if ref in known:        # already captured — no Supabase write
                             run["dedupe_skip"] += 1
                             continue
-                        content_type = _classify_content_type(sh.get("type"), sh)
+                        content_type = _classify_content_type(sh.get("type"), sh, url_override=link)
                         status = await _insert_reel_dna({
                             "reel_url": link, "platform": _detect_platform(link), "source": "ig_dm",
                             "status": "captured", "external_ref": ref,
@@ -660,11 +790,16 @@ async def _do_sync(trigger: str = "cron") -> dict:
                                 detail=f"insert failed for ref={ref}",
                                 conversation_id=cid, message_id=mid)
 
-    # ── reconciliation (exact rule from plan A2.4) ──
+    # ── reconciliation ──
+    # graph_errors count too: a conversation we couldn't fetch may hold reels we
+    # never saw, so a run with ANY graph_error is NOT fully reconciled — otherwise
+    # dropped conversations show green and the missing reels stay invisible.
     seen = run["shares_seen"]
     accounted = run["inserted"] + run["dedupe_skip"]
-    reconciled = (accounted == seen) and run["insert_error"] == 0 and run["parse_fail"] == 0
-    mismatch_count = seen - accounted + run["insert_error"] + run["parse_fail"]
+    reconciled = ((accounted == seen) and run["insert_error"] == 0
+                  and run["parse_fail"] == 0 and run["graph_errors"] == 0)
+    mismatch_count = (seen - accounted + run["insert_error"]
+                      + run["parse_fail"] + run["graph_errors"])
 
     async with httpx.AsyncClient(timeout=20) as client2:
         await _close_sync_run(client2, run_id, run, reconciled, mismatch_count)

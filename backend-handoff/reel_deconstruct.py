@@ -166,6 +166,26 @@ def _feature_on() -> bool:
     return os.environ.get("FEATURE_REEL_DECONSTRUCT", "").strip() in ("1", "true", "TRUE", "yes")
 
 
+def _ytdlp_cookies() -> str:
+    """Path to a Netscape-format cookies.txt for yt-dlp, or "" if unset/missing. Lets the
+    worker auto-acquire bot-gated YouTube + login-walled Instagram sources (else manual
+    upload is the only path). Env name matches DEPLOY-PHASE1.md (YTDLP_COOKIES);
+    IG_COOKIES_FILE accepted as an alias. Returns "" if the file doesn't exist so a stale
+    path silently degrades to the upload CTA rather than passing a bad --cookies arg."""
+    p = (os.environ.get("YTDLP_COOKIES") or os.environ.get("IG_COOKIES_FILE") or "").strip()
+    return p if (p and os.path.exists(p)) else ""
+
+
+def _with_cookies(cmd: list[str]) -> list[str]:
+    """Prepend `--cookies <file>` to a yt-dlp argv (right after "yt-dlp") when a cookies
+    file is configured. Single source of truth for BOTH the longform and reel acquire
+    paths so they can never drift. No-op when no cookies are set."""
+    c = _ytdlp_cookies()
+    if c:
+        cmd[1:1] = ["--cookies", c]
+    return cmd
+
+
 def _supabase_headers(prefer: str = "return=minimal") -> dict[str, str]:
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     return {
@@ -286,9 +306,11 @@ def _acquire(url: str, work: str) -> None:
     best-effort — their absence triggers the whisper fallback in _transcribe)."""
     os.makedirs(work, exist_ok=True)
     # 1. audio: bestaudio → mp3 (small, fast). -o template stays inside the temp dir.
+    #    _with_cookies injects --cookies when configured (YouTube is bot-gated without it).
     audio = _run(
-        ["yt-dlp", "-f", "bestaudio", "-x", "--audio-format", "mp3",
-         "--no-playlist", "-o", os.path.join(work, "audio.%(ext)s"), url],
+        _with_cookies(
+            ["yt-dlp", "-f", "bestaudio", "-x", "--audio-format", "mp3",
+             "--no-playlist", "-o", os.path.join(work, "audio.%(ext)s"), url]),
         timeout=ACQUIRE_TIMEOUT,
     )
     if audio.returncode != 0:
@@ -296,9 +318,10 @@ def _acquire(url: str, work: str) -> None:
     # 2. captions: native English auto-subs as .vtt, no media download (FREE path).
     #    Non-fatal: a video with no captions just falls back to whisper.
     caps = _run(
-        ["yt-dlp", "--write-auto-sub", "--sub-lang", "en",
-         "--skip-download", "--sub-format", "vtt",
-         "--no-playlist", "-o", os.path.join(work, "caps"), url],
+        _with_cookies(
+            ["yt-dlp", "--write-auto-sub", "--sub-lang", "en",
+             "--skip-download", "--sub-format", "vtt",
+             "--no-playlist", "-o", os.path.join(work, "caps"), url]),
         timeout=ACQUIRE_TIMEOUT,
     )
     if caps.returncode != 0:
@@ -611,7 +634,8 @@ async def _process_longform(client: httpx.AsyncClient, row: dict[str, Any]) -> b
             raise RuntimeError("row has no reel_url to analyze")
 
         # 1. acquiring ──────────────────────────────────────────────────────────
-        await _write_progress(client, row_id, "acquiring", 10, "downloading audio + captions")
+        _ck = " (cookies)" if _ytdlp_cookies() else ""
+        await _write_progress(client, row_id, "acquiring", 10, "downloading audio + captions" + _ck)
         # Persist the resolved URL we acted on (canonical-ish; full normalize is C1's job).
         await _patch_row(client, row_id, {"source_url_resolved": src})
         await asyncio.to_thread(_acquire, src, work)
@@ -712,19 +736,17 @@ def _acquire_reel_video(src: str | None, work: str) -> str:
     if not src:
         raise _AcquireError("no uploaded video and no reel_url to download")
 
-    cmd = ["yt-dlp", "-f", "mp4/best[ext=mp4]", "--no-playlist",
-           "--max-filesize", MAX_VIDEO_BYTES,
-           "--merge-output-format", "mp4",
-           "-o", os.path.join(work, "base.%(ext)s"), src]
-    # IG/login-walled reels may need a cookies file. Env name matches DEPLOY-PHASE1.md
-    # (YTDLP_COOKIES); IG_COOKIES_FILE accepted as an alias for convenience.
-    cookies = (os.environ.get("YTDLP_COOKIES")
-               or os.environ.get("IG_COOKIES_FILE") or "").strip()
-    if cookies and os.path.exists(cookies):
-        cmd[1:1] = ["--cookies", cookies]
+    # IG/login-walled reels (and bot-gated YouTube) may need a cookies file; _with_cookies
+    # injects --cookies when YTDLP_COOKIES/IG_COOKIES_FILE points at an existing file.
+    cmd = _with_cookies(
+        ["yt-dlp", "-f", "mp4/best[ext=mp4]", "--no-playlist",
+         "--max-filesize", MAX_VIDEO_BYTES,
+         "--merge-output-format", "mp4",
+         "-o", os.path.join(work, "base.%(ext)s"), src])
     cp = _run(cmd, timeout=REEL_VIDEO_TIMEOUT)
     if cp.returncode != 0:
-        raise _AcquireError("yt-dlp video failed: " + _stderr_tail(cp))
+        hint = "" if _ytdlp_cookies() else " (no YTDLP_COOKIES configured — bot-gated/login-walled sources need one)"
+        raise _AcquireError("yt-dlp video failed: " + _stderr_tail(cp) + hint)
     out = _find_uploaded_video(work)
     if not out:
         raise _AcquireError("yt-dlp produced no base video file")
@@ -888,7 +910,8 @@ async def _process_reel(client: httpx.AsyncClient, row: dict[str, Any]) -> bool:
     acquired = False
     try:
         # 1. acquire ──────────────────────────────────────────────────────────────
-        await _write_progress(client, row_id, "acquire", 8, "acquiring video")
+        await _write_progress(client, row_id, "acquire", 8,
+                              "acquiring video" + (" (cookies)" if _ytdlp_cookies() else ""))
         if src:
             await _patch_row(client, row_id, {"source_url_resolved": src})
         video = await asyncio.to_thread(_acquire_reel_video, src, work)
@@ -987,13 +1010,59 @@ async def _fail_row(client: httpx.AsyncClient, row_id: str | None, detail: str) 
     })
 
 
+# ── single-flight concurrency guard (OOM protection on the 5.2GB box) ──────────
+# The */2 cron POSTs /deconstruct every 2 min; a heavy analysis (PySceneDetect + ffmpeg,
+# whole video held in memory) can exceed 2 min, so WITHOUT a cap the next tick would claim
+# a DIFFERENT pending row and run a SECOND pipeline concurrently → OOM kill on this box.
+# We cap CONCURRENT analyses in THIS uvicorn process (default 1). Slots are reserved
+# SYNCHRONOUSLY (no await between the busy-check and the reserve) so two near-simultaneous
+# requests can't both pass. An OOM kills the process (restart: unless-stopped) → _INFLIGHT
+# resets empty, so the queue is NEVER blocked by a cap that outlives its task; the single
+# row left in 'analyzing' is requeued by the one-shot reaper below on the next call.
+_MAX_CONCURRENT = max(1, int((os.environ.get("REEL_MAX_CONCURRENT") or "1").strip() or "1"))
+_INFLIGHT: set[str] = set()   # row ids whose background pipeline is running in THIS process
+_RESERVED = 0                 # slots reserved between the busy-check and _INFLIGHT.add / wait
+_STALE_REAPED = False         # one-shot guard for the startup requeue below
+
+
+async def _reap_stale_once(client: httpx.AsyncClient) -> None:
+    """ONCE per process, when nothing is in-flight here, requeue rows stranded in
+    'analyzing' by a prior crash/OOM/redeploy back to 'pending_analyze' so they re-drain.
+    Safe because this is the ONLY worker: a DB 'analyzing' row with an empty in-process
+    _INFLIGHT is necessarily a ghost from a previous incarnation (its task can't exist)."""
+    global _STALE_REAPED
+    if _STALE_REAPED:
+        return
+    _STALE_REAPED = True
+    url = _supabase_url()
+    if not url:
+        return
+    try:
+        r = await client.patch(
+            f"{url}/rest/v1/reel_dna?media_status=eq.analyzing",
+            headers=_supabase_headers("return=minimal"),
+            json={"media_status": "pending_analyze",
+                  "progress": {"step": "queued", "pct": 0,
+                               "msg": "requeued after worker restart", "updated_at": _now_iso()}},
+        )
+        if r.status_code in (200, 204):
+            log.info("reel_deconstruct: reaped stale 'analyzing' rows on first drain")
+    except Exception as e:  # noqa: BLE001
+        log.warning("reel_deconstruct: stale reap failed: %s", e)
+
+
 async def _process_row_bg(row: dict[str, Any]) -> None:
     """Background wrapper: open a fresh long-timeout client and process one already-
     claimed row. Used when the request returns immediately (the cron/owner path) so a
     multi-minute pipeline never holds the HTTP connection open. _process_row never
-    raises, so this task always settles the row into a terminal status."""
-    async with httpx.AsyncClient(timeout=ACQUIRE_TIMEOUT + WHISPER_TIMEOUT + LLM_TIMEOUT + 60) as client:
-        await _process_row(client, row)
+    raises, so this task always settles the row into a terminal status. The finally
+    releases this row's concurrency slot even if the task is cancelled."""
+    rid = str(row.get("id") or "")
+    try:
+        async with httpx.AsyncClient(timeout=ACQUIRE_TIMEOUT + WHISPER_TIMEOUT + LLM_TIMEOUT + 60) as client:
+            await _process_row(client, row)
+    finally:
+        _INFLIGHT.discard(rid)
 
 
 # ── endpoint (C6) ──────────────────────────────────────────────────────────────
@@ -1025,24 +1094,41 @@ async def deconstruct(request: Request):
     row_id = request.query_params.get("id") or None
     wait = request.query_params.get("wait") == "1"
 
+    global _RESERVED
     # Claim with a short-timeout client (the claim is a single fast PATCH).
     async with httpx.AsyncClient(timeout=30) as client:
-        row = await _claim_one(client, row_id)
-        if not row:
-            return JSONResponse({"ok": True, "claimed": 0, "processed": 0},
-                                status_code=200)
-        if wait:
-            # Synchronous debug path: process inline, report the outcome. _process_row
-            # never raises → a failure is recorded as analyze_failed, still 200.
-            ok = await _process_row(client, row)
-            return JSONResponse({"ok": bool(ok), "claimed": 1,
-                                 "processed": 1 if ok else 0, "waited": True},
-                                status_code=200)
+        # One-shot: requeue rows stranded 'analyzing' by a prior crash/OOM/redeploy. Runs
+        # only when this process holds nothing, so it can never touch a live analysis.
+        if not _INFLIGHT and _RESERVED == 0:
+            await _reap_stale_once(client)
 
-    # Default cron/owner path: we hold the claim (media_status='analyzing'); finish the
-    # pipeline in the background so the request returns immediately.
-    asyncio.create_task(_process_row_bg(row))
-    return JSONResponse({"ok": True, "claimed": 1, "started": True}, status_code=200)
+        # CONCURRENCY CAP (OOM guard): if a heavy pipeline is already running in this
+        # process, don't claim another — the row stays 'pending_analyze' and the next */2
+        # tick drains it once a slot frees. ?wait=1 (debug) bypasses so it always runs.
+        if not wait and (len(_INFLIGHT) + _RESERVED) >= _MAX_CONCURRENT:
+            return JSONResponse({"ok": True, "claimed": 0, "busy": True}, status_code=200)
+
+        _RESERVED += 1   # reserve a slot SYNCHRONOUSLY before the claim await
+        try:
+            row = await _claim_one(client, row_id)
+            if not row:
+                return JSONResponse({"ok": True, "claimed": 0, "processed": 0},
+                                    status_code=200)
+            if wait:
+                # Synchronous debug path: process inline, report the outcome. _process_row
+                # never raises → a failure is recorded as analyze_failed, still 200.
+                ok = await _process_row(client, row)
+                return JSONResponse({"ok": bool(ok), "claimed": 1,
+                                     "processed": 1 if ok else 0, "waited": True},
+                                    status_code=200)
+            # Default cron/owner path: hold the claim (media_status='analyzing'); finish the
+            # pipeline in the background so the request returns immediately. Hand the slot to
+            # the background task (it discards from _INFLIGHT in its finally).
+            _INFLIGHT.add(str(row.get("id") or ""))
+            asyncio.create_task(_process_row_bg(row))
+            return JSONResponse({"ok": True, "claimed": 1, "started": True}, status_code=200)
+        finally:
+            _RESERVED -= 1   # release the temporary reservation (slot now in _INFLIGHT or freed)
 
 
 # ── signed reel-asset download (HMAC validator + stream) ──────────────────────
@@ -1123,4 +1209,7 @@ async def status():
         "reels_dir": _reels_dir(),
         "download_signing_set": bool(_download_signing_secret()),
         "supabase_configured": bool(_supabase_url()) and bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
+        "cookies_set": bool(_ytdlp_cookies()),
+        "max_concurrent": _MAX_CONCURRENT,
+        "inflight": len(_INFLIGHT),
     }

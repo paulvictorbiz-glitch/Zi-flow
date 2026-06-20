@@ -170,29 +170,96 @@ Notes:
 
 ---
 
-## 3. Set the signing secret + IG cookie path on Hetzner 🔴
+## 3. Set the signing secret + yt-dlp cookie file on Hetzner 🔴
 
-The worker validates download HMACs and (for some reels) needs an IG/yt-dlp cookie file to
-acquire the source. Append to `deploy/hetzner/.env`:
+The worker validates download HMACs and — to **auto-acquire** bot-gated YouTube (longform
+*and* reel) and login-walled Instagram sources — needs an authenticated `cookies.txt`.
+Without it, auto-acquire degrades cleanly to `acquire_failed` + the manual-upload CTA
+(manual upload stays the reliable backbone; cookies are best-effort).
+
+### 3a. Generate `cookies.txt` (Netscape format) — on a machine WITH a browser
+
+`--cookies-from-browser` does **not** work on the headless box (no browser). Produce the
+file on your desktop, logged into the relevant account(s), then copy it up:
+
+- Browser: a "Get cookies.txt (Netscape)" extension → export while on youtube.com (and
+  instagram.com if reels are wanted). **One file can hold both domains** — yt-dlp matches
+  cookies to each URL by domain, and the worker passes the same file to every yt-dlp call.
+- Or: `yt-dlp --cookies-from-browser chrome --cookies cookies.txt --skip-download <any-url>`.
+
+> ⚠️ Use a **throwaway / secondary** account, not the owner's primary — authenticated bulk
+> download can get the source account rate-limited or flagged. The file is a **live
+> credential**: `chmod 600`, never commit it, keep it outside the Docker build context.
+
+### 3b. Persist it under the mounted data volume
+
+> **STATUS 2026-06-20: the box-side wiring below is ALREADY DONE** — the cookie *code* is
+> deployed live (merged + rebuilt, in-container sha `3b60a78c…`), the `/app/data/cookies`
+> mount + `YTDLP_COOKIES` env are wired into the live compose/.env, and the host dir exists.
+> **The ONLY remaining step is dropping a real `cookies.txt` at the path in 3b.** Once the
+> file lands the worker activates on the next acquire — NO restart needed.
+
+This stack does **not** mount `/app/data` as one volume — it mounts each subdir
+individually, and the relative `./data/...` paths resolve under the compose **working dir**
+`deploy/hetzner/`, NOT the repo root. So the real host path is
+`…/footage-brain-test/deploy/hetzner/data/cookies` (already created, `chmod 700`):
+
+```bash
+# from your desktop — drop the file into the already-mounted, already-created dir:
+scp cookies.txt root@178.105.14.144:/srv/footagebrain/footage-brain-test/deploy/hetzner/data/cookies/ig_cookies.txt
+ssh root@178.105.14.144 'chmod 600 /srv/footagebrain/footage-brain-test/deploy/hetzner/data/cookies/ig_cookies.txt'
+# verify it took (expect a non-empty path, not ''):
+ssh root@178.105.14.144 'docker exec fb-backend python3 -c "import app.api.reel_deconstruct as m; print(m._ytdlp_cookies())"'
+```
+
+### 3c. Env + passthrough (ALREADY APPLIED on the live box)
+
+`deploy/hetzner/.env` now has (alongside the signing secret):
 
 ```
-FB_DOWNLOAD_SIGNING_SECRET=<pick a long random string>   # MUST byte-match the Vercel value (step 6)
-# optional — only if yt-dlp needs authenticated access to acquire some reels:
-# YTDLP_COOKIES=/app/data/cookies/ig_cookies.txt
+FB_DOWNLOAD_SIGNING_SECRET=<long random string>   # MUST byte-match the Vercel value (step 6)
+YTDLP_COOKIES=/app/data/cookies/ig_cookies.txt    # in-CONTAINER path (resolves the file dropped in 3b)
 ```
 
-Then add matching passthroughs under the backend service's `environment:` in
-`deploy/hetzner/docker-compose.yml` (this stack maps vars individually — `.env` alone is
-NOT enough; same lesson as Phase 0):
+This stack uses **map** (not list) env syntax and maps vars individually — `.env` alone is
+NOT enough. Under the backend service's `environment:` + `volumes:` in
+`deploy/hetzner/docker-compose.yml` (both lines already added):
 
 ```yaml
-      - FB_DOWNLOAD_SIGNING_SECRET=${FB_DOWNLOAD_SIGNING_SECRET}
-      - YTDLP_COOKIES=${YTDLP_COOKIES}
+    environment:
+      FB_DOWNLOAD_SIGNING_SECRET: ${FB_DOWNLOAD_SIGNING_SECRET:-}
+      YTDLP_COOKIES: ${YTDLP_COOKIES:-}
+    volumes:
+      - ./data/cookies:/app/data/cookies          # yt-dlp auth cookies (auto-acquire)
 ```
 
 > `FB_DOWNLOAD_SIGNING_SECRET` is the **shared env var name on BOTH sides** (Vercel minter +
 > Hetzner validator). The two values must be **byte-identical** or every signed download
 > 403s. Verify with the parity vector in step 8 BEFORE trusting any download.
+>
+> The worker reads `YTDLP_COOKIES` (alias `IG_COOKIES_FILE`) via `_ytdlp_cookies()` and
+> injects `--cookies <file>` into **every** yt-dlp call through `_with_cookies()` — longform
+> audio + captions AND the reel mp4 pull. When present, the acquire progress line shows
+> `(cookies)`; on failure with none set, `_AcquireError` appends a "no YTDLP_COOKIES
+> configured" hint so `media_error` is self-diagnosing.
+
+### 3e. Worker concurrency guard (OOM protection — deployed 2026-06-20)
+
+The worker caps **concurrent analyses in-process at 1** (`_MAX_CONCURRENT`, override with
+env `REEL_MAX_CONCURRENT`). The `*/2` drain cron skips claiming a new row while one is
+running (`/deconstruct` returns `{claimed:0, busy:true}`), so two PySceneDetect+ffmpeg
+pipelines can't run together and OOM the 5.2 GB box. A one-shot reaper on the first drain
+after a (re)start requeues any row stranded in `analyzing` by a prior crash/OOM/redeploy
+back to `pending_analyze`. `/api/reel/status` now reports `max_concurrent` + `inflight`.
+**Keep `REEL_MAX_CONCURRENT=1` unless the box gets more RAM.**
+
+### 3d. Cookie rot (recurring chore)
+
+YouTube/IG session cookies expire in **days–weeks** and silently break auto-acquire again
+→ rows fall back to `acquire_failed`. There is no auto-refresh: when auto-acquire starts
+failing, regenerate `cookies.txt` (3a) and re-`scp` it (3b) — no rebuild needed, the worker
+re-reads the file each acquire. (A cookie-expiry alert is a deferred follow-up, same shape
+as the IG token alerting.)
 
 ---
 
