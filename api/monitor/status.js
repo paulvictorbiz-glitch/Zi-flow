@@ -303,21 +303,29 @@ async function fetchHetznerStats() {
 
 async function fetchHetznerOsMetrics() {
   const base = process.env.FB_PROXY_TARGET || "https://api.footagebrain.com";
-  const controller = new AbortController();
   // /api/metrics runs `docker stats` (~3s) on the box; allow generous headroom for
   // TLS + Vercel→Hetzner latency so a slow tick doesn't drop the OS donuts. The
-  // parent handler caps at maxDuration: 45, so 12s here is well within budget.
-  const t = setTimeout(() => controller.abort(), 12000);
-  try {
-    const r = await fetch(`${base}/api/metrics`, { signal: controller.signal });
-    if (!r.ok) return { configured: false };
-    const d = await r.json();
-    return d.ok ? { configured: true, ...d } : { configured: false };
-  } catch {
-    return { configured: false };
-  } finally {
-    clearTimeout(t);
+  // parent handler caps at maxDuration: 45, so two 12s attempts stay well within
+  // budget. A single slow tick or transient 5xx is the usual cause of the OS
+  // donuts intermittently going blank, so retry once before giving up — the
+  // client also keeps last-good, but reducing the blip at the source means the
+  // card stays live more often.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 12000);
+    try {
+      const r = await fetch(`${base}/api/metrics`, { signal: controller.signal });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.ok) return { configured: true, ...d };
+      }
+    } catch {
+      /* fall through to retry / give up */
+    } finally {
+      clearTimeout(t);
+    }
   }
+  return { configured: false };
 }
 
 // ── Google Cloud ──────────────────────────────────────────────────────────────

@@ -121,6 +121,16 @@
 .mon-unconfigured { color: var(--fg-faint); }
 .mon-unconfigured code { color: var(--c-cyan); font-size: 10.5px; }
 .mon-hint         { color: var(--fg-faint); }
+/* Shown on a card when it's rendering last-good data after a failed refresh tick. */
+.mon-stale-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--f-mono); font-size: 9.5px; line-height: 1;
+  color: var(--c-amber, #f5a524);
+  border: 1px solid color-mix(in srgb, var(--c-amber, #f5a524) 45%, transparent);
+  background: color-mix(in srgb, var(--c-amber, #f5a524) 12%, transparent);
+  border-radius: 999px; padding: 3px 8px;
+  margin: 0 0 8px; letter-spacing: .04em; text-transform: uppercase;
+}
 .mon-vercel-link {
   display: inline-block;
   padding: 7px 14px;

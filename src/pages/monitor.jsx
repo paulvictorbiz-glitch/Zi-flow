@@ -25,6 +25,48 @@ const WARN_PCT  = 80;
 const CRIT_PCT  = 95;
 const CACHE_KEY = "mon.cache.v1";   // last successful /api/monitor/status payload
 
+/* The provider sub-fetches that make up a status payload. Each can fail
+   independently (e.g. the Hetzner OS /api/metrics tick times out) without the
+   others failing — so we merge per-section and keep the last-good value rather
+   than letting one blip blank a whole card. */
+const STATUS_SECTIONS = ["supabase", "hetzner", "gcp", "os", "worldMonitor"];
+
+/* A section is "usable" (worth displaying / caching) when it actually carried
+   data — i.e. it's configured and didn't report an error. An unconfigured or
+   errored section is a failure/blip we'd rather replace with last-good. */
+function sectionUsable(s) {
+  return !!s && s.configured !== false && !s.error;
+}
+
+/* Merge a fresh payload over the previous one, preserving the last-good value
+   for any section that came back unusable this tick (and flagging it _stale so
+   the UI can show it's not live). This is what makes the OS donuts — and every
+   other card — keep showing through a transient provider hiccup. */
+function mergeStatus(prev, next) {
+  if (!next) return prev;
+  const merged = { ...next };
+  for (const k of STATUS_SECTIONS) {
+    if (!sectionUsable(next[k]) && sectionUsable(prev?.[k])) {
+      merged[k] = { ...prev[k], _stale: true };
+    }
+  }
+  return merged;
+}
+
+/* Strip the transient _stale flags before caching so a since-recovered section
+   doesn't render as stale on the next cold mount. */
+function stripStale(d) {
+  if (!d) return d;
+  const out = { ...d };
+  for (const k of STATUS_SECTIONS) {
+    if (out[k]?._stale) {
+      const { _stale, ...rest } = out[k];
+      out[k] = rest;
+    }
+  }
+  return out;
+}
+
 /* ── helpers ─────────────────────────────────────────────── */
 function pctTone(p) {
   if (p == null) return "ok";
@@ -110,6 +152,20 @@ function StatRow({ label, value, tone }) {
       <span className="mon-stat-k">{label}</span>
       <span className={`mon-stat-v${tone ? " mon-stat-v--" + tone : ""}`}>{value}</span>
     </div>
+  );
+}
+
+/* ── StaleTag ────────────────────────────────────────────────
+   Shown on a card when its section is rendering last-good data because the
+   latest poll tick for that provider failed (kept visible instead of blanked). */
+function StaleTag() {
+  return (
+    <span
+      className="mon-stale-tag"
+      title="The latest refresh for this card failed — showing the last known-good values."
+    >
+      ⚠ last good
+    </span>
   );
 }
 
@@ -1328,6 +1384,11 @@ export function Monitor() {
   const [fromCache, setFromCache] = useState(false);
   const [toast, setToast]     = useState(null);
 
+  // Mirror the latest merged data into a ref so load() can read it as the
+  // "previous" payload without re-creating the callback on every change.
+  const dataRef = React.useRef(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -1335,14 +1396,18 @@ export function Monitor() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       const now = Date.now();
-      setData(d);
+      // Merge per-section so a transient failure in ONE provider (e.g. the
+      // Hetzner OS metrics tick timing out) doesn't blank that card — we keep
+      // its last-good value and flag it stale instead of wiping it.
+      const merged = mergeStatus(dataRef.current, d);
+      setData(merged);
       setLastFetch(new Date(now));
       setFromCache(false);
       setError(null);
-      // Cache the fresh payload so the next visit renders instantly
-      // without burning another round of provider-API calls.
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: now, payload: d })); } catch (_) {}
-      checkThresholds(d);
+      // Cache the MERGED (last-good) payload so the next visit renders fully
+      // populated without burning another round of provider-API calls.
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: now, payload: stripStale(merged) })); } catch (_) {}
+      checkThresholds(merged);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1442,18 +1507,22 @@ export function Monitor() {
 
       <div className="mon-grid">
         <Card title="Supabase" footLeft="Database · Storage · Bandwidth">
+          {data?.supabase?._stale && <StaleTag />}
           <SupabaseSection data={data?.supabase} />
         </Card>
 
         <Card title="Hetzner server" footLeft="api.footagebrain.com · Docker host">
+          {data?.hetzner?._stale && <StaleTag />}
           <HetznerSection data={data?.hetzner} />
         </Card>
 
         <Card title="Server OS" footLeft="Memory · Swap · Disk · Load">
+          {data?.os?._stale && <StaleTag />}
           <OsSection data={data?.os} />
         </Card>
 
         <Card title="Google Cloud" footLeft="YouTube · Maps · Cloud Billing">
+          {data?.gcp?._stale && <StaleTag />}
           <GcpSection data={data?.gcp} />
         </Card>
 
@@ -1466,6 +1535,7 @@ export function Monitor() {
         </Card>
 
         <Card title="World Monitor" footLeft="Free APIs · Limits · Usage">
+          {data?.worldMonitor?._stale && <StaleTag />}
           <WorldMonitorSection data={data?.worldMonitor} />
         </Card>
 
