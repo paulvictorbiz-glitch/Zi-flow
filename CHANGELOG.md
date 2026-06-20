@@ -4,6 +4,116 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-21 — Render worker: Google Drive credentials wired + `_download_drive_file()` implemented
+
+**What changed:** The render worker can now actually download source videos from Google Drive. `_download_drive_file()` was a stub raising `NotImplementedError`; it now calls Drive API v3 via the `opencut@footage-brain-database.iam.gserviceaccount.com` service account using `google-api-python-client`. The health endpoint returns `"drive_configured": true`.
+
+**Where:** `backend-handoff/render.py` (real Drive download implementation) · `backend-handoff/requirements-hosting.txt` (`+google-api-python-client==2.137.0`, `+google-auth==2.29.0`) · Hetzner `.env` (`GOOGLE_SERVICE_ACCOUNT_JSON` set as minified JSON) · Hetzner backend image rebuilt + force-recreated.
+
+**Path we took:** User provided the service account email + key ID. Found the already-downloaded JSON key file locally at `footage-brain-database-fa569f3dc1df.json` (already gitignored via the `footage-brain-database-*.json` pattern). SCPed it to Hetzner `/tmp`, ran a Python script to minify + append the JSON (unquoted single-line) to the `.env` file. Implemented `_download_drive_file()` from the existing TODO stub: the `googleapiclient` is synchronous, so the download runs inside `asyncio.get_event_loop().run_in_executor(None, _sync_download)`. Added google deps to `requirements-hosting.txt`. Rebuilt image + `--force-recreate` (Docker Compose saw no tag change and didn't recreate without the flag).
+
+**What we learned:** (1) **Minified JSON as an unquoted Docker Compose `.env` value works** — `json.dumps(sa, separators=(',',':'))` produces a single line; Docker Compose v2 takes everything after `=` to end-of-line without shell expansion, so `{`, `}`, `"` are all fine unquoted. (2) **Google API client is sync** — wrap in `run_in_executor` to avoid blocking FastAPI's async event loop. (3) `cache_discovery=False` prevents `googleapiclient` from writing a local discovery cache (would fail in a read-only container layer). (4) **`docker compose up -d` doesn't recreate** if the compose config didn't change (only the image changed) — must use `--force-recreate` when the change is a new image build.
+
+**Status:** LIVE — `/api/render/health` → `{"ok":true,"drive_configured":true}`. ffmpeg filtergraph is still Phase 0 passthrough stub; real renders advance in Phase 1.
+
+---
+
+## 2026-06-21 — Fix: render endpoints 404 due to double `/api` prefix
+
+**What changed:** The render worker's three endpoints (`/api/render/submit`, `/api/render/status/{job_id}`, `/api/render/health`) all returned 404 immediately after the first deploy. Fixed — all three now return 200.
+
+**Where:** `backend-handoff/render.py` (3 route decorator paths), Hetzner `backend/app/api/render.py` patched in-place, backend container rebuilt.
+
+**Path we took:** Hit `/api/render/health` → 404. Container logs showed "Application startup complete" (app started fine, no import errors). Checked `main.py` → `app.include_router(api_router, prefix="/api")`. But `render.py` defined routes as `@render_router.post("/api/render/submit")` — the actual served URL became `/api/api/render/submit`. The `reel_deconstruct.py` precedent confirmed: its routes use `/deconstruct` and `/status` (no `/api` prefix). Fixed by writing a Python `pathlib.read_text/write_text` script to `/tmp/fix_render.py` on Hetzner (direct `sed` via SSH + PowerShell heredoc had forward-slash escaping issues), then rebuilt.
+
+**What we learned:** (1) **The Hetzner router pattern**: routes inside any `api_router`-registered module must NOT include the `/api` prefix — `app.include_router(api_router, prefix="/api")` in `main.py` adds it. So `@router.post("/render/submit")` → served at `/api/render/submit`. (2) **`sed` with `/`-containing patterns via SSH + PowerShell heredoc is unreliable** — Python file `str.replace()` on the remote file is far simpler and has no quoting/escaping edge cases.
+
+**Status:** LIVE — `/api/render/health`, `/api/render/submit`, `/api/render/status/{job_id}` all return 200.
+
+---
+
+## 2026-06-21 — CapCut-style editor: Phase 0 render pipeline + collab foundation
+
+**What changed:** Laid the full DB + backend foundation for the in-house video editor. Two new migrations wire collaboration and render data models. A Supabase Broadcast presence hook enables real-time multi-editor awareness (committed as dead code — activated in Phase 3 when the OpenCut fork is live). A new Hetzner render worker accepts timeline JSON → queues a `render_jobs` row → fires ffmpeg in the background → returns a HMAC-signed download URL. The Vercel proxy gains `render-submit` and `render-status` actions.
+
+**Where:** `supabase/migrations/0082_edit_collab.sql` (`edit_projects`, `edit_project_versions`, `editor_locks`) · `supabase/migrations/0083_render_jobs.sql` (`render_jobs`) · `src/lib/editor-presence.jsx` (new — Supabase Broadcast presence hook, not imported anywhere yet) · `backend-handoff/render.py` (new — FastAPI render worker, fire-and-forget + poll) · `api/ai/suggest.js` (`render-submit` + `render-status` actions) · `deploy/hetzner/docker-compose.yml` (`renders:` volume + env vars) · `backend/app/api/__init__.py` (render router registration). Committed `feat(editor): Phase 0 render pipeline + collab foundation` + applied migrations to prod Supabase.
+
+**Path we took:** Started from a `/qa-verified-plan` session that produced plan `.claude/plans/this-is-a-purely-elegant-haven.md`. Designed a CapCut Pro feature inventory (Tier 1 = ffmpeg/CPU-feasible at 70–90% confidence; Tier 3 = GPU-only, not viable). Architecture decisions: Fork + Self-Host OpenCut (removes X-Frame-Options blocker), track-level soft locking over Yjs/OT (4-person team with natural track separation), fire-and-forget render + poll (same pattern as `reel_deconstruct.py`), Google Drive source download via service account.
+
+**What we learned:** (1) **Migration number collision** — three concurrent plans each claimed 0082; resolved by assigning 0082→collab tables, 0083→render_jobs, changedetection.io bridge bumped to 0084+. (2) **Full unique index, not partial, for the active-render constraint** — `render_jobs(reel_dna_id) WHERE status IN ('queued','rendering')` uses a partial index for the DB safety net, but Python does the single-flight check before INSERT (the partial-index/ON-CONFLICT-arbiter gotcha doesn't bite here because we use a regular INSERT, not upsert). (3) **`editor-presence.jsx` must sanitize `personName` before `.track()`** — avoids reintroducing the undici non-ASCII-header class of bug via Supabase realtime presence payloads.
+
+**Status:** Migrations LIVE on prod Supabase. Render worker deployed on Hetzner (health 200, drive_configured:true after follow-up). `editor-presence.jsx` committed as dead code. `editor.jsx` still dirty (requires OpenCut fork at `editor.footagebrain.com` before it can be wired). `_build_filtergraph()` is Phase 0 passthrough stub — Phase 1 adds trim/cut + xfade transitions.
+
+---
+
+## 2026-06-21 — Scout "non ISO-8859-1" Headers error: root cause confirmed server-side (no browser culprit)
+
+**What changed:** No new code this session — a diagnostic pass (via `/qa-verified-plan`, 3 domain agents + 1 QA agent) that conclusively located the `TypeError: Failed to execute 'set' on 'Headers': String contains non ISO-8859-1 code point` error and confirmed the already-deployed two-part fix is complete. The error surfaced in the Scout tab's error state but was **never browser-side**.
+
+**Where:** Investigation only — full grep of every `fetch(` header across `src/` + `api/`; read `src/lib/footage-brain-client.js`, `src/pages/scout.jsx`, `src/lib/scout-supabase.js`, `microsaas-scout/backend/app/main.py`; PowerShell byte-scan of `.env.local`. The live fix (prior session) is `api/ai/suggest.js:164` (`encodeURIComponent(scoutSecret)`, `dpl_CfHJPKRjdpt7uX7sXZWyHjgn3MUV`) + `microsaas-scout/backend/app/main.py:44` (`unquote(x_scout_secret)`, Hetzner `fb-scout`, SHA-verified).
+
+**Path we took:** Assumed browser-side (the error text is a DOMException), so grepped every browser `fetch` for dynamic header values. All came back ASCII-safe: every call uses only `Authorization: Bearer ${JWT}` (base64url = ASCII) or static `"Content-Type": "application/json"`. `footage-brain-client.js` GETs carry no/static headers; `editor.jsx` has zero fetch calls; `editor-presence.jsx` is dead code (imported nowhere); `VITE_SCOUT_SUPABASE_ANON_KEY` is all-ASCII; `.env.local` non-ASCII bytes are in COMMENT lines only. With no browser candidate, the culprit is the only remaining path: `suggest.js`'s server-side `fetch` to the Scout backend.
+
+**What we learned:** **Node.js 18+ `fetch` (undici) throws the EXACT same error string as the browser** — "Failed to execute 'set' on 'Headers'…". So this error text does NOT prove a browser-side origin. The throw happened in `suggest.js` setting `"x-scout-secret": <non-ASCII SCOUT_SCRAPE_SECRET>`, was caught, and returned to the UI as a 502 body — which made it *look* browser-side in the Scout tab. The `encodeURIComponent`/`unquote` pair already fixes it. If still seen: hard-refresh to bust a cached 502.
+
+**Status:** Resolved — fix live on both Vercel and Hetzner. No further code changes needed.
+
+---
+
+## 2026-06-21 — MicroSaaS Scout integrated as FootageBrain Monitor "Scout" tab
+
+**What changed:** The standalone MicroSaaS Scout tool (97 products, 97 AI dossiers from PH/HN/GitHub) is now accessible as an owner-only **Scout** sub-tab inside the Monitor hub. The owner can browse/filter the opportunity radar (by source, score, and keyword search), expand any card to see the full AI dossier, and trigger a fresh scrape with the Refresh button — all without leaving FootageBrain. Non-owner roles don't see the tab at all (permission catalog default + Monitor hub's `isOwner &&` hard gate).
+
+**Where:** `src/lib/scout-supabase.js` (new 2nd Supabase client, Scout's own DB) · `src/pages/scout.jsx` + `scout.css` (Scout tab component, ~280 lines) · `src/pages/monitor-hub.jsx` (+Scout SUBVIEWS entry) · `src/lib/permissions-catalog.js` (+scout VIEW_CAP, owner-only default) · `api/ai/suggest.js` (+scout-scrape action block, owner-gated via `verifyOwner`, server-proxy to Hetzner) · `.env.local` (+4 vars) · Hetzner `docker-compose.yml` (+scout-backend service) · Hetzner `Caddyfile` (+`/scout/*` handle block) · Scout Supabase (migration 0004: shortlist writes locked to authenticated). Deployed `dpl_GBFPmtjq7afctFBUqE2bGTifXzt3` to footagebrain.com. Committed `79ab93e`.
+
+**Path we took:** Folded `scout-scrape` into the existing `suggest.js` action-dispatch pattern (same as `ig-sync`, `deconstruct`) to stay under the Vercel 12/12 fn cap. Used a **second Supabase client** (`scout-supabase.js`, `persistSession:false`, `storageKey:"scout_sb"`) pointing at the Scout Supabase project — the browser reads Scout data directly via the anon key (safe after RLS migration 0004 locked shortlist writes), while Refresh still goes server-side so the SCRAPE_SECRET never reaches the browser. Scout backend was transferred to Hetzner via tar+SCP (rsync unavailable on Windows Git Bash), built as `fb-scout` on port 8787, and exposed through a new Caddy `/scout/*` handle block. Added SCRAPE_SECRET auth + single-flight guard to the Scout backend's `main.py` before deploying.
+
+**What we learned:** (1) **Scout Supabase column names differ from FB's** — `products` uses `first_seen`/`last_seen` (not `created_at`) and `dossiers` uses `generated_at` (not `created_at`); the initial deploy hit a `column products.created_at does not exist` error, caught quickly. (2) **PowerShell corrupts binary data in pipes** — `tar -czf - . | ssh ...` mangled the archive through PowerShell; the fix is to write the tar locally first, then `scp` it, then extract on the remote side. (3) `verifyOwner` must be a **static import** at the top of `suggest.js` — adding it as a dynamic import inside the action block caused a deploy-time error. (4) **Docker network name** = compose project name + network name (`footagebrain_internal`), but Caddy uses the service name `scout-backend:8787` for routing — no port-publishing needed.
+
+**Status:** LIVE on footagebrain.com. Scout backend on Hetzner, daily 06:00 UTC cron active. Committed `79ab93e`.
+
+---
+
+## 2026-06-20 — yt-dlp cookies activated on Hetzner (Reel DNA auto-acquire now live)
+
+**What changed:** The `ig_cookies.txt` file (Netscape format, exported from an incognito YouTube session) was dropped onto the Hetzner server at `deploy/hetzner/data/cookies/ig_cookies.txt`. The worker's `_ytdlp_cookies()` helper detects the file on each request and passes `--cookies <file>` to all three yt-dlp calls; prior to this the feature was built + wired but inert (`cookies_set: false`). `/api/reel/status` now returns `"cookies_set": true`.
+
+**Where:** Hetzner only — `scp` to `/srv/footagebrain/footage-brain-test/deploy/hetzner/data/cookies/ig_cookies.txt`, `chmod 600`. No code changes, no redeploy, no restart needed.
+
+**Path we took:** The code and infra (volume mount, env var `YTDLP_COOKIES`, `os.path.exists` guard) were all deployed in the prior session. This session's only step was handing the file to the server.
+
+**What we learned:** Cookies rotate in days–weeks. When `acquire_failed` starts appearing on YouTube longform analysis, the fix is just re-exporting from incognito YouTube (Get cookies.txt LOCALLY extension) and re-SCP-ing the file — no code change, no restart.
+
+**Status:** Live on Hetzner. Next test: submit a YouTube longform Reel DNA Analyze and confirm status reaches `analyzing` (not `acquire_failed`).
+
+---
+
+## 2026-06-20 — Duplicate reel: editor picker + first-name title + full DNA/asset clone
+
+**What changed:** Clicking "Duplicate" on a reel card now opens an **editor-picker sub-menu** (first names of all active team members) before creating the clone. The duplicate immediately lands in the selected editor's **Not Started** column and adopts the title format `"<Original Title> (Judy)"` instead of `"(copy)"`. XP flows naturally to the correct editor because the clone's `lane` is set to the target person. All previous duplication bugs are fixed (see below).
+
+**Where:** `src/store/store.jsx` (`duplicateReel` signature + clone shape) · `src/components/components.jsx` (`useRoster` import, `showDupePicker` state, sub-menu JSX). Committed `cf738f8`, deployed `dpl_FW9y5x2e5hgf6ZHHHGjE7gGHfiKC` → footagebrain.com.
+
+**Path we took:** Extended `duplicateReel(id)` to `duplicateReel(id, targetPersonId, targetFirstName)`, setting `lane: targetPersonId` and `stage: "not_started"` on the clone. The `ReelCard` menu now tracks a `showDupePicker` boolean that swaps the menu body for a `peopleList` picker; `useRoster()` was added to `components.jsx` for the first time. The `onDuplicate` handler was replaced with `onDuplicateFor(person)`. XP needed no change — `computeProgress()` already attributes XP by `r.personId` on rubric rows, which are created by whoever grades the work (the assigned editor).
+
+**What we learned:** The `styles.css` deny guardrail (set by the /space-enhance branch gate) is still active on `main`. Inline styles are the workaround for small new classes until the guardrail is lifted or the feature is deployed from a branch where the deny is scoped.
+
+---
+
+## 2026-06-20 — Fix: duplicate reel missing IG embed, gene data, attached assets + silent timeline drop
+
+**What changed:** Duplicating a pipeline reel now correctly clones its linked `reel_dna` card (IG embed URL, all gene fields: music/hook/font/sfx/story, timeline, quick_notes, location, content_type, format) and all `reel_dna_assets` links (attached footages, locations, news). Reels created via Generate or manually that have an `inspo` URL get a blank DNA card seeded from that URL so **every duplicated reel has the same structure**. Also fixed a silent secondary bug: `reelDnaToDb` was not emitting the `timeline` jsonb column, so any new Reel DNA card with timeline segments would appear correct in the session (optimistic) but lose the timeline on page reload.
+
+**Where:** `src/store/store.jsx` — `duplicateReel` (clone DNA + assets), `reelDnaToDb` (add `timeline` to destructure + conditional emit), import `platformFromUrl`. No migrations, no UI changes, no new functions — all infrastructure already existed.
+
+**Path we took:** Started with a `/qa-verified-plan` exploration (3 parallel Explore agents + 1 Plan + 1 QA). The Explore agents confirmed `duplicateReel` only wrote to `reels` + `attached_footage_items` and that `persistCreateReelDna`, `persistAttachAsset`, `CREATE_REEL_DNA`, and `UPSERT_REEL_DNA_ASSET` all existed. The Plan agent discovered the hidden `timeline` drop inside `reelDnaToDb`. The QA agent caught three blocking issues: (1) need `if (srcDna)` guard for reels with no DNA card; (2) `archivedAt: undefined` must be explicit so archived source cards don't clone an archived duplicate; (3) the DB persist row for `persistAttachAsset` must NOT include the optimistic `id` field (the synthetic id contains colons, not a valid uuid — would cause a `22P02` error). All three were pre-emptively addressed before writing a line of code. Then added the `else if (src.inspo)` fallback to cover Generate/manual reels.
+
+**What we learned:** (1) `reelDnaToDb` uses explicit destructuring — anything not named there is silently dropped on insert even if it arrives correctly via `...rest` in `reelDnaFromDb`. The pattern of "reads fine, loses on write" is subtle: the optimistic UI shows the data, the DB doesn't have it, page reload reveals the discrepancy. (2) The `reel_dna_external_ref_uidx` is a PARTIAL unique index (`WHERE external_ref IS NOT NULL`) — cloning the source's `externalRef` (the IG DM dedupe key) would produce a unique constraint violation; must always set to `null` on a duplicate. (3) FK ordering matters for the async persist block: `reels → attached_footage_items → reel_dna → reel_dna_assets`. (4) `UPSERT_REEL_DNA_ASSET` deduplicates by composite key, not by `id` — the synthetic optimistic id `${reelDnaId}:${type}:${assetId}` is the established pattern and must match exactly for the realtime echo merge to work.
+
+**Status:** LIVE on footagebrain.com (`cf738f8`, `dpl_FW9y5x2e5hgf6ZHHHGjE7gGHfiKC`).
+
+---
+
 ## 2026-06-20 — Side-by-side reel comparison + Team Chat share + deep-link (`feat(compare)`)
 
 **What changed:** A "⇔ Compare" entry point now appears next to every video in the app. Clicking it opens a full-screen split-view modal (`ReelCompareModal`) with the inspiration reel on the left and the current edit on the right. The right panel accepts a local file upload (screen recordings), a pasted URL (Frame.io, Drive, Instagram, YouTube), or auto-fills from the linked pipeline reel's `attachUrl`. A "📤 Share to channel" header button posts a structured Rocket.Chat message with both links plus a deep-link (`?reel=X&compare=1`) that auto-opens the compare view for teammates who click it. A new **Compare panel** on the Team Chat page lets editors pick an inspiration reel, attach their screen recording, and post to channel as a 3-step flow.
