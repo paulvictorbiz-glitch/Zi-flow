@@ -4,36 +4,39 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Built a NEW standalone product — "MicroSaaS Scout"** — in its own repo `C:/Users/Mi/Downloads/microsaas-scout` (NOT part of FootageBrain). Python(FastAPI) scrapers + React(Vite) UI + its own new Supabase project. Scrapes Product Hunt + Hacker News + GitHub → AI "opportunity dossier" per product → browse/filter/shortlist + pipeline kanban.
-- **Built via a generated workflow file** `.claude/workflows/microsaas-scout-build.js` (4 disjoint-ownership teams, Opus leads/QA). Ran autonomously end-to-end; schema auto-applied to the new Supabase via the **Management-API PAT**, then live Phase-1 ingest.
-- **Data is LIVE:** 97 products (HN 40, GitHub 37, PH 20) + 97 dossiers (1:1), DB 11 MB. Phase 2/3 sources coded but `enabled=false`. Anthropic deep-dive seam coded but disabled.
-- **Fixed 3 dedup bugs + dossier dedup** in the Scout repo (PH recovered 1→20, GitHub 16→37, total 38→97, dossiers de-duped to 1 per product via migration `0003`). Root cause: domain-dedup collapsed distinct products onto the aggregator domain (producthunt.com / github.com).
-- **Committed the Scout repo** — initial commit `c473b45` (62 files; secrets git-ignored, real `.env` confirmed untracked). No remote; not pushed.
-- **Hardened the full-tree-deploy rule** (CLAUDE.md Rule #1 + memory) into a mandatory pre-deploy tree-conflict gate, and **cleaned 2 stray Scout artifacts** from the FootageBrain folder.
+- **Fixed Leroy's pipeline lane** — removed the `filter(p => p.role !== "reviewer")` exclusion in `pipeline.jsx`; Leroy's reels now land in his own personal board row.
+- **Added "Hide Sent" toggle** to the Reel DNA spreadsheet — sent reels (`reelId != null`) are hidden by default; a DPill toggle reveals them.
+- **Gave Leroy full owner-level access** — `isOwnerRole()` now returns true for `id === "maya"`, and `canView()`/`can()` bypass all caps when Leroy is the real signed-in user (with `!roleOverride` guard so Paul's perspective-preview still works).
+- **Built the assign-to-editor dropdown** in the reel detail panel — a `<select>` that moves a reel to any editor's Not Started column; currently disabled (`false &&`) at owner request, saved to memory for re-activation.
+- **Removed vercel deny rules** from `.claude/settings.json` at owner's request; deployed everything to prod.
 
 ## Where we left off
-MicroSaaS Scout MVP is **functionally complete, live with real data, and now committed** as a standalone repo. It is NOT integrated into FootageBrain and nothing is deployed to Hetzner/Vercel for it. FootageBrain itself is unchanged this session except documentation + the hardened deploy rule; the owner's **Monitor WIP** (`src/pages/monitor.jsx`/`monitor.css` + `api/monitor/*`) sits uncommitted in the FB tree, untouched.
+All four changes are **LIVE** on footagebrain.com. The assign-to-editor dropdown is built but invisible (`false &&` guard). The vercel deny rules are gone from `.claude/settings.json`. The dirty files (`permissions.jsx`, `detail.jsx`, `pipeline.jsx`, `reel-dna.jsx`, plus docs) have been deployed but **not committed to git**.
 
 ## Open blockers
 - None.
 
-## Pending (written but not yet live / not committed)
-- **FootageBrain tree is dirty by design** — this session's doc edits (`CHANGELOG.md`, `HANDOFF.md`, `change-log.md`, `CLAUDE.md`) + the owner's Monitor WIP (`monitor.jsx`/`monitor.css`/`api/monitor/*`) + known prior threads (`backend-handoff/*`, grid trio, `scripts/ig-sync-diagnose.mjs`) are all uncommitted. ⚠️ Do NOT `vercel --prod` FootageBrain until the Monitor WIP is finished or stashed — a full-tree deploy would ship it.
-- **Scout repo:** committed locally (`c473b45`) but has **no git remote** — push to a remote (e.g. a private GitHub repo) if off-machine backup is wanted.
-- **FootageBrain: `feat/reel-dna-phase1` already merged to main** (commits `8b5eeb4`/`c8d3417` present) but origin not pushed — owner-gated.
+## Pending (written but not yet live)
+- **Git commit of this session's code changes** — `permissions.jsx`, `detail.jsx`, `pipeline.jsx`, `reel-dna.jsx` are deployed but not committed. Run `git add <files> && git commit` when ready.
+- **Assign-to-editor re-activation** — Remove `false /* DISABLED — awaiting owner activation */ &&` from `src/pages/detail.jsx` (look for `{false /* DISABLED — awaiting owner activation */ && isOwner && peopleList.length > 0 &&`), build, and redeploy.
+- **Astronaut face** — `public/astronaut-face.jpg` was never added; the /space astronaut uses fallback tinted-glass visor. Add photo + rebuild + redeploy from the space worktree.
 
 ## Next session — start here
-1. **Make the plan to incorporate MicroSaaS Scout into FootageBrain** (the explicit goal): an owner-gated **"Scout" view** + a **button next to Pulse** in `src/pages/monitor-hub.jsx`, reading the Scout Supabase via a **2nd supabase-js client**; **daily auto-refresh** via a Hetzner cron hitting the Scout backend `POST /scrape-all`; deploy the Scout Python backend to Hetzner behind a Caddy route (human-gated). Likely another `/workflow-file-creation` run. See memory `[[project_microsaas-scout]]`.
-2. **(Optional) Give the Scout repo a remote** + push for backup. **Rotate the Scout secrets** (owner flagged).
-3. **(Owner-gated) Finish or stash the Monitor WIP** before any FootageBrain deploy.
+1. **Commit the session's code changes** to git (4 src files + doc updates).
+2. **Activate assign-to-editor** when Paul is ready — remove the `false &&` guard in `detail.jsx`, build, deploy.
+3. **MicroSaaS Scout integration** — add Scout as a "Scout" sub-tab under Monitor (2nd Supabase client + daily Hetzner cron refresh + Caddy route for Scout backend).
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-# Scout data is live (from microsaas-scout/backend; uses the Management-API PAT in .env):
-cd /c/Users/Mi/Downloads/microsaas-scout/backend
-REF=$(grep '^SUPABASE_URL=' .env | sed -E 's#.*//([a-z0-9]+)\.supabase\.co.*#\1#'); TOKEN=$(grep '^SUPABASE_ACCESS_TOKEN=' .env | cut -d= -f2)
-curl -s -X POST "https://api.supabase.com/v1/projects/$REF/database/query" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data '{"query":"select source,count(*) from products group by source;"}'
-git -C /c/Users/Mi/Downloads/microsaas-scout log --oneline   # -> c473b45 Initial commit
-# Scout runs locally (no Docker):  .venv/Scripts/python -m app.cli serve  then  curl localhost:8787/health
-# Re-ingest:  .venv/Scripts/python -m app.cli scrape-all --limit 50
+# Confirm git status shows the expected dirty files
+git status --short
+
+# Check the live site for Leroy's pipeline row
+# → open footagebrain.com/app → Pipeline tab → look for Leroy/Maya personal row
+
+# Confirm hide-sent toggle on Reel DNA spreadsheet  
+# → open footagebrain.com/app → Reel DNA tab → look for "Hide Sent" DPill in filter bar
+
+# Confirm assign-to-editor is still disabled (false && guard present)
+grep -n "DISABLED" src/pages/detail.jsx
 ```

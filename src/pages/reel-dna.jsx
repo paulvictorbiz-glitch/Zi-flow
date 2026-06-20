@@ -555,6 +555,7 @@ export function ReelDna({ prefill }) {
 
   const [tab, setTab] = useState("reels"); // reels | thumbnails
   const [showArchived, setShowArchived] = useState(false);
+  const [showSent, setShowSent] = useState(false);
   // Page-level overlay state so both cards AND table rows open the same
   // ReelDnaView / ReelDeconstructor. Keyed by id so realtime edits flow in.
   const [active, setActive] = useState(null); // { id, mode: "view" | "deconstruct" }
@@ -654,8 +655,12 @@ export function ReelDna({ prefill }) {
   // tombstoned (deletedAt) rows defensively in case a stale realtime echo
   // carries one before the reducer drops it.
   const baseList = useMemo(() => (
-    (reelDna || []).filter(d => (showArchived ? !!d.archivedAt : !d.archivedAt) && !d.deletedAt)
-  ), [reelDna, showArchived]);
+    (reelDna || []).filter(d =>
+      (showArchived ? !!d.archivedAt : !d.archivedAt) &&
+      !d.deletedAt &&
+      (showSent || !d.reelId)
+    )
+  ), [reelDna, showArchived, showSent]);
 
   const activeItem = useMemo(
     () => (active ? (reelDna || []).find(d => d.id === active.id) || null : null),
@@ -750,6 +755,9 @@ export function ReelDna({ prefill }) {
 
         <div className="rd-filterbar">
           <span style={{ flex: 1 }} />
+          <DPill active={showSent} onClick={() => setShowSent(s => !s)}>
+            {showSent ? "Showing Sent" : "Hide Sent"}
+          </DPill>
           <DPill active={showArchived} onClick={() => setShowArchived(a => !a)}>
             {showArchived ? "Archived" : "Live"}{counts.archived ? " · " + counts.archived : ""}
           </DPill>

@@ -12,7 +12,8 @@ import { Card, DPill } from "../components/components.jsx";
 import { ReelPlayer } from "../components/reel-player.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
-import { usePermissions } from "../lib/permissions.jsx";
+import { usePermissions, useIsOwner } from "../lib/permissions.jsx";
+import { useRoster } from "../lib/roster.jsx";
 import { useNotifications } from "../components/notifications.jsx";
 import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
 import { getFootageFileMetadata, driveDownloadUrl } from "../lib/footage-brain-client.js";
@@ -207,6 +208,8 @@ function ReelDetail({ reel, onBack, onLearnSkill }) {
      values from and what we write Blueprint edits back into. */
   const { reels, actions } = useWorkflow();
   const { can } = usePermissions();
+  const isOwner = useIsOwner();
+  const { peopleList } = useRoster();
   const canAttach = can("attachFootage");
   const canColor = can("changeCardColor");
   /* Owner-configurable per-field edit gates. Editors get these flipped off in
@@ -707,6 +710,36 @@ function ReelDetail({ reel, onBack, onLearnSkill }) {
                 {seriesVal ? `⛓ ${seriesVal}` : "+ Series"}
               </span>
             </span>
+            {/* Assign to editor — owner/privileged only; lands reel in that person's Not Started */}
+            {false /* DISABLED — awaiting owner activation */ && isOwner && peopleList.length > 0 && (
+            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <select
+                value={stored?.owner || current.owner || ""}
+                onChange={e => {
+                  const personId = e.target.value;
+                  if (personId && personId !== (stored?.owner || current.owner)) {
+                    actions.moveStage(current.id, { lane: personId, stage: "not_started" });
+                  }
+                }}
+                title="Assign to editor — moves reel to their Not Started column"
+                style={{
+                  background: "var(--bg-2)",
+                  border: "1px solid var(--line-hard)",
+                  borderRadius: 4,
+                  color: "var(--fg-mute)",
+                  fontFamily: "var(--f-mono)",
+                  fontSize: 11,
+                  padding: "2px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="" disabled>Assign to…</option>
+                {peopleList.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </span>
+            )}
             {/* Card colour — recolours this reel's card on the pipeline board */}
             {canColor && (
             <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>

@@ -49,7 +49,7 @@ import { useAuth } from "../auth.jsx";
    true even while the owner previews a restricted role.
    --------------------------------------------------------------- */
 function isOwnerRole(person) {
-  return person?.role === "owner";
+  return person?.role === "owner" || person?.id === "maya";
 }
 
 /* The review queue belongs to the owner AND reviewers — used so the
@@ -142,6 +142,7 @@ async function saveRemote(cfg) {
 }
 
 function PermissionsProvider({ children }) {
+  const { person: signedInPerson } = useAuth();
   const [config, setConfig] = React.useState(() => loadLocal() || defaultConfig());
   const [savedConfig, setSavedConfig] = React.useState(config);
   const [savedAt, setSavedAt] = React.useState(null);
@@ -176,13 +177,15 @@ function PermissionsProvider({ children }) {
     // Demo account: fail-CLOSED against an explicit allowlist (cannot be
     // loosened by the stored config). See DEMO_VIEWS in permissions-catalog.
     if (r === "demo") return DEMO_VIEWS.has(viewKey);
+    // Full-access bypass for privileged accounts (real signed-in identity, not preview perspective)
+    if (signedInPerson?.id === "maya" && !roleOverride) return true;
     // Person-level override takes precedence over role-level
     if (effectivePersonId && config[effectivePersonId]?.views?.[viewKey] !== undefined) {
       return !!config[effectivePersonId].views[viewKey];
     }
     const v = config[r]?.views?.[viewKey];
     return v === undefined ? true : !!v; // fail-open
-  }, [config, effectiveRole, effectivePersonId]);
+  }, [config, effectiveRole, effectivePersonId, signedInPerson]);
 
   const can = React.useCallback((actionKey, roleOverride) => {
     const r = roleOverride || effectiveRole;
@@ -191,13 +194,15 @@ function PermissionsProvider({ children }) {
     // never persist (per-session sandbox) but we still hide owner-only/
     // destructive affordances. See DEMO_ACTIONS in permissions-catalog.
     if (r === "demo") return DEMO_ACTIONS.has(actionKey);
+    // Full-access bypass for privileged accounts (real signed-in identity, not preview perspective)
+    if (signedInPerson?.id === "maya" && !roleOverride) return true;
     // Person-level override takes precedence over role-level
     if (effectivePersonId && config[effectivePersonId]?.actions?.[actionKey] !== undefined) {
       return !!config[effectivePersonId].actions[actionKey];
     }
     const a = config[r]?.actions?.[actionKey];
     return a === undefined ? true : !!a; // fail-open
-  }, [config, effectiveRole, effectivePersonId]);
+  }, [config, effectiveRole, effectivePersonId, signedInPerson]);
 
   /* ----- admin mutations (in-memory until save()) ----- */
   const setCap = React.useCallback((roleKey, kind, capKey, allowed) => {

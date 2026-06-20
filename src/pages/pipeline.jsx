@@ -116,7 +116,6 @@ function Pipeline({ onOpen }) {
      plus the shared "review" lane named after the reviewer. */
   const lanes = useMemo(() => {
     const personLanes = peopleList
-      .filter(p => p.role !== "reviewer")
       .slice()
       .sort((a, b) =>
         (a.role === "owner" ? 0 : 1) - (b.role === "owner" ? 0 : 1) ||
