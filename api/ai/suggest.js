@@ -161,7 +161,7 @@ export default async function handler(req, res) {
       const r = await fetch(`${scoutUrl}/scrape-all`, {
         method: "POST",
         signal: ctrl.signal,
-        headers: { "x-scout-secret": scoutSecret },
+        headers: { "x-scout-secret": encodeURIComponent(scoutSecret) },
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) { res.status(502).json({ error: `Scout HTTP ${r.status}`, ...body }); return; }
@@ -472,6 +472,57 @@ export default async function handler(req, res) {
     } catch (e) {
       console.error("ig-sync-alert error:", e.message);
       res.status(200).json({ ok: true, skipped: true, error: e.message });
+    }
+    return;
+  }
+
+  // ── Dispatch: submit a render job to the Hetzner render worker ─────────────
+  // POST /api/ai/suggest?action=render-submit  (owner Bearer JWT or cron secret)
+  // Body: { reel_dna_id?, project_id?, project_json, render_mode? }
+  // Fire-and-forget proxy → Hetzner /api/render/submit. Returns { job_id }.
+  // The caller polls status via ?action=render-status&id=<job_id> or watches
+  // the render_jobs Supabase realtime subscription.
+  if (action === "render-submit") {
+    const renderSecret = process.env.REEL_DECONSTRUCT_SECRET;
+    if (!renderSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+    if (!body.project_json) { res.status(400).json({ error: "project_json required" }); return; }
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/render/submit?secret=${encodeURIComponent(renderSecret)}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Render worker HTTP ${r.status}`, ...data }); return; }
+      res.status(200).json({ ok: true, ...data });
+    } catch (e) {
+      console.error("render-submit error:", e.message);
+      res.status(502).json({ error: `Couldn't reach render worker: ${e.message}` });
+    }
+    return;
+  }
+
+  // ── Dispatch: poll a render job's status ────────────────────────────────────
+  // GET /api/ai/suggest?action=render-status&id=<job_id>  (owner Bearer JWT)
+  // Proxies to Hetzner /api/render/status/{job_id}. Returns { status, progress,
+  // output_url (HMAC-signed), error }. output_url is re-minted on every poll.
+  if (action === "render-status") {
+    const renderSecret = process.env.REEL_DECONSTRUCT_SECRET;
+    if (!renderSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
+    const jobId = req.query?.id || url?.searchParams.get("id");
+    if (!jobId || !/^[0-9a-f-]{36}$/i.test(jobId)) {
+      res.status(400).json({ error: "Valid job id required" }); return;
+    }
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/render/status/${encodeURIComponent(jobId)}?secret=${encodeURIComponent(renderSecret)}`);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Render worker HTTP ${r.status}`, ...data }); return; }
+      res.status(200).json({ ok: true, ...data });
+    } catch (e) {
+      console.error("render-status error:", e.message);
+      res.status(502).json({ error: `Couldn't reach render worker: ${e.message}` });
     }
     return;
   }

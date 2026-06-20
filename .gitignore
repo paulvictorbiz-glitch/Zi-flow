@@ -35,3 +35,8 @@ __pycache__/
 # Playwright saved auth session (never commit)
 auth.json
 screenshots/
+
+# Instagram / yt-dlp cookies — contain live session tokens, never commit
+ig_cookies.txt
+cookies.txt
+*.cookies.txt
