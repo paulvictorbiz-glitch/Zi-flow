@@ -4,39 +4,42 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Fixed Leroy's pipeline lane** — removed the `filter(p => p.role !== "reviewer")` exclusion in `pipeline.jsx`; Leroy's reels now land in his own personal board row.
-- **Added "Hide Sent" toggle** to the Reel DNA spreadsheet — sent reels (`reelId != null`) are hidden by default; a DPill toggle reveals them.
-- **Gave Leroy full owner-level access** — `isOwnerRole()` now returns true for `id === "maya"`, and `canView()`/`can()` bypass all caps when Leroy is the real signed-in user (with `!roleOverride` guard so Paul's perspective-preview still works).
-- **Built the assign-to-editor dropdown** in the reel detail panel — a `<select>` that moves a reel to any editor's Not Started column; currently disabled (`false &&`) at owner request, saved to memory for re-activation.
-- **Removed vercel deny rules** from `.claude/settings.json` at owner's request; deployed everything to prod.
+- **Committed the previous session's 4 deployed-but-uncommitted files** (`permissions.jsx`, `detail.jsx`, `pipeline.jsx`, `reel-dna.jsx`) as `ec2cf79`.
+- **Built the side-by-side Reel Comparison feature** — `ReelCompareModal` (new full-screen split-view) with 5 entry points across the app + local file upload + share-to-channel.
+- **Added Team Chat Compare panel** — 3-step flow (pick reel → attach screen recording → post to RC channel) in `team-chat.jsx`.
+- **Added `?reel=X&compare=1` deep-link** — teammates who click the RC-posted link land directly in the compare view.
+- **Committed + deployed** everything: `4f82931` → `dpl_9BE57RF9Vi34ZoTtZstC8jvZzUMG` → footagebrain.com. Working tree is now **clean**.
 
 ## Where we left off
-All four changes are **LIVE** on footagebrain.com. The assign-to-editor dropdown is built but invisible (`false &&` guard). The vercel deny rules are gone from `.claude/settings.json`. The dirty files (`permissions.jsx`, `detail.jsx`, `pipeline.jsx`, `reel-dna.jsx`, plus docs) have been deployed but **not committed to git**.
+All changes are **LIVE** on footagebrain.com. Working tree is clean — no uncommitted changes. The compare modal appears next to every video in the app (detail page inspiration section, Reel DNA overlay header, Reel DNA table rows, gallery cards, Team Chat panel). Assign-to-editor dropdown is still built but disabled (`false &&` in `detail.jsx`).
 
 ## Open blockers
 - None.
 
 ## Pending (written but not yet live)
-- **Git commit of this session's code changes** — `permissions.jsx`, `detail.jsx`, `pipeline.jsx`, `reel-dna.jsx` are deployed but not committed. Run `git add <files> && git commit` when ready.
-- **Assign-to-editor re-activation** — Remove `false /* DISABLED — awaiting owner activation */ &&` from `src/pages/detail.jsx` (look for `{false /* DISABLED — awaiting owner activation */ && isOwner && peopleList.length > 0 &&`), build, and redeploy.
-- **Astronaut face** — `public/astronaut-face.jpg` was never added; the /space astronaut uses fallback tinted-glass visor. Add photo + rebuild + redeploy from the space worktree.
+- **Assign-to-editor re-activation** — Remove `false /* DISABLED — awaiting owner activation */ &&` from `src/pages/detail.jsx`, build, and redeploy. Already built and working; just needs the guard removed.
+- **Astronaut face** — `public/astronaut-face.jpg` was never added; the /space astronaut uses fallback tinted-glass visor. Drop in photo + rebuild + redeploy from `feat/space-enhance` worktree (or main).
+- **MicroSaaS Scout integration** — standalone Scout app is live (own Supabase, 97 products), committed locally (`c473b45`), but not yet wired into FootageBrain as a Monitor "Scout" sub-tab.
 
 ## Next session — start here
-1. **Commit the session's code changes** to git (4 src files + doc updates).
-2. **Activate assign-to-editor** when Paul is ready — remove the `false &&` guard in `detail.jsx`, build, deploy.
-3. **MicroSaaS Scout integration** — add Scout as a "Scout" sub-tab under Monitor (2nd Supabase client + daily Hetzner cron refresh + Caddy route for Scout backend).
+1. **MicroSaaS Scout integration** — add Scout as a "Scout" sub-tab under the Monitor hub: 2nd Supabase client (Scout's `rqkzstyvqfmcsxdyogij`), daily Hetzner cron refresh, Caddy `/scout/*` route proxying the Scout FastAPI backend, React panel reading Scout's Supabase directly.
+2. **Activate assign-to-editor** — remove the `false &&` guard in `detail.jsx`, build, deploy.
+3. **Reel DNA Phase 1 backend activation** — the PySceneDetect worker + HMAC signed downloads are live on Hetzner; the STEP 9 calibration reels need to be run and the activation runbook finished. See `DEPLOY-PHASE1.md`.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-# Confirm git status shows the expected dirty files
+# Confirm clean tree
 git status --short
 
-# Check the live site for Leroy's pipeline row
-# → open footagebrain.com/app → Pipeline tab → look for Leroy/Maya personal row
+# Confirm both this session's commits are in
+git log --oneline -5
 
-# Confirm hide-sent toggle on Reel DNA spreadsheet  
-# → open footagebrain.com/app → Reel DNA tab → look for "Hide Sent" DPill in filter bar
+# Check compare modal is wired into detail.jsx
+grep -n "ReelCompareModal\|showCompare" src/pages/detail.jsx
 
-# Confirm assign-to-editor is still disabled (false && guard present)
+# Check team-chat.jsx has ReelComparePanel
+grep -n "ReelComparePanel" src/pages/team-chat.jsx
+
+# Confirm assign-to-editor is still disabled
 grep -n "DISABLED" src/pages/detail.jsx
 ```

@@ -27,7 +27,7 @@ import { useAuth } from "../auth.jsx";
 import { XP_PER_GRADE, scoreForSkillXp, medalForScores,
          SKILL_KEYS, REWARDS, levelForXp, xpForSkillGrades,
          xpForSkillGradesWithDifficulty, isReelLocked } from "../lib/gamify-data.jsx";
-import { reelDnaToPipelineFields } from "../lib/reel-dna.jsx";
+import { reelDnaToPipelineFields, platformFromUrl } from "../lib/reel-dna.jsx";
 
 /* ---------- camelCase ↔ snake_case mappers ---------- */
 function reelFromDb(row) {
@@ -177,7 +177,7 @@ function reelDnaToDb(item) {
           reelId, archivedAt, deletedAt, location, id, platform, status, source,
           music, hook, font, story, sfx, contentType,
           format, mediaStatus, sourceUrlResolved, narrative, progress,
-          mediaError, analyzedAt, assetManifest, pacing } = item;
+          mediaError, analyzedAt, assetManifest, pacing, timeline } = item;
   const out = { id, platform, status, source, music, hook, font, story, sfx,
     reel_url: reelUrl,
     genes_of_interest: genesOfInterest ?? [],
@@ -206,6 +206,7 @@ function reelDnaToDb(item) {
   // them, so we keep the NULL DB defaults instead of overwriting with null.
   if (assetManifest !== undefined)     out.asset_manifest = assetManifest;
   if (pacing !== undefined)            out.pacing = pacing;
+  if (timeline !== undefined)          out.timeline = timeline;
   return out;
 }
 
@@ -2255,13 +2256,16 @@ function WorkflowProvider({ children }) {
         () => persistCreateReel(reel)),
 
       /* Clone a reel into a fresh REEL id — title/script/audio/owner, the whole
-         detail blob (plan, pins, rubric notes), and the attached footage rows.
-         Used to template a reel and reassign the copy to another editor. The
-         copy starts with a clean comment thread and ungraded rubric (a new
-         editor grades their own work). reel_id FK requires the reel to exist
-         before its footage, so we insert the reel first (same ordering guard as
-         createReelWithFootage). */
-      duplicateReel: (id) => {
+         detail blob (plan, pins, rubric notes), attached footage rows, and the
+         linked reel_dna card + its reel_dna_assets links. Human-authored gene
+         data (reelUrl, platform, genesOfInterest, quickNotes, music, hook, font,
+         story, sfx, timeline, location, contentType) is copied; machine-analysis
+         fields (mediaStatus, narrative, progress, mediaError, sourceUrlResolved,
+         analyzedAt, assetManifest, pacing) are intentionally NOT copied so the
+         duplicate starts clean and can be re-analyzed independently.
+         externalRef is cleared (unique index on non-null values).
+         FK ordering: reels → attached_footage_items → reel_dna → reel_dna_assets. */
+      duplicateReel: (id, targetPersonId, targetFirstName) => {
         const current = stateRef.current;
         const src = current.reels.find(r => r.id === id);
         if (!src) return;
@@ -2269,10 +2273,13 @@ function WorkflowProvider({ children }) {
         const clonedDetail = src.detail
           ? { ...JSON.parse(JSON.stringify(src.detail)), comments: [] }
           : src.detail;
+        const nameSuffix = targetFirstName ? ` (${targetFirstName})` : " (copy)";
         const clone = {
           ...src,
           id: newId,
-          title: (src.title || "Reel") + " (copy)",
+          title: (src.title || "Reel") + nameSuffix,
+          lane:  targetPersonId || src.lane,
+          stage: targetPersonId ? "not_started" : src.stage,
           detail: clonedDetail,
           board_order: undefined,
           displayNumber: undefined,
@@ -2286,12 +2293,96 @@ function WorkflowProvider({ children }) {
             id: `footage-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             reel_id: newId,
           }));
+
+        // Clone the linked reel_dna card (if any). Only the first non-deleted
+        // card is cloned — multiple linked cards are uncommon.
+        // Fallback: if no linked DNA card exists but the reel has an inspo URL,
+        // create a blank DNA card so every duplicate has the same structure.
+        const srcDna = (current.reelDna || []).find(d => d.reelId === id && !d.deletedAt);
+        let dnaClone = null;
+        let assetClones = [];
+        if (srcDna) {
+          const newDnaId = crypto.randomUUID();
+          dnaClone = {
+            reelUrl:         srcDna.reelUrl,
+            platform:        srcDna.platform,
+            genesOfInterest: Array.isArray(srcDna.genesOfInterest) ? [...srcDna.genesOfInterest] : [],
+            quickNotes:      srcDna.quickNotes,
+            location:        srcDna.location,
+            contentType:     srcDna.contentType,
+            format:          srcDna.format,
+            status:          "captured",
+            source:          "manual",
+            capturedBy:      srcDna.capturedBy,
+            music:    srcDna.music    ? JSON.parse(JSON.stringify(srcDna.music))    : undefined,
+            hook:     srcDna.hook     ? JSON.parse(JSON.stringify(srcDna.hook))     : undefined,
+            font:     srcDna.font     ? JSON.parse(JSON.stringify(srcDna.font))     : undefined,
+            story:    srcDna.story    ? JSON.parse(JSON.stringify(srcDna.story))    : undefined,
+            sfx:      srcDna.sfx      ? JSON.parse(JSON.stringify(srcDna.sfx))      : undefined,
+            timeline: Array.isArray(srcDna.timeline) ? JSON.parse(JSON.stringify(srcDna.timeline)) : undefined,
+            id:          newDnaId,
+            reelId:      newId,
+            externalRef: null,
+            archivedAt:  undefined,
+            deletedAt:   undefined,
+            createdAt:   new Date().toISOString(),
+          };
+          const srcAssets = (current.reelDnaAssets || []).filter(a => a.reelDnaId === srcDna.id);
+          assetClones = srcAssets.map(a => ({
+            id:        `${newDnaId}:${a.assetType}:${String(a.assetId)}`,
+            reelDnaId: newDnaId,
+            assetType: a.assetType,
+            assetId:   String(a.assetId),
+            label:     a.label,
+            createdBy: _authPerson?.id ?? null,
+            createdAt: new Date().toISOString(),
+          }));
+        } else if (src.inspo) {
+          // Reel was generated or manually created with an inspo URL but no DNA
+          // card. Create a blank card so duplicates always have the full structure.
+          const newDnaId = crypto.randomUUID();
+          dnaClone = {
+            reelUrl:         src.inspo,
+            platform:        platformFromUrl(src.inspo),
+            genesOfInterest: [],
+            status:          "captured",
+            source:          "manual",
+            capturedBy:      _authPerson?.id ?? null,
+            id:              newDnaId,
+            reelId:          newId,
+            externalRef:     null,
+            archivedAt:      undefined,
+            deletedAt:       undefined,
+            createdAt:       new Date().toISOString(),
+          };
+          // No asset links to clone — the source had none.
+        }
+
+        // ── Optimistic dispatches ────────────────────────────────────────────
         dispatch({ type: "CREATE_REEL", reel: clone });
         footageClones.forEach(item => dispatch({ type: "ADD_ATTACHED_FOOTAGE", item }));
+        if (dnaClone) {
+          dispatch({ type: "CREATE_REEL_DNA", item: dnaClone });
+          assetClones.forEach(item => dispatch({ type: "UPSERT_REEL_DNA_ASSET", item }));
+        }
+
+        // ── Persist (sequential, FK order enforced) ──────────────────────────
         (async () => {
           try {
             await persistCreateReel(clone);
             for (const item of footageClones) await persistAddAttachedFootage(item);
+            if (dnaClone) {
+              await persistCreateReelDna(dnaClone);
+              for (const a of assetClones) {
+                await persistAttachAsset({
+                  reel_dna_id: a.reelDnaId,
+                  asset_type:  a.assetType,
+                  asset_id:    a.assetId,
+                  label:       a.label ?? null,
+                  created_by:  a.createdBy ?? null,
+                });
+              }
+            }
           } catch (e) {
             console.error("duplicateReel persist failed:", e);
             dispatch({ type: "SET_ERROR", error: e.message || String(e) });

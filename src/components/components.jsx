@@ -7,6 +7,7 @@ import { useNow, formatAge } from "../lib/time.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useNotifications } from "./notifications.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
+import { useRoster } from "../lib/roster.jsx";
 
 /* ---------- Status pill ---------- */
 function Pill({ tone, dashed, children }) {
@@ -116,6 +117,8 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
   const canCreate = can("createReel");
   const showMenu = canArchive || canDelete || canCreate;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showDupePicker, setShowDupePicker] = useState(false);
+  const { peopleList } = useRoster();
   const menuRef = useRef(null);
   useEffect(() => {
     if (!menuOpen) return;
@@ -123,6 +126,8 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, [menuOpen]);
+  // Reset picker view whenever the menu closes.
+  useEffect(() => { if (!menuOpen) setShowDupePicker(false); }, [menuOpen]);
 
   const onArchive = (e) => {
     e.stopPropagation();
@@ -136,12 +141,10 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
       actions.deleteReel(reel.id);
     }
   };
-  /* Clone this reel (script, audio, owner, rubric, footages, pins) into a new
-     REEL id — used to template a reel and reassign the copy to another editor. */
-  const onDuplicate = (e) => {
-    e.stopPropagation();
+  const onDuplicateFor = (person) => {
+    const firstName = person.short || (person.name || "").split(" ")[0] || person.id;
     setMenuOpen(false);
-    actions.duplicateReel(reel.id);
+    actions.duplicateReel(reel.id, person.id, firstName);
   };
 
   return (
@@ -190,9 +193,19 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
         )}
         {!collapsed && !compact && showMenu && menuOpen && (
           <div ref={menuRef} className="reel-menu" onClick={e => e.stopPropagation()}>
-            {canArchive && <div className="reel-menu-opt" onClick={onArchive}>Archive</div>}
-            {canDelete && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
-            {canCreate && <div className="reel-menu-opt" onClick={onDuplicate}>Duplicate</div>}
+            {showDupePicker ? (<>
+              <div style={{ padding:"5px 10px 3px", fontFamily:"var(--f-mono)", fontSize:10, color:"var(--fg-dim,#888)", textTransform:"uppercase", letterSpacing:".06em" }}>Duplicate for:</div>
+              {(peopleList || []).filter(p => !p.archivedAt).map(p => (
+                <div key={p.id} className="reel-menu-opt" onClick={() => onDuplicateFor(p)}>
+                  {p.short || (p.name || "").split(" ")[0] || p.id}
+                </div>
+              ))}
+              <div className="reel-menu-opt" style={{ opacity:.6, fontSize:11 }} onClick={() => setShowDupePicker(false)}>← Back</div>
+            </>) : (<>
+              {canArchive && <div className="reel-menu-opt" onClick={onArchive}>Archive</div>}
+              {canDelete && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
+              {canCreate && <div className="reel-menu-opt" onClick={() => setShowDupePicker(true)}>Duplicate →</div>}
+            </>)}
           </div>
         )}
       </div>

@@ -4,6 +4,20 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-20 — Side-by-side reel comparison + Team Chat share + deep-link (`feat(compare)`)
+
+**What changed:** A "⇔ Compare" entry point now appears next to every video in the app. Clicking it opens a full-screen split-view modal (`ReelCompareModal`) with the inspiration reel on the left and the current edit on the right. The right panel accepts a local file upload (screen recordings), a pasted URL (Frame.io, Drive, Instagram, YouTube), or auto-fills from the linked pipeline reel's `attachUrl`. A "📤 Share to channel" header button posts a structured Rocket.Chat message with both links plus a deep-link (`?reel=X&compare=1`) that auto-opens the compare view for teammates who click it. A new **Compare panel** on the Team Chat page lets editors pick an inspiration reel, attach their screen recording, and post to channel as a 3-step flow.
+
+**Where:** `src/components/ReelCompareModal.jsx` + `ReelCompareModal.css` (new); `src/app.jsx` (`?compare=1` deep-link); `src/pages/detail.jsx` (trigger in inspiration section); `src/components/reel-dna-view.jsx` (⇔ Compare button in DNA overlay header + nested Esc guard); `src/pages/reel-dna.jsx` (⇔ button in DnaTable Actions column); `src/components/unified-dna-card.jsx` (gallery card footer); `src/pages/team-chat.jsx` (`ReelComparePanel` component); `src/pages/reel-dna.css`; `src/components/reel-dna-view.css`. Committed `4f82931`, deployed `dpl_9BE57RF9Vi34ZoTtZstC8jvZzUMG`.
+
+**Path we took:** Frontend-only (no new DB columns, no new Vercel functions, no migrations). Reused the existing `ReelPlayer` component for both panels. Needed 5 entry points so built a single modal that all 5 wiring points import. The `styles.css` hard-deny from the space-enhance guardrail blocked adding `.rcm-trigger-btn` to `styles.css`; placed it in `ReelCompareModal.css` instead — Vite bundles it globally regardless. `DnaTable` had no `useWorkflow()` call, so added one directly inside the function. Patched `ReelDnaView`'s unconditional Esc handler to check `showCompare` first (else first Esc would close both the compare modal and the DNA overlay simultaneously). Blob URLs from local file uploads are browser-local and can't be shared, so the RC message includes a Frame.io suggestion + the deep-link so teammates can load their own copy.
+
+**What we learned:** (1) When multiple layers of overlay exist (DNA overlay z-1000 + compare modal z-1100 + FAB z-80), nested Esc handlers must guard against the inner one firing first — a dependency-array omission on the outer handler meant adding `showCompare` to the outer Esc effect's deps was critical. (2) `position: fixed` for the compare modal ensures it escapes any ancestor `overflow: hidden` stacking context — essential since `ReelDnaView` has its own `overflow-y: auto` scroll container. (3) `URL.createObjectURL()` blob URLs are per-browser-session and can never be shared over the network; the UI should proactively hint "upload to Frame.io to make it shareable" rather than leave users confused when the link 404s for a teammate.
+
+**Status:** LIVE on footagebrain.com (`4f82931`, `dpl_9BE57RF9Vi34ZoTtZstC8jvZzUMG`). Working tree is clean.
+
+---
+
 ## 2026-06-20 — Leroy full-access + pipeline lane + spreadsheet hide-sent + assign-to-editor (disabled)
 
 **What changed:** Four changes shipped together to bring Leroy's (id=`maya`, role=`reviewer`) experience to parity with Paul's, and to clean up the Reel DNA spreadsheet:
