@@ -41,6 +41,8 @@ function Pipeline({ onOpen }) {
      cell and shows a series header. Off by default (= current flat board). */
   const [groupBySeries, setGroupBySeries] = useState(
     () => localStorage.getItem("pipeline_group_by_series") === "1");
+  const [cardView, setCardView] = useState(
+    () => localStorage.getItem("pipeline_card_view") || "list");
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const colMenuRef = useRef(null);
   const [lanesMenuOpen, setLanesMenuOpen] = useState(false);
@@ -63,6 +65,9 @@ function Pipeline({ onOpen }) {
   useEffect(() => {
     localStorage.setItem("pipeline_group_by_series", groupBySeries ? "1" : "0");
   }, [groupBySeries]);
+  useEffect(() => {
+    localStorage.setItem("pipeline_card_view", cardView);
+  }, [cardView]);
 
   /* Close column menu on outside click */
   useEffect(() => {
@@ -328,7 +333,7 @@ function Pipeline({ onOpen }) {
         </div>
       </div>
 
-      {/* Lanes visibility toolbar */}
+      {/* Lanes visibility toolbar + card view toggle */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 16px 4px", position: "relative" }}>
         <div style={{ position: "relative" }} ref={lanesMenuRef}>
           <button
@@ -369,11 +374,18 @@ function Pipeline({ onOpen }) {
             </div>
           )}
         </div>
+        <div className="view-toggle">
+          {["list", "2x2", "3x3"].map(v => (
+            <button key={v} className={cardView === v ? "is-active" : ""} onClick={() => setCardView(v)}>
+              {v === "list" ? "≡ List" : v === "2x2" ? "⊞ 2×2" : "⊟ 3×3"}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Board grid */}
       <div className="board" style={{
-        gridTemplateColumns: `200px repeat(${visibleStages.length}, 1fr)`,
+        gridTemplateColumns: `200px repeat(${visibleStages.length}, minmax(0, 1fr))`,
       }}>
         {/* Column heads (offset by lane gutter) */}
         <div className="col-head" style={{ background: "var(--bg-0)" }}>
@@ -424,7 +436,8 @@ function Pipeline({ onOpen }) {
                   className={
                     "cell" +
                     (reels.length === 0 ? " empty" : "") +
-                    (isTarget ? " drop-target" : "")
+                    (isTarget ? " drop-target" : "") +
+                    (cardView !== "list" ? " cell--" + cardView : "")
                   }
                   key={stage.key}
                   onDragOver={e => {
@@ -450,7 +463,7 @@ function Pipeline({ onOpen }) {
                     const isThisDrag = dragging && dragging.id === r.id;
                     const isInGroupDrag = dragging && selectedIds.has(dragging.id) && selectedIds.size > 1 && isSelected;
                     /* When grouping, drop a thin series label at each group boundary. */
-                    const showSeriesHeader = groupBySeries &&
+                    const showSeriesHeader = groupBySeries && cardView === "list" &&
                       (idx === 0 || (reels[idx - 1].series || "") !== (r.series || ""));
                     return (
                       <React.Fragment key={r.id}>
@@ -496,6 +509,7 @@ function Pipeline({ onOpen }) {
                           reel={r}
                           state={r.state}
                           isSelected={isSelected}
+                          compact={cardView !== "list"}
                           onOpen={(reel, e) => handleCardClick(reel, e || {})}
                         />
                       </div>

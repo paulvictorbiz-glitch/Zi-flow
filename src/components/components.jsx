@@ -62,7 +62,7 @@ function Card({ title, right, footLeft, children, defaultOpen = true, tone, soli
 // and the --c-* tokens in styles.css). Default is cyan.
 const CARD_COLORS = ["cyan", "violet", "green", "amber", "red", "blue", "orange", "pink"];
 
-function ReelCard({ reel, onOpen, state, isSelected }) {
+function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'
   /* Per-card action menu (archive / delete) — gated by role permissions.
      Pulled up here because `collapsed` (derived from store) is read by `cls`
@@ -71,6 +71,7 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
   const collapsed = (collapsedReelIds || []).includes(reel.id);
   const cls = [
     "reel",
+    compact ? "reel--compact" : "",
     collapsed ? "collapsed" : "",
     state === "block" ? "is-blocked" : "",
     state === "warn" ? "is-warn" : "",
@@ -147,7 +148,7 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
     <div className={cls} onClick={openReel} style={cardStyle}>
       <div className="head">
         <div>
-          {!collapsed && (
+          {!collapsed && !compact && (
             <div className="id">
               {reel.id}
               {unreadCount > 0 && (
@@ -167,31 +168,27 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
             </div>
           )}
           <div className="title">{reel.title}</div>
-          {/* Series/playlist tag — lets the Pipeline optionally group reels
-              (e.g. "Nepal series"). Shown as a small chip under the title. */}
-          {!collapsed && reel.series && (
+          {!collapsed && !compact && reel.series && (
             <div className="reel-series" title={"Series: " + reel.series}>
               ⛓ {reel.series}
             </div>
           )}
-          {/* Posted cards carry their scheduled post date (from the
-              Move-to-Posted modal) so the date is visible on the board. */}
-          {!collapsed && reel.stage === "posted" && reel.scheduledPostDate && (
-            <div className="mono dim" style={{ fontSize: 10, marginTop: 2 }}
+          {!collapsed && !compact && reel.stage === "posted" && reel.scheduledPostDate && (
+            <div className="mono dim reel-duedate" style={{ fontSize: 10, marginTop: 2 }}
                  title="Scheduled post date">
               📅 {reel.scheduledPostDate}
             </div>
           )}
         </div>
-        {!collapsed && pillText && <Pill tone={pillTone}>{pillText}</Pill>}
-        {!collapsed && showMenu && (
+        {!collapsed && !compact && pillText && <Pill tone={pillTone}>{pillText}</Pill>}
+        {!collapsed && !compact && showMenu && (
           <button
             className="reel-menu-btn"
             onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
             aria-label="Card actions"
           >⋯</button>
         )}
-        {!collapsed && showMenu && menuOpen && (
+        {!collapsed && !compact && showMenu && menuOpen && (
           <div ref={menuRef} className="reel-menu" onClick={e => e.stopPropagation()}>
             {canArchive && <div className="reel-menu-opt" onClick={onArchive}>Archive</div>}
             {canDelete && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
@@ -199,8 +196,8 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
           </div>
         )}
       </div>
-      {!collapsed && reel.note && <div className="note">{reel.note}</div>}
-      {!collapsed && reel.links && reel.links.length > 0 && (
+      {!collapsed && !compact && reel.note && <div className="note">{reel.note}</div>}
+      {!collapsed && !compact && reel.links && reel.links.length > 0 && (
         <div className="links" onClick={e => e.stopPropagation()}>
           {reel.links.map((l, i) => (
             <a key={i} className="link" href="#"
@@ -208,13 +205,15 @@ function ReelCard({ reel, onOpen, state, isSelected }) {
           ))}
         </div>
       )}
-      <div className="foot">
-        <span>{collapsed ? "" : (reel.foot || "")}</span>
-        <span
-          className="collapse"
-          onClick={e => { e.stopPropagation(); actions.toggleReelCollapsed(reel.id); }}
-        >{collapsed ? "Expand" : "Collapse"}</span>
-      </div>
+      {!compact && (
+        <div className="foot">
+          <span>{collapsed ? "" : (reel.foot || "")}</span>
+          <span
+            className="collapse"
+            onClick={e => { e.stopPropagation(); actions.toggleReelCollapsed(reel.id); }}
+          >{collapsed ? "Expand" : "Collapse"}</span>
+        </div>
+      )}
     </div>
   );
 }

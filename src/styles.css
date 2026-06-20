@@ -801,6 +801,47 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   white-space: nowrap;
 }
 
+/* Card grid view modes (2×2 / 3×3 within each cell) */
+/* minmax(0, 1fr) — NOT bare 1fr (= minmax(auto,1fr)) — so a card's content can
+   never floor the column wider than its equal share. Pairs with min-width:0 on
+   the grid items below. */
+.board .cell.cell--2x2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; align-content: start; }
+.board .cell.cell--3x3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; align-content: start; }
+/* Grid items are the draggable wrapper divs (direct children of .cell — the
+   React.Fragment makes no DOM node, and series headers only render in List
+   mode, so these only ever match card wrappers). Let them shrink below content. */
+.board .cell.cell--2x2 > *, .board .cell.cell--3x3 > * { min-width: 0; }
+/* Every grid card is a fixed-height tile. A hard height + overflow:hidden means
+   NO content (long title, pill, etc.) can stretch one card taller than the rest —
+   "How I traveled to Europe…" clamps to two lines and is clipped at the tile edge. */
+.reel.reel--compact {
+  height: 58px;
+  padding: 6px 8px;
+  gap: 3px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  justify-content: flex-start;
+}
+.reel.reel--compact .head { gap: 5px; align-items: flex-start; }
+.reel.reel--compact .title {
+  font-size: 11px;
+  line-height: 1.3;
+  max-height: 2.6em;
+  margin-top: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* View-mode toggle (≡ List / ⊞ 2×2 / ⊟ 3×3) */
+.view-toggle { display: flex; gap: 3px; margin-left: 8px; }
+.view-toggle button { padding: 3px 9px; border-radius: 4px; border: 1px solid var(--line-hard); background: var(--bg-2); color: var(--fg-dim); cursor: pointer; font-family: var(--f-mono); font-size: 11px; transition: background 120ms, color 120ms; }
+.view-toggle button.is-active { background: rgba(107,214,224,0.12); color: var(--c-cyan); border-color: var(--c-cyan); }
+.view-toggle button:hover:not(.is-active) { color: var(--fg); border-color: var(--line); }
+
 /* legend row (caption row right below column heads) */
 .legend-row {
   display: grid;
