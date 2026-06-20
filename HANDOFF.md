@@ -1,48 +1,37 @@
-# Handoff — last updated 2026-06-19 (Playwright smoke + Reel DNA verify)
+# Handoff — last updated 2026-06-20
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Tooling + verification, no app code.** Installed Playwright (`@playwright/test` + Chromium) — the project had **no** browser automation — and built the first smoke-screenshot harness (`scripts/smoke-screenshot.mjs`).
-- **Verified the Reel DNA dashboard tab renders healthy** via real screenshots: capture form, Reels/Thumbnails sub-tabs, IG Sync Health panel, ~28-row captured-reels spreadsheet — no crash, no error boundary, **no uncaught page errors**.
-- Auth solved with a one-time `playwright codegen --save-storage=auth.json` (owner logged in once, session reused). `auth.json` + `screenshots/` are gitignored.
-- **One minor finding:** the Reel DNA "capture a reel" bookmarklet is `<a href="javascript:…">` ([src/pages/reel-dna.jsx:1197](src/pages/reel-dna.jsx#L1197)) → React future-version warning. Non-breaking.
-- **No DB, no deploy.** Live production unchanged. **Note:** during wrap-up a separate commit `ecb3247 fix(demo): decommission demo mode` landed (committed the carried-over `monitor.jsx`/`store.jsx` edits) — `main` is now **1 ahead of `origin/main`, unpushed, not deployed**.
-- This now satisfies the "smoke-harness in progress" item the prior reorg-planning session was waiting on (see below) — the harness exists and works.
+- **Executed the Reel DNA Phase 1 activation runbook STEP 0→9** (`.claude/plans/reel-dna-phase1-activation-pyscene.md`) — short-reel deconstruction (PySceneDetect cut-detection + downloadable asset layers + cut-pacing) is now **LIVE and proven end-to-end**, alongside the already-live Wave 1 longform Story.
+- **Backend merged + rebuilt on Hetzner**: merged worker (cv2 4.13 + scenedetect 0.7, longform path intact, claim now format-agnostic), `serve_router` registered, Caddy `/reels/*` → `backend:8000`, `REELS_DIR=/app/data/reels` on a persisted volume (B1 closed), `FB_DOWNLOAD_SIGNING_SECRET` set (byte-parity 3 ways).
+- **DB**: 0081 columns confirmed present (B2 was a stale PostgREST cache, not a ledger lie — refreshed via `NOTIFY pgrst`).
+- **Vercel**: owner ran `vercel --prod` (reachability fix live — short Analyze button reachable; minter secret wired). **HMAC parity** Python==JS==`34010c33…`.
+- **Calibrated all 4 reel types**, capped by the decisive proof: a signed download **streamed HTTP 200** through the live Caddy→uvicorn chain.
+- **Discussed commit/merge safety** — confirmed `feat/reel-dna-phase1 → main` is a clean fast-forward; git ops don't deploy; nothing breaks. Wrap-up + grouped commit + ff-merge planned.
 
 ## Where we left off
-Two threads are open:
-1. **(This session — done)** Playwright + `scripts/smoke-screenshot.mjs` exist locally (uncommitted); Reel DNA confirmed working. Dev server may still be on port **8001** (8000 was already in use).
-2. **(Prior reorg-planning session — still paused on owner input)** A tabs/monitor/permissions **reorganization plan** is drafted but unapproved, awaiting two decisions (below). Plan file: `C:\Users\Mi\.claude\plans\analyze-the-all-tabs-curious-dongarra.md`. Key discovery there: `monitor`/`pulse`/`ai` tabs are hard-gated `isOwner &&` at render ([app.jsx:676-678](src/app.jsx#L676-L678)), not via `canView()` — see memory `reference_owner-monitor-hardgate.md`.
+Phase 1 is fully LIVE. Queue clean (0 pending_analyze, 0 analyzing), `*/2` drain cron re-enabled, `/api/reel/status` all green (`download_signing_set:true`, `reels_dir:/app/data/reels`). Branch `feat/reel-dna-phase1` is build-green + proven but **not yet committed/pushed/merged** (owner-gated). Host backups tagged `phase1-20260620_003139`.
 
 ## Open blockers
-- **None** for production. The reorg is paused on owner input, not a technical blocker.
+- None.
 
-## Awaiting owner decision (to finalize the reorg plan)
-1. **Smoke harness** — fold a minimal Playwright smoke (boot + per-role tab visibility) into the reorg plan as "Part 0"? ✅ The harness now exists (`scripts/smoke-screenshot.mjs`) and is proven — just needs extending to per-role tab checks. (Recommended — only safety net; repo has zero tests.)
-2. **Restructure coordination** — is the nav reorg *part of* the contemplated full restructure ([[reference_restructure-readiness]]) or independent and done first? It rewrites `app.jsx` `TABS`/`DEFAULT_TAB_GROUPS` heavily, so order matters.
-
-## Pending (written but not yet live)
-- **Playwright harness uncommitted** — `scripts/smoke-screenshot.mjs` + `@playwright/test` devDep in `package.json`/`package-lock.json` + `.gitignore` edits are local only. Looks like a coherent unit; commit or stash before any deploy.
-- **Demo-decommission commit unpushed/undeployed** — `ecb3247` (the former carried-over `monitor.jsx`/`store.jsx` edits) is committed but `main` is 1 ahead of origin and **not deployed**. `git push` + `vercel --prod` when ready (full-tree deploy will also ship the Playwright batch + docs below — review first).
-- **Still-dirty tree:** the Playwright batch (above) + `CHANGELOG.md`/`change-log.md`/`HANDOFF.md` docs + `api/monitor/migrations.manifest.json` (prebuild regen). Commit or stash before deploying.
-- **0076 §2** (owner-only DELETE reels/cards/tasks) — rewrite against live `"auth write"` policies.
-- **0049 demo sandbox** — `[pending]`, guarded, DEFERRED until owner revisits.
+## Pending (written/done but not yet committed-to-git)
+- `feat/reel-dna-phase1` not committed/pushed. The reachability fix (`unified-dna-card.jsx`) + 0081 manifest entry are the Phase-1-thread uncommitted bits (the reachability fix IS already live via the owner's `vercel --prod`).
+- Grid-view trio (`pipeline.jsx`/`components.jsx`/`styles.css`) + `ig_webhook.py` + `ig-sync-diagnose.mjs` remain uncommitted (separate, already-live threads — leave to owner).
+- `.env.local` now holds `FB_DOWNLOAD_SIGNING_SECRET` (gitignored — never committed).
 
 ## Next session — start here
-1. **Answer the two decisions above**, then resequence the reorg plan (owner-only Monitor hub, flat Infra/Pulse/World/AI Brain sub-tabs, centralized `useIsOwner()` role check).
-2. Decide whether to **commit the Playwright harness** (and extend `smoke-screenshot.mjs` into a per-role multi-tab smoke test — the restructure audit's highest-leverage gap).
-3. **Triage the deploy surface** — push `ecb3247` (demo decommission) + commit/stash the Playwright batch + docs before any `vercel --prod` (full-tree deploy ships everything).
-4. Optionally fix the `javascript:` bookmarklet warning in [src/pages/reel-dna.jsx:1197](src/pages/reel-dna.jsx#L1197).
-5. 0076 §2 rewrite + apply (verify from a non-owner session); local curl-TLS quirk; (deferred) demo sandbox 0049.
+1. **Commit + merge (owner-gated):** tidy grouped commit of the Phase-1 thread → fast-forward merge `feat/reel-dna-phase1` → `main`. Stop before `push` (owner's call). Clean ff, no conflicts.
+2. **Optional Phase-1 hardening:** add a single-flight guard to the worker (no concurrency guard → parallel analyzes could OOM the 5.2GB box); add yt-dlp cookies (`IG_COOKIES_FILE`/`YTDLP_COOKIES`) if auto-acquire is wanted (manual upload is the current backbone).
+3. **Optional Phase 5:** swap PySceneDetect → TransNetV2 behind the intact `_detect_scenes(video,work):764` seam (torch-CPU, TransNetV2-primary + PySceneDetect-fallback) — touches only the detector + deps.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-git status -sb                            # main ahead 1 of origin; dirty = Playwright batch + docs + manifest
-git log --oneline -1                      # expect ecb3247 (demo decommission, unpushed)
-npx playwright --version                  # confirms Playwright installed
-npm run dev                               # starts Vite (falls back to :8001 if :8000 busy)
-node scripts/smoke-screenshot.mjs http://localhost:8000   # re-run the Reel DNA smoke (needs auth.json)
+git rev-parse --abbrev-ref HEAD                                  # feat/reel-dna-phase1
+git log --oneline main..feat/reel-dna-phase1 | wc -l            # 4 (clean ff to main)
+curl -s https://api.footagebrain.com/api/reel/status            # ok:true, download_signing_set:true, reels_dir:/app/data/reels
+# read-only signed-download proof: mint reels/<id>/<file>:<exp> HMAC with FB_DOWNLOAD_SIGNING_SECRET, curl https://api.footagebrain.com/reels/... → 200
+ssh root@178.105.14.144 'crontab -l | grep reel/deconstruct'    # */2 active (un-paused)
 ```
-Plan under review: `C:\Users\Mi\.claude\plans\analyze-the-all-tabs-curious-dongarra.md`

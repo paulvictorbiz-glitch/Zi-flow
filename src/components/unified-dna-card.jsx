@@ -256,15 +256,17 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
                     Long
                   </button>
                 </span>
-                {isLong && (
-                  <button type="button"
-                          className="udc-analyze"
-                          disabled={analyzing}
-                          onClick={runAnalyze}
-                          title={analyzing ? "Deconstruction in progress…" : "Deconstruct this longform video"}>
-                    {analyzing ? "Analyzing…" : analyzeLabel}
-                  </button>
-                )}
+                <button type="button"
+                        className="udc-analyze"
+                        disabled={analyzing}
+                        onClick={runAnalyze}
+                        title={analyzing
+                          ? "Deconstruction in progress…"
+                          : (isLong
+                              ? "Deconstruct this longform video"
+                              : "Deconstruct this reel into asset layers + pacing")}>
+                  {analyzing ? "Analyzing…" : analyzeLabel}
+                </button>
               </span>
             )}
           </div>
