@@ -121,31 +121,32 @@ def _sign_render_url(job_id: str, ttl_s: int = 3600) -> str:
 # ── Google Drive source download ─────────────────────────────────────────────
 
 async def _download_drive_file(drive_id: str, dest: Path) -> None:
-    """
-    Download a Google Drive file to `dest` using a service account.
-    Phase 0 stub — raises NotImplementedError until google-api-python-client
-    is added to requirements-hosting.txt and GOOGLE_SERVICE_ACCOUNT_JSON is set.
+    """Download a Google Drive file to `dest` using the service account in GOOGLE_SA_JSON."""
+    if not GOOGLE_SA_JSON:
+        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON not set — cannot download from Drive")
 
-    TODO Phase 1: implement with:
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaIoBaseDownload
+    def _sync_download() -> None:
+        from google.oauth2 import service_account  # type: ignore
+        from googleapiclient.discovery import build  # type: ignore
+        from googleapiclient.http import MediaIoBaseDownload  # type: ignore
+
         creds = service_account.Credentials.from_service_account_info(
             json.loads(GOOGLE_SA_JSON),
-            scopes=["https://www.googleapis.com/auth/drive.readonly"])
-        service = build("drive", "v3", credentials=creds)
+            scopes=["https://www.googleapis.com/auth/drive.readonly"],
+        )
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
         req = service.files().get_media(fileId=drive_id)
-        with open(dest, "wb") as f:
-            downloader = MediaIoBaseDownload(f, req)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest, "wb") as fh:
+            downloader = MediaIoBaseDownload(fh, req)
             done = False
             while not done:
-                _, done = downloader.next_chunk()
-    """
-    raise NotImplementedError(
-        "Google Drive download not yet implemented. "
-        "Add google-api-python-client + google-auth to requirements-hosting.txt "
-        "and set GOOGLE_SERVICE_ACCOUNT_JSON on Hetzner."
-    )
+                status, done = downloader.next_chunk()
+                if status:
+                    logger.debug("Drive %s: %d%%", drive_id, int(status.progress() * 100))
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _sync_download)
 
 
 # ── ffmpeg filtergraph builder ────────────────────────────────────────────────

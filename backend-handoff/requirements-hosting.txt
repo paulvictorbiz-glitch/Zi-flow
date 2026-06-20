@@ -1,0 +1,44 @@
+# Slim dependency set for the always-on HOSTING box (no ingestion).
+# See requirements.txt for the full set used on local/GPU boxes.
+# Diff vs requirements.txt: drops faster-whisper, lancedb, pyarrow,
+# accelerate, explicit transformers (pulled in by sentence-transformers),
+# pytest; adds psycopg2-binary for Postgres.
+
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+sqlalchemy==2.0.30
+alembic==1.13.1
+pydantic==2.7.1
+pydantic-settings==2.2.1
+python-dotenv==1.0.1
+aiofiles==23.2.1
+httpx==0.27.0
+
+# Postgres driver
+psycopg2-binary==2.9.9
+
+# Video / image utilities (still used by thumbnail-serving code paths)
+ffmpeg-python==0.2.0
+Pillow>=10.0.0
+
+# Query-time text embedding
+sentence-transformers==3.0.0
+
+# Vector store (Qdrant only on the hosting box; chroma intentionally absent)
+qdrant-client==1.9.1
+
+# Utilities
+xxhash==3.4.1
+apscheduler==3.10.4
+structlog==24.1.0
+
+# Reel DNA longform deconstruction worker (Phase 0)
+yt-dlp>=2024.0.0
+faster-whisper>=1.0.0
+
+# Reel DNA Phase 1 — shot/cut detection (PySceneDetect + OpenCV backend)
+scenedetect[opencv]>=0.6.4
+
+# Render worker — Google Drive source downloads
+google-api-python-client==2.137.0
+google-auth==2.29.0
