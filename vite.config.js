@@ -15,7 +15,7 @@ export default defineConfig({
   // + reload that aborts the in-flight dynamic import ("Failed to fetch
   // dynamically imported module"). Listing them here makes that deterministic.
   optimizeDeps: {
-    include: ["three", "@react-three/fiber", "@react-three/drei"],
+    include: ["three", "@react-three/fiber", "@react-three/drei", "@react-three/postprocessing", "postprocessing"],
   },
   server: {
     port: 8000,

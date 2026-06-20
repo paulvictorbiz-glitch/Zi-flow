@@ -17,21 +17,26 @@
    ========================================================= */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
 
 import { useAuth } from "../auth.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
 import { getConnections } from "../lib/social-client.js";
 
-import { FACES, PAGES, FACE_BY_KEY, PAGE_BY_KEY, openInApp } from "../lib/space-cube-config.jsx";
+import { FACES, PAGES, FACE_BY_KEY, PAGE_BY_KEY, openInApp, QUALITY, pickQuality } from "../lib/space-cube-config.jsx";
 import { buildMetrics, pageDetail } from "../components/space/widgets.jsx";
 import RubikCube from "../components/space/RubikCube.jsx";
 import Galaxy from "../components/space/Galaxy.jsx";
+import Skydome from "../components/space/Skydome.jsx";
 import StarWeb from "../components/space/StarWeb.jsx";
 import SpaceMenu from "../components/space/SpaceMenu.jsx";
 import DetailPanel from "../components/space/DetailPanel.jsx";
 import SpaceFallback from "../components/space/SpaceFallback.jsx";
 import SpaceSettings from "../components/space/SpaceSettings.jsx";
+import SpaceControls from "../components/space/SpaceControls.jsx";
+import { SpaceAudio } from "../components/space/space-audio.js";
+import { DEFAULT_SCENE, BODIES, hydrateScene } from "../lib/space-scene-params.jsx";
 import "./space3d.css";
 
 /* ---- capability checks (same recipe as dna-helix.jsx) ---- */
@@ -50,6 +55,15 @@ function prefersReducedMotion() {
     return false;
   }
 }
+function deviceTier() {
+  try {
+    const mobile = window.matchMedia ? window.matchMedia("(max-width:820px)").matches : false;
+    const cores = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 8;
+    return { mobile, lowCore: cores <= 4 };
+  } catch {
+    return { mobile: false, lowCore: false };
+  }
+}
 function connectionsCount() {
   try {
     const c = getConnections();
@@ -66,6 +80,10 @@ function loadPrefs() {
   try { return { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem("s3d_prefs") || "{}")) }; }
   catch { return { ...DEFAULT_PREFS }; }
 }
+function loadScene() {
+  try { return hydrateScene(JSON.parse(localStorage.getItem("s3d_scene") || "{}")); }
+  catch { return hydrateScene(null); }
+}
 
 export function Space3D() {
   const { person } = useAuth();
@@ -81,8 +99,16 @@ function Space3DInner() {
   const wf = useWorkflow();
   const loc = useLocations();
 
-  const [caps] = useState(() => ({ gl: webglAvailable(), reduced: prefersReducedMotion() }));
+  const [caps] = useState(() => {
+    const tier = deviceTier();
+    return { gl: webglAvailable(), reduced: prefersReducedMotion(), ...tier };
+  });
   const use3D = caps.gl && !caps.reduced;
+  const quality = useMemo(
+    () => pickQuality({ mobile: caps.mobile, lowCore: caps.lowCore, reduced: caps.reduced }),
+    [caps.mobile, caps.lowCore, caps.reduced]
+  );
+  const bloomOn = (QUALITY[quality] || QUALITY.high).bloom;
 
   // Continuous-zoom model: the camera distance drives `zone`
   // (free / assembled / stacked); a picked page drives `selectedKey`.
@@ -91,6 +117,48 @@ function Space3DInner() {
   const [hoveredFace, setHoveredFace] = useState(null);
   const [prefs, setPrefs] = useState(loadPrefs);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // ── Scene Studio: per-body params + procedural audio ──
+  const [scene, setScene] = useState(loadScene);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const audioRef = useRef(null);
+
+  // push the whole scene's audio settings to the engine
+  const syncAudio = useCallback((sc) => {
+    const a = audioRef.current;
+    if (!a || !a.started) return;
+    a.setMuted(sc.global.muted);
+    a.setMaster(sc.global.masterVolume);
+    for (const b of BODIES) {
+      const bp = sc[b.id];
+      if (bp) a.setBody(b.id, { sound: bp.sound, volume: bp.volume });
+    }
+    a.setPulsarRate(sc.pulsar.spin);
+  }, []);
+
+  const onSceneChange = useCallback((bodyId, key, value) => {
+    setScene((prev) => {
+      const next = { ...prev, [bodyId]: { ...prev[bodyId], [key]: value } };
+      try { localStorage.setItem("s3d_scene", JSON.stringify(next)); } catch (_) {}
+      syncAudio(next);
+      return next;
+    });
+  }, [syncAudio]);
+
+  // first time the studio opens is a user gesture → safe to start audio
+  const toggleStudio = useCallback(() => {
+    setStudioOpen((o) => {
+      const open = !o;
+      if (open && !audioRef.current) {
+        audioRef.current = new SpaceAudio();
+        audioRef.current.init();
+      }
+      if (open && audioRef.current) { audioRef.current.resume(); syncAudio(scene); }
+      return open;
+    });
+  }, [scene, syncAudio]);
+
+  useEffect(() => () => { if (audioRef.current) audioRef.current.dispose(); }, []);
 
   const state = selectedKey ? "detail" : (zone === "stacked" ? "stacked" : "assembled");
 
@@ -183,19 +251,34 @@ function Space3DInner() {
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}
           style={{ background: "transparent" }}
         >
-          <Galaxy reduced={caps.reduced} bg={prefs.bg} />
+          <Skydome bg={prefs.bg} />
+          <Galaxy reduced={caps.reduced} bg={prefs.bg} quality={quality} scene={scene} />
           <RubikCube
             mode={state}
             selectedKey={selectedKey}
             hoveredFace={hoveredFace}
             metrics={metrics}
             prefs={prefs}
+            autoRotateSpeed={scene.global.autoRotate}
             onSelectPage={openPage}
             onHoverFace={setHoveredFace}
             onZone={setZone}
           />
+          {bloomOn && scene.global.bloom > 0.02 && (
+            <EffectComposer disableNormalPass>
+              <Bloom
+                intensity={scene.global.bloom}
+                luminanceThreshold={0.22}
+                luminanceSmoothing={0.32}
+                mipmapBlur
+                radius={0.7}
+              />
+            </EffectComposer>
+          )}
         </Canvas>
       </div>
+
+      <SpaceControls open={studioOpen} onToggle={toggleStudio} scene={scene} onChange={onSceneChange} />
 
       {state === "detail" && (
         <DetailPanel

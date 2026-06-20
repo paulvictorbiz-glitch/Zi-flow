@@ -247,7 +247,7 @@ function Tile({ tile, mode, selectedKey, hoveredFace, metric, boxGeo, prefs, onS
   );
 }
 
-export function RubikCube({ mode = "assembled", selectedKey = null, hoveredFace = null, metrics = {}, prefs = {}, onSelectPage = () => {}, onHoverFace = () => {}, onZone = () => {} }) {
+export function RubikCube({ mode = "assembled", selectedKey = null, hoveredFace = null, metrics = {}, prefs = {}, autoRotateSpeed = 0.5, onSelectPage = () => {}, onHoverFace = () => {}, onZone = () => {} }) {
   const { tiles, columns, faceTopics } = useMemo(() => buildScene(), []);
   const boxGeo = useMemo(() => new THREE.BoxGeometry(TILE, TILE, TILE), []);
   const frameGeo = useMemo(() => new THREE.BoxGeometry(FRAME, FRAME, FRAME), []);
@@ -283,8 +283,8 @@ export function RubikCube({ mode = "assembled", selectedKey = null, hoveredFace 
         zoomSpeed={0.8}
         enablePan={mode !== "stacked"}
         enableRotate={mode !== "stacked"}
-        autoRotate={mode === "assembled"}
-        autoRotateSpeed={0.5}
+        autoRotate={mode === "assembled" && autoRotateSpeed > 0.01}
+        autoRotateSpeed={autoRotateSpeed}
         rotateSpeed={0.6}
         minDistance={CAM.MIN}
         maxDistance={CAM.MAX}

@@ -108,3 +108,61 @@ export function metalForKey(key) {
    the stacked↔assembled↔free zone boundaries; HYST is the deadband
    that prevents flicker at a boundary; START is the initial distance. */
 export const CAM = { MIN: 4.5, MAX: 60, D_NEAR: 6.8, D_FAR: 16, HYST: 1.1, START: 9 };
+
+/* ─────────────────────────────────────────────────────────
+   SCENE — placement of the decorative deep-space set-pieces.
+
+   The cube sits at the origin (~±2 units). Set-pieces live on a
+   30–200 unit shell, deliberately spread across ALL octants so the
+   scene reads well from every orbit angle (the "engaging from all
+   sides" goal). Positions are data here so they can be retuned in one
+   place; the L1 components import these instead of hard-coding.
+   Still pure data — no three.js / React. */
+export const SCENE = {
+  galaxyCenter:    [0, 0, -140],                                  // Sgr A* (Galaxy.jsx) — far −z
+  binaryBlackHole: { position: [-66, -14, 34], scale: 1.0, tilt: [1.02, 0, 0.18] }, // −x −y +z
+  pulsar:          { position: [46, 30, -38], scale: 1.1, tilt: [0.25, 0, 0.12] },   // +x +y −z
+  fleet:           { position: [-34, 24, 26], scale: 0.85 },      // −x +y +z (front-left-up)
+  nebula:          [-90, 18, -110],                               // existing
+};
+
+/* 360° ambient events — small, cheap, billboard/sprite-based pieces
+   scattered across the far shell so no viewing angle is empty. */
+export const AMBIENT = [
+  { key: "gal1",  kind: "galaxy",       position: [155, 64, -110],  scale: 40, color: "#9bb8ff", spin: 0.020 },
+  { key: "gal2",  kind: "galaxy",       position: [-165, -44, 92],  scale: 48, color: "#ffc6a0", spin: -0.015 },
+  { key: "gal3",  kind: "galaxy",       position: [118, -96, 150],  scale: 32, color: "#c8a6ff", spin: 0.028 },
+  { key: "gal4",  kind: "galaxy",       position: [-120, 96, 60],   scale: 28, color: "#a6ffe0", spin: -0.022 },
+  { key: "comet1", kind: "comet",       position: [82, 52, 44],     dir: [-1, -0.4, -0.5], speed: 9,  color: "#bfe6ff", span: 150 },
+  { key: "comet2", kind: "comet",       position: [-92, -30, -60],  dir: [0.7, 0.5, 0.6],  speed: 7,  color: "#d9fff0", span: 150 },
+  { key: "comet3", kind: "comet",       position: [24, -84, 72],    dir: [0.2, 1, -0.3],   speed: 11, color: "#fff0c0", span: 150 },
+  { key: "nova",   kind: "supernova",   position: [-124, 72, -34],  scale: 11, color: "#ffe2a8", period: 13 },
+  { key: "flyby",  kind: "ringedPlanet", position: [40, -24, 50],   scale: 4.4, color: "#cda06a", ringColor: "#e8d2a0" },
+
+  // ── extra fill so no octant is empty from any orbit angle ──
+  { key: "gal5",  kind: "galaxy",       position: [70, 120, 90],    scale: 34, color: "#ffd9a0", spin: 0.018 },
+  { key: "gal6",  kind: "galaxy",       position: [-70, -120, -90], scale: 36, color: "#a0c0ff", spin: -0.024 },
+  { key: "gal7",  kind: "galaxy",       position: [180, -20, -60],  scale: 30, color: "#d8b0ff", spin: 0.02 },
+  { key: "comet4", kind: "comet",       position: [-60, 90, 30],    dir: [0.6, -1, 0.3],   speed: 8,  color: "#cfeaff", span: 160 },
+  { key: "comet5", kind: "comet",       position: [110, -10, -90],  dir: [-0.8, 0.2, 0.7], speed: 10, color: "#fff4d0", span: 170 },
+  { key: "nova2",  kind: "supernova",   position: [90, 50, -120],   scale: 9,  color: "#a8d8ff", period: 17 },
+  { key: "flyby2", kind: "ringedPlanet", position: [-50, 40, 70],   scale: 3.4, color: "#8a6fb0", ringColor: "#cdbce8" },
+  { key: "flyby3", kind: "ringedPlanet", position: [60, -70, -30],  scale: 5.2, color: "#6f9bb0", ringColor: "#b0d4e0" },
+];
+
+/* ─────────────────────────────────────────────────────────
+   QUALITY tiers — particle counts + per-tier bloom flag. The
+   mobile/low-core gate (computed in Galaxy.jsx) and reduced-motion
+   pick a tier so the scene scales down on weak hardware. */
+export const QUALITY = {
+  high: { distantStars: 5200, diskParticles: 6000, nearStars: 1200, bhDisk: 2600, jetParticles: 700, shootingStars: 6, bloom: true },
+  mid:  { distantStars: 2800, diskParticles: 3200, nearStars: 700,  bhDisk: 1400, jetParticles: 360, shootingStars: 3, bloom: true },
+  low:  { distantStars: 1200, diskParticles: 1600, nearStars: 420,  bhDisk: 700,  jetParticles: 0,   shootingStars: 1, bloom: false },
+};
+
+/* Pure tier selector (no window access — caller passes the booleans). */
+export function pickQuality({ mobile = false, lowCore = false, reduced = false } = {}) {
+  if (reduced || lowCore) return "low";
+  if (mobile) return "mid";
+  return "high";
+}

@@ -27,10 +27,14 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
 import { makeHaloTexture, makePointMaterial } from "./celestial-shared.js";
+import { QUALITY } from "../../lib/space-cube-config.jsx";
+import { DEFAULT_SCENE } from "../../lib/space-scene-params.jsx";
 import Nebula from "./Nebula.jsx";
 import Sun from "./Sun.jsx";
 import NeutronStar from "./NeutronStar.jsx";
 import SpaceBattle from "./SpaceBattle.jsx";
+import BinaryBlackHole from "./BinaryBlackHole.jsx";
+import AmbientEvents from "./AmbientEvents.jsx";
 
 const GALAXY_Z = -140;
 const DISK_TILT = [THREE.MathUtils.degToRad(62), 0, THREE.MathUtils.degToRad(8)];
@@ -80,17 +84,17 @@ function DistantStars({ count, reduced }) {
   return <points geometry={geo} material={mat} frustumCulled={false} />;
 }
 
-function CoreGlow() {
+function CoreGlow({ intensity = 1 }) {
   const tex = useMemo(() => makeHaloTexture(), []);
   useEffect(() => () => { tex.dispose(); }, [tex]);
   return (
     <>
       <sprite scale={[26, 26, 26]}>
-        <spriteMaterial map={tex} color="#ffd2a0" transparent opacity={0.5}
+        <spriteMaterial map={tex} color="#ffd2a0" transparent opacity={0.5 * intensity}
           depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
       </sprite>
       <sprite scale={[60, 60, 60]}>
-        <spriteMaterial map={tex} color="#9fb8e0" transparent opacity={0.18}
+        <spriteMaterial map={tex} color="#9fb8e0" transparent opacity={0.18 * intensity}
           depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
       </sprite>
     </>
@@ -238,17 +242,13 @@ function Asteroids({ reduced }) {
 }
 
 /* ================================ Galaxy ================================= */
-export function Galaxy({ reduced = false, bg }) {
-  const isMobile = useMemo(() => {
-    if (typeof window === "undefined") return false;
-    const mq = window.matchMedia ? window.matchMedia("(max-width:820px)").matches : false;
-    const cores = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 8;
-    return mq || cores <= 4;
-  }, []);
-
-  const distantCount = isMobile ? 1500 : 4000;
-  const diskCount = isMobile ? 2500 : 6000;
-  const nearCount = isMobile ? 500 : 1200;
+export function Galaxy({ reduced = false, bg, quality = "high", scene }) {
+  const sc = scene || DEFAULT_SCENE;
+  const gc = sc.galaxyCore || DEFAULT_SCENE.galaxyCore;
+  const q = QUALITY[quality] || QUALITY.high;
+  const distantCount = q.distantStars;
+  const diskCount = q.diskParticles;
+  const nearCount = q.nearStars;
 
   const diskBuild = useMemo(() => makeDiskBuilder(diskCount), [diskCount]);
   const nearBuild = useMemo(() => makeNearStarsBuilder(nearCount), [nearCount]);
@@ -256,20 +256,20 @@ export function Galaxy({ reduced = false, bg }) {
   const spinRef = useRef();
   useFrame((_, dt) => {
     if (reduced) return;
-    if (spinRef.current) spinRef.current.rotation.y += dt * SPIN_SPEED;
+    if (spinRef.current) spinRef.current.rotation.y += dt * SPIN_SPEED * gc.spin;
   });
 
   return (
     <>
       <DistantStars count={distantCount} reduced={reduced} />
 
-      <group position={[0, 0, GALAXY_Z]}>
+      <group position={[0, 0, GALAXY_Z]} visible={gc.visible !== false}>
         <mesh>
           <sphereGeometry args={[3.2, 32, 32]} />
           <meshBasicMaterial color="#000000" toneMapped={false} />
         </mesh>
 
-        <CoreGlow />
+        <CoreGlow intensity={gc.intensity} />
 
         <group rotation={DISK_TILT}>
           <PhotonRing />
@@ -282,10 +282,12 @@ export function Galaxy({ reduced = false, bg }) {
 
       <Asteroids reduced={reduced} />
 
-      <Nebula reduced={reduced} />
-      <Sun reduced={reduced} />
-      <NeutronStar reduced={reduced} />
-      <SpaceBattle reduced={reduced} />
+      <Nebula reduced={reduced} params={sc.nebula} />
+      <Sun reduced={reduced} params={sc.sun} />
+      <NeutronStar reduced={reduced} quality={quality} params={sc.pulsar} />
+      <SpaceBattle reduced={reduced} params={sc.fleet} />
+      <BinaryBlackHole reduced={reduced} params={sc.binaryBH} />
+      <AmbientEvents reduced={reduced} quality={quality} />
     </>
   );
 }
