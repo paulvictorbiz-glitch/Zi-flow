@@ -17,6 +17,7 @@
    ========================================================= */
 
 import React, { useState, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import "./reel-dna.css";
 import { Card, DPill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
@@ -24,7 +25,7 @@ import { useAuth } from "../auth.jsx";
 import { useNow, formatDuration } from "../lib/time.jsx";
 import {
   GENES, PLATFORMS, STATUSES,
-  platformLabel, sourceLabel, contentTypeLabel,
+  platformLabel,
   platformFromUrl, parseTagNote, resolveBrief,
 } from "../lib/reel-dna.jsx";
 import { ReelDeconstructor } from "./reel-deconstructor.jsx";
@@ -399,14 +400,14 @@ function ColumnFilterRow({ colFilters, onColFilter, onClear }) {
   const S = (k) => <ColFilterSelectCell k={k} colFilters={colFilters} onColFilter={onColFilter} />;
   return (
     <tr className="rd-colfilter-row">
+      <td className="rd-colfilter-td" />
       {T("reel")}
       {T("location")}
       {T("music")}
       {T("font")}
       {T("sfx")}
       {T("story")}
-      {S("source")}
-      {S("contentType")}
+      {T("notes")}
       {S("status")}
       <td className="rd-colfilter-td" />
       <td className="rd-colfilter-td rd-colfilter-clear-td">
@@ -430,9 +431,236 @@ function AssetCountCell({ item, onOpen }) {
   );
 }
 
+/* 8-tone palette for Reel DNA row color-tagging — mirrors the My Work / list-view
+   pickers (cyan/violet/green/amber/red/blue/orange/pink) so a color reads the
+   same everywhere. The tone NAME is what we persist in reel_dna.row_color. */
+export const RD_ROW_TONES = ["cyan", "violet", "green", "amber", "red", "blue", "orange", "pink"];
+export const RD_TONE_COLOR = {
+  cyan:   "var(--c-cyan)",   violet: "var(--c-violet)",
+  green:  "var(--c-green)",  amber:  "var(--c-amber)",
+  red:    "var(--c-red)",    blue:   "var(--c-blue)",
+  orange: "var(--c-orange)", pink:   "var(--c-pink)",
+};
+/* Faint full-row tint from a tone name (color-mix over transparent, an existing
+   pattern in this repo). Returns undefined for an untagged row so the row keeps
+   its normal status styling. */
+export function rdRowTint(tone) {
+  const base = tone && RD_TONE_COLOR[tone];
+  return base ? `color-mix(in srgb, ${base} 14%, transparent)` : undefined;
+}
+
+/* Anchored color-swatch popover. The spreadsheet wrapper has `overflow-x: auto`,
+   which CLIPS an absolutely-positioned dropdown — so the panel is rendered
+   `position: fixed`, measured from the trigger button via getBoundingClientRect,
+   to escape the clip and sit above the table. Closes on outside-click, scroll,
+   or resize (a fixed panel would otherwise float detached when the sheet moves). */
+function useColorPopover() {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState(null);
+  const wrapRef = React.useRef(null);
+  const btnRef = React.useRef(null);
+  const panelRef = React.useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    // The panel is portaled to <body>, so it is NOT a descendant of wrapRef —
+    // check BOTH refs or a swatch click counts as "outside" and closes the
+    // popover (on mousedown) before the click lands.
+    const onDown = (e) => {
+      if (wrapRef.current && wrapRef.current.contains(e.target)) return;
+      if (panelRef.current && panelRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    const close = () => setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const vw = window.innerWidth || 9999;
+      setCoords({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, vw - 140)) });
+    }
+    setOpen((o) => !o);
+  };
+  const panelStyle = {
+    position: "fixed", top: coords?.top ?? 0, left: coords?.left ?? 0, zIndex: 4000,
+    background: "var(--bg-2, #1e2433)", border: "1px solid var(--line-hard)",
+    borderRadius: 6, padding: "6px 8px", display: "flex", gap: 5, flexWrap: "wrap",
+    width: 132, boxShadow: "0 6px 20px rgba(0,0,0,0.5)",
+  };
+  // Render the swatch panel in a body portal so no overflow / transformed
+  // ancestor can clip it (position:fixed alone wasn't enough — a transformed
+  // ancestor was establishing a containing block).
+  const renderPanel = (children) =>
+    open && coords
+      ? createPortal(
+          <span ref={panelRef} onClick={(e) => e.stopPropagation()} style={panelStyle}>{children}</span>,
+          document.body
+        )
+      : null;
+  return { open, setOpen, coords, wrapRef, btnRef, toggle, renderPanel };
+}
+
+/* One swatch in a color popover. */
+function ToneSwatch({ tone, selected, onClick }) {
+  return (
+    <span
+      onClick={onClick}
+      title={tone}
+      style={{
+        width: 16, height: 16, borderRadius: "50%", cursor: "pointer",
+        background: RD_TONE_COLOR[tone],
+        border: selected ? "2px solid #fff" : "2px solid transparent",
+      }}
+    />
+  );
+}
+
+/* The "×" clear pip in a color popover. */
+function ClearPip({ onClick, title }) {
+  return (
+    <span
+      onClick={onClick}
+      title={title}
+      style={{
+        width: 16, height: 16, borderRadius: "50%", cursor: "pointer",
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        border: "1px solid var(--fg-dim)", color: "var(--fg-mute)", fontSize: 11, lineHeight: 1,
+      }}
+    >×</span>
+  );
+}
+
+/* Small colored-dot button + popover palette for color-tagging a row — the same
+   interaction as My Work's TaskColorDot. Picking a tone tints the whole row. */
+function RowColorDot({ item, actions }) {
+  const { setOpen, wrapRef, btnRef, toggle, renderPanel } = useColorPopover();
+  const tone = item.rowColor || null;
+  const current = tone ? RD_TONE_COLOR[tone] : null;
+  const pick = (t) => { actions.updateReelDna(item.id, { rowColor: t }); setOpen(false); };
+  return (
+    <span ref={wrapRef} style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        title={tone ? `Row color: ${tone} (change / clear)` : "Color-tag this row"}
+        style={{
+          width: 13, height: 13, borderRadius: "50%", padding: 0, cursor: "pointer",
+          background: current || "transparent",
+          border: current ? "1px solid rgba(255,255,255,0.25)" : "1px dashed var(--fg-dim)",
+        }}
+      />
+      {renderPanel(
+        <>
+          {RD_ROW_TONES.map(t => (
+            <ToneSwatch key={t} tone={t} selected={tone === t} onClick={() => pick(t)} />
+          ))}
+          {tone && <ClearPip onClick={() => pick(null)} title="Clear color" />}
+        </>
+      )}
+    </span>
+  );
+}
+
+/* Header star-filter toggle — lives at the top of the mark column. Star on =
+   show only favorited rows. */
+function StarFilterButton({ active, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(!active)}
+      aria-pressed={active}
+      title={active ? "Showing starred only — click to show all" : "Filter to starred rows"}
+      style={{
+        background: "none", border: "none", cursor: "pointer", padding: 0,
+        fontSize: 14, lineHeight: 1,
+        color: active ? "var(--c-amber, #f5b301)" : "var(--fg-dim)",
+      }}
+    >
+      {active ? "★" : "☆"}
+    </button>
+  );
+}
+
+/* Header color-filter dot + popover — lives in the mark column heading. Always
+   shown (so the filter is discoverable even before any row is colored); offers
+   the full palette. Picking a tone narrows the sheet to rows tagged with it. */
+function ColorFilterDot({ value, onPick }) {
+  const { setOpen, wrapRef, btnRef, toggle, renderPanel } = useColorPopover();
+  const current = value ? RD_TONE_COLOR[value] : null;
+  const choose = (t) => { onPick(t); setOpen(false); };
+  return (
+    <span ref={wrapRef} style={{ display: "inline-flex", alignItems: "center" }}>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        title={value ? `Filtering by ${value} — click to change` : "Filter by color tag"}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 2,
+          background: "none", border: "none", cursor: "pointer", padding: 0,
+          color: "var(--fg-dim)", fontSize: 9, lineHeight: 1,
+        }}
+      >
+        <span style={{
+          width: 12, height: 12, borderRadius: "50%",
+          background: current || "transparent",
+          border: current ? "1px solid rgba(255,255,255,0.25)" : "1px dashed var(--fg-dim)",
+        }} />
+        <span>▾</span>
+      </button>
+      {renderPanel(
+        <>
+          {RD_ROW_TONES.map(t => (
+            <ToneSwatch key={t} tone={t} selected={value === t} onClick={() => choose(t)} />
+          ))}
+          <ClearPip onClick={() => choose(null)} title="All colors" />
+        </>
+      )}
+    </span>
+  );
+}
+
+/* Leftmost spreadsheet cell: a favorite (star) toggle on the LEFT and the color
+   dot on the RIGHT, side by side. Both persist via updateReelDna (favorite
+   boolean / rowColor tone name, migration 0089) so they survive reload and sync
+   across tabs via realtime. The chosen color tints the whole <tr>. */
+function RowMarkCell({ item, actions }) {
+  const fav = !!item.favorite;
+  return (
+    <td className="rd-td-mark">
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <button
+          type="button"
+          className={"rd-fav-btn" + (fav ? " is-on" : "")}
+          title={fav ? "Unstar this reel" : "Star this reel (filter by favorites)"}
+          aria-pressed={fav}
+          onClick={() => actions.updateReelDna(item.id, { favorite: !fav })}
+          style={{
+            background: "none", border: "none", cursor: "pointer", padding: 0,
+            fontSize: 15, lineHeight: 1, flexShrink: 0,
+            color: fav ? "var(--c-amber, #f5b301)" : "var(--fg-dim)",
+          }}
+        >
+          {fav ? "★" : "☆"}
+        </button>
+        <RowColorDot item={item} actions={actions} />
+      </span>
+    </td>
+  );
+}
+
 /* ---------- Spreadsheet / log view ---------- */
 export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, onDelete,
-                          onOpenAssets, onOpenCard, colFilters, onColFilter, onClearColFilters }) {
+                          onOpenAssets, onOpenCard, colFilters, onColFilter, onClearColFilters,
+                          favOnly, onFavFilter, colorFilter, onColorFilter }) {
   const { reels } = useWorkflow();
   const [compareItem, setCompareItem] = useState(null);
 
@@ -449,14 +677,19 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
       <table className="rd-table">
         <thead>
           <tr>
+            <th className="rd-th-mark" title="Filter by starred / color">
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {onFavFilter && <StarFilterButton active={!!favOnly} onToggle={onFavFilter} />}
+                {onColorFilter && <ColorFilterDot value={colorFilter} onPick={onColorFilter} />}
+              </span>
+            </th>
             <th className="rd-th-reel">Reel</th>
             <th>Location</th>
             <th>Music</th>
             <th>Font</th>
             <th>SFX</th>
             <th>Story / Pacing</th>
-            <th>Source</th>
-            <th>Type</th>
+            <th>Notes</th>
             <th>Status</th>
             <th className="rd-th-assets">Assets</th>
             <th className="rd-th-act"></th>
@@ -473,10 +706,11 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
           )}
           {items.map(item => {
             const tags = resolveTags(item);
-            const sourceTone = item.source === "ig_dm" ? "violet" : item.source === "share_target" ? "blue" : undefined;
             const hasTimeline = item.timeline && item.timeline.length > 0;
             return (
-              <tr key={item.id} className={"rd-tr rd-status--" + item.status}>
+              <tr key={item.id} className={"rd-tr rd-status--" + item.status}
+                  style={item.rowColor ? { background: rdRowTint(item.rowColor) } : undefined}>
+                <RowMarkCell item={item} actions={actions} />
                 <td className="rd-td-reel">
                   <a className="rd-cell-link" href={item.reelUrl} target="_blank" rel="noreferrer" title={item.reelUrl}>
                     {item.reelUrl}
@@ -491,12 +725,7 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                 <td><EditableCell value={tags.font} placeholder="—" onSave={v => saveGeneField(item, "font", "names", v)} /></td>
                 <td><EditableCell value={tags.sfx} placeholder="—" onSave={v => saveGeneField(item, "sfx", "notes", v)} /></td>
                 <td><EditableCell value={tags.story} placeholder="—" onSave={v => saveGeneField(item, "story", "styleNotes", v)} /></td>
-                <td>
-                  <span className={"rd-tag sm rd-source" + (sourceTone ? " rd-source--" + sourceTone : "")}>
-                    {sourceLabel(item.source)}
-                  </span>
-                </td>
-                <td><span className="rd-tag sm rd-type-badge">{contentTypeLabel(item.contentType)}</span></td>
+                <td><EditableCell value={item.quickNotes} placeholder="—" onSave={v => actions.updateReelDna(item.id, { quickNotes: v || null })} /></td>
                 <td>
                   <select className="rd-cell-status" value={item.status}
                           onChange={e => actions.updateReelDna(item.id, { status: e.target.value })}>

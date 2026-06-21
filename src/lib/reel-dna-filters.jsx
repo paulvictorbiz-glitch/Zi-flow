@@ -31,6 +31,7 @@ export const RD_TEXT_COLUMNS = [
   { key: "font",     label: "Font",          get: (it, b) => b.fontNames || "" },
   { key: "sfx",      label: "SFX",           get: (it, b) => b.sfx || "" },
   { key: "story",    label: "Story / Pacing", get: (it, b) => b.story || "" },
+  { key: "notes",    label: "Notes",         get: (it) => it.quickNotes || "" },
 ];
 
 /* Select-style columns matched by exact equality on a top-level field. */

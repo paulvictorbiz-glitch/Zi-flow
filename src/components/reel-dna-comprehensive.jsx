@@ -32,6 +32,8 @@ export function ReelDnaComprehensive({
   const [colFilters, setColFilters] = useState(emptyColumnFilters); // Grid column headers
   const [modalId, setModalId] = useState(null); // row → centered UnifiedDnaCard modal
   const [hideAllAssets, setHideAllAssets] = useState(false); // Gallery: hide every card's assets (session state)
+  const [favOnly, setFavOnly] = useState(false);   // ★ show only starred rows
+  const [colorFilter, setColorFilter] = useState(null); // hex → show only rows with that color tag
 
   const onColFilter = (key, value) => setColFilters((f) => ({ ...f, [key]: value }));
   const clearColFilters = () => setColFilters(emptyColumnFilters());
@@ -44,7 +46,23 @@ export function ReelDnaComprehensive({
     if (!needle) return list;
     return list.filter((it) => searchHaystack(it, resolveBrief(it)).includes(needle));
   }, [list, q]);
-  const filtered = useMemo(() => applyColumnFilters(searched, colFilters), [searched, colFilters]);
+  const columnFiltered = useMemo(() => applyColumnFilters(searched, colFilters), [searched, colFilters]);
+
+  // Distinct color tags actually in use across the pool — drives the swatch
+  // filter row (only colors that exist are offered, so it stays tidy).
+  const colorsInUse = useMemo(() => {
+    const out = [];
+    for (const it of list) if (it.rowColor && !out.includes(it.rowColor)) out.push(it.rowColor);
+    return out;
+  }, [list]);
+
+  // Star/color quick-filters layer on top of search + column filters.
+  const filtered = useMemo(() => {
+    let out = columnFiltered;
+    if (favOnly) out = out.filter((it) => it.favorite);
+    if (colorFilter) out = out.filter((it) => it.rowColor === colorFilter);
+    return out;
+  }, [columnFiltered, favOnly, colorFilter]);
 
   const modalItem = useMemo(
     () => (modalId ? list.find((d) => d.id === modalId) || null : null),
@@ -92,7 +110,9 @@ export function ReelDnaComprehensive({
           <DnaTable items={filtered} now={now} actions={actions}
                     onView={onView} onDeconstruct={onDeconstruct} onSend={onSend} onDelete={onDelete}
                     onOpenAssets={onOpenAssets} onOpenCard={(it) => setModalId(it.id)}
-                    colFilters={colFilters} onColFilter={onColFilter} onClearColFilters={clearColFilters} />
+                    colFilters={colFilters} onColFilter={onColFilter} onClearColFilters={clearColFilters}
+                    favOnly={favOnly} onFavFilter={setFavOnly}
+                    colorFilter={colorFilter} onColorFilter={setColorFilter} colorsInUse={colorsInUse} />
         ) : filtered.length === 0 ? (
           <div className="rd-empty">No reels match these filters.</div>
         ) : (

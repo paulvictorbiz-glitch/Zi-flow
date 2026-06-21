@@ -52,6 +52,12 @@ function reelFromDb(row) {
     statusColor: status_color ?? undefined,
     scheduledPostDate: scheduled_post_date ?? undefined,
     gamifyDifficulty: gamify_difficulty ?? {},
+    // Planable final-video reference. There is no reels.media_path column —
+    // it lives inside the `detail` jsonb — so re-surface it as a top-level
+    // field on read, the shape detail.jsx reads (stored?.mediaPath) and the
+    // planable-push server reads (suggest.js item.mediaPath).
+    mediaPath: rest.detail?.mediaPath ?? undefined,
+    mediaTarget: rest.detail?.mediaTarget ?? undefined,
   };
 }
 function reelToDb(reel) {
@@ -141,12 +147,14 @@ function reelDnaFromDb(row) {
           external_ref, reel_id, archived_at, deleted_at, location,
           created_at, updated_at,
           media_status, source_url_resolved, media_error, analyzed_at,
-          asset_manifest, pacing,
+          asset_manifest, pacing, row_color,
           ...rest } = row;
-  // format / narrative / progress are same-name (snake==camel) → pass through ...rest.
+  // format / narrative / progress / favorite are same-name (snake==camel) → pass
+  // through ...rest. row_color is the only camel↔snake remap here.
   return {
     ...rest,
     reelUrl: reel_url,
+    rowColor: row_color ?? undefined,
     genesOfInterest: genes_of_interest ?? [],
     quickNotes: quick_notes ?? undefined,
     capturedBy: captured_by ?? undefined,
@@ -177,7 +185,8 @@ function reelDnaToDb(item) {
           reelId, archivedAt, deletedAt, location, id, platform, status, source,
           music, hook, font, story, sfx, contentType,
           format, mediaStatus, sourceUrlResolved, narrative, progress,
-          mediaError, analyzedAt, assetManifest, pacing, timeline } = item;
+          mediaError, analyzedAt, assetManifest, pacing, timeline,
+          rowColor, favorite } = item;
   const out = { id, platform, status, source, music, hook, font, story, sfx,
     reel_url: reelUrl,
     genes_of_interest: genesOfInterest ?? [],
@@ -207,6 +216,11 @@ function reelDnaToDb(item) {
   if (assetManifest !== undefined)     out.asset_manifest = assetManifest;
   if (pacing !== undefined)            out.pacing = pacing;
   if (timeline !== undefined)          out.timeline = timeline;
+  // Spreadsheet row tagging (migration 0089): color tag + favorite star.
+  // Conditional-emit so a capture-form insert keeps the DB defaults
+  // (row_color NULL, favorite false) instead of writing them explicitly.
+  if (rowColor !== undefined)          out.row_color = rowColor;
+  if (favorite !== undefined)          out.favorite = favorite;
   return out;
 }
 
@@ -1371,6 +1385,19 @@ async function persistUpdateReel(state, id, patch) {
   if ("archivedAt" in patch)  { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
   if ("parentId" in patch)    { dbPatch.parent_id = patch.parentId; delete dbPatch.parentId; }
   if ("gamifyDifficulty" in patch) { dbPatch.gamify_difficulty = patch.gamifyDifficulty; delete dbPatch.gamifyDifficulty; }
+  // Planable final-video reference (mediaPath/mediaTarget) has no reels column —
+  // fold it into the existing `detail` jsonb (read-modify-write off the current
+  // reel) so it persists across reloads, and strip the top-level keys so
+  // PostgREST never sees an unknown column. reelFromDb re-surfaces them on read.
+  if ("mediaPath" in patch || "mediaTarget" in patch) {
+    const cur = (isCard ? state.reviewLaneCards : state.reels).find(r => r.id === id) || {};
+    const nextDetail = { ...(cur.detail || {}) };
+    if ("mediaPath" in patch)   nextDetail.mediaPath = patch.mediaPath;
+    if ("mediaTarget" in patch) nextDetail.mediaTarget = patch.mediaTarget;
+    dbPatch.detail = nextDetail;
+    delete dbPatch.mediaPath;
+    delete dbPatch.mediaTarget;
+  }
   // Keep `lane` in sync when owner changes — board derives column as lane || owner,
   // so a stale lane from a prior board drag would otherwise override the new owner.
   if ("owner" in patch && !("lane" in patch)) { dbPatch.lane = patch.owner; }
@@ -1469,6 +1496,9 @@ async function persistUpdateReelDna(id, patch) {
   // Reel DNA Phase 1 — asset_manifest (H3) remaps; pacing (H4) is same-name and
   // passes through {...patch} untouched (jsonb).
   if ("assetManifest" in patch)     { dbPatch.asset_manifest = patch.assetManifest; delete dbPatch.assetManifest; }
+  // Spreadsheet row tagging (migration 0089) — rowColor remaps; favorite is
+  // same-name and passes through {...patch} untouched.
+  if ("rowColor" in patch)          { dbPatch.row_color = patch.rowColor; delete dbPatch.rowColor; }
   const { error } = await supabase.from("reel_dna").update(dbPatch).eq("id", id);
   if (error) throw error;
 }

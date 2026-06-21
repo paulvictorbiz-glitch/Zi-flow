@@ -4,29 +4,30 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Lean-FootageBrain (WS1–WS4) executed + SHIPPED LIVE.** Ran the `lean-footagebrain` workflow, verified, committed (`2a7cd95`), pushed `origin/main`, deployed `vercel --prod` → `dpl_8iNqY7QVDyVxcqx7NC2rx3zzwWH5` → www.footagebrain.com (prod 200-verified). One site, no subdomain — Direction B realized.
-- **WS1** gates secondary/heavy tabs off editable roles' DEFAULT nav (`permissions-catalog.js` `LEAN_HIDDEN`: editor, lossless, export, analytics, inbox, locations, coverage, generate; Resources stays; owner unaffected, re-enableable in admin).
-- **WS2** code-splits heavy pages (lazy chunks confirmed in build — old single 1.3 MB `index` → many lazy chunks incl. `monitor-hub` 110 kB) + owner-only "Prefetch heavy tabs" toggle (`app.jsx`, `PreferencesModal.jsx`, `vite.config.js`).
-- **WS3** role-gates the store's secondary fetches + 2 realtime channels behind `isOwner` (`store.jsx`).
-- **WS4** web-vitals perf telemetry: `perf-tracker.js` (one keepalive sample/session, silent-degrade) + `main.jsx` + owner Monitor perf card (`monitor-hub.jsx`) + migration `0086_perf_samples` (apply human-gated).
-- Verified pre-ship: build-green (8.08s), per-role Playwright smoke (owner sees Monitor + Analytics, HTTP 200, zero boot page errors), static WS1 gating confirmed from diff.
+- Built **Reel DNA spreadsheet row tagging**: per-row ☆ favorite star + 8-tone color dot (My Work-style) that **tints the whole row**; persists via new `row_color`/`favorite` columns (migration 0089).
+- Added **star filter + color filter** in that column's heading; **removed the Source & Type columns**; added an inline-editable **Notes** column after Story / Pacing.
+- Fixed two UX bugs: the header color filter never showed (gated on "colors in use" → made always-on) and the popover was clipped by the table's `overflow-x` / a transformed ancestor → fixed via a **React portal to `document.body`**.
+- Mid-session the editor reverted `reel-dna.jsx` + `store.jsx`; re-applied both. All build-green.
+- Wrapped up; committing **only this session's files**. Deploy method still to be decided because the tree also carries unrelated Planable WIP.
 
 ## Where we left off
-Lean overhaul is **live on prod** and serving 200. The working tree is clean (everything committed + pushed). The only outstanding piece is the human-gated DB migration that backs WS4 telemetry.
+Reel DNA row-tagging feature is **code-complete and builds clean**, verified live on the dev server (localhost:8003). It is **not committed or deployed yet**, and migration **0089 is not applied** — so star/color toggles update optimistically but won't persist until 0089 runs.
 
 ## Open blockers
-- None. (The Playwright smoke's reviewer-leg is blocked by the pre-existing `GamifyWelcomePopup` `gf-overlay`, not a lean regression — owner-side invariants + error-clean boot validated the ship.)
+- None functional. The one decision pending: how to deploy without shipping the unrelated dirty Planable WIP in the tree (full-tree vs isolated — see Pending).
 
 ## Pending (written but not yet live)
-- **Migration `0086_perf_samples.sql` not yet applied** to prod Supabase (human-gated). Until applied, the WS4 Monitor perf card shows no data and the perf-tracker's one insert/session silently no-ops (by design). Apply via `/update-migrations` or paste into the Supabase SQL editor.
+- **Migration `0089_reel_dna_row_color_favorite.sql`** — NOT applied (human-gated). Required before star/color persist.
+- **Deploy** — this session's Reel DNA changes are not on prod. `vercel --prod` builds the WHOLE tree, which also contains Planable WIP (`api/ai/suggest.js`, `api/ai/_planable.js`, `src/pages/export-view.jsx`, `src/pages/detail.jsx`, migs 0087/0088). Reconcile before deploying.
+- Planable follow-ups from prior session (two-step media attach, final-video upload pipeline) — unchanged, still pending.
 
 ## Next session — start here
-1. **Apply migration `0086_perf_samples`** to prod Supabase to light up the WS4 Monitor perf card (then confirm rows arrive after a few real sessions).
-2. Optionally eyeball the live lean nav as a non-owner editor (confirm the leaner default tab set feels right; re-enable any tab per-role in admin if the team needs it).
-3. Resume any parked threads (Reel DNA Phase 1 deploy, render worker Phase 1 Hetzner build, /space LOCAL items) per their memory files.
+1. Apply migration 0089, then deploy the Reel DNA row-tagging changes (decide full-tree vs isolated given the Planable WIP) and verify star/color persist on prod.
+2. Optional: decide whether the Notes column should preserve `key=value` tag portions of legacy IG-DM `quickNotes` instead of overwriting raw.
+3. Resume Planable media/upload follow-ups if desired.
 
 ## Verification commands (to confirm current state on resume)
-- `git -C "c:\Users\Mi\Downloads\ziflow project-final" log --oneline -3` → top should be `2a7cd95 perf(lean): make dashboard lean…`
-- `git -C "c:\Users\Mi\Downloads\ziflow project-final" status --short` → should be clean
-- `curl -s -o /dev/null -w "%{http_code}\n" https://www.footagebrain.com/` → `200`
-- Migration status: open Supabase SQL editor → `select to_regclass('public.perf_samples');` → non-null once `0086` is applied (null = still pending).
+- `git status --short` — confirm which files are staged/dirty.
+- `git log --oneline -5` — confirm the session commit landed.
+- In the app: Reel DNA → Grid → leftmost column shows ☆ + color dot per row; heading has star + color filters; Notes column present; Source/Type gone.
+- Supabase: check `reel_dna` has `row_color` + `favorite` columns (confirms 0089 applied).

@@ -4,6 +4,48 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-21 — Reel DNA spreadsheet: row star + color tag, Notes column, dropped Source/Type
+
+**What changed:** The Reel DNA Grid (spreadsheet) gained a **leftmost row-tagging column**: a ☆ **favorite star** and a My-Work-style **8-tone color dot** per row (cyan/violet/green/amber/red/blue/orange/pink) that **tints the whole row**. That column's **heading** carries a **star filter** and a **color filter** so the owner can narrow the sheet to starred or color-coded rows. The **Source** and **Type** columns were removed and a new inline-editable **Notes** column (bound to `quickNotes`) was added after Story / Pacing.
+
+**Where:** `src/pages/reel-dna.jsx` (palette `RD_ROW_TONES`/`RD_TONE_COLOR` + `rdRowTint`; `RowColorDot`, `RowMarkCell`, `StarFilterButton`, `ColorFilterDot`, shared `useColorPopover` hook; header/colfilter/body rewires); `src/store/store.jsx` (`reelDnaFromDb`/`reelDnaToDb`/`persistUpdateReelDna` map `row_color`↔`rowColor` + pass-through `favorite`); `src/components/reel-dna-comprehensive.jsx` (favOnly/colorFilter state + filtering, passes to DnaTable); `src/lib/reel-dna-filters.jsx` (new `notes` text column); new `supabase/migrations/0089_reel_dna_row_color_favorite.sql` (`row_color TEXT` + `favorite BOOLEAN` — **NOT applied**).
+
+**Path we took:** followed the established row-color convention (resources/locations `row_color` + My Work's `TaskColorDot` 8-tone picker), storing the **tone NAME** in `row_color` so the whole row could tint via `color-mix(... 14%, transparent)`. Iterated on owner feedback: switched the native hex picker → 8-tone popover, put star left / color right, moved both filters into the column heading. Mid-session the editor **reverted reel-dna.jsx + store.jsx** (companion files kept their edits → nothing rendered) — re-applied both from the reverted-to-original baseline.
+
+**What we learned:** (1) The header color-filter must **always render** (not gate on "colors in use") or it never appears before any row is colored — and persistence is blocked until 0089 is applied, so colors never stick on reload, so the gate hid it permanently. (2) A popover inside the spreadsheet was clipped first by `.rd-table-wrap`'s `overflow-x: auto`, and `position: fixed` **still** got clipped because a transformed/sticky ancestor established a containing block — the bulletproof fix is a **React portal to `document.body`** + fixed coords from `getBoundingClientRect`, with the outside-click handler checking BOTH the trigger wrap AND the portaled panel (else a swatch click counts as outside and closes before it lands). (3) The Notes column edits raw `quickNotes`; for legacy IG-DM rows whose notes still hold `key=value` tags, overwriting is visible-not-silent but could clear the parsed Location/Music columns — flagged to owner.
+
+**Status:** **Written + build-green, NOT deployed.** Pending: apply migration 0089 (human-gated) before star/color persist; `vercel --prod`.
+
+---
+
+## 2026-06-21 — Push to Planable from the Export tab — SHIPPED LIVE
+
+**What changed:** The Export tab can now **push selected posted reels to Planable as scheduled DRAFT posts** (one click, per platform), instead of only downloading a CSV. Built the plan → generated a 3-team workflow → ran it → then validated against the live Planable API and **deployed**. Caption + schedule + (when available) video go up as a Planable draft the owner publishes/approves manually.
+
+**Where:** new `api/ai/_planable.js` (helper — all Planable specifics in labelled constants, draft-only, media fallback, AbortController); `api/ai/suggest.js` (`?action=planable-push` + `?action=planable-config`, owner-gated, before the line-586 unknown-action guard); `src/pages/export-view.jsx` (multi-select + platform selector + owner-only Push + **mandatory preview** + per-reel status; CSV unchanged); new `supabase/migrations/0087_planable_pushes.sql` (audit+idempotency table, render_jobs-style RLS — **APPLIED**). Deploy **`dpl_Dd9RGGqy5MvpUqoMzpTHSyofYuDX`** → www.footagebrain.com. Plan `is-there-a-way-polished-robin.md`; workflow `.claude/workflows/push-to-planable.js`.
+
+**Path we took:** qa-verified plan → `/workflow-file-creation` (3 disjoint-ownership teams: DB / API / UI + integration architect + adversarial QA + build gate) → ran the workflow (build green). Then did the human-gated setup myself (owner authorized "do the rest"): hit the **live Planable API** with the owner's token to discover the real spec (the helper had been built against `// CONFIRM` placeholders), patched the constants, ran a **create+delete calibration draft** to prove the never-publish guarantee, applied **only** 0087 (single-file `exec_sql` + `schema_migrations` upsert — not the all-or-nothing `migrate:apply`, which would have swept the unready 0086), wrote `app_settings.planable_config`, set `PLANABLE_API_TOKEN` in `.env.local` + Vercel (prod+dev), build-gated, pre-deploy clean-tree check, `vercel --prod`.
+
+**What we learned:** (1) Planable's real API: base `https://api.planable.io/api/v1`, Bearer, OpenAPI at `/openapi.json`; `POST /posts` targets by **`pageId`** (NO `platform` field — sending one 400s), caption=`text`, schedule=`scheduledAt`, and **`publishAtScheduledDate:false` = never auto-publish** (the draft lands `status:"default", published:false` — verified). (2) **The owner's workspace is SHARED** ("Nikky Kho", `FrTsAB5SQq4F82kWM`) and contains *both* the owner's accounts and another person's — exactly the cross-posting hazard; the server-side **page-ID allow-list** (`config.pages[platform]`, only the owner's 6 page IDs, rejects raw/unmapped ids) is the wall, plus the mandatory preview. (3) **Media attach is a TWO-STEP, ASYNC flow** — a raw external URL on `POST /posts` did NOT attach (stayed `no-media` for minutes); the reliable path is `POST /media`(workspaceId, mediaUrls) → poll the library until `status:"success"` (Planable downloads to its own CDN) → `POST /posts` with **Planable's CDN URL**. This means the **shipped helper's single-URL media path won't reliably attach video and needs a follow-up fix.** (4) Because ingest is async, a "delete the source after push" design must be **confirmation-gated** (wait for Planable `success`), never a fixed timer.
+
+**Status:** **LIVE** (`dpl_Dd9RGGqy5MvpUqoMzpTHSyofYuDX`; migration 0087 APPLIED; token + config set). **Caption/text posting is ready.** **Follow-ups (not yet done):** (a) owner browser end-to-end test (push UI is behind owner login); (b) **fix video attach to the two-step `/media` flow** in `_planable.js`/`suggest.js`; (c) the final-video upload pipeline (below) is **design-only, not built**.
+
+---
+
+## 2026-06-21 — Final-video upload + transient-storage pipeline — DESIGN ONLY (not built)
+
+**What changed:** Nothing in code. Design/architecture discussion: today a pipeline reel only has *link* fields (`attachUrl` "Current reel state", `inspo`) and **no clear "final video" attachment**; the app is 100% link-based (only location photos ever upload to Supabase Storage). Decided the approach for getting externally-edited finals (Premiere/CapCut) to Planable.
+
+**Where:** discussion only — touches future `src/pages/detail.jsx` (clarify the field), a new Supabase `reel-videos` bucket, the two-step push, and a cleanup cron.
+
+**Path we took:** mapped current attachment fields (Explore), answered storage questions (finished reels ~30–150 MB each → ~1.5 GB/mo; raw footage balloons — wrong tool for Supabase), and the owner chose: **upload external MP4 → Supabase `reel-videos` bucket (link field on detail page) → push → auto-delete after Planable ingests → fall back to Hetzner near ~80% Supabase capacity.**
+
+**What we learned:** the transient-bucket idea is feasible AND the safe-delete trigger is **"after Planable confirms ingest"** (async, can take minutes) — confirmed by live testing. The architecture is ~4 parts: upload UI + bucket, the two-step push fix, a **cron** completion+cleanup worker (async ingest exceeds a serverless timeout, so finalize+delete out-of-band, matching the render/ig-sync fire-and-forget pattern), and a later capacity guard.
+
+**Status:** **DESIGN ONLY — not built.** Build approach (workflow vs direct/phased) + cron location (Vercel vs Hetzner) were being decided when the session wrapped.
+
+---
+
 ## 2026-06-21 — Lean-FootageBrain executed + shipped (WS1–WS4) — LIVE
 
 **What changed:** Ran the `lean-footagebrain` workflow and **deployed** the result. The dashboard now opens lean on the core workflow: secondary/heavy tabs are gated off editable roles' default nav, heavy pages are code-split (lazy chunks), the store's secondary fetches + 2 realtime channels are role-gated behind `isOwner`, and a web-vitals perf collector feeds an owner Monitor card. One site, no subdomain — Direction B realized.
