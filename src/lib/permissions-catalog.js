@@ -117,6 +117,18 @@ export function defaultPermsForRole(roleKey) {
   views.ai       = false; // AI Brain — owner only
   views.scout    = false; // MicroSaaS radar — owner only
 
+  /* A1 LEAN DEFAULT — gate the secondary/heavy tabs off the editable roles'
+     default nav so the dashboard opens lean on the core workflow. Resources
+     stays visible (shared link sheet). Owner is unaffected (god-mode, not
+     configured here); DEMO_VIEWS is a separate fail-closed surface and is
+     left untouched. The owner can re-enable any of these per-role or
+     per-person in the admin — this only moves the DEFAULT. */
+  const LEAN_HIDDEN = [
+    "editor", "lossless", "export", "analytics",
+    "inbox", "locations", "coverage", "generate",
+  ];
+  for (const v of LEAN_HIDDEN) views[v] = false;
+
   const actions = {};
   for (const a of ACTION_CAPS) actions[a.key] = true;
   actions.deleteReel = false;

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-21T09:10:34.572Z",
+  "generated": "2026-06-21T11:07:41.472Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -344,6 +344,10 @@
     {
       "version": "0084_daily_tasks_color.sql",
       "checksum": "8a689660c98502e5e1957ca0110917edcd777a24505228e715488464d15d7727"
+    },
+    {
+      "version": "0086_perf_samples.sql",
+      "checksum": "c482595b73a7241c2155a0d46acc14ccaadeafcc7a72ed8c2ead85559842d1ab"
     }
   ]
 }

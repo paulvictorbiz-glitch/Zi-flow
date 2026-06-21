@@ -4,26 +4,65 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { DPill } from "./components/components.jsx";
 import { ROLES } from "./lib/shared-data.jsx";
 import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
+/* ---- EAGER core pages (primary flow — never code-split so it never
+   flashes a Suspense fallback). ---- */
 import { MyWork } from "./pages/my-work.jsx";
 import { Pipeline } from "./pages/pipeline.jsx";
-import { ListView } from "./pages/list-view.jsx";
-import { CalendarView } from "./pages/calendar-view.jsx";
 import { ReelDetail } from "./pages/detail.jsx";
-import { ExportView } from "./pages/export-view.jsx";
 import { FootageLibrary } from "./pages/footage-library.jsx";
-import { Analytics } from "./pages/analytics.jsx";
+import { ReelDna } from "./pages/reel-dna.jsx";
+/* ---- LAZY peripheral pages (code-split — each loads on first open, or is
+   warmed on idle when the owner enables the "Prefetch heavy tabs" pref).
+   These pages all use NAMED exports, so we map the named export to `default`
+   (React.lazy requires a module with a default export). The import() factories
+   are hoisted to module scope (LAZY_IMPORTERS) so B3 prefetch reuses the exact
+   same chunk factories — no duplicate chunks. ---- */
+const importMonitorHub   = () => import("./pages/monitor-hub.jsx");
+const importAnalytics    = () => import("./pages/analytics.jsx");
+const importInbox        = () => import("./pages/inbox.jsx");
+const importTraining     = () => import("./pages/training.jsx");
+const importVideoEditor  = () => import("./pages/editor.jsx");
+const importLosslessCut  = () => import("./pages/lossless.jsx");
+const importIdeaGenerator= () => import("./pages/idea-generator.jsx");
+const importLocations    = () => import("./pages/locations.jsx");
+const importCoverage     = () => import("./pages/coverage.jsx");
+const importResources    = () => import("./pages/resources.jsx");
+const importActivity     = () => import("./pages/activity.jsx");
+const importRolesAdmin   = () => import("./pages/roles-admin.jsx");
+const importExportView   = () => import("./pages/export-view.jsx");
+const importArchivedView = () => import("./pages/archived-view.jsx");
+const importCalendarView = () => import("./pages/calendar-view.jsx");
+const importListView     = () => import("./pages/list-view.jsx");
+const importTeamChat     = () => import("./pages/team-chat.jsx");
+// Used by B3 prefetch: warm every heavy chunk on idle. Same factories as below.
+const LAZY_IMPORTERS = [
+  importMonitorHub, importAnalytics, importInbox, importTraining,
+  importVideoEditor, importLosslessCut, importIdeaGenerator, importLocations,
+  importCoverage, importResources, importActivity, importRolesAdmin,
+  importExportView, importArchivedView, importCalendarView, importListView,
+  importTeamChat,
+];
+const MonitorHub   = React.lazy(() => importMonitorHub().then((m)   => ({ default: m.MonitorHub })));
+const Analytics    = React.lazy(() => importAnalytics().then((m)    => ({ default: m.Analytics })));
+const Inbox        = React.lazy(() => importInbox().then((m)        => ({ default: m.Inbox })));
+const Training     = React.lazy(() => importTraining().then((m)     => ({ default: m.Training })));
+const VideoEditor  = React.lazy(() => importVideoEditor().then((m)  => ({ default: m.VideoEditor })));
+const LosslessCut  = React.lazy(() => importLosslessCut().then((m)  => ({ default: m.LosslessCut })));
+const IdeaGenerator= React.lazy(() => importIdeaGenerator().then((m)=> ({ default: m.IdeaGenerator })));
+const Locations    = React.lazy(() => importLocations().then((m)    => ({ default: m.Locations })));
+const Coverage     = React.lazy(() => importCoverage().then((m)     => ({ default: m.Coverage })));
+const Resources    = React.lazy(() => importResources().then((m)    => ({ default: m.Resources })));
+const Activity     = React.lazy(() => importActivity().then((m)     => ({ default: m.Activity })));
+const RolesAdmin   = React.lazy(() => importRolesAdmin().then((m)   => ({ default: m.RolesAdmin })));
+const ExportView   = React.lazy(() => importExportView().then((m)   => ({ default: m.ExportView })));
+const ArchivedView = React.lazy(() => importArchivedView().then((m) => ({ default: m.ArchivedView })));
+const CalendarView = React.lazy(() => importCalendarView().then((m) => ({ default: m.CalendarView })));
+const ListView     = React.lazy(() => importListView().then((m)     => ({ default: m.ListView })));
+const TeamChat     = React.lazy(() => importTeamChat().then((m)     => ({ default: m.TeamChat })));
 import { CreateFab } from "./components/fab.jsx";
 import { AuthProvider, AuthGate, IdentityGate, useAuth } from "./auth.jsx";
 import { TimeProvider } from "./lib/time.jsx";
-import { ArchivedView } from "./pages/archived-view.jsx";
-import { Locations } from "./pages/locations.jsx";
-import { Coverage } from "./pages/coverage.jsx";
-import { IdeaGenerator } from "./pages/idea-generator.jsx";
-import { Activity } from "./pages/activity.jsx";
-import { Resources } from "./pages/resources.jsx";
-import { Training } from "./pages/training.jsx";
 import { MODULE_BY_SKILL } from "./lib/training-curriculum.jsx";
-import { VideoEditor } from "./pages/editor.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider } from "./components/notifications.jsx";
 import { PermissionsProvider, usePermissions, useIsOwner, ownsReviewQueue } from "./lib/permissions.jsx";
@@ -31,14 +70,19 @@ import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import GamifyWelcomePopup from "./components/GamifyWelcomePopup.jsx";
 import { ThemeProvider } from "./lib/theme.jsx";
 import { PreferencesModal } from "./components/PreferencesModal.jsx";
-import { RolesAdmin } from "./pages/roles-admin.jsx";
-import { Inbox } from "./pages/inbox.jsx";
-import { TeamChat } from "./pages/team-chat.jsx";
-import { LosslessCut } from "./pages/lossless.jsx";
-import { MonitorHub } from "./pages/monitor-hub.jsx";
-import { ReelDna } from "./pages/reel-dna.jsx";
 import { extractUrl } from "./lib/reel-dna.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
+
+/* Lightweight fallback shown while a code-split (lazy) page chunk loads. Mirrors
+   the app's existing "loading…" idiom (mono dim text) — intentionally minimal so
+   it never blocks paint and matches the store's "loading workflow…" treatment. */
+function ViewFallback() {
+  return (
+    <div className="mono dim" style={{ padding: "48px 24px", opacity: 0.7 }}>
+      loading…
+    </div>
+  );
+}
 
 /* External feedback form for demo testers. Create a Google Form / Tally form
    and paste its URL here (or set VITE_FEEDBACK_FORM_URL in the env). When empty,
@@ -95,7 +139,7 @@ const DEFAULT_TAB_GROUPS = [
 
 function AppShell() {
   const { person: me, signOut } = useAuth();
-  const { reels } = useWorkflow();
+  const { reels, prefetchHeavyTabs } = useWorkflow();
   const { peopleById, peopleList } = useRoster();
   const { canView, setEffectiveRole, setEffectivePersonId } = usePermissions();
   // Real-role owner flag (NOT the previewed perspective) — drives owner-only
@@ -128,6 +172,39 @@ function AppShell() {
   const [capturePrefill, setCapturePrefill] = useState(null);   // Reel DNA share-target/bookmarklet
   const [autoCompare, setAutoCompare]     = useState(false);   // ?compare=1 deep-link
   const searchRef                       = useRef(null);
+
+  /* B3 PREFETCH — owner-only warming of the code-split heavy tabs. When the
+     owner enables the "Prefetch heavy tabs" pref, warm every lazy chunk on idle
+     so the first click on a peripheral tab is instant (no fallback flash). Uses
+     the SAME import() factories as the React.lazy wrappers above (LAZY_IMPORTERS),
+     so no extra/duplicate chunks are produced. Editors (non-owners) never enter
+     this branch — they get pure on-demand loading, totally unaffected. When the
+     flag is false, chunks load lazily on first click as normal. */
+  useEffect(() => {
+    if (!isOwner || !prefetchHeavyTabs) return;
+    let cancelled = false;
+    const warm = () => {
+      if (cancelled) return;
+      // Fire-and-forget; failures are harmless (the real lazy load retries).
+      LAZY_IMPORTERS.forEach((load) => { try { load(); } catch (_) {} });
+    };
+    const ric = typeof window !== "undefined" && window.requestIdleCallback;
+    let handle;
+    if (ric) {
+      handle = window.requestIdleCallback(warm, { timeout: 4000 });
+    } else {
+      // Fallback for browsers without requestIdleCallback (e.g. Safari).
+      handle = setTimeout(warm, 1200);
+    }
+    return () => {
+      cancelled = true;
+      if (ric && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(handle);
+      } else {
+        clearTimeout(handle);
+      }
+    };
+  }, [isOwner, prefetchHeavyTabs]);
 
   /* Close perspective dropdown on outside click */
   useEffect(() => {
@@ -669,32 +746,38 @@ function AppShell() {
         </div>
       )}
 
-      {/* Body */}
-      {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} onNavigate={goView} onSetPerson={setRole} />}
-      {view === "pipeline"  && pipelineMode === "board"    && <Pipeline    onOpen={openReel} />}
-      {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
-      {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
-      {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
-      {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} openCompare={autoCompare} onCompareMounted={() => setAutoCompare(false)} />}
-      {view === "footage"   && <FootageLibrary onOpen={openReel} />}
-      {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
-      {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}
-      {view === "export"    && <ExportView onOpen={openReel} />}
-      {view === "analytics" && <Analytics />}
-      {view === "inbox"     && <Inbox />}
+      {/* Body — ONE Suspense boundary wraps the whole view-switch cascade so any
+          code-split (lazy) peripheral page shows the lightweight ViewFallback
+          while its chunk loads. The eager core pages (MyWork/Pipeline/ReelDetail/
+          FootageLibrary/ReelDna) resolve synchronously and never trip it. The
+          always-mounted TeamChat is lazy too, so it lives inside the boundary. */}
+      <React.Suspense fallback={<ViewFallback />}>
+        {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} onNavigate={goView} onSetPerson={setRole} />}
+        {view === "pipeline"  && pipelineMode === "board"    && <Pipeline    onOpen={openReel} />}
+        {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
+        {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
+        {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
+        {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} openCompare={autoCompare} onCompareMounted={() => setAutoCompare(false)} />}
+        {view === "footage"   && <FootageLibrary onOpen={openReel} />}
+        {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
+        {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}
+        {view === "export"    && <ExportView onOpen={openReel} />}
+        {view === "analytics" && <Analytics />}
+        {view === "inbox"     && <Inbox />}
 
-      {view === "locations" && <Locations />}
-      {view === "coverage"  && <Coverage />}
-      {view === "generate"  && <IdeaGenerator />}
-      {view === "reeldna"   && <ReelDna prefill={capturePrefill} />}
-      {view === "training"  && <Training onOpen={openReel} personId={shownPerson?.id} focusModule={focusModule} onFocusConsumed={() => setFocusModule(null)} />}
-      {view === "activity"  && <Activity />}
-      {view === "resources" && <Resources />}
-      {view === "monitor"   && isOwner && <MonitorHub canView={canView} />}
-      {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
+        {view === "locations" && <Locations />}
+        {view === "coverage"  && <Coverage />}
+        {view === "generate"  && <IdeaGenerator />}
+        {view === "reeldna"   && <ReelDna prefill={capturePrefill} />}
+        {view === "training"  && <Training onOpen={openReel} personId={shownPerson?.id} focusModule={focusModule} onFocusConsumed={() => setFocusModule(null)} />}
+        {view === "activity"  && <Activity />}
+        {view === "resources" && <Resources />}
+        {view === "monitor"   && isOwner && <MonitorHub canView={canView} />}
+        {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
 
-      {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}
-      <TeamChat active={view === "team"} />
+        {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}
+        <TeamChat active={view === "team"} />
+      </React.Suspense>
 
       {/* Global create FAB */}
       <CreateFab />

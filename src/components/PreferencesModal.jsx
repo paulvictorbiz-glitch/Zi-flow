@@ -10,9 +10,16 @@ import React from "react";
 import { Modal, Field, SegRow } from "./modals/Modal.jsx";
 import { DPill } from "./components.jsx";
 import { useTheme } from "../lib/theme.jsx";
+import { useWorkflow } from "../store/store.jsx";
+import { useIsOwner } from "../lib/permissions.jsx";
 
 export function PreferencesModal({ onClose }) {
   const { theme, fontScale, font, setTheme, setFontScale, setFont, reset } = useTheme();
+  // Owner-only performance pref. `prefetchHeavyTabs` / `setPrefetchHeavyTabs`
+  // are the frozen TEAM_C store contract (user_preferences-backed); we only
+  // consume them here — editors never see this row.
+  const isOwner = useIsOwner();
+  const { prefetchHeavyTabs, setPrefetchHeavyTabs } = useWorkflow();
 
   return (
     <Modal
@@ -64,6 +71,22 @@ export function PreferencesModal({ onClose }) {
           ]}
         />
       </Field>
+
+      {isOwner && (
+        <Field
+          label="Prefetch heavy tabs"
+          hint="warm the heavier tabs (Monitor, Analytics, Editor, …) on idle so they open instantly — costs a little extra background download"
+        >
+          <SegRow
+            value={prefetchHeavyTabs ? "on" : "off"}
+            onChange={(v) => setPrefetchHeavyTabs(v === "on")}
+            options={[
+              { k: "off", l: "Off" },
+              { k: "on",  l: "On" },
+            ]}
+          />
+        </Field>
+      )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
         <DPill onClick={reset}>Reset to default</DPill>

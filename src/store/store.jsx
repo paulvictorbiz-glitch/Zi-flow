@@ -1127,6 +1127,10 @@ function workflowReducer(state, action) {
     case "SET_HIDDEN_LANE_IDS":
       return { ...state, hiddenLaneIds: action.ids || [] };
 
+    /* ----- Owner-only "Prefetch heavy tabs" pref (per-user, persisted to user_preferences) ----- */
+    case "SET_PREFETCH_HEAVY_TABS":
+      return { ...state, prefetchHeavyTabs: !!action.next };
+
     case "TOGGLE_LANE_HIDDEN": {
       const has = state.hiddenLaneIds.includes(action.laneId);
       return { ...state, hiddenLaneIds: has
@@ -1727,6 +1731,7 @@ const INITIAL_STATE = {
   moduleContent: {},           // { [moduleId]: { [fieldPath]: value } } — owner training-content overrides
   collapsedReelIds: [],        // reel IDs the current user has collapsed on the pipeline board
   hiddenLaneIds: [],           // lane/person IDs the current user has hidden on the pipeline board
+  prefetchHeavyTabs: false,    // owner pref: eagerly prefetch the code-split heavy tabs (per-user, user_preferences)
   loaded: false,
   error: null,
 };
@@ -1825,81 +1830,13 @@ function WorkflowProvider({ children }) {
             console.warn("reel_dna not available (run migration 0044?):", e?.message || e);
           }
 
-          /* Thumbnail DNA — degrades to [] until migration 0063. Windowed. */
-          try {
-            const thumbnailRes = await supabase
-              .from("thumbnail_dna").select("*")
-              .is("deleted_at", null)
-              .order("created_at", { ascending: false })
-              .limit(RECENT_WINDOW);
-            if (thumbnailRes.error) throw thumbnailRes.error;
-            if (!cancelled) dispatch({ type: "SET_THUMBNAIL_DNA", items: (thumbnailRes.data || []).map(thumbnailFromDb) });
-          } catch (e) {
-            console.warn("thumbnail_dna not available (run migration 0063?):", e?.message || e);
-          }
-
-          /* Pulse Monitor events — the chattiest grower. Degrades to [] until
-             migration 0059. Windowed by BOTH a 90-day gate and a row cap, per
-             the frozen index contract (monitor_events_created_idx). */
-          try {
-            const monitorRes = await supabase
-              .from("monitor_events").select("*")
-              .gte("created_at", monitorEventsSince())
-              .order("created_at", { ascending: false })
-              .limit(MONITOR_EVENTS_WINDOW);
-            if (monitorRes.error) throw monitorRes.error;
-            if (!cancelled) dispatch({ type: "SET_MONITOR_EVENTS", items: (monitorRes.data || []).map(monitorEventFromDb) });
-          } catch (e) {
-            console.warn("monitor_events not available (run migration 0059?)", e?.message || e);
-          }
-
-          /* IG DM sync runs (migration 0073) — already capped at 50. */
-          try {
-            const igRunsRes = await supabase
-              .from("ig_sync_runs").select("*")
-              .order("started_at", { ascending: false })
-              .limit(50);
-            if (igRunsRes.error) throw igRunsRes.error;
-            if (!cancelled) dispatch({ type: "SET_IG_SYNC_RUNS", items: (igRunsRes.data || []).map(igSyncRunFromDb) });
-          } catch (e) {
-            console.warn("ig_sync_runs not available (run migration 0073?)", e?.message || e);
-          }
-
-          /* IG DM ingest log (migration 0074) — already capped at 200. */
-          try {
-            const igLogRes = await supabase
-              .from("ig_ingest_log").select("*")
-              .order("occurred_at", { ascending: false })
-              .limit(200);
-            if (igLogRes.error) throw igLogRes.error;
-            if (!cancelled) dispatch({ type: "SET_IG_INGEST_LOG", items: (igLogRes.data || []).map(igIngestLogFromDb) });
-          } catch (e) {
-            console.warn("ig_ingest_log not available (run migration 0074?)", e?.message || e);
-          }
-
-          /* Pulse Monitor sources (migration 0060) — owner-curated, small; no
-             window needed (a handful of feed rows). */
-          try {
-            const sourcesRes = await supabase
-              .from("monitor_sources").select("*")
-              .order("created_at", { ascending: true });
-            if (sourcesRes.error) throw sourcesRes.error;
-            if (!cancelled) dispatch({ type: "SET_MONITOR_SOURCES", items: (sourcesRes.data || []).map(monitorSourceFromDb) });
-          } catch (e) {
-            console.warn("monitor_sources not available (run migration 0060?)", e?.message || e);
-          }
-
-          /* Monitor event links (migration 0065) — windowed. */
-          try {
-            const linksRes = await supabase
-              .from("monitor_event_links").select("*")
-              .order("created_at", { ascending: false })
-              .limit(RECENT_WINDOW);
-            if (linksRes.error) throw linksRes.error;
-            if (!cancelled) dispatch({ type: "SET_EVENT_LINKS", items: (linksRes.data || []).map(eventLinkFromDb) });
-          } catch (e) {
-            console.warn("monitor_event_links not available (run migration 0065?)", e?.message || e);
-          }
+          /* OWNER-ONLY secondary tables (thumbnail_dna, monitor_events,
+             ig_sync_runs, ig_ingest_log, monitor_sources, monitor_event_links)
+             are loaded by their OWN auth-keyed effect (see "Owner-only secondary
+             hydration" below) so editors skip those queries entirely. Moved out
+             of this all-roles IIFE to role-gate them; FAIL-OPEN until role
+             resolves. The reel_dna_assets fetch below stays here — it backs the
+             lean editor tabs for every role. */
 
           /* Reel DNA assets (migration 0067) — windowed. */
           try {
@@ -1985,6 +1922,110 @@ function WorkflowProvider({ children }) {
     return () => { cancelled = true; };
   }, []);
 
+  /* WS3 role gate — is the signed-in person the owner? FAIL-OPEN: when the
+     auth person hasn't resolved yet (role unknown), treat as owner so the
+     owner-only secondary fetches/realtime still run and boot is never bricked;
+     the optimization (editors skip these queries) kicks in once role resolves
+     to a non-owner. Mirrors the auth-person-keyed pattern of CLAUDE.md rule #6. */
+  const _ownerKnown = !!_authPerson?.id;
+  /* Match the UI's owner-equivalent treatment (permissions.jsx isOwnerRole /
+     app.jsx useIsOwner): reviewer Leroy Crosby (id 'maya') is UI-permitted to
+     open the Monitor hub, so the store must run the same owner-only secondary
+     fetches + realtime channels for him — otherwise he sees empty data with no
+     live updates once his role resolves to 'reviewer' (fail-closed regression). */
+  const _isOwner =
+    !_ownerKnown ||
+    _authPerson?.role === "owner" ||
+    _authPerson?.id === "maya";
+
+  /* Owner-only secondary hydration (WS3 C1) — monitor_events, monitor_sources,
+     monitor_event_links, ig_sync_runs, ig_ingest_log, thumbnail_dna. Editors
+     skip these queries entirely. Keyed on the resolved auth person so it re-runs
+     once role is known (fail-open: runs while role is unknown). Every block keeps
+     its own missing-table try/catch degrade-to-[]. */
+  React.useEffect(() => {
+    if (!_isOwner) return;
+    let cancelled = false;
+    (async () => {
+      /* Thumbnail DNA — degrades to [] until migration 0063. Windowed. */
+      try {
+        const thumbnailRes = await supabase
+          .from("thumbnail_dna").select("*")
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(RECENT_WINDOW);
+        if (thumbnailRes.error) throw thumbnailRes.error;
+        if (!cancelled) dispatch({ type: "SET_THUMBNAIL_DNA", items: (thumbnailRes.data || []).map(thumbnailFromDb) });
+      } catch (e) {
+        console.warn("thumbnail_dna not available (run migration 0063?):", e?.message || e);
+      }
+
+      /* Pulse Monitor events — the chattiest grower. Degrades to [] until
+         migration 0059. Windowed by BOTH a 90-day gate and a row cap, per
+         the frozen index contract (monitor_events_created_idx). */
+      try {
+        const monitorRes = await supabase
+          .from("monitor_events").select("*")
+          .gte("created_at", monitorEventsSince())
+          .order("created_at", { ascending: false })
+          .limit(MONITOR_EVENTS_WINDOW);
+        if (monitorRes.error) throw monitorRes.error;
+        if (!cancelled) dispatch({ type: "SET_MONITOR_EVENTS", items: (monitorRes.data || []).map(monitorEventFromDb) });
+      } catch (e) {
+        console.warn("monitor_events not available (run migration 0059?)", e?.message || e);
+      }
+
+      /* IG DM sync runs (migration 0073) — already capped at 50. */
+      try {
+        const igRunsRes = await supabase
+          .from("ig_sync_runs").select("*")
+          .order("started_at", { ascending: false })
+          .limit(50);
+        if (igRunsRes.error) throw igRunsRes.error;
+        if (!cancelled) dispatch({ type: "SET_IG_SYNC_RUNS", items: (igRunsRes.data || []).map(igSyncRunFromDb) });
+      } catch (e) {
+        console.warn("ig_sync_runs not available (run migration 0073?)", e?.message || e);
+      }
+
+      /* IG DM ingest log (migration 0074) — already capped at 200. */
+      try {
+        const igLogRes = await supabase
+          .from("ig_ingest_log").select("*")
+          .order("occurred_at", { ascending: false })
+          .limit(200);
+        if (igLogRes.error) throw igLogRes.error;
+        if (!cancelled) dispatch({ type: "SET_IG_INGEST_LOG", items: (igLogRes.data || []).map(igIngestLogFromDb) });
+      } catch (e) {
+        console.warn("ig_ingest_log not available (run migration 0074?)", e?.message || e);
+      }
+
+      /* Pulse Monitor sources (migration 0060) — owner-curated, small; no
+         window needed (a handful of feed rows). */
+      try {
+        const sourcesRes = await supabase
+          .from("monitor_sources").select("*")
+          .order("created_at", { ascending: true });
+        if (sourcesRes.error) throw sourcesRes.error;
+        if (!cancelled) dispatch({ type: "SET_MONITOR_SOURCES", items: (sourcesRes.data || []).map(monitorSourceFromDb) });
+      } catch (e) {
+        console.warn("monitor_sources not available (run migration 0060?)", e?.message || e);
+      }
+
+      /* Monitor event links (migration 0065) — windowed. */
+      try {
+        const linksRes = await supabase
+          .from("monitor_event_links").select("*")
+          .order("created_at", { ascending: false })
+          .limit(RECENT_WINDOW);
+        if (linksRes.error) throw linksRes.error;
+        if (!cancelled) dispatch({ type: "SET_EVENT_LINKS", items: (linksRes.data || []).map(eventLinkFromDb) });
+      } catch (e) {
+        console.warn("monitor_event_links not available (run migration 0065?)", e?.message || e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [_isOwner]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* Per-user preferences (pipeline collapse state, hidden lanes).
      Fired separately so auth must be resolved first — depends on _authPerson.id.
      Degrades gracefully if migration 0070 hasn't been applied yet. */
@@ -1995,12 +2036,14 @@ function WorkflowProvider({ children }) {
         const { data } = await supabase
           .from("user_preferences").select("key, value")
           .eq("person_id", _authPerson.id)
-          .in("key", ["pipeline_collapsed", "pipeline_hidden_lanes"]);
+          .in("key", ["pipeline_collapsed", "pipeline_hidden_lanes", "prefetch_heavy_tabs"]);
         for (const row of (data || [])) {
           if (row.key === "pipeline_collapsed")
             dispatch({ type: "SET_COLLAPSED_REEL_IDS", ids: row.value?.ids || [] });
           if (row.key === "pipeline_hidden_lanes")
             dispatch({ type: "SET_HIDDEN_LANE_IDS", ids: row.value?.ids || [] });
+          if (row.key === "prefetch_heavy_tabs")
+            dispatch({ type: "SET_PREFETCH_HEAVY_TABS", next: !!row.value?.enabled });
         }
       } catch (e) {
         console.warn("user_preferences not available (run migration 0070?):", e?.message || e);
@@ -2210,7 +2253,7 @@ function WorkflowProvider({ children }) {
        not workflow-realtime, which carries every other tab's live updates.
        Wrapped in try/catch in case the channel constructor itself throws. */
     let monitorChannel = null;
-    try {
+    if (_isOwner) try {
       monitorChannel = supabase
         .channel("monitor-events-realtime")
         .on("postgres_changes",
@@ -2292,7 +2335,7 @@ function WorkflowProvider({ children }) {
        (migrations 0073/0074 not yet applied) only kills its own realtime — not
        workflow-realtime. Mirrors the monitor-events-realtime pattern above. */
     let igSyncChannel = null;
-    try {
+    if (_isOwner) try {
       igSyncChannel = supabase
         .channel("ig-sync-realtime")
         .on("postgres_changes",
@@ -2333,7 +2376,7 @@ function WorkflowProvider({ children }) {
       if (reelDnaAssetsChannel) { try { supabase.removeChannel(reelDnaAssetsChannel); } catch (_) {} }
       if (igSyncChannel) { try { supabase.removeChannel(igSyncChannel); } catch (_) {} }
     };
-  }, [state.loaded, _isDemo, queueRtOp]);
+  }, [state.loaded, _isDemo, queueRtOp, _isOwner]);
 
   // Helper: dispatch locally, then persist. If persist fails,
   // log and surface — local state stays optimistic.
@@ -2418,6 +2461,7 @@ function WorkflowProvider({ children }) {
     moduleContent: state.moduleContent,
     collapsedReelIds: state.collapsedReelIds,
     hiddenLaneIds: state.hiddenLaneIds,
+    prefetchHeavyTabs: state.prefetchHeavyTabs,
     /* Is this reel locked to its editor? (gamify on + work started or graded).
        UI uses this to disable assign controls / show an owner confirm. */
     isReelLocked: (reelId) => {
@@ -3793,6 +3837,19 @@ function WorkflowProvider({ children }) {
           { person_id: _authPerson.id, key: "pipeline_hidden_lanes", value: { ids: next }, updated_at: new Date().toISOString() },
           { onConflict: "person_id,key" }
         ).then(({ error }) => { if (error) console.error("lane hidden persist failed:", error); });
+      },
+
+      /* WS2 C4 — owner pref "Prefetch heavy tabs". Per-user, persisted to
+         user_preferences (key prefetch_heavy_tabs), mirroring toggleReelCollapsed.
+         Consumed by TEAM_B's code-split prefetch in app.jsx. */
+      setPrefetchHeavyTabs: (next) => {
+        const enabled = !!next;
+        dispatch({ type: "SET_PREFETCH_HEAVY_TABS", next: enabled });
+        if (isDemoMode() || !_authPerson?.id) return;
+        supabase.from("user_preferences").upsert(
+          { person_id: _authPerson.id, key: "prefetch_heavy_tabs", value: { enabled }, updated_at: new Date().toISOString() },
+          { onConflict: "person_id,key" }
+        ).then(({ error }) => { if (error) console.error("prefetch_heavy_tabs persist failed:", error); });
       },
 
       /* Editor self-assessment: store the set of checked sub-item ids for

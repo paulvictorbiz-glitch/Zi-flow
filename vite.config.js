@@ -17,6 +17,36 @@ export default defineConfig({
   optimizeDeps: {
     include: ["three", "@react-three/fiber", "@react-three/drei", "@react-three/postprocessing", "postprocessing"],
   },
+  // B2 VENDOR SPLIT — pull the two obvious heavy vendor groups into their own
+  // chunks so they only download when a page that uses them is opened (the 3D
+  // stack is only on the lazy landing + owner-only /space route; the Maps SDK
+  // only on Locations/Coverage). Path-prefix matching on node_modules is
+  // resolution-agnostic, so this is chunking-only and can't break the build.
+  // Anything not matched falls through to Rollup's default chunking. No
+  // charting lib is in the dependency set, so none is split.
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (
+            id.includes("/three/") ||
+            id.includes("/@react-three/") ||
+            id.includes("/postprocessing/")
+          ) {
+            return "vendor-three";
+          }
+          if (
+            id.includes("/@vis.gl/react-google-maps/") ||
+            id.includes("/@googlemaps/")
+          ) {
+            return "vendor-maps";
+          }
+          return undefined;
+        },
+      },
+    },
+  },
   server: {
     port: 8000,
     open: "/index.html",
