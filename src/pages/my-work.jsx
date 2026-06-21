@@ -140,6 +140,85 @@ function MyWork({ role, personId, onOpen, onNavigate, onSetPerson }) {
 /* Tasks & Comms — daily task list per person             */
 /* ─────────────────────────────────────────────────────── */
 
+// 8-tone palette for daily-task color tagging — mirrors the reel-card / list-view
+// picker so colors read the same across the app.
+const TASK_TONES = ["cyan", "violet", "green", "amber", "red", "blue", "orange", "pink"];
+const TASK_TONE_COLOR = {
+  cyan:   "var(--c-cyan)",   violet: "var(--c-violet)",
+  green:  "var(--c-green)",  amber:  "var(--c-amber)",
+  red:    "var(--c-red)",    blue:   "var(--c-blue)",
+  orange: "var(--c-orange)", pink:   "var(--c-pink)",
+};
+
+/* Small colored-dot button + popover palette for tagging a task with a color.
+   Owner-only (disabled for others, who still see the color if one is set). */
+function TaskColorDot({ task, onPick, disabled = false }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = React.useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  // Nothing to show for a non-owner on an uncolored task.
+  if (disabled && !task.color) return null;
+  const current = task.color ? TASK_TONE_COLOR[task.color] : null;
+
+  return (
+    <span ref={wrapRef} style={{ position: "relative", display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => { if (!disabled) setOpen(o => !o); }}
+        title={disabled ? (task.color || "") : "Set task color"}
+        style={{
+          width: 12, height: 12, borderRadius: "50%", padding: 0, marginTop: 3,
+          cursor: disabled ? "default" : "pointer",
+          background: current || "transparent",
+          border: current ? "1px solid rgba(255,255,255,0.25)" : "1px dashed var(--fg-dim)",
+        }}
+      />
+      {open && (
+        <span
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: "absolute", top: 18, left: 0, zIndex: 50,
+            background: "var(--bg-2, #1e2433)", border: "1px solid var(--line-hard)",
+            borderRadius: 6, padding: "6px 8px", display: "flex", gap: 5, flexWrap: "wrap",
+            width: 132, boxShadow: "0 6px 20px rgba(0,0,0,0.5)",
+          }}
+        >
+          {TASK_TONES.map(t => (
+            <span
+              key={t}
+              onClick={() => { onPick(t); setOpen(false); }}
+              title={t}
+              style={{
+                width: 16, height: 16, borderRadius: "50%", cursor: "pointer",
+                background: TASK_TONE_COLOR[t],
+                border: task.color === t ? "2px solid #fff" : "2px solid transparent",
+              }}
+            />
+          ))}
+          {task.color && (
+            <span
+              onClick={() => { onPick(null); setOpen(false); }}
+              title="Clear color"
+              style={{
+                width: 16, height: 16, borderRadius: "50%", cursor: "pointer",
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                border: "1px solid var(--fg-dim)", color: "var(--fg-mute)", fontSize: 11, lineHeight: 1,
+              }}
+            >×</span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function TaskRow({
   task, isOwner, onComplete, onDelete, onUpdate,
   draggableTask = false, dragId = null, isOver = false,
@@ -212,6 +291,8 @@ function TaskRow({
       style={{
         display: "flex", flexDirection: "column", gap: 0,
         borderBottom: "1px solid var(--line-soft, var(--line-hard))",
+        borderLeft: task.color ? `3px solid ${TASK_TONE_COLOR[task.color] || "transparent"}` : "3px solid transparent",
+        paddingLeft: 6,
         opacity: dragId === task.id ? 0.4 : 1,
       }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0" }}>
@@ -237,6 +318,12 @@ function TaskRow({
           checked={!!task.completed}
           onChange={e => onComplete(task.id, e.target.checked)}
           style={{ marginTop: 3, cursor: "pointer", accentColor: "var(--c-ok, #22c55e)", flexShrink: 0 }}
+        />
+
+        <TaskColorDot
+          task={task}
+          onPick={c => onUpdate(task.id, { color: c })}
+          disabled={!isOwner}
         />
 
         <button

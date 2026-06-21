@@ -22,9 +22,6 @@ const SEARCH_MODES = [
   { key: "semantic",   label: "Semantic",   hint: "meaning + visual concepts" },
   { key: "keyword",    label: "Keyword",    hint: "exact transcript terms" },
   { key: "hybrid",     label: "Hybrid",     hint: "semantic + keyword" },
-  { key: "visual",     label: "Visual",     hint: "CLIP frame embeddings (what's on screen)" },
-  { key: "caption",    label: "Caption",    hint: "VLM-generated frame captions" },
-  { key: "multimodal", label: "Multimodal", hint: "fused: transcript + CLIP + captions" },
   { key: "filename",   label: "Filename",   hint: "match by file name — type to search" },
   { key: "folders",    label: "Folders",    hint: "browse clips by folder" },
 ];
@@ -36,9 +33,14 @@ function folderAbsPath(rootPath, relPath) {
   return rootPath.replace(/[\\/]+$/, "") + sep + relPath;
 }
 
-export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = [] }) {
+export function FootageBrainSearch({
+  reelId, onAttach, onClose, attachedIds = [],
+  // Optional deep-link: open straight into a folder browse (used by the
+  // "📁 folder" link on attached clips → jump to all that country's clips).
+  initialMode = "semantic", initialFolder = "", initialFolderLabel = "",
+}) {
   const [query, setQuery] = useState("");
-  const [mode, setMode]   = useState("semantic");
+  const [mode, setMode]   = useState(initialMode || "semantic");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -50,7 +52,12 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
   // Folder-browse mode
   const [folders, setFolders] = useState([]);
   const [foldersLoading, setFoldersLoading] = useState(false);
-  const [selectedFolder, setSelectedFolder] = useState("");
+  const [selectedFolder, setSelectedFolder] = useState(initialFolder || "");
+  // Type-to-filter combobox for the folder list.
+  const [folderQuery, setFolderQuery] = useState(initialFolderLabel || "");
+  const [folderListOpen, setFolderListOpen] = useState(false);
+  const folderBoxRef = useRef(null);
+  const didInitFolder = useRef(false);
   const debounceRef = useRef(null);
 
   // Tracks whether a mousedown began on the backdrop itself. The modal then
@@ -109,8 +116,10 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
     } finally { setLoading(false); }
   };
 
-  const handleFolderSelect = async (absFolder) => {
+  const handleFolderSelect = async (absFolder, label = "") => {
     setSelectedFolder(absFolder);
+    if (label) setFolderQuery(label);
+    setFolderListOpen(false);
     if (!absFolder) { setResults([]); setError(null); return; }
     setLoading(true); setError(null);
     try {
@@ -121,6 +130,36 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
       setError("Folder load failed: " + (e.message || String(e))); setResults([]);
     } finally { setLoading(false); }
   };
+
+  // Deep-link: if opened with a folder (the 📁 link on an attached clip),
+  // jump straight to that folder's clips once, on mount.
+  useEffect(() => {
+    if (didInitFolder.current || !initialFolder) return;
+    didInitFolder.current = true;
+    handleFolderSelect(initialFolder, initialFolderLabel);
+  }, [initialFolder]);
+
+  // Close the folder combobox list when clicking outside it.
+  useEffect(() => {
+    if (!folderListOpen) return;
+    const onDown = (e) => {
+      if (folderBoxRef.current && !folderBoxRef.current.contains(e.target)) {
+        setFolderListOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [folderListOpen]);
+
+  // Folders filtered by the type-to-search box (label or root substring).
+  const filteredFolders = (() => {
+    const q = folderQuery.trim().toLowerCase();
+    if (!q) return folders;
+    return folders.filter(f =>
+      (f.label || "").toLowerCase().includes(q) ||
+      (f.root  || "").toLowerCase().includes(q)
+    );
+  })();
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -293,26 +332,60 @@ export function FootageBrainSearch({ reelId, onAttach, onClose, attachedIds = []
             </div>
           </div>
           {mode === "folders" ? (
-            <select
-              value={selectedFolder}
-              onChange={(e) => handleFolderSelect(e.target.value)}
-              disabled={!footageBrainOnline || foldersLoading}
-              style={{
-                width: "100%", padding: "10px 12px",
-                border: "1px solid var(--border)", borderRadius: "4px",
-                backgroundColor: "var(--bg-input)", color: "var(--fg)",
-                fontSize: 14, fontFamily: "inherit",
-              }}
-            >
-              <option value="">
-                {foldersLoading ? "Loading folders…" : "Select a folder to browse…"}
-              </option>
-              {folders.map((f, i) => (
-                <option key={i} value={f.absFolder}>
-                  {f.label} ({f.count}) — {f.root}
-                </option>
-              ))}
-            </select>
+            <div ref={folderBoxRef} style={{ position: "relative" }}>
+              <input
+                type="text"
+                value={folderQuery}
+                onChange={(e) => { setFolderQuery(e.target.value); setFolderListOpen(true); }}
+                onFocus={() => setFolderListOpen(true)}
+                disabled={!footageBrainOnline || foldersLoading}
+                placeholder={foldersLoading ? "Loading folders…" : "Type to filter folders — e.g. 'Norway', 'Taiwan'…"}
+                style={{
+                  width: "100%", padding: "10px 12px",
+                  border: "1px solid var(--border)", borderRadius: "4px",
+                  backgroundColor: "var(--bg-input)", color: "var(--fg)",
+                  fontSize: 14, fontFamily: "inherit", boxSizing: "border-box",
+                }}
+              />
+              {folderListOpen && !foldersLoading && (
+                <div
+                  style={{
+                    position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+                    zIndex: 10, maxHeight: 260, overflowY: "auto",
+                    background: "var(--bg-card, var(--bg))",
+                    border: "1px solid var(--border)", borderRadius: 4,
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                  }}
+                >
+                  {filteredFolders.length === 0 ? (
+                    <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--fg-mute)" }}>
+                      {folders.length ? "No folders match." : "No folders available."}
+                    </div>
+                  ) : (
+                    filteredFolders.slice(0, 100).map((f, i) => (
+                      <div
+                        key={i}
+                        onClick={() => handleFolderSelect(f.absFolder, f.label)}
+                        title={f.absFolder}
+                        style={{
+                          padding: "8px 12px", fontSize: 13, cursor: "pointer",
+                          color: "var(--fg)",
+                          borderBottom: "1px solid var(--border)",
+                          background: selectedFolder === f.absFolder ? "rgba(107,214,224,0.08)" : "transparent",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(107,214,224,0.12)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = selectedFolder === f.absFolder ? "rgba(107,214,224,0.08)" : "transparent"; }}
+                      >
+                        <span style={{ fontWeight: 500 }}>{f.label}</span>
+                        <span style={{ color: "var(--fg-mute)", marginLeft: 6, fontSize: 11, fontFamily: "var(--f-mono)" }}>
+                          ({f.count}) — {f.root}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           ) : (
             <form onSubmit={handleSearch} style={{ display: "flex", gap: "8px" }}>
               <input

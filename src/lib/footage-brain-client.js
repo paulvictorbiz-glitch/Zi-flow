@@ -300,6 +300,31 @@ export function footageFolderLabel(absPath) {
 }
 
 /**
+ * Absolute path of the *country/trip folder* a clip lives in (the same segment
+ * footageFolderLabel() picks), so we can list every clip from that country via
+ * searchByFolder(). Returns the path up to and including that folder, preserving
+ * the original separator and any leading slash. Returns null if none is found.
+ *
+ * @param {string} absPath - a clip's abs_path (or source_path)
+ * @returns {string|null}
+ */
+export function footageFolderPath(absPath) {
+  if (!absPath) return null;
+  const str = String(absPath);
+  const sep = str.includes("\\") ? "\\" : "/";
+  const parts = str.split(/[\\/]+/).filter(Boolean);
+  if (parts.length < 2) return null;
+  const GENERIC = /^(\d+\s*media|dcim|media|clips|videos?|footage|\d+)$/i;
+  for (let i = parts.length - 2; i >= 1; i--) {        // walk up from the parent
+    if (GENERIC.test(parts[i])) continue;              // skip 101MEDIA / DCIM / etc.
+    let joined = parts.slice(0, i + 1).join(sep);
+    if (sep === "/" && /^[\\/]/.test(str)) joined = "/" + joined;  // keep POSIX root
+    return joined;
+  }
+  return null;
+}
+
+/**
  * Convert a Google Drive *file* link into a direct-download URL.
  *
  * Drive file links come in a few shapes:

@@ -2626,10 +2626,11 @@ function WorkflowProvider({ children }) {
       },
 
       updateDailyTask: async (id, patch) => {
-        // patch can include: { taskText, notes }
+        // patch can include: { taskText, notes, color }
         const dbPatch = {};
         if (patch.taskText !== undefined) dbPatch.task_text = patch.taskText;
         if (patch.notes     !== undefined) dbPatch.notes     = patch.notes;
+        if (patch.color     !== undefined) dbPatch.color     = patch.color;
         dispatch({ type: "UPSERT_DAILY_TASK", item: { id, ...patch } });
         if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
         await supabase.from("daily_tasks").update(dbPatch).eq("id", id).then(({ error }) => {

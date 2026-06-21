@@ -9,11 +9,10 @@ import React, { useState } from "react";
 import {
   footageBrainThumbnailUrl,
   footageFolderLabel,
+  footageFolderPath,
   getFootageTranscript,
-  tagFootage,
 } from "../lib/footage-brain-client.js";
 import { supabase } from "../lib/supabase-client.js";
-import { useWorkflow } from "../store/store.jsx";
 
 /* Seconds → "M:SS" for transcript timecodes (e.g. 75 → "1:15"). */
 function fmtTime(sec) {
@@ -72,7 +71,7 @@ export function VisionTagChips({ tags, onTagClick = null, max = null, style = {}
   );
 }
 
-export function AttachedFootageList({ items, onRemove, canRemove = true, beatTitleByItemId = {} }) {
+export function AttachedFootageList({ items, onRemove, canRemove = true, beatTitleByItemId = {}, onOpenFolder = null }) {
   if (!items || items.length === 0) {
     return (
       <div
@@ -104,6 +103,7 @@ export function AttachedFootageList({ items, onRemove, canRemove = true, beatTit
           onRemove={() => onRemove(item.id)}
           canRemove={canRemove}
           beatTitle={beatTitleByItemId[item.id] || null}
+          onOpenFolder={onOpenFolder}
         />
       ))}
     </div>
@@ -113,36 +113,20 @@ export function AttachedFootageList({ items, onRemove, canRemove = true, beatTit
 /**
  * Individual attached footage item
  */
-function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitle = null }) {
-  const { actions } = useWorkflow();
+function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitle = null, onOpenFolder = null }) {
   const durationText = item.duration_seconds
     ? `${item.duration_seconds.toFixed(1)}s`
     : "?";
   const folder = footageFolderLabel(item.source_path);
+  // The country/trip folder this clip lives in — used to jump to all of that
+  // country's clips when the 📁 chip is clicked.
+  const folderPath = footageFolderPath(item.source_path);
+  const folderClickable = !!(onOpenFolder && folderPath);
   // Per-file Drive link, falling back to the clip's Drive folder.
   const driveLink = item.drive_url || item.drive_folder_url || null;
 
-  /* Vision tagging — analyze the thumbnail with a free OpenRouter vision model
-     and persist structured tags across every attachment of this clip. */
-  const [tagging, setTagging] = useState(false);
-  const [tagError, setTagError] = useState(null);
+  // Pre-existing vision tags (from earlier analysis) are still shown read-only.
   const hasTags = flattenVisionTags(item.vision_tags).length > 0;
-
-  const handleAnalyze = async () => {
-    if (tagging) return;
-    if (!item.footage_file_id) { setTagError("No clip id to tag"); return; }
-    if (!item.thumbnail_url) { setTagError("No thumbnail to analyze"); return; }
-    setTagging(true);
-    setTagError(null);
-    try {
-      const tags = await tagFootage(item.footage_file_id, item.thumbnail_url, item.filename);
-      actions.setFootageTags(item.footage_file_id, tags);
-    } catch (e) {
-      setTagError(e.message || "Analysis failed");
-    } finally {
-      setTagging(false);
-    }
-  };
 
   /* In-app transcript viewer (no video download). Collapsed by default.
      On first expand: use item.full_transcript if already cached (migration
@@ -184,16 +168,6 @@ function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitl
     } finally {
       setTLoading(false);
     }
-  };
-
-  const openPreview = () => {
-    // Prefer the Drive link — it's the reliably-viewable asset and works in
-    // production. Fall back to the local Footage Brain file page for dev only.
-    if (driveLink) {
-      window.open(driveLink, "_blank", "noopener,noreferrer");
-      return;
-    }
-    window.open(`http://localhost:8765/files/${item.footage_file_id}`, "_blank");
   };
 
   return (
@@ -270,13 +244,29 @@ function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitl
           )}
           <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", flexWrap: "wrap" }}>
             {folder && (
-              <span style={{
-                fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--c-cyan, #22d3ee)",
-                border: "1px solid var(--c-cyan-soft, var(--border))", borderRadius: 8,
-                padding: "1px 7px", whiteSpace: "nowrap",
-              }}>
-                📁 {folder}
-              </span>
+              folderClickable ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenFolder(folderPath, folder)}
+                  title={`Browse all clips from ${folder}`}
+                  style={{
+                    fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--c-cyan, #22d3ee)",
+                    border: "1px solid var(--c-cyan-soft, var(--border))", borderRadius: 8,
+                    padding: "1px 7px", whiteSpace: "nowrap", cursor: "pointer",
+                    background: "transparent", textDecoration: "underline",
+                  }}
+                >
+                  📁 {folder}
+                </button>
+              ) : (
+                <span style={{
+                  fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--c-cyan, #22d3ee)",
+                  border: "1px solid var(--c-cyan-soft, var(--border))", borderRadius: 8,
+                  padding: "1px 7px", whiteSpace: "nowrap",
+                }}>
+                  📁 {folder}
+                </span>
+              )
             )}
             <span style={{ fontSize: 11, color: "var(--fg-mute)", whiteSpace: "nowrap" }}>
               ({durationText})
@@ -349,21 +339,6 @@ function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitl
             </span>
           )}
           <button
-            onClick={openPreview}
-            style={{
-              padding: "6px 12px",
-              backgroundColor: "transparent",
-              border: "1px solid var(--accent)",
-              color: "var(--accent)",
-              borderRadius: "3px",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 500,
-            }}
-          >
-            📺 Preview
-          </button>
-          <button
             onClick={toggleTranscript}
             title="Read this clip's transcript in-app (no download)"
             style={{
@@ -378,24 +353,6 @@ function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitl
             }}
           >
             📄 Transcript {showTranscript ? "▴" : "▾"}
-          </button>
-          <button
-            onClick={handleAnalyze}
-            disabled={tagging}
-            title="Analyze the thumbnail with a vision model and tag what's on screen"
-            style={{
-              padding: "6px 12px",
-              backgroundColor: "transparent",
-              border: "1px solid var(--c-violet, #a78bfa)",
-              color: "var(--c-violet, #a78bfa)",
-              borderRadius: "3px",
-              cursor: tagging ? "wait" : "pointer",
-              fontSize: 11,
-              fontWeight: 500,
-              opacity: tagging ? 0.6 : 1,
-            }}
-          >
-            {tagging ? "🔍 Analyzing…" : hasTags ? "🔍 Re-analyze" : "🔍 Analyze"}
           </button>
           {/* Removal is owner-configurable — editors with `removeFootage` off
               don't see this button at all. */}
@@ -418,12 +375,7 @@ function AttachedFootageItem({ index, item, onRemove, canRemove = true, beatTitl
           )}
         </div>
 
-        {/* Vision tags + any analysis error. */}
-        {tagError && (
-          <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--fg-warn)" }}>
-            {tagError}
-          </div>
-        )}
+        {/* Pre-existing vision tags (read-only). */}
         {hasTags && (
           <VisionTagChips tags={item.vision_tags} style={{ marginTop: 8 }} />
         )}

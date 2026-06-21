@@ -385,6 +385,14 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
 
   /* Footage Brain search modal state */
   const [searchModalOpen, setSearchModalOpen] = useState(false);
+  // When set, the Footage search modal opens straight into a folder browse
+  // (clicked the 📁 link on an attached clip → all of that country's clips).
+  const [folderToBrowse, setFolderToBrowse] = useState(null);
+  const handleOpenFolder = (path, label) => {
+    setFolderToBrowse({ path, label });
+    setSearchModalOpen(true);
+  };
+  const closeSearchModal = () => { setSearchModalOpen(false); setFolderToBrowse(null); };
 
   /* Get attached footage for this reel from store */
   const { attachedFootage } = useWorkflow();
@@ -839,8 +847,11 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
         <FootageBrainSearch
           reelId={current.id}
           onAttach={handleAttachFootage}
-          onClose={() => setSearchModalOpen(false)}
+          onClose={closeSearchModal}
           attachedIds={reelAttachedFootage.map(f => f.footage_file_id)}
+          initialMode={folderToBrowse ? "folders" : "semantic"}
+          initialFolder={folderToBrowse?.path || ""}
+          initialFolderLabel={folderToBrowse?.label || ""}
         />
       )}
 
@@ -915,6 +926,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
               onRemove={handleRemoveFootage}
               canRemove={canRemoveFootage}
               beatTitleByItemId={beatTitleByItemId}
+              onOpenFolder={canAttach ? handleOpenFolder : null}
             />
             {canAttach && (
               <div style={{ marginTop: 10 }}>
