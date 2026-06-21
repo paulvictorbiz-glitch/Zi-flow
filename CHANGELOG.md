@@ -4,6 +4,104 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-21 — Lean-FootageBrain plan + workflow file + "Master Save Point #1" tag (planning/tooling — no app code)
+
+**What changed:** Decided how to make the dashboard **lean WITHOUT a second website**, produced a layered plan, generated a runnable multi-agent workflow to execute it, and marked the current live version as a named, restorable rollback point. No `src/` code shipped this session.
+
+**Where:** plan `C:/Users/Mi/.claude/plans/there-are-too-many-tidy-crystal.md`; new `.claude/workflows/lean-footagebrain.js` (gitignored — local tooling); annotated git tag **`master-save-point-1` → `7a95176`**; memory `master-save-point-1.md` + `project_lean-footagebrain.md` (+ MEMORY.md pointers). No application files touched.
+
+**Path we took:** Owner felt the app had too many features for the real workflow (inspiration → assets → editors → posted) and considered hosting an MVP on footagebrain.com + the full app as a hobby version on a subdomain. Three Explore agents inventoried all ~20 tabs / 33 pages, traced the core path, and mapped the hosting/deploy setup. That surfaced the key fact (below), which redirected the plan from "two sites" to **Direction B: one site, gate editor tabs + a lightness pass**: WS1 gate editor tabs to the core set (+ Team Chat, Training, Resources) in `permissions-catalog.js`; WS2 `React.lazy` the heavy pages in `app.jsx` + an owner-only "Prefetch heavy tabs" toggle; WS3 role-gate `store.jsx` secondary fetches + 2 realtime channels behind `isOwner`; WS4 `web-vitals` perf tracking on the Monitor page (new `perf-tracker.js` + migration `0086_perf_samples`). Then `/workflow-file-creation` generated a 4-team workflow (disjoint file ownership + integration architect + adversarial QA per team + whole-project build gate).
+
+**What we learned:** (1) **Hiding tabs alone changes nothing about load/traffic** — every page is a *static* import in `app.jsx` (only Landing + `/space` are lazy), and `store.jsx` fetches every table + opens 4 realtime channels regardless of role. Real lightness needs lazy-loading + role-gated boot. (2) `store.jsx` `user_preferences` is **not** a generic getter — new prefs must follow the existing `collapsedReelIds`/`toggleReelCollapsed` pattern, which is exactly the C→B `prefetchHeavyTabs`/`setPrefetchHeavyTabs` contract. (3) `.claude/` is gitignored, so the generated workflow file is **local-only** (won't commit/deploy). (4) An **annotated git tag** is the durable way to name a restore point (vs. only a SHA in memory). (5) The prior session's open blocker (Scout/Monitor isolated-deploy regression) is **resolved** by commit `7a95176`.
+
+**Status:** Planning + tooling only — NOT deployed, no migration applied. The `lean-footagebrain` workflow is ready to launch (owner will run it next session); migration `0086` + `vercel --prod` stay human-gated.
+
+---
+
+## 2026-06-21 — Scale the dashboard for ~15 concurrent users (store perf overhaul + index migration)
+
+**What changed:** Reworked the store god-module's boot + realtime path so the app stops choking at ~15 simultaneous users. Boot queries on the big growers (`reel_dna`, `thumbnail_dna`, `reel_dna_assets`, `monitor_events`, `monitor_event_links`, `attached_footage_items`, `gamify_rubric`) are now windowed/limited instead of unbounded `select("*")`; boot is progressive (the core board renders before the secondary tables hydrate) instead of an all-or-nothing gate; the chatty unfiltered realtime subscriptions were trimmed to cut cross-user re-render churn; and the whole-state context memo was narrowed. Plus a new pure-additive index migration to back the windowed queries.
+
+**Where:** `src/store/store.jsx` (565 ins / 198 del — single-file, surgical-additive), new `supabase/migrations/0080_perf_indexes.sql` (5 indexes: partial `(created_at DESC) WHERE deleted_at IS NULL` on reel_dna + thumbnail_dna; bare `(created_at DESC)` on reel_dna_assets, monitor_event_links, attached_footage_items; monitor_events already had its index from 0059). Commit `5871e05`, prod deploy `dpl_2ktBndNTNB2fpDZZQHbk2zAxRNRs`.
+
+**Path we took:** Diagnosis-first — two Explore agents mapped the data-loading + hosting layers and pinned the lag to `store.jsx` (unbounded boot selects + unfiltered realtime broadcasts fanning every poller write to all clients + a `useMemo([state])` that re-renders all consumers on any patch). Wrote a Part-3 fix roadmap to the plan file, then generated and ran a `scale-15-users-perf` workflow (2 disjoint-ownership teams — TEAM_STORE owns store.jsx, TEAM_DB owns the migration — each with a senior-architect lead + adversarial QA + a whole-project build gate). Build green. Committed only the 2 owned files (explicit staging), deployed **isolated** (stash the concurrent Scout/Monitor WIP → deploy clean main+perf → `stash pop` to restore), then applied **only** 0080 to the live DB via a throwaway one-off mirroring `migrate.mjs` `applyOne()` (the normal `migrate:apply` would have swept in the unready 0084).
+
+**What we learned:** (1) The whole perf problem lived in ONE file, so the "many parallel teams" workflow shape collapses to one owning team + serialized intra-file work — the honest decomposition is 2 teams (store + migration), not more. (2) `migrate:apply` is all-or-nothing across *all* pending migrations; to apply a single authorized file against the shared prod DB, reuse the `exec_sql` RPC + `schema_migrations` upsert for just that file. (3) **Isolated deploy has a sharp edge:** building from clean `main` ships a prod bundle WITHOUT any currently-dirty files — and the prior session had left `monitor.jsx`/`scout.jsx` Scout-quota work *live but uncommitted*, so this deploy most likely **reverted that work on prod**. Excluding uncommitted WIP is correct when it's unshipped, but dangerous when "uncommitted" actually means "live-but-never-committed" (the recurring no-clean-ref==live trap). Always check whether dirty files are already live before an isolated deploy.
+
+**Status:** Live (prod + 0080 applied). Follow-up: verify the Scout quota cards on prod and re-ship the Scout/Monitor work if the isolated deploy regressed it; regenerate the migration manifest to list 0080.
+
+---
+
+## 2026-06-21 — Editor Phase 1: in-app visual timeline → real ffmpeg render (trim/cut/crossfade)
+
+**What changed:** The Editor tab graduated from "OpenCut iframe + progress tracker" to a working in-app cut-and-render. A new **visual drag timeline** lets you assemble a reel's attached footage (reorder by dragging, trim by dragging clip edges, toggle **cut ↔ crossfade** with a duration, zoom, live total-duration), then **Render draft** submits the cut to the Hetzner worker with a live progress bar and a finished-video link that can be pushed straight into the reel's review-queue export flow. OpenCut is kept as an "advanced manual" toggle. The render worker's ffmpeg step — previously a Phase 0 passthrough that only re-encoded the first clip — now does **real Phase 1**: per-clip trim, `concat` for hard cuts, chained `xfade`/`acrossfade` for crossfades.
+
+**Where:** `src/components/editor/Timeline.jsx` + `timeline.css` (new — pointer-event drag track, exports `buildProjectJson`/`timelineTotal`) · `src/pages/editor.jsx` (Timeline⇄OpenCut toggle, `extractDriveId()`, output presets + fps, render submit/poll, "Use as export link", timeline persisted in `edit_sessions.edit_plan.timeline`) · `src/pages/editor.css` · `backend-handoff/render.py` (`_build_filtergraph` Phase 1 + `_probe_async`/`_clip_bounds`) · `api/ai/suggest.js` (added `verifyOwner` gate to `render-submit`/`render-status`). Committed `1fe26e0`; **deployed `vercel --prod` → `dpl_7KpcQmXgYZAMdynKzz8qa94qppzc`** (www.footagebrain.com).
+
+**Path we took:** Audited the half-built editor + the existing-but-dormant render pipeline (worker, `render_jobs`/`edit_collab` migs 0082/0083, and `suggest.js` render proxies all already existed; nothing drove them and the ffmpeg was a stub). Owner chose: visual drag timeline (not a simple list), Phase 1 only. Defined one `project_json` contract (`{output, tracks:[{clips:[{source_drive_id, trim_in, trim_out, transition}]}]}`) as the UI↔worker seam, built the timeline, then implemented the matching filtergraph using the xfade offset formula already documented in the stub. Caught a runtime **temporal-dead-zone crash** the owner hit ("Cannot access '$' before initialization") — the OpenCut iframe-load effect's dep array read `view` during render, but `const [view] = useState()` was declared *after* it; moved the declaration above the effect.
+
+**What we learned:** (1) A hook's **dependency array is evaluated during render**, so any `const` it references must be declared earlier — a forward-reference there is a TDZ that the build never catches and only blows up at runtime (minified to `$`). (2) The render proxies in `suggest.js` were only secret-gated, never owner-gated like the Scout proxies — closed that gap with `verifyOwner`. (3) Probe each source with `ffprobe` (async) to clamp trims to real duration and to synthesize `anullsrc` silence for audio-less clips, so `concat`/`xfade` always get a matching A/V pair. (4) The changelog said migration 0078 was pending, but the live DB showed it already applied — **trust the DB ledger over the changelog**; only 0084 was actually pending.
+
+**Status:** Frontend LIVE. The in-app timeline (assemble/trim/reorder + persistence) works now; the **Render** button will 502 until the worker is deployed — `backend-handoff/render.py` Phase 1 is written but the Hetzner build (scp-merge against the live copy + `docker compose build backend && up -d backend`) is owner-gated and **not yet done**.
+
+---
+
+## 2026-06-21 — Applied pending migration 0084 (daily_tasks.color) to live DB
+
+**What changed:** The Tasks color picker's backing column (`daily_tasks.color`) was added to the live Supabase DB. Audit had flagged migration drift where written-but-unapplied migrations could silently break features.
+
+**Where:** `supabase/migrations/0084_daily_tasks_color.sql` (applied via `/update-migrations` → `npm run migrate:apply`); `api/monitor/migrations.manifest.json` regenerated.
+
+**Path we took:** Ran the dry-run status check first. It revealed the changelog was stale: **0078 (`training_quiz_attempts`) was already applied** and `0080_reel_group_id` has no file at all — only **0084** was genuinely pending. Applied just 0084 (idempotent `ADD COLUMN IF NOT EXISTS`), verified 0 pending. Left the 3 `[CHANGED]` files (0077/0079/0081 — doc/guard edits to already-live migrations) untouched per the skill's safety rule.
+
+**What we learned:** `schema_migrations` (the live ledger) is the source of truth, not `CHANGELOG.md`/memory — both had claimed 0078 was pending when it wasn't. Always dry-run the status check before applying.
+
+**Status:** LIVE — 0 pending migrations after apply.
+
+---
+
+## 2026-06-21 — Scout: live OpenRouter quota card on Monitor → Infra (free-pull limits)
+
+**What changed:** The owner asked "how many free pulls do I get per day/per month" — there's now a **Scout** card on the Infrastructure monitor that answers it with **live** data. It auto-detects the OpenRouter tier (Free **50/day** vs Credited **1,000/day**) from the real account, shows credits used/balance, dossiers today vs the live cap, plus DB usage (dossiers this month, products tracked, new this week, last scrape) and a "Source caps" reference block (OpenRouter 20 req/min · failed calls count, Hacker News ~unlimited, GitHub Search 30 req/min, Product Hunt 6,250 pts/15-min).
+
+**Where:** `microsaas-scout` backend `app/main.py` (new secret-gated `GET /quota` → calls OpenRouter `/api/v1/key` + `/api/v1/credits`) · `api/ai/suggest.js` (new owner-gated `action=scout-quota` proxy, reuses the `asciiHeader()` guard) · `src/pages/monitor.jsx` (new `ScoutSection` + `<Card title="Scout">`, imports `scoutSupabase`). Hetzner `fb-scout` image rebuilt; Vercel `dpl_…2f6rijml5`.
+
+**Path we took:** Decided the binding free-tier constraint is the **AI dossier step** (each new product = 1 OpenRouter free-model call) — the scrape APIs sit far below their caps at one daily pull. The card first shipped as a Supabase-derived *proxy* (counting `dossiers` rows); the owner then asked for a real hookup. Built a `/quota` endpoint on the Scout backend (it holds the dossier `OPENROUTER_API_KEY`), proxied through `suggest.js`, and swapped the card's hardcoded tier for the live value. Verified the live endpoint in-container (`docker exec fb-scout python -c "httpx.get('http://localhost:8787/quota', headers={'x-scout-secret': …})"`) before shipping the frontend.
+
+**What we learned:** (1) **OpenRouter's `rate_limit` field is deprecated** — the live `/api/v1/key` response returns `{"requests": -1, "interval": "10s", "note": "deprecated and safe to ignore"}`. Guard with `requests > 0` and fall back to the documented **20/min** policy, or the card renders "−1 / 10s". (2) `is_free_tier` is the clean tier signal: `true` → 50/day, `false` (any $10+ purchase, ever) → 1,000/day — so the card auto-upgrades with zero code change if the owner adds credit. (3) Confirmed live: this key is `is_free_tier:true`, `$0.00` used → **50/day (~1,500/month)** is the real current cap.
+
+**Status:** LIVE — backend `/quota` verified returning real data; card live on www.footagebrain.com → Monitor → Infra → Scout.
+
+---
+
+## 2026-06-21 — Scout "non ISO-8859-1 code point" Headers error: full multi-layer fix
+
+**What changed:** The recurring `TypeError: Failed to execute 'set' on 'Headers': String contains non ISO-8859-1 code point` from the Scout tool is closed across **every** layer that could throw it, and the Scout Refresh button now surfaces the *real* server error instead of a false "Scraping started".
+
+**Where:** `api/ai/suggest.js` (new `asciiHeader()` helper; routes the `x-scout-secret` value through it) · `src/pages/scout.jsx` (`handleRefresh` checks `r.ok`/`status`, treats 200/202 as success, shows `Scrape failed (NNN): <error>` otherwise) · `microsaas-scout` backend `app/config.py` (new `ascii_clean()` + `_scrub_settings()` scrub of all loaded settings + the `os.environ` mirror) · `app/scrapers/base.py` (`_env()` strips/ASCII-cleans every token, covering the dirty-shell-env case). Vercel `dpl_7zwE91UX…`; Hetzner `fb-scout` rebuilt (config.py + base.py + the prior main.py `unquote`).
+
+**Path we took:** Ran `/qa-verified-plan` with 3 parallel Explore agents. The error string is thrown identically by the **browser, Node/undici, AND Python/httpx**, so it never pointed anywhere on its own. Adversarial QA killed a false lead (an agent claimed non-ASCII *JSON bodies* cause it — they don't; only header *values* do). Drove the **live Scout tab via Playwright** (`scripts/scout-inspect.mjs`, reusing the localhost:8000 dev server + saved `auth.json`) and proved the error does **not** fire browser-side — the tab loads 388 product cards, scout Supabase returns 200. Concluded the originally-diagnosed culprit was the server-side `x-scout-secret` hop (already patched prior) and hardened the one untouched layer: the Python backend's outbound `Authorization` tokens.
+
+**What we learned:** (1) **This error can ONLY come from a non-ASCII byte in an HTTP header *value*** — JSON request bodies are UTF-8 and never trigger it; that fact alone bounds the entire search space. (2) The user's console was full of **third-party-embed noise** (puter.js socket, a CSP `unsafe-eval` block, Microsoft Clarity, Rocket.Chat deprecation notices) — none was the bug; the decisive move was the red-`TypeError` stack frame, not the yellow warnings. (3) **No CSP is defined in the repo** — the `unsafe-eval` block is enforced by an embedded iframe's own policy, not FootageBrain's. (4) Centralizing the Python scrub at two chokepoints (`config.py` settings + `_env()`) covers all four call sites (store/dossier/PH/GitHub) without scattering wraps; `_env()` also catches a token set directly in the process env that bypasses the config scrub.
+
+**Status:** LIVE across all three layers (Node + Python + UI). Browser-side provably clean; recurrence on prod would now self-describe via the Refresh toast.
+
+---
+
+## 2026-06-21 — Restore 4 reverted UI fixes (Reel DNA / Footage search / Tasks color picker)
+
+**What changed:** Four previously-built UI features that were lost in an earlier tree revert are restored: (1) the **Footage Brain search "Folders" dropdown is now a type-to-filter combobox** (type "Norway"/"Taiwan" to filter, click to browse); (2) the **Multimodal / Caption / Visual search modes were removed** (left: Semantic / Keyword / Hybrid / Filename / Folders); (3) on **attached footage** the **Analyze + Preview buttons were removed** and the `📁 country` chip is now a **link that opens the search modal pre-loaded with all of that country's clips**; (4) the **My Work → Tasks & Comms 8-tone color picker** is back (colored dot + left-border row tint) with the checkmark and drag-reorder untouched. The Reel DNA "DNA overlay too tall / ✕ unreachable" report needed **no code** — the scroll/pin fix was already in the tree; it was only stale on live and shipped with this deploy.
+
+**Where:** `src/components/FootageBrainSearch.jsx` (combobox + mode removal + `initialMode`/`initialFolder` props) · `src/components/AttachedFootageList.jsx` (button removal + folder link via `onOpenFolder`) · `src/lib/footage-brain-client.js` (new `footageFolderPath()` helper) · `src/pages/detail.jsx` (folder-browse wiring) · `src/pages/my-work.jsx` (`TaskColorDot` + tone constants + row tint) · `src/store/store.jsx` (`updateDailyTask` persists `color`) · new migration `supabase/migrations/0084_daily_tasks_color.sql`. Committed `5d7a9a7`, deployed `dpl_CJ2oktPBqLLDrWbk8mEXfUHzwUjB`.
+
+**Path we took:** Ran `/qa-verified-plan` to scope all four against the actual code first. Key adversarial catch: the Reel DNA CSS (`reel-dna-view.css` `.rdv-header`/`.rdv-stage`) was *already* in its fixed state and imported — so the bug the user saw was the **un-deployed older build on live**, not a code regression (confirmed: user had only checked the live site). The other three were genuinely absent (3 mode buttons present, Analyze/Preview present, plain `<select>`, no `color` column). Built inline; `dailyTaskFromDb` needed no change (it spreads `...rest`, so `color` flows through automatically) — only `updateDailyTask`'s db-patch mapping. The folder link derives the country-folder absolute path via a new `footageFolderPath()` (mirrors `footageFolderLabel`'s skip-`DCIM`/`101MEDIA` walk) and feeds `searchByFolder()`. Build green (913 modules).
+
+**What we learned:** (1) **A "bug" that's already fixed in the tree = a deploy gap, not a code task** — reading the actual file beat trusting the report; the fix had been merged but never shipped. (2) **Deploying with a concurrent session active in the same working tree:** the Scout session had `suggest.js`/`editor.jsx`/`scout.jsx`/`monitor.jsx` + scripts dirty. Shipped cleanly by committing **only my 7 files** to `main`, then deploying from an **isolated detached `git worktree` at HEAD** (`git worktree add --detach ../fb-ship-tmp HEAD`, `cp -r .vercel` into it, `vercel --prod --yes`). Because `node_modules`/`dist` are gitignored and **Vercel builds in the cloud**, the worktree needs no `node_modules` — so no junction dance and a trivial `git worktree remove --force` teardown. The concurrent session's working dir was never touched (committing to `main` in place beats a branch switch in a shared tree). (3) `npm run build`'s `prebuild` regenerates `migrations.manifest.json` from the migrations dir — it auto-picked up 0084; left uncommitted so it doesn't entangle the Scout session's manifest edits.
+
+**Status:** LIVE on www.footagebrain.com (3 of 4 fixes fully functional). ⚠️ Migration `0084_daily_tasks_color.sql` is **written but NOT applied** — task-color picks update optimistically but won't persist across refresh until `migrate:apply` is run (human-gated; coordinate the `0084` number with the concurrent Scout session before applying).
+
+---
+
 ## 2026-06-21 — Render worker: Google Drive credentials wired + `_download_drive_file()` implemented
 
 **What changed:** The render worker can now actually download source videos from Google Drive. `_download_drive_file()` was a stub raising `NotImplementedError`; it now calls Drive API v3 via the `opencut@footage-brain-database.iam.gserviceaccount.com` service account using `google-api-python-client`. The health endpoint returns `"drive_configured": true`.

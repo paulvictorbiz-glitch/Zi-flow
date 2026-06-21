@@ -4,54 +4,38 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- Fixed the render endpoint 404 (routes had `/api/render/...` but `main.py` adds `/api` as a prefix → double prefix). Fixed via Python script on Hetzner, rebuilt.
-- Implemented `_download_drive_file()` (was a `NotImplementedError` stub) — now calls Drive API v3 via `google-api-python-client` inside `run_in_executor`.
-- Added `google-api-python-client==2.137.0` + `google-auth==2.29.0` to `requirements-hosting.txt`.
-- Set `GOOGLE_SERVICE_ACCOUNT_JSON` in Hetzner `.env` (service account `opencut@footage-brain-database.iam.gserviceaccount.com`, key file `footage-brain-database-fa569f3dc1df.json`).
-- Render worker fully live: `/api/render/health` → `{"ok":true,"drive_configured":true}`.
+- **Planning + tooling session — no app code shipped.** Owner wanted a leaner app focused on the core workflow (inspiration → assets → editors → posted) and was weighing a second website.
+- **Explored** the whole feature surface (3 Explore agents: ~20 tabs / 33 pages inventory, core-path trace, hosting/deploy map). Conclusion: a second site is unnecessary, and **hiding tabs alone won't reduce load** (all pages are static-imported into one bundle; the store fetches every table + opens 4 realtime channels regardless of role).
+- **Wrote the plan** `there-are-too-many-tidy-crystal.md` — Direction B (one site): WS1 gate editor tabs, WS2 code-split + owner "Prefetch heavy tabs" toggle, WS3 role-gate store fetches/realtime, WS4 `web-vitals` perf tracking on Monitor (migration `0086_perf_samples`).
+- **Generated the workflow** `.claude/workflows/lean-footagebrain.js` (via `/workflow-file-creation`) — 4 disjoint-ownership teams (A=permissions-catalog, B=app.jsx/PreferencesModal/vite, C=store.jsx, D=perf-tracker/main/migration/monitor-hub/package.json) + integration architect + adversarial QA per team + whole-project build gate. Syntax-verified. **Not launched.**
+- **Marked "Master Save Point #1"** — annotated git tag `master-save-point-1` → `7a95176` (current live, fully-working) + memory, as a named rollback target before the lean refactor.
 
 ## Where we left off
-The **render pipeline foundation (Phase 0) is complete and live on Hetzner**. The full path is wired: frontend submits timeline JSON → `suggest.js?action=render-submit` → Hetzner `/api/render/submit` → download Drive sources → ffmpeg → Supabase status update → HMAC-signed download URL. The ffmpeg filtergraph (`_build_filtergraph`) is still the Phase 0 passthrough stub (re-encodes first source only) — usable for smoke testing but not real production renders. Phase 1 adds trim/cut + xfade transitions.
-
-The **OpenCut fork (Phase 0 of the editor plan) has NOT been started** — it's the next major build. Until that's live at `editor.footagebrain.com`, `editor.jsx` can't be wired (the iframe currently tries to load `opencut.app` which blocks with X-Frame-Options). `editor-presence.jsx` is dead code (committed, not imported).
+Master Save Point #1 (`7a95176`) is the current live state on `main`. The lean-FootageBrain plan is approved and its workflow file is ready to run. Nothing about the app changed yet — the workflow only edits the working tree when launched, so the save point stays intact.
 
 ## Open blockers
-- `_build_filtergraph()` is a Phase 0 stub — renders only passthrough the first source. Phase 1 (trim/cut + xfade) needed for real renders.
-- OpenCut fork not started — `editor.jsx` iframe points nowhere useful until `editor.footagebrain.com` exists.
-- `editor.jsx` is dirty (modified, not committed) — `VITE_OPENCUT_URL` + `reelDnaId` prop additions were reverted by linter; re-apply once fork is live.
+- None. (The prior session's possible Scout/Monitor prod regression was **resolved** by commit `7a95176` — "restore Scout quota card + scrape-error surfacing".)
 
 ## Pending (written but not yet live)
-- `src/lib/editor-presence.jsx` — committed, imported nowhere. Wire in Phase 3 (collab). Sanitize `personName` before `.track()` when wiring.
-- `src/pages/editor.jsx` — dirty (modified uncommitted). `VITE_OPENCUT_URL` env var + `reelDnaId` prop pending fork deploy.
-- changedetection.io → Pulse bridge — APPROVED, not built. Migration 0084+ (see `project_changedetection-pulse-bridge.md`).
-- `_build_filtergraph()` Phase 1 implementation — trim/cut (concat demuxer) + xfade transitions. Local in `backend-handoff/render.py`.
+- **`lean-footagebrain` workflow** — generated, not launched. Owner will run it next session. When it finishes it edits owned files only (commits/deploys nothing).
+- **Migration `0086_perf_samples`** — will be written by the workflow (WS4); apply is HUMAN-GATED.
+- (Carried) **Hetzner render worker** (Editor Phase 1 ffmpeg) — `backend-handoff/render.py` written, NOT deployed; owner-gated.
 
 ## Next session — start here
-1. **Fork OpenCut (Phase 0 of editor plan)** — clone `opencut-app/OpenCut` (MIT), deploy to `editor.footagebrain.com` (separate Vercel project or Hetzner nginx), wire Supabase JWT bridge via `postMessage`, pass `reel_dna_id` in URL. Then update `editor.jsx` iframe src. See plan `.claude/plans/this-is-a-purely-elegant-haven.md` Phase 0.
-2. **OR: changedetection.io → Pulse bridge** — simpler, no external deploy. Memory: `project_changedetection-pulse-bridge.md`. Migration 0084 + `_changedetect.js` + `suggest.js?action=changedetect-ingest`.
-3. **Phase 1 render filtergraph** — implement `_build_filtergraph()` with trim/cut (concat demuxer) + xfade offset formula. Unit-test with 2/3/5-clip cases before any real render ships.
-
-## Notes for next session build decisions
-- **OpenCut fork deployment target**: main site is at the 12-function Vercel cap — OpenCut must be a SEPARATE Vercel project or an nginx container on Hetzner. Hetzner option avoids a second Vercel account/project.
-- **xfade offset formula**: `offset_n = Σ(clip_durations[0..n-1]) − Σ(transition_durations[0..n-1])` — this is the #1 correctness risk in Phase 1. Write unit tests before any render ships.
-- **`editor-presence.jsx` sanitization**: before calling `channel.track({ name: personName, ... })`, ensure `personName` is ASCII-safe. Supabase realtime presence broadcasts go server-side via undici; a non-ASCII name would cause the same error class as the Scout SCRAPE_SECRET bug.
-- **Google Drive scope**: service account `opencut@footage-brain-database.iam.gserviceaccount.com` needs "Viewer" access shared on the Drive folders holding source videos. If downloads fail with 403, check Drive sharing permissions.
+1. **Launch the `lean-footagebrain` workflow** (owner runs it): say "Launch the lean-footagebrain workflow", watch `/workflows`.
+2. After it completes: review diffs of the owned files, confirm `npm run build` is green with per-page chunks, smoke as an editor (lean nav, no heavy chunks/queries) and as owner (everything intact).
+3. Apply migration `0086` (human-gated), then `git status --short` clean-tree check → `vercel --prod`.
+4. (Carried) Deploy the Hetzner render worker; Editor Phase 2/3.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-# Render worker health (replace <SECRET> with REEL_DECONSTRUCT_SECRET from .env.local):
-curl -s "https://api.footagebrain.com/api/render/health?secret=<SECRET>"
-# Expected: {"ok":true,"running":0,"max_concurrent":1,"renders_dir":"/app/data/renders","drive_configured":true}
+# The save point is tagged and points at the live commit:
+git rev-list -n1 master-save-point-1          # → 7a95176bb3c468f7bf251b4a1451b3e03ec97730
+git tag -n9 -l master-save-point-1            # annotated message
 
-# Confirm render router registered (no 404 on submit):
-curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.footagebrain.com/api/render/submit?secret=<SECRET>" \
-  -H "Content-Type: application/json" -d '{"reel_dna_id":"test","project_json":{}}'
-# Expected: 400 (validation error) or 422 — NOT 404
+# The generated workflow exists (gitignored, local):
+ls ".claude/workflows/lean-footagebrain.js"
 
-# Migrations applied:
-# Check in Supabase SQL editor: SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename IN ('edit_projects','render_jobs');
-# Expected: 2 rows
-
-git status --short   # editor.jsx dirty expected; all other session files committed
-git log --oneline -5
+# Restore to the save point if ever needed:
+#   git checkout master-save-point-1  → rebuild → vercel --prod (human-gated)
 ```
