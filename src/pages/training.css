@@ -359,6 +359,30 @@
   flex-shrink: 0;
 }
 
+/* ── Additional standalone modules ────────────────────────────── */
+.tr-custom-ctrl { display: inline-flex; gap: 6px; flex-shrink: 0; }
+.tr-custom-ctrl .tb-mini-btn { padding: 2px 7px; }
+.tr-custom-ctrl .tb-mini-btn:disabled { opacity: 0.35; cursor: default; }
+.tr-custom-page {
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--line-hard);
+}
+.tr-custom-page:last-of-type { border-bottom: none; }
+.tr-custom-page .tb-label-row { align-items: center; gap: 10px; }
+.tr-custom-add {
+  margin-top: 12px;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--c-cyan);
+  background: none;
+  border: 1px dashed var(--line-hard);
+  border-radius: 7px;
+  padding: 7px 13px;
+  cursor: pointer;
+}
+.tr-custom-add:hover { border-color: var(--c-cyan-soft); }
+.tr-custom-add-section { display: block; width: 100%; text-align: center; }
+
 /* ── Rubric quick-reference (collapsible) ─────────────────────── */
 .tr-quickref { margin-top: 30px; }
 .tr-quickref-toggle {

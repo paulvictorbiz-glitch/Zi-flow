@@ -39,6 +39,15 @@ import { ModuleChapters } from "../components/training/ModuleChapters.jsx";
 import "./training.css";
 import "../components/training/training-blocks.css";
 
+/* Standalone "Additional Modules" live in the SAME training_module_content
+   JSON channel as the per-pillar overrides, under one synthetic module id +
+   key. They don't tie into progress, EXP, the pillar rail or anything else —
+   purely owner-authored extra reading. One blob: an array of
+   { id, name, pages: [{ id, title, body }] }. Zero new tables (migration 0055). */
+const CUSTOM_MODULE_ID = "__custom_sections__";
+const CUSTOM_KEY = "index";
+const rid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 9);
+
 export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
   const { person: me } = useAuth();
   const { can } = usePermissions();
@@ -374,7 +383,177 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
 
       {/* Collapsible rubric reference (replaces the old flat RUBRIC table) */}
       <RubricQuickRef onJumpToModule={jumpTo} />
+
+      {/* Owner-authored standalone modules — independent of the six pillars */}
+      <CustomSections
+        sections={resolveBlock(CUSTOM_MODULE_ID, CUSTOM_KEY, [])}
+        canEdit={canEdit}
+        onSave={(next) => setBlock(CUSTOM_MODULE_ID, CUSTOM_KEY, next)}
+      />
     </div>
+  );
+}
+
+/* ── Additional standalone modules ─────────────────────────────────
+   Owner creates extra training sections that DON'T connect to the rest of
+   the app (no progress, EXP, quizzes or pillar wiring). Each section has a
+   name and a list of manually-authored pages (title + rich body). The whole
+   list is one JSON blob persisted via the training_module_content channel;
+   the owner edits inline, everyone else sees it read-only. */
+function CustomSections({ sections, canEdit, onSave }) {
+  const [open, setOpen] = useState({});
+  const list = Array.isArray(sections) ? sections : [];
+
+  // Nothing authored yet and the viewer can't edit → render nothing.
+  if (list.length === 0 && !canEdit) return null;
+
+  const addSection = () => {
+    const sec = { id: rid("sec"), name: "New section", pages: [] };
+    onSave([...list, sec]);
+    setOpen(p => ({ ...p, [sec.id]: true }));
+  };
+  const renameSection = (id, name) =>
+    onSave(list.map(s => s.id === id ? { ...s, name } : s));
+  const deleteSection = (id) => {
+    if (!window.confirm("Delete this section and all its pages?")) return;
+    onSave(list.filter(s => s.id !== id));
+  };
+  const moveSection = (id, dir) => {
+    const i = list.findIndex(s => s.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    onSave(next);
+  };
+
+  const mapPages = (sid, fn) =>
+    onSave(list.map(s => s.id === sid ? { ...s, pages: fn(s.pages || []) } : s));
+  const addPage = (sid) =>
+    mapPages(sid, pages => [...pages, { id: rid("pg"), title: "New page", body: "" }]);
+  const editPage = (sid, pid, patch) =>
+    mapPages(sid, pages => pages.map(p => p.id === pid ? { ...p, ...patch } : p));
+  const deletePage = (sid, pid) => {
+    if (!window.confirm("Delete this page?")) return;
+    mapPages(sid, pages => pages.filter(p => p.id !== pid));
+  };
+  const movePage = (sid, pid, dir) =>
+    mapPages(sid, pages => {
+      const i = pages.findIndex(p => p.id === pid);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= pages.length) return pages;
+      const next = [...pages];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+
+  return (
+    <section className="tr-month" id="tr-section-custom">
+      <div className="tr-month-head">
+        <span className="tr-month-title">Additional Modules</span>
+        <span className="tr-month-hint">Standalone training sections — not tied to the six pillars</span>
+      </div>
+
+      {list.length === 0 && canEdit && (
+        <div className="tr-reels-empty" style={{ marginBottom: 12 }}>
+          No extra sections yet. Add one below, name it, and fill it with pages.
+        </div>
+      )}
+
+      {list.map((sec, si) => {
+        const expanded = !!open[sec.id];
+        const pages = sec.pages || [];
+        return (
+          <div className="tr-mod" key={sec.id} id={"tr-custom-" + sec.id}>
+            <div
+              className="tr-mod-head"
+              onClick={() => setOpen(p => ({ ...p, [sec.id]: !p[sec.id] }))}
+            >
+              <span className="tr-mod-title">
+                <span className="tr-mod-icon">📦</span>{" "}
+                {canEdit ? (
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <EditableText
+                      value={sec.name}
+                      canEdit
+                      placeholder="Section name"
+                      onCommit={(v) => renameSection(sec.id, v || "Untitled section")}
+                    />
+                  </span>
+                ) : (sec.name || "Untitled section")}
+              </span>
+              <span className="tr-mod-deliv">{pages.length} page{pages.length === 1 ? "" : "s"}</span>
+              {canEdit && (
+                <span className="tr-custom-ctrl" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" className="tb-mini-btn" disabled={si === 0}
+                    onClick={() => moveSection(sec.id, -1)} title="Move section up">↑</button>
+                  <button type="button" className="tb-mini-btn" disabled={si === list.length - 1}
+                    onClick={() => moveSection(sec.id, 1)} title="Move section down">↓</button>
+                  <button type="button" className="tb-mini-btn is-danger"
+                    onClick={() => deleteSection(sec.id)} title="Delete section">✕</button>
+                </span>
+              )}
+              <span className="tr-caret">{expanded ? "▾" : "▸"}</span>
+            </div>
+
+            {expanded && (
+              <div className="tr-mod-body">
+                {pages.length === 0 && !canEdit && (
+                  <span className="tr-reels-empty">No pages in this section yet.</span>
+                )}
+                {pages.map((pg, pi) => (
+                  <div className="tr-custom-page" key={pg.id}>
+                    <div className="tr-block-label tb-label-row">
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        {canEdit ? (
+                          <EditableText
+                            value={pg.title}
+                            canEdit
+                            placeholder="Page title"
+                            onCommit={(v) => editPage(sec.id, pg.id, { title: v || "Untitled page" })}
+                          />
+                        ) : (pg.title || "Untitled page")}
+                      </span>
+                      {canEdit && (
+                        <span className="tr-custom-ctrl">
+                          <button type="button" className="tb-mini-btn" disabled={pi === 0}
+                            onClick={() => movePage(sec.id, pg.id, -1)} title="Move page up">↑</button>
+                          <button type="button" className="tb-mini-btn" disabled={pi === pages.length - 1}
+                            onClick={() => movePage(sec.id, pg.id, 1)} title="Move page down">↓</button>
+                          <button type="button" className="tb-mini-btn is-danger"
+                            onClick={() => deletePage(sec.id, pg.id)} title="Delete page">✕</button>
+                        </span>
+                      )}
+                    </div>
+                    <div className="tr-prose">
+                      <EditableText
+                        value={pg.body}
+                        canEdit={canEdit}
+                        multiline
+                        linkify
+                        placeholder={canEdit ? "Click to add page content…" : ""}
+                        onCommit={(v) => editPage(sec.id, pg.id, { body: v })}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {canEdit && (
+                  <button type="button" className="tr-custom-add" onClick={() => addPage(sec.id)}>
+                    + Add page
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {canEdit && (
+        <button type="button" className="tr-custom-add tr-custom-add-section" onClick={addSection}>
+          + Add section
+        </button>
+      )}
+    </section>
   );
 }
 
