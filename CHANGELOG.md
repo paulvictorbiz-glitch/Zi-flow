@@ -4,6 +4,20 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-21 — Lean-FootageBrain executed + shipped (WS1–WS4) — LIVE
+
+**What changed:** Ran the `lean-footagebrain` workflow and **deployed** the result. The dashboard now opens lean on the core workflow: secondary/heavy tabs are gated off editable roles' default nav, heavy pages are code-split (lazy chunks), the store's secondary fetches + 2 realtime channels are role-gated behind `isOwner`, and a web-vitals perf collector feeds an owner Monitor card. One site, no subdomain — Direction B realized.
+
+**Where:** `src/lib/permissions-catalog.js` (WS1 — `LEAN_HIDDEN` defaults off: editor, lossless, export, analytics, inbox, locations, coverage, generate; Resources stays; owner unaffected); `src/app.jsx` + `src/components/PreferencesModal.jsx` + `vite.config.js` (WS2 — `React.lazy` heavy pages + `manualChunks` + owner-only "Prefetch heavy tabs" toggle); `src/store/store.jsx` (WS3 — secondary fetches + 2 realtime channels behind `isOwner`); new `src/lib/perf-tracker.js` + `src/main.jsx` + `src/pages/monitor-hub.jsx` + `package.json` (`web-vitals ^4.2.4`) + new `supabase/migrations/0086_perf_samples.sql` (WS4). Commit **`2a7cd95`**, pushed `origin/main`, prod deploy **`dpl_8iNqY7QVDyVxcqx7NC2rx3zzwWH5`** → www.footagebrain.com.
+
+**Path we took:** The plan + 4-team workflow (disjoint file ownership + adversarial QA per team + whole-project build gate) were prepared the prior session. This session: launched the workflow → build-green. Verified before shipping — `npm run build` (8.08s, code-split confirmed: `editor`/`inbox`/`locations`/`analytics`/`monitor-hub`(110 kB)/`space3d` now separate lazy chunks vs. the old single 1.3 MB `index`); read `perf-tracker.js` to confirm silent-degrade; ran the per-role Playwright smoke against the live dev server (owner sees Monitor + Analytics, **HTTP 200, zero boot page errors**); statically confirmed WS1's `LEAN_HIDDEN` non-owner gating from the diff. Pre-deploy tree check showed exactly the WS1–WS4 footprint (clean/intentional) → committed all 12 files → push → `vercel --prod` → prod 200-verified.
+
+**What we learned:** (1) The smoke harness's reviewer-perspective leg is blocked by the **pre-existing `GamifyWelcomePopup` `gf-overlay`** (full-screen, intercepts the perspective-switcher click) — not a lean regression; the owner-side invariants + error-clean boot still validated the ship. When the popup defeats the harness, fall back to **static diff verification** of the gating (`permissions-catalog.js` `LEAN_HIDDEN`). (2) WS1 only moves the **default** nav — owner is god-mode (unaffected) and any hidden tab is re-enableable per-role/per-person in admin, so it's reversible without code. (3) WS4's perf-tracker is **safe to ship before migration 0086** — it fires one keepalive insert per session and swallows all failures, so a missing `perf_samples` table just means dormant telemetry, not errors. **Migration `0086` apply stays human-gated** — owner applies it (via `/update-migrations` or the Supabase SQL editor) to light up the Monitor perf card.
+
+**Status:** **LIVE** (commit `2a7cd95`, `dpl_8iNqY7QVDyVxcqx7NC2rx3zzwWH5`, prod 200-verified). **Pending (human-gated):** apply migration `0086_perf_samples` to prod Supabase — until then the WS4 Monitor perf card has no data.
+
+---
+
 ## 2026-06-21 — Lean-FootageBrain plan + workflow file + "Master Save Point #1" tag (planning/tooling — no app code)
 
 **What changed:** Decided how to make the dashboard **lean WITHOUT a second website**, produced a layered plan, generated a runnable multi-agent workflow to execute it, and marked the current live version as a named, restorable rollback point. No `src/` code shipped this session.

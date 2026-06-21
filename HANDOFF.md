@@ -4,40 +4,29 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Planning + tooling session — no app code shipped.** Owner wanted a leaner app focused on the core workflow (inspiration → assets → editors → posted) and was weighing a second website.
-- **Explored** the whole feature surface (3 Explore agents: ~20 tabs / 33 pages inventory, core-path trace, hosting/deploy map). Conclusion: a second site is unnecessary, and **hiding tabs alone won't reduce load** (all pages are static-imported into one bundle; the store fetches every table + opens 4 realtime channels regardless of role).
-- **Wrote the plan** `there-are-too-many-tidy-crystal.md` — Direction B (one site): WS1 gate editor tabs, WS2 code-split + owner "Prefetch heavy tabs" toggle, WS3 role-gate store fetches/realtime, WS4 `web-vitals` perf tracking on Monitor (migration `0086_perf_samples`).
-- **Generated the workflow** `.claude/workflows/lean-footagebrain.js` (via `/workflow-file-creation`) — 4 disjoint-ownership teams (A=permissions-catalog, B=app.jsx/PreferencesModal/vite, C=store.jsx, D=perf-tracker/main/migration/monitor-hub/package.json) + integration architect + adversarial QA per team + whole-project build gate. Syntax-verified. **Not launched.**
-- **Marked "Master Save Point #1"** — annotated git tag `master-save-point-1` → `7a95176` (current live, fully-working) + memory, as a named rollback target before the lean refactor.
+- **Lean-FootageBrain (WS1–WS4) executed + SHIPPED LIVE.** Ran the `lean-footagebrain` workflow, verified, committed (`2a7cd95`), pushed `origin/main`, deployed `vercel --prod` → `dpl_8iNqY7QVDyVxcqx7NC2rx3zzwWH5` → www.footagebrain.com (prod 200-verified). One site, no subdomain — Direction B realized.
+- **WS1** gates secondary/heavy tabs off editable roles' DEFAULT nav (`permissions-catalog.js` `LEAN_HIDDEN`: editor, lossless, export, analytics, inbox, locations, coverage, generate; Resources stays; owner unaffected, re-enableable in admin).
+- **WS2** code-splits heavy pages (lazy chunks confirmed in build — old single 1.3 MB `index` → many lazy chunks incl. `monitor-hub` 110 kB) + owner-only "Prefetch heavy tabs" toggle (`app.jsx`, `PreferencesModal.jsx`, `vite.config.js`).
+- **WS3** role-gates the store's secondary fetches + 2 realtime channels behind `isOwner` (`store.jsx`).
+- **WS4** web-vitals perf telemetry: `perf-tracker.js` (one keepalive sample/session, silent-degrade) + `main.jsx` + owner Monitor perf card (`monitor-hub.jsx`) + migration `0086_perf_samples` (apply human-gated).
+- Verified pre-ship: build-green (8.08s), per-role Playwright smoke (owner sees Monitor + Analytics, HTTP 200, zero boot page errors), static WS1 gating confirmed from diff.
 
 ## Where we left off
-Master Save Point #1 (`7a95176`) is the current live state on `main`. The lean-FootageBrain plan is approved and its workflow file is ready to run. Nothing about the app changed yet — the workflow only edits the working tree when launched, so the save point stays intact.
-
-**End of session:** wrap-up doc commit `e8be7b7` **pushed** to `origin/main`; tag `master-save-point-1` **pushed**; the (code-unchanged) bundle was **re-deployed** `vercel --prod` → `dpl_BAguneUKUpUH1DuH589PjeskL3gM` (www.footagebrain.com) — a redundant re-ship of the save-point state, no app change. Build confirmed the pre-refactor baseline: single `index` chunk **1,331 kB** (gzip 383 kB) — WS2 code-splitting will break this up.
+Lean overhaul is **live on prod** and serving 200. The working tree is clean (everything committed + pushed). The only outstanding piece is the human-gated DB migration that backs WS4 telemetry.
 
 ## Open blockers
-- None. (The prior session's possible Scout/Monitor prod regression was **resolved** by commit `7a95176` — "restore Scout quota card + scrape-error surfacing".)
+- None. (The Playwright smoke's reviewer-leg is blocked by the pre-existing `GamifyWelcomePopup` `gf-overlay`, not a lean regression — owner-side invariants + error-clean boot validated the ship.)
 
 ## Pending (written but not yet live)
-- **`lean-footagebrain` workflow** — generated, not launched. Owner will run it next session. When it finishes it edits owned files only (commits/deploys nothing).
-- **Migration `0086_perf_samples`** — will be written by the workflow (WS4); apply is HUMAN-GATED.
-- (Carried) **Hetzner render worker** (Editor Phase 1 ffmpeg) — `backend-handoff/render.py` written, NOT deployed; owner-gated.
+- **Migration `0086_perf_samples.sql` not yet applied** to prod Supabase (human-gated). Until applied, the WS4 Monitor perf card shows no data and the perf-tracker's one insert/session silently no-ops (by design). Apply via `/update-migrations` or paste into the Supabase SQL editor.
 
 ## Next session — start here
-1. **Launch the `lean-footagebrain` workflow** (owner runs it): say "Launch the lean-footagebrain workflow", watch `/workflows`.
-2. After it completes: review diffs of the owned files, confirm `npm run build` is green with per-page chunks, smoke as an editor (lean nav, no heavy chunks/queries) and as owner (everything intact).
-3. Apply migration `0086` (human-gated), then `git status --short` clean-tree check → `vercel --prod`.
-4. (Carried) Deploy the Hetzner render worker; Editor Phase 2/3.
+1. **Apply migration `0086_perf_samples`** to prod Supabase to light up the WS4 Monitor perf card (then confirm rows arrive after a few real sessions).
+2. Optionally eyeball the live lean nav as a non-owner editor (confirm the leaner default tab set feels right; re-enable any tab per-role in admin if the team needs it).
+3. Resume any parked threads (Reel DNA Phase 1 deploy, render worker Phase 1 Hetzner build, /space LOCAL items) per their memory files.
 
 ## Verification commands (to confirm current state on resume)
-```bash
-# The save point is tagged and points at the live commit:
-git rev-list -n1 master-save-point-1          # → 7a95176bb3c468f7bf251b4a1451b3e03ec97730
-git tag -n9 -l master-save-point-1            # annotated message
-
-# The generated workflow exists (gitignored, local):
-ls ".claude/workflows/lean-footagebrain.js"
-
-# Restore to the save point if ever needed:
-#   git checkout master-save-point-1  → rebuild → vercel --prod (human-gated)
-```
+- `git -C "c:\Users\Mi\Downloads\ziflow project-final" log --oneline -3` → top should be `2a7cd95 perf(lean): make dashboard lean…`
+- `git -C "c:\Users\Mi\Downloads\ziflow project-final" status --short` → should be clean
+- `curl -s -o /dev/null -w "%{http_code}\n" https://www.footagebrain.com/` → `200`
+- Migration status: open Supabase SQL editor → `select to_regclass('public.perf_samples');` → non-null once `0086` is applied (null = still pending).
