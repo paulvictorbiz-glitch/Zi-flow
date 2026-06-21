@@ -14,23 +14,23 @@
 - No DB migration this session (uses live `user_preferences` 0070 + existing `reels`/`reel_dna` columns).
 
 ## Where we left off
-All Reel DNA work is **built, build-green, and verified live on `npm run dev` (localhost:8003)**. The reel-dna files + the doc files are **committed + pushed to `origin/main`**. The deploy was **NOT run** — see Open blockers.
+All Reel DNA work is **LIVE on www.footagebrain.com** (`dpl_53XjnpzdMdbT9koUgPH7wfVNSXpj`). The reel-dna files + docs are **committed (`694e0c6`) + pushed to `origin/main`**. Owner authorized a **full-tree deploy**, so the parallel Planable-grouping WIP **also shipped** (still uncommitted — see Pending).
 
 ## Open blockers
-- **Deploy is unsafe right now (shared dirty tree).** A `0090_planable_pushes_grouping.sql` + further edits to `api/ai/suggest.js`, `src/pages/export-view.jsx`, `api/ai/_planable.js` appeared **during** this session (a parallel/owner Planable-grouping effort) and were NOT made by this session. A full-tree `vercel --prod` would ship that unverified Planable-grouping WIP; an isolated deploy would revert the **live-but-uncommitted** Planable phase-2. Both are documented traps. **Held the deploy and surfaced it to the owner.** The reel-dna code is safely committed regardless.
+- **None for the Reel DNA work** (live + verified-buildable + committed).
+- ⚠ The **full-tree deploy shipped the parallel Planable-grouping WIP** (`suggest.js`/`export-view.jsx`/`_planable.js` + `0090`) to prod **uncommitted and unverified by this session**. The Planable owner should smoke-test the Planable push/grouping on prod and commit those files (no clean git ref == live for them yet — the recurring trap). Migration `0090` is **written, not applied** — if the shipped Planable code references 0090 columns, apply it (owner-gated).
 
 ## Pending (written but not yet live)
-- This session's **Reel DNA enhancements** — committed + pushed, **NOT deployed** (deploy held per above).
-- Planable **grouping** WIP in the tree (`_planable.js`, `suggest.js`, `export-view.jsx`, `0090_planable_pushes_grouping.sql`) — a parallel effort; left untouched + uncommitted by this session.
-- Migration `0090` written, **not applied** (Planable grouping; owner-gated). No migration needed for the Reel DNA work.
+- Planable **grouping** files are **deployed-but-uncommitted** (`_planable.js`, `suggest.js`, `export-view.jsx`, `0090`) — parallel effort; commit + verify pending (its owner).
+- Migration `0090` written, **not applied**. No migration was needed for the Reel DNA work.
 
 ## Next session — start here
-1. **Decide the deploy**: either (a) reconcile/verify the Planable grouping WIP and full-tree deploy everything, or (b) coordinate a clean release of just the Reel DNA work. Then `vercel --prod`.
-2. After deploy, smoke the Reel DNA tab: Columns menu + freeze (desktop+mobile), → Pipeline editor picker, link-preview popup (all 4 platforms), ↩ DNA round-trip.
+1. **Verify on prod** (`www.footagebrain.com` → Reel DNA tab): Columns menu + freeze (desktop+mobile), → Pipeline editor picker, link-preview popup (IG/YT/TikTok/FB), ↩ DNA round-trip.
+2. **Planable owner:** smoke the Planable push/grouping that rode along on this deploy; commit those files; apply `0090` if its code needs it.
 3. (Owner) Calibrate Planable phase-2 `/media` constants on a real upload (still `// CONFIRM`), if continuing Planable.
 
 ## Verification commands (to confirm current state on resume)
-- `git -C "c:/Users/Mi/Downloads/ziflow project-final" log --oneline -3` — confirm the reel-dna commit is on top of `origin/main`.
-- `git -C "c:/Users/Mi/Downloads/ziflow project-final" status --short` — the Planable files (`suggest.js`, `export-view.jsx`, `_planable.js`, `0090`, `detail.jsx`, manifest) should still be the only dirty entries.
-- `npm run build` — expect green (only the chunk-size warning).
-- Browser: `npm run dev` → Reel DNA tab → exercise the four features above.
+- `git -C "c:/Users/Mi/Downloads/ziflow project-final" log --oneline -3` — `694e0c6` (reel-dna batch) on top of `origin/main`.
+- `git -C "c:/Users/Mi/Downloads/ziflow project-final" status --short` — only the Planable files (`suggest.js`, `export-view.jsx`, `_planable.js`, `0090`, `detail.jsx`, manifest) remain dirty (deployed-but-uncommitted).
+- `curl -sI https://www.footagebrain.com | head -1` — prod reachable (deploy `dpl_53XjnpzdMdbT9koUgPH7wfVNSXpj`).
+- Browser: `www.footagebrain.com` → Reel DNA tab → exercise the four features.

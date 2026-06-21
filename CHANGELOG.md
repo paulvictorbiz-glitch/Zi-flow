@@ -14,7 +14,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 **What we learned:** Must **soft-archive** (not delete) the pipeline reel on send-back — a hard delete would cascade-delete `attached_footage_items`, dangling the card's just-migrated footage asset links. Pipeline text returns into the card's **Notes** (a labelled `↩ From pipeline REEL-xxx` block, deduped) rather than un-mapping back into individual gene columns, because the pipeline brief is free-text and can't be reliably split back into Music/Font/SFX without guessing — nothing is lost, just consolidated.
 
-**Status:** Built + verified on localhost; committed. **Deploy pending** (see below).
+**Status:** **LIVE** (`dpl_53XjnpzdMdbT9koUgPH7wfVNSXpj`, www.footagebrain.com) — committed `694e0c6` + pushed; shipped via a full-tree deploy (owner-authorized).
 
 ## 2026-06-21 — Reel DNA spreadsheet: in-app reel preview popup (all platforms) + visited-link tracking
 
@@ -26,7 +26,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 **What we learned:** Embedding costs **zero storage/bandwidth** — each embed streams from the platform's own CDN to the viewer; we only store the URL. **IG/TikTok cannot autoplay** via their official embeds (platform restriction) — only YT/FB can. Short `vm.tiktok.com` links carry no video id → fall back to "Open original". Self-hosting MP4s is the only way to force IG autoplay, and that's the one path that actually bills storage+egress — so we kept embeds.
 
-**Status:** Built + verified on localhost; committed. **Deploy pending.**
+**Status:** **LIVE** (`dpl_53XjnpzdMdbT9koUgPH7wfVNSXpj`, www.footagebrain.com) — committed `694e0c6` + pushed; shipped via a full-tree deploy (owner-authorized).
 
 ## 2026-06-21 — Reel DNA: send a captured card to the pipeline for chosen editors
 
@@ -38,7 +38,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 **What we learned:** The pipeline board has **no add-card affordance at all** — the only create surface is the FAB → "Create new reel" (and now the Reel-DNA send button); that's why the first attempt "landed on the wrong screen." Per-cell dropdowns inside the spreadsheet get clipped by the table's scroll container, so editor-pick UI belongs in a page-level modal (or a body-portaled popover), not the row.
 
-**Status:** Built + verified on localhost; committed. **Deploy pending.**
+**Status:** **LIVE** (`dpl_53XjnpzdMdbT9koUgPH7wfVNSXpj`, www.footagebrain.com) — committed `694e0c6` + pushed; shipped via a full-tree deploy (owner-authorized).
 
 ## 2026-06-21 — Reel DNA spreadsheet: hide/collapse columns + freeze header row & first column (per-user)
 
@@ -49,6 +49,8 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 **Path we took:** Planned via `/qa-verified-plan`, built via a generated `/workflow-file-creation` workflow (`reel-dna-cols-and-multi-editor.js`: Store team Wave 1 → Spreadsheet + Pipeline teams Wave 2, disjoint file ownership + adversarial QA). Build shipped green, but live testing showed the freeze didn't work — fixed after.
 
 **What we learned:** `position:sticky` only freezes against the **nearest scroll container**. The table wrapper had `overflow-x:auto` but **no bounded height**, so the *page* scrolled (carrying the header away) and on a wide desktop the table fit without horizontal scroll (so the column never appeared frozen either). Fix = make `.rd-table-wrap` a real 2-D scroll box: `overflow:auto` + `max-height: calc(100dvh - 200px)` (with a tighter mobile breakpoint). `dvh` (not `vh`) so the mobile address bar doesn't mis-size it. Also confirmed hiding the assets column is **not** a perf win — `useReelDnaAssets` is a pure `useMemo`, no fetch.
+
+**Status:** **LIVE** (`dpl_53XjnpzdMdbT9koUgPH7wfVNSXpj`, www.footagebrain.com) — committed `694e0c6` + pushed.
 
 ## 2026-06-21 — Push to Planable phase 2: two-step video attach + final-video upload pipeline + multi-account push — SHIPPED LIVE
 
