@@ -754,6 +754,17 @@ function workflowReducer(state, action) {
     case "DELETE_ATTACHED_FOOTAGE_BY_ID":
       return { ...state, attachedFootage: state.attachedFootage.filter(f => f.id !== action.id) };
 
+    /* Full replace — background-hydration load of the recent window. */
+    case "SET_ATTACHED_FOOTAGE":
+      return { ...state, attachedFootage: action.items };
+
+    /* loadMore page-in: append older rows, de-duped by id (a window row may
+       overlap the page boundary). */
+    case "APPEND_ATTACHED_FOOTAGE": {
+      const have = new Set(state.attachedFootage.map(f => f.id));
+      return { ...state, attachedFootage: [...state.attachedFootage, ...action.items.filter(f => !have.has(f.id))] };
+    }
+
     case "SET_FOOTAGE_TAGS": {
       // Vision tags describe the clip, not one attachment — apply to every row
       // sharing the same footage_file_id so the library (grouped by clip) and
@@ -790,6 +801,12 @@ function workflowReducer(state, action) {
     case "SET_REEL_DNA":   // full replace — used by the Refresh button's reload
       return { ...state, reelDna: action.items };
 
+    /* loadMore page-in: append older rows, de-duped by id. */
+    case "APPEND_REEL_DNA": {
+      const have = new Set(state.reelDna.map(d => d.id));
+      return { ...state, reelDna: [...state.reelDna, ...action.items.filter(d => !have.has(d.id))] };
+    }
+
     /* Thumbnail DNA — separate table, same optimistic + realtime shape as reel_dna. */
     case "CREATE_THUMBNAIL_DNA":
       return { ...state, thumbnailDna: [action.item, ...state.thumbnailDna] };
@@ -815,6 +832,12 @@ function workflowReducer(state, action) {
     case "SET_THUMBNAIL_DNA":   // full replace — used by reloadThumbnailDna
       return { ...state, thumbnailDna: action.items };
 
+    /* loadMore page-in: append older rows, de-duped by id. */
+    case "APPEND_THUMBNAIL_DNA": {
+      const have = new Set(state.thumbnailDna.map(d => d.id));
+      return { ...state, thumbnailDna: [...state.thumbnailDna, ...action.items.filter(d => !have.has(d.id))] };
+    }
+
     /* Pulse Monitor events — same optimistic + realtime shape as reel_dna. */
     case "CREATE_MONITOR_EVENT":
       return { ...state, monitorEvents: [action.item, ...state.monitorEvents] };
@@ -836,6 +859,33 @@ function workflowReducer(state, action) {
 
     case "DELETE_MONITOR_EVENT_BY_ID":
       return { ...state, monitorEvents: state.monitorEvents.filter(e => e.id !== action.id) };
+
+    /* Full replace — background-hydration load of the recent (90d) window. */
+    case "SET_MONITOR_EVENTS":
+      return { ...state, monitorEvents: action.items };
+
+    /* G3 realtime trim: apply a coalesced BURST of monitor_events realtime ops
+       (the chattiest poller) in ONE reducer pass / ONE render, preserving
+       arrival order. ops = [{ kind:"upsert", item } | { kind:"delete", id }]. */
+    case "BATCH_MONITOR_EVENTS": {
+      let list = state.monitorEvents;
+      for (const op of action.ops) {
+        if (op.kind === "delete") {
+          list = list.filter(e => e.id !== op.id);
+        } else {
+          list = list.some(e => e.id === op.item.id)
+            ? list.map(e => e.id === op.item.id ? op.item : e)
+            : [op.item, ...list];
+        }
+      }
+      return { ...state, monitorEvents: list };
+    }
+
+    /* loadMore page-in: append older rows, de-duped by id. */
+    case "APPEND_MONITOR_EVENTS": {
+      const have = new Set(state.monitorEvents.map(e => e.id));
+      return { ...state, monitorEvents: [...state.monitorEvents, ...action.items.filter(e => !have.has(e.id))] };
+    }
 
     /* IG DM sync runs — same upsert/delete-by-id shape as monitor_events. */
     case "UPSERT_IG_SYNC_RUN": {
@@ -864,6 +914,22 @@ function workflowReducer(state, action) {
 
     case "DELETE_IG_INGEST_LOG_BY_ID":
       return { ...state, igIngestLog: state.igIngestLog.filter(l => l.id !== action.id) };
+
+    /* G3 realtime trim: apply a coalesced BURST of ig_ingest_log realtime ops
+       (one row per processed DM during a sync — very chatty) in ONE pass. */
+    case "BATCH_IG_INGEST_LOG": {
+      let list = state.igIngestLog;
+      for (const op of action.ops) {
+        if (op.kind === "delete") {
+          list = list.filter(l => l.id !== op.id);
+        } else {
+          list = list.some(l => l.id === op.item.id)
+            ? list.map(l => l.id === op.item.id ? op.item : l)
+            : [op.item, ...list];
+        }
+      }
+      return { ...state, igIngestLog: list };
+    }
 
     /* Full-replace on manual reload (the "Check IG Sync" button). Realtime can
        miss events (tab asleep, dropped socket), so the button re-pulls both. */
@@ -894,6 +960,10 @@ function workflowReducer(state, action) {
     case "DELETE_MONITOR_SOURCE_BY_ID":
       return { ...state, monitorSources: state.monitorSources.filter(s => s.id !== action.id) };
 
+    /* Full replace — background-hydration load. */
+    case "SET_MONITOR_SOURCES":
+      return { ...state, monitorSources: action.items };
+
     /* Monitor event links (geo/news event → reel/review_card/location).
        Same optimistic + realtime shape as monitor events/sources. */
     case "CREATE_EVENT_LINK":
@@ -911,6 +981,16 @@ function workflowReducer(state, action) {
 
     case "DELETE_EVENT_LINK_BY_ID":
       return { ...state, eventLinks: state.eventLinks.filter(l => l.id !== action.id) };
+
+    /* Full replace — background-hydration load of the recent window. */
+    case "SET_EVENT_LINKS":
+      return { ...state, eventLinks: action.items };
+
+    /* loadMore page-in: append older rows, de-duped by id. */
+    case "APPEND_EVENT_LINKS": {
+      const have = new Set(state.eventLinks.map(l => l.id));
+      return { ...state, eventLinks: [...state.eventLinks, ...action.items.filter(l => !have.has(l.id))] };
+    }
 
     /* reel_dna_assets (card uuid → footage/location/thumbnail/news link).
        Same optimistic + realtime shape as monitor_event_links above. */
@@ -947,6 +1027,54 @@ function workflowReducer(state, action) {
         reelDnaAssets: (state.reelDnaAssets || []).filter(a => a.id !== action.id),
       };
 
+    /* Full replace — background-hydration load of the recent window. */
+    case "SET_REEL_DNA_ASSETS":
+      return { ...state, reelDnaAssets: action.items };
+
+    /* G3 realtime trim: apply a coalesced BURST of reel_dna_assets realtime ops
+       in ONE pass / ONE render. Upserts reuse the composite-link de-dup of
+       UPSERT_REEL_DNA_ASSET (synthetic optimistic id vs DB uuid). */
+    case "BATCH_REEL_DNA_ASSETS": {
+      let list = state.reelDnaAssets || [];
+      for (const op of action.ops) {
+        if (op.kind === "delete") {
+          list = list.filter(a => a.id !== op.id);
+        } else {
+          const incoming = op.item;
+          const sameLink = (a) =>
+            a.reelDnaId === incoming.reelDnaId &&
+            a.assetType === incoming.assetType &&
+            String(a.assetId) === String(incoming.assetId);
+          const incomingIsDbRow = typeof incoming.id === "string" && !incoming.id.includes(":");
+          const idx = list.findIndex(sameLink);
+          if (idx === -1) {
+            list = [incoming, ...list];
+          } else {
+            const existing = list[idx];
+            const merged = incomingIsDbRow ? { ...existing, ...incoming } : { ...incoming, id: existing.id };
+            const next = list.slice();
+            next[idx] = merged;
+            list = next;
+          }
+        }
+      }
+      return { ...state, reelDnaAssets: list };
+    }
+
+    /* loadMore page-in: append older rows, de-duped by the COMPOSITE link
+       identity (reelDnaId + assetType + assetId), mirroring UPSERT_REEL_DNA_ASSET
+       so a page-boundary overlap doesn't emit the asset twice in the resolver. */
+    case "APPEND_REEL_DNA_ASSETS": {
+      const list = state.reelDnaAssets || [];
+      const seen = new Set(list.map(a => `${a.reelDnaId}|${a.assetType}|${String(a.assetId)}`));
+      const add = [];
+      for (const a of action.items) {
+        const key = `${a.reelDnaId}|${a.assetType}|${String(a.assetId)}`;
+        if (!seen.has(key)) { seen.add(key); add.push(a); }
+      }
+      return { ...state, reelDnaAssets: [...list, ...add] };
+    }
+
     /* Reel ↔ chat refs — same optimistic + realtime shape as reel_dna. */
     case "CREATE_REEL_CHAT_REF":
       return { ...state, reelChatRefs: [action.item, ...state.reelChatRefs] };
@@ -963,6 +1091,10 @@ function workflowReducer(state, action) {
 
     case "DELETE_REEL_CHAT_REF_BY_ID":
       return { ...state, reelChatRefs: state.reelChatRefs.filter(r => r.id !== action.id) };
+
+    /* Full replace — background-hydration load. */
+    case "SET_REEL_CHAT_REFS":
+      return { ...state, reelChatRefs: action.items };
 
     /* ----- Unified Reel DNA card (owner feature flag) ----- */
     case "SET_UNIFIED_CARDS":
@@ -1014,6 +1146,10 @@ function workflowReducer(state, action) {
       return { ...state, moduleContent: { ...state.moduleContent, [action.moduleId]: mod } };
     }
 
+    /* Full replace — background-hydration load of all owner overrides. */
+    case "SET_MODULE_CONTENT_ALL":
+      return { ...state, moduleContent: action.moduleContent || {} };
+
     case "UPSERT_GAMIFY_PROGRESS": {
       const exists = state.gamifyProgress.some(p => p.personId === action.item.personId);
       return {
@@ -1039,6 +1175,32 @@ function workflowReducer(state, action) {
 
     case "DELETE_GAMIFY_RUBRIC_BY_ID":
       return { ...state, gamifyRubrics: state.gamifyRubrics.filter(r => r.id !== action.id) };
+
+    /* Background-hydration bundle: progress + (windowed) rubric rows + the
+       app_settings toggles, merged together in one dispatch so the gamify slice
+       lands atomically without clobbering anything else. */
+    case "SET_GAMIFY_BUNDLE": {
+      const p = action.payload || {};
+      return {
+        ...state,
+        gamifyProgress: p.gamifyProgress ?? state.gamifyProgress,
+        gamifyRubrics: p.gamifyRubrics ?? state.gamifyRubrics,
+        gamifyEnabled: p.gamifyEnabled ?? state.gamifyEnabled,
+        unifiedCards: p.unifiedCards ?? state.unifiedCards,
+        gamifyGradingMode: p.gamifyGradingMode ?? state.gamifyGradingMode,
+        rubricDescMode: p.rubricDescMode ?? state.rubricDescMode,
+        gamifyHiddenSubskills: p.gamifyHiddenSubskills ?? state.gamifyHiddenSubskills,
+      };
+    }
+
+    /* loadMore page-in: append older rubric rows, de-duped by the composite
+       (reelId|personId|skillKey) identity used by UPSERT_GAMIFY_RUBRIC. */
+    case "APPEND_GAMIFY_RUBRICS": {
+      const key = (r) => `${r.reelId}|${r.personId}|${r.skillKey}`;
+      const have = new Set(state.gamifyRubrics.map(key));
+      const add = action.items.filter(r => !have.has(key(r)));
+      return { ...state, gamifyRubrics: [...state.gamifyRubrics, ...add] };
+    }
 
     case "SET_DAILY_TASKS":
       return { ...state, dailyTasks: action.items };
@@ -1520,6 +1682,23 @@ function computeProgress(personId, rubricRows) {
 /* ---------- Context + provider ---------- */
 const WorkflowContext = React.createContext(null);
 
+/* Boot-window sizing (perf / scale-to-~15-concurrent-users — Part 3).
+   Unbounded `select("*")` on the big growers (reel_dna, thumbnail_dna,
+   attached_footage_items, reel_dna_assets, monitor_event_links, gamify_rubric)
+   pulled the WHOLE table on every boot, which gets heavier per row added and
+   floods the reducer/render. We now fetch only a bounded RECENT window ordered
+   by created_at DESC (matching the existing/contracted indexes) and expose
+   additive `loadMore*` actions to page in older rows on demand (UI wiring is a
+   follow-up — not done here). monitor_events additionally uses a time-window
+   (90 days) per the frozen index contract (monitor_events_created_idx, 0059).
+   Tuning knob: bump RECENT_WINDOW if a tab legitimately needs a deeper default. */
+const RECENT_WINDOW = 500;          // generic recent-row cap for the big growers
+const MONITOR_EVENTS_WINDOW = 500;  // monitor_events row cap (paired with the 90d gate)
+const MONITOR_EVENTS_WINDOW_DAYS = 90;
+function monitorEventsSince() {
+  return new Date(Date.now() - MONITOR_EVENTS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
 const INITIAL_STATE = {
   reels: [],
   reviewLaneCards: [],
@@ -1580,218 +1759,223 @@ function WorkflowProvider({ children }) {
     let cancelled = false;
     (async () => {
       try {
-        const [reelsRes, cardsRes, tasksRes, footageRes, dailyTasksRes] = await Promise.all([
+        /* PROGRESSIVE BOOT (G2): gate `loaded` (and therefore the whole UI)
+           on ONLY the ESSENTIAL collaboration tables — reels, review_lane_cards,
+           tasks, daily_tasks. Everything else (footage, reel_dna, monitor_*,
+           gamify, etc.) hydrates in the BACKGROUND after first paint and is
+           merged via its own SET_* dispatch as it arrives, so a slow/large
+           secondary table no longer blocks the app from rendering. The reducer's
+           SET_* cases are surgical (touch only their slice) so these incremental
+           merges never clobber the essential state set by HYDRATE. */
+        const [reelsRes, cardsRes, tasksRes, dailyTasksRes] = await Promise.all([
           supabase.from("reels").select("*"),
           supabase.from("review_lane_cards").select("*"),
           supabase.from("tasks").select("*"),
-          supabase.from("attached_footage_items").select("*"),
           supabase.from("daily_tasks").select("*").order("task_date", { ascending: false }).order("created_at", { ascending: true }),
         ]);
         if (reelsRes.error) throw reelsRes.error;
         if (cardsRes.error) throw cardsRes.error;
         if (tasksRes.error) throw tasksRes.error;
-        if (footageRes.error) throw footageRes.error;
         if (dailyTasksRes.error) throw dailyTasksRes.error;
 
-        /* Reel DNA is fetched separately and degrades to [] if the table
-           hasn't been migrated yet. Hydrate is all-or-nothing — folding this
-           into the Promise.all above would brick the WHOLE app (the provider
-           gates render on `loaded`) on any DB where 0044 isn't applied. */
-        let reelDna = [];
-        try {
-          const reelDnaRes = await supabase
-            .from("reel_dna").select("*")
-            .is("deleted_at", null)
-            .order("created_at", { ascending: false });
-          if (reelDnaRes.error) throw reelDnaRes.error;
-          reelDna = (reelDnaRes.data || []).map(reelDnaFromDb);
-        } catch (e) {
-          console.warn("reel_dna not available (run migration 0044?):", e?.message || e);
-        }
-
-        /* Thumbnail DNA degrades to [] until migration 0063 lands. Same
-           all-or-nothing reasoning as reel_dna above — a missing table must
-           never brick boot. Separate try/catch from reel_dna. */
-        let thumbnailDna = [];
-        try {
-          const thumbnailRes = await supabase
-            .from("thumbnail_dna").select("*")
-            .is("deleted_at", null)
-            .order("created_at", { ascending: false });
-          if (thumbnailRes.error) throw thumbnailRes.error;
-          thumbnailDna = (thumbnailRes.data || []).map(thumbnailFromDb);
-        } catch (e) {
-          console.warn("thumbnail_dna not available (run migration 0063?):", e?.message || e);
-        }
-
-        /* Pulse Monitor events degrade to [] until migration 0059 lands. Same
-           all-or-nothing reasoning as reel_dna above — the hydrate gates the
-           whole app on `loaded`, so we never let a missing table brick boot. */
-        let monitorEvents = [];
-        try {
-          const monitorRes = await supabase
-            .from("monitor_events").select("*")
-            .order("created_at", { ascending: false });
-          if (monitorRes.error) throw monitorRes.error;
-          monitorEvents = (monitorRes.data || []).map(monitorEventFromDb);
-        } catch (e) {
-          console.warn("monitor_events not available (run migration 0059?)", e?.message || e);
-        }
-
-        /* IG DM sync runs — panel headline + mismatch math (migration 0073).
-           Degrades to [] if the table isn't there yet, same all-or-nothing
-           reasoning as monitor_events above — a missing table must not brick boot. */
-        let igSyncRuns = [];
-        try {
-          const igRunsRes = await supabase
-            .from("ig_sync_runs").select("*")
-            .order("started_at", { ascending: false })
-            .limit(50);
-          if (igRunsRes.error) throw igRunsRes.error;
-          igSyncRuns = (igRunsRes.data || []).map(igSyncRunFromDb);
-        } catch (e) {
-          console.warn("ig_sync_runs not available (run migration 0073?)", e?.message || e);
-        }
-
-        /* IG DM ingest log — per-message non-happy-path reasons (migration 0074).
-           Degrades to [] if the table isn't there yet, same as ig_sync_runs above. */
-        let igIngestLog = [];
-        try {
-          const igLogRes = await supabase
-            .from("ig_ingest_log").select("*")
-            .order("occurred_at", { ascending: false })
-            .limit(200);
-          if (igLogRes.error) throw igLogRes.error;
-          igIngestLog = (igLogRes.data || []).map(igIngestLogFromDb);
-        } catch (e) {
-          console.warn("ig_ingest_log not available (run migration 0074?)", e?.message || e);
-        }
-
-        /* Pulse Monitor sources — owner-curated feed list (migration 0060).
-           Degrades to [] if the table isn't there yet, same as monitor_events. */
-        let monitorSources = [];
-        try {
-          const sourcesRes = await supabase
-            .from("monitor_sources").select("*")
-            .order("created_at", { ascending: true });
-          if (sourcesRes.error) throw sourcesRes.error;
-          monitorSources = (sourcesRes.data || []).map(monitorSourceFromDb);
-        } catch (e) {
-          console.warn("monitor_sources not available (run migration 0060?)", e?.message || e);
-        }
-
-        /* Monitor event links — event → reel/review_card/location (migration
-           0065). Degrades to [] if the table isn't there yet, same all-or-nothing
-           reasoning as monitor_events above. */
-        let eventLinks = [];
-        try {
-          const linksRes = await supabase
-            .from("monitor_event_links").select("*")
-            .order("created_at", { ascending: false });
-          if (linksRes.error) throw linksRes.error;
-          eventLinks = (linksRes.data || []).map(eventLinkFromDb);
-        } catch (e) {
-          console.warn("monitor_event_links not available (run migration 0065?)", e?.message || e);
-        }
-
-        /* Reel DNA assets — card → footage/location/thumbnail/news links
-           (migration 0067). Degrades to [] if the table isn't there yet, same
-           all-or-nothing reasoning as monitor_event_links above. */
-        let reelDnaAssets = [];
-        try {
-          const assetsRes = await supabase
-            .from("reel_dna_assets").select("*")
-            .order("created_at", { ascending: false });
-          if (assetsRes.error) throw assetsRes.error;
-          reelDnaAssets = (assetsRes.data || []).map(reelDnaAssetFromDb);
-        } catch (e) {
-          console.warn("reel_dna_assets not available (run migration 0067?)", e?.message || e);
-        }
-
-        /* Reel ↔ chat refs degrade to [] if migration 0046 hasn't run yet —
-           same all-or-nothing reasoning as reel_dna above. */
-        let reelChatRefs = [];
-        try {
-          const refsRes = await supabase
-            .from("reel_chat_refs").select("*")
-            .order("created_at", { ascending: false });
-          if (refsRes.error) throw refsRes.error;
-          reelChatRefs = (refsRes.data || []).map(reelChatRefsFromDb);
-        } catch (e) {
-          console.warn("reel_chat_refs not available (run migration 0046?):", e?.message || e);
-        }
-
-        /* Gamify progress + rubric rows + the two app_settings toggles —
-           all degrade gracefully if migration 0050 hasn't run yet. */
-        let gamifyProgress = [];
-        let gamifyRubrics = [];
-        let gamifyEnabled = false;
-        let unifiedCards = false;
-        let gamifyGradingMode = "editor+reviewer";
-        let rubricDescMode = "all";
-        let gamifyHiddenSubskills = {};
-        try {
-          const [gpRes, grRes, gsRes] = await Promise.all([
-            supabase.from("gamify_progress").select("*"),
-            supabase.from("gamify_rubric").select("*"),
-            supabase.from("app_settings").select("key,value")
-              .in("key", ["gamify_enabled", "unified_cards", "gamify_grading_mode", "gamify_rubric_desc_mode", "gamify_hidden_subskills"]),
-          ]);
-          if (gpRes.error) throw gpRes.error;
-          if (grRes.error) throw grRes.error;
-          gamifyProgress = (gpRes.data || []).map(gamifyProgressFromDb);
-          gamifyRubrics = (grRes.data || []).map(gamifyRubricFromDb);
-          for (const s of (gsRes.data || [])) {
-            if (s.key === "gamify_enabled") gamifyEnabled = !!s.value?.enabled;
-            if (s.key === "unified_cards") unifiedCards = !!s.value?.enabled;
-            if (s.key === "gamify_grading_mode" && s.value?.mode) gamifyGradingMode = s.value.mode;
-            if (s.key === "gamify_rubric_desc_mode" && s.value?.mode) rubricDescMode = s.value.mode;
-            if (s.key === "gamify_hidden_subskills") gamifyHiddenSubskills = normalizeHiddenSubskills(s.value);
-          }
-        } catch (e) {
-          console.warn("gamify not available (run migration 0050?):", e?.message || e);
-        }
-
-        /* Owner per-field training-module content overrides — degrade to
-           {} if migration 0055 hasn't run yet (defaults live in code). */
-        let moduleContent = {};
-        try {
-          const mcRes = await supabase
-            .from("training_module_content")
-            .select("module_id, field_path, value");
-          if (mcRes.error) throw mcRes.error;
-          for (const row of (mcRes.data || [])) {
-            (moduleContent[row.module_id] ||= {})[row.field_path] = row.value;
-          }
-        } catch (e) {
-          console.warn("training_module_content not available (run migration 0055?):", e?.message || e);
-        }
-
         if (cancelled) return;
+        /* G2: flip `loaded` on the ESSENTIAL tables alone. The UI paints now;
+           the secondary tables below merge in via their own SET_* dispatch.
+           HYDRATE only carries the essential slices — every other slice keeps
+           its INITIAL_STATE default ([] / {}) until its background loader
+           resolves, so a slow secondary table no longer holds up boot. */
         dispatch({ type: "HYDRATE", payload: {
           reels: (reelsRes.data || []).map(reelFromDb),
           reviewLaneCards: (cardsRes.data || []).map(cardFromDb),
           tasks: (tasksRes.data || []).map(taskFromDb),
-          attachedFootage: footageRes.data || [],
           dailyTasks: (dailyTasksRes.data || []).map(dailyTaskFromDb),
-          reelDna,
-          thumbnailDna,
-          monitorEvents,
-          monitorSources,
-          eventLinks,
-          reelDnaAssets,
-          igSyncRuns,
-          igIngestLog,
-          reelChatRefs,
-          gamifyProgress,
-          gamifyRubrics,
-          gamifyEnabled,
-          unifiedCards,
-          gamifyGradingMode,
-          rubricDescMode,
-          gamifyHiddenSubskills,
-          moduleContent,
         }});
+
+        /* ----- SECONDARY (background) hydration -----
+           Each table loads independently AFTER first paint and is windowed to a
+           bounded recent slice (G1) — older rows page in via the loadMore*
+           actions. Every block keeps its own try/catch degrade-to-[] so a
+           missing/un-migrated table can never brick boot. We don't await this
+           IIFE — boot is already complete. */
+        (async () => {
+          /* attached_footage_items (G1 window). Was an unbounded essential
+             fetch in the boot Promise.all; now a windowed secondary load. */
+          try {
+            const footageRes = await supabase
+              .from("attached_footage_items").select("*")
+              .order("created_at", { ascending: false })
+              .limit(RECENT_WINDOW);
+            if (footageRes.error) throw footageRes.error;
+            if (!cancelled) dispatch({ type: "SET_ATTACHED_FOOTAGE", items: footageRes.data || [] });
+          } catch (e) {
+            console.warn("attached_footage_items load failed:", e?.message || e);
+          }
+
+          /* Reel DNA — degrades to [] if migration 0044 isn't applied.
+             Windowed to the RECENT_WINDOW most-recent non-deleted rows. */
+          try {
+            const reelDnaRes = await supabase
+              .from("reel_dna").select("*")
+              .is("deleted_at", null)
+              .order("created_at", { ascending: false })
+              .limit(RECENT_WINDOW);
+            if (reelDnaRes.error) throw reelDnaRes.error;
+            if (!cancelled) dispatch({ type: "SET_REEL_DNA", items: (reelDnaRes.data || []).map(reelDnaFromDb) });
+          } catch (e) {
+            console.warn("reel_dna not available (run migration 0044?):", e?.message || e);
+          }
+
+          /* Thumbnail DNA — degrades to [] until migration 0063. Windowed. */
+          try {
+            const thumbnailRes = await supabase
+              .from("thumbnail_dna").select("*")
+              .is("deleted_at", null)
+              .order("created_at", { ascending: false })
+              .limit(RECENT_WINDOW);
+            if (thumbnailRes.error) throw thumbnailRes.error;
+            if (!cancelled) dispatch({ type: "SET_THUMBNAIL_DNA", items: (thumbnailRes.data || []).map(thumbnailFromDb) });
+          } catch (e) {
+            console.warn("thumbnail_dna not available (run migration 0063?):", e?.message || e);
+          }
+
+          /* Pulse Monitor events — the chattiest grower. Degrades to [] until
+             migration 0059. Windowed by BOTH a 90-day gate and a row cap, per
+             the frozen index contract (monitor_events_created_idx). */
+          try {
+            const monitorRes = await supabase
+              .from("monitor_events").select("*")
+              .gte("created_at", monitorEventsSince())
+              .order("created_at", { ascending: false })
+              .limit(MONITOR_EVENTS_WINDOW);
+            if (monitorRes.error) throw monitorRes.error;
+            if (!cancelled) dispatch({ type: "SET_MONITOR_EVENTS", items: (monitorRes.data || []).map(monitorEventFromDb) });
+          } catch (e) {
+            console.warn("monitor_events not available (run migration 0059?)", e?.message || e);
+          }
+
+          /* IG DM sync runs (migration 0073) — already capped at 50. */
+          try {
+            const igRunsRes = await supabase
+              .from("ig_sync_runs").select("*")
+              .order("started_at", { ascending: false })
+              .limit(50);
+            if (igRunsRes.error) throw igRunsRes.error;
+            if (!cancelled) dispatch({ type: "SET_IG_SYNC_RUNS", items: (igRunsRes.data || []).map(igSyncRunFromDb) });
+          } catch (e) {
+            console.warn("ig_sync_runs not available (run migration 0073?)", e?.message || e);
+          }
+
+          /* IG DM ingest log (migration 0074) — already capped at 200. */
+          try {
+            const igLogRes = await supabase
+              .from("ig_ingest_log").select("*")
+              .order("occurred_at", { ascending: false })
+              .limit(200);
+            if (igLogRes.error) throw igLogRes.error;
+            if (!cancelled) dispatch({ type: "SET_IG_INGEST_LOG", items: (igLogRes.data || []).map(igIngestLogFromDb) });
+          } catch (e) {
+            console.warn("ig_ingest_log not available (run migration 0074?)", e?.message || e);
+          }
+
+          /* Pulse Monitor sources (migration 0060) — owner-curated, small; no
+             window needed (a handful of feed rows). */
+          try {
+            const sourcesRes = await supabase
+              .from("monitor_sources").select("*")
+              .order("created_at", { ascending: true });
+            if (sourcesRes.error) throw sourcesRes.error;
+            if (!cancelled) dispatch({ type: "SET_MONITOR_SOURCES", items: (sourcesRes.data || []).map(monitorSourceFromDb) });
+          } catch (e) {
+            console.warn("monitor_sources not available (run migration 0060?)", e?.message || e);
+          }
+
+          /* Monitor event links (migration 0065) — windowed. */
+          try {
+            const linksRes = await supabase
+              .from("monitor_event_links").select("*")
+              .order("created_at", { ascending: false })
+              .limit(RECENT_WINDOW);
+            if (linksRes.error) throw linksRes.error;
+            if (!cancelled) dispatch({ type: "SET_EVENT_LINKS", items: (linksRes.data || []).map(eventLinkFromDb) });
+          } catch (e) {
+            console.warn("monitor_event_links not available (run migration 0065?)", e?.message || e);
+          }
+
+          /* Reel DNA assets (migration 0067) — windowed. */
+          try {
+            const assetsRes = await supabase
+              .from("reel_dna_assets").select("*")
+              .order("created_at", { ascending: false })
+              .limit(RECENT_WINDOW);
+            if (assetsRes.error) throw assetsRes.error;
+            if (!cancelled) dispatch({ type: "SET_REEL_DNA_ASSETS", items: (assetsRes.data || []).map(reelDnaAssetFromDb) });
+          } catch (e) {
+            console.warn("reel_dna_assets not available (run migration 0067?)", e?.message || e);
+          }
+
+          /* Reel ↔ chat refs (migration 0046) — degrade to []. */
+          try {
+            const refsRes = await supabase
+              .from("reel_chat_refs").select("*")
+              .order("created_at", { ascending: false });
+            if (refsRes.error) throw refsRes.error;
+            if (!cancelled) dispatch({ type: "SET_REEL_CHAT_REFS", items: (refsRes.data || []).map(reelChatRefsFromDb) });
+          } catch (e) {
+            console.warn("reel_chat_refs not available (run migration 0046?):", e?.message || e);
+          }
+
+          /* Gamify progress + rubric rows + the app_settings toggles — degrade
+             gracefully if migration 0050 hasn't run. gamify_rubric is windowed
+             (G1: it grows per graded reel). The toggles ride along in the same
+             SET_GAMIFY_BUNDLE dispatch. */
+          try {
+            const [gpRes, grRes, gsRes] = await Promise.all([
+              supabase.from("gamify_progress").select("*"),
+              supabase.from("gamify_rubric").select("*")
+                .order("created_at", { ascending: false })
+                .limit(RECENT_WINDOW),
+              supabase.from("app_settings").select("key,value")
+                .in("key", ["gamify_enabled", "unified_cards", "gamify_grading_mode", "gamify_rubric_desc_mode", "gamify_hidden_subskills"]),
+            ]);
+            if (gpRes.error) throw gpRes.error;
+            if (grRes.error) throw grRes.error;
+            let gamifyEnabled = false;
+            let unifiedCards = false;
+            let gamifyGradingMode = "editor+reviewer";
+            let rubricDescMode = "all";
+            let gamifyHiddenSubskills = {};
+            for (const s of (gsRes.data || [])) {
+              if (s.key === "gamify_enabled") gamifyEnabled = !!s.value?.enabled;
+              if (s.key === "unified_cards") unifiedCards = !!s.value?.enabled;
+              if (s.key === "gamify_grading_mode" && s.value?.mode) gamifyGradingMode = s.value.mode;
+              if (s.key === "gamify_rubric_desc_mode" && s.value?.mode) rubricDescMode = s.value.mode;
+              if (s.key === "gamify_hidden_subskills") gamifyHiddenSubskills = normalizeHiddenSubskills(s.value);
+            }
+            if (!cancelled) dispatch({ type: "SET_GAMIFY_BUNDLE", payload: {
+              gamifyProgress: (gpRes.data || []).map(gamifyProgressFromDb),
+              gamifyRubrics: (grRes.data || []).map(gamifyRubricFromDb),
+              gamifyEnabled, unifiedCards, gamifyGradingMode, rubricDescMode, gamifyHiddenSubskills,
+            }});
+          } catch (e) {
+            console.warn("gamify not available (run migration 0050?):", e?.message || e);
+          }
+
+          /* Owner per-field training-module content overrides — degrade to {}
+             if migration 0055 hasn't run (defaults live in code). */
+          try {
+            const mcRes = await supabase
+              .from("training_module_content")
+              .select("module_id, field_path, value");
+            if (mcRes.error) throw mcRes.error;
+            const moduleContent = {};
+            for (const row of (mcRes.data || [])) {
+              (moduleContent[row.module_id] ||= {})[row.field_path] = row.value;
+            }
+            if (!cancelled) dispatch({ type: "SET_MODULE_CONTENT_ALL", moduleContent });
+          } catch (e) {
+            console.warn("training_module_content not available (run migration 0055?):", e?.message || e);
+          }
+        })();
       } catch (e) {
         if (cancelled) return;
         console.error("Hydrate failed:", e);
@@ -1834,6 +2018,45 @@ function WorkflowProvider({ children }) {
      idempotent (UPSERT replaces with the same row, DELETE_BY_ID
      is a no-op on already-removed rows), so we don't bother
      filtering them out. */
+
+  /* G3 realtime trim — debounced batcher for the three CHATTY unfiltered
+     poller tables (monitor_events, reel_dna_assets, ig_ingest_log). The
+     Hetzner ingesters insert these in tight bursts (a news/world sync, an
+     IG-DM sync), and one dispatch + render per row pinned the main thread.
+     Instead we QUEUE each op and flush the whole burst as a single BATCH_*
+     dispatch (one reducer pass, one render) on a short trailing debounce. The
+     CORE collaboration channel (reels / review_lane_cards / tasks /
+     daily_tasks / reel_dna) stays immediate — its writes are human-paced and
+     latency-sensitive. Ops are applied in arrival order, so an UPSERT followed
+     by a DELETE of the same id resolves correctly. */
+  const rtBatchRef = React.useRef({
+    monitor_events: { type: "BATCH_MONITOR_EVENTS", ops: [], timer: null },
+    reel_dna_assets: { type: "BATCH_REEL_DNA_ASSETS", ops: [], timer: null },
+    ig_ingest_log: { type: "BATCH_IG_INGEST_LOG", ops: [], timer: null },
+  });
+  const RT_BATCH_MS = 400;
+  const queueRtOp = React.useCallback((table, op) => {
+    const slot = rtBatchRef.current[table];
+    if (!slot) return;
+    slot.ops.push(op);
+    if (slot.timer) return;
+    slot.timer = setTimeout(() => {
+      const ops = slot.ops;
+      slot.ops = [];
+      slot.timer = null;
+      if (ops.length) dispatch({ type: slot.type, ops });
+    }, RT_BATCH_MS);
+  }, []);
+  // Flush any pending batches on unmount so a burst mid-debounce isn't lost.
+  React.useEffect(() => () => {
+    const slots = rtBatchRef.current;
+    for (const k of Object.keys(slots)) {
+      const slot = slots[k];
+      if (slot.timer) { clearTimeout(slot.timer); slot.timer = null; }
+      if (slot.ops.length) { const ops = slot.ops; slot.ops = []; dispatch({ type: slot.type, ops }); }
+    }
+  }, []);
+
   React.useEffect(() => {
     if (!state.loaded) return;
     // Demo sessions stay purely local after the initial hydrate so concurrent
@@ -1993,10 +2216,11 @@ function WorkflowProvider({ children }) {
         .on("postgres_changes",
             { event: "*", schema: "public", table: "monitor_events" },
             (payload) => {
+              // G3: debounced-batched — bursty ingester writes collapse into one render.
               if (payload.eventType === "DELETE") {
-                dispatch({ type: "DELETE_MONITOR_EVENT_BY_ID", id: payload.old?.id });
+                queueRtOp("monitor_events", { kind: "delete", id: payload.old?.id });
               } else if (payload.new) {
-                dispatch({ type: "UPSERT_MONITOR_EVENT", item: monitorEventFromDb(payload.new) });
+                queueRtOp("monitor_events", { kind: "upsert", item: monitorEventFromDb(payload.new) });
               }
             })
         .on("postgres_changes",
@@ -2044,10 +2268,11 @@ function WorkflowProvider({ children }) {
             { event: "*", schema: "public", table: "reel_dna_assets" },
             (payload) => {
               // Attach/detach made on any card by any teammate reflects live.
+              // G3: debounced-batched (send-to-pipeline can attach many at once).
               if (payload.eventType === "DELETE") {
-                dispatch({ type: "DELETE_REEL_DNA_ASSET", id: payload.old?.id });
+                queueRtOp("reel_dna_assets", { kind: "delete", id: payload.old?.id });
               } else if (payload.new) {
-                dispatch({ type: "UPSERT_REEL_DNA_ASSET", item: reelDnaAssetFromDb(payload.new) });
+                queueRtOp("reel_dna_assets", { kind: "upsert", item: reelDnaAssetFromDb(payload.new) });
               }
             })
         .subscribe((status, err) => {
@@ -2082,10 +2307,11 @@ function WorkflowProvider({ children }) {
         .on("postgres_changes",
             { event: "*", schema: "public", table: "ig_ingest_log" },
             (payload) => {
+              // G3: debounced-batched — an IG sync writes one row per DM processed.
               if (payload.eventType === "DELETE") {
-                dispatch({ type: "DELETE_IG_INGEST_LOG_BY_ID", id: payload.old?.id });
+                queueRtOp("ig_ingest_log", { kind: "delete", id: payload.old?.id });
               } else if (payload.new) {
-                dispatch({ type: "UPSERT_IG_INGEST_LOG", item: igIngestLogFromDb(payload.new) });
+                queueRtOp("ig_ingest_log", { kind: "upsert", item: igIngestLogFromDb(payload.new) });
               }
             })
         .subscribe((status, err) => {
@@ -2107,7 +2333,7 @@ function WorkflowProvider({ children }) {
       if (reelDnaAssetsChannel) { try { supabase.removeChannel(reelDnaAssetsChannel); } catch (_) {} }
       if (igSyncChannel) { try { supabase.removeChannel(igSyncChannel); } catch (_) {} }
     };
-  }, [state.loaded, _isDemo]);
+  }, [state.loaded, _isDemo, queueRtOp]);
 
   // Helper: dispatch locally, then persist. If persist fails,
   // log and surface — local state stays optimistic.
@@ -2154,6 +2380,20 @@ function WorkflowProvider({ children }) {
     }
   }, []);
 
+  /* G4 (MEMO NARROW) — DEFERRED as a documented RISK.
+     This memo rebuilds (and therefore re-renders every useWorkflow() consumer)
+     on ANY state change, because the public context value is a SINGLE flat
+     object that inlines every state slice + the actions bundle. Narrowing it
+     safely (split read-only contexts, or context selectors) would require
+     consumers to opt into specific slices — i.e. it CANNOT be done without
+     changing the useWorkflow() public return shape, which the contract forbids
+     touching (no consumer file may change). Composing internal split contexts
+     while still exposing one merged object here doesn't reduce re-renders: the
+     merged object's identity still changes whenever any slice does. So G4 is
+     left as a follow-up that must land WITH the consumer migration (a
+     `useWorkflow(selector)` / per-slice hooks API), not inside store.jsx alone.
+     G1–G3 above already cut the dominant re-render driver — the bursty,
+     unbounded poller tables — which is where the scale pain actually came from. */
   const value = React.useMemo(() => ({
     reels: state.reels,
     reviewLaneCards: state.reviewLaneCards,
@@ -2759,10 +2999,31 @@ function WorkflowProvider({ children }) {
         const { data, error } = await supabase
           .from("reel_dna").select("*")
           .is("deleted_at", null)
-          .order("created_at", { ascending: false });
+          .order("created_at", { ascending: false })
+          .limit(RECENT_WINDOW);
         if (error) throw error;
         const items = (data || []).map(reelDnaFromDb);
         dispatch({ type: "SET_REEL_DNA", items });
+        return items.length;
+      },
+
+      /* loadMore (G1 follow-up): page in the next window of OLDER reel_dna rows
+         past what's already loaded, ordered created_at DESC (matches the index
+         contract). Appends (de-duped) rather than replacing. Returns the number
+         of NEW rows fetched (0 = end of table). UI wiring is a follow-up. */
+      loadMoreReelDna: async (limit = RECENT_WINDOW) => {
+        if (isDemoMode()) return 0;
+        const cur = stateRef.current.reelDna || [];
+        const oldest = cur.length ? cur[cur.length - 1]?.createdAt : null;
+        let q = supabase.from("reel_dna").select("*")
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (oldest) q = q.lt("created_at", oldest);
+        const { data, error } = await q;
+        if (error) throw error;
+        const items = (data || []).map(reelDnaFromDb);
+        if (items.length) dispatch({ type: "APPEND_REEL_DNA", items });
         return items.length;
       },
 
@@ -2860,10 +3121,29 @@ function WorkflowProvider({ children }) {
         const { data, error } = await supabase
           .from("thumbnail_dna").select("*")
           .is("deleted_at", null)
-          .order("created_at", { ascending: false });
+          .order("created_at", { ascending: false })
+          .limit(RECENT_WINDOW);
         if (error) throw error;
         const items = (data || []).map(thumbnailFromDb);
         dispatch({ type: "SET_THUMBNAIL_DNA", items });
+        return items.length;
+      },
+
+      /* loadMore (G1 follow-up): page in the next window of OLDER thumbnail_dna
+         rows. Returns the count of NEW rows (0 = end). UI wiring is a follow-up. */
+      loadMoreThumbnailDna: async (limit = RECENT_WINDOW) => {
+        if (isDemoMode()) return 0;
+        const cur = stateRef.current.thumbnailDna || [];
+        const oldest = cur.length ? cur[cur.length - 1]?.createdAt : null;
+        let q = supabase.from("thumbnail_dna").select("*")
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (oldest) q = q.lt("created_at", oldest);
+        const { data, error } = await q;
+        if (error) throw error;
+        const items = (data || []).map(thumbnailFromDb);
+        if (items.length) dispatch({ type: "APPEND_THUMBNAIL_DNA", items });
         return items.length;
       },
 
@@ -3689,6 +3969,93 @@ function WorkflowProvider({ children }) {
           module_id: r.module_id,
           done: !!r.done,
         }));
+      },
+
+      /* ----- loadMore page-in actions (G1 follow-up) -----
+         Boot only loads a bounded RECENT window of the big growers; these page
+         in the next window of OLDER rows past what's in memory, ordered
+         created_at DESC (matching the frozen index contract), and append
+         (de-duped). Each returns the count of NEW rows (0 = end of table). They
+         degrade to 0 in demo mode and never throw on a missing/un-migrated
+         table. UI wiring (infinite-scroll / "load older" buttons) is a follow-up. */
+      loadMoreMonitorEvents: async (limit = MONITOR_EVENTS_WINDOW) => {
+        if (isDemoMode()) return 0;
+        try {
+          const cur = stateRef.current.monitorEvents || [];
+          const oldest = cur.length ? cur[cur.length - 1]?.createdAt : null;
+          let q = supabase.from("monitor_events").select("*")
+            .order("created_at", { ascending: false })
+            .limit(limit);
+          if (oldest) q = q.lt("created_at", oldest);
+          const { data, error } = await q;
+          if (error) throw error;
+          const items = (data || []).map(monitorEventFromDb);
+          if (items.length) dispatch({ type: "APPEND_MONITOR_EVENTS", items });
+          return items.length;
+        } catch (e) {
+          console.warn("loadMoreMonitorEvents failed:", e?.message || e);
+          return 0;
+        }
+      },
+
+      loadMoreAttachedFootage: async (limit = RECENT_WINDOW) => {
+        if (isDemoMode()) return 0;
+        try {
+          const cur = stateRef.current.attachedFootage || [];
+          const oldest = cur.length ? cur[cur.length - 1]?.created_at : null;
+          let q = supabase.from("attached_footage_items").select("*")
+            .order("created_at", { ascending: false })
+            .limit(limit);
+          if (oldest) q = q.lt("created_at", oldest);
+          const { data, error } = await q;
+          if (error) throw error;
+          const items = data || [];
+          if (items.length) dispatch({ type: "APPEND_ATTACHED_FOOTAGE", items });
+          return items.length;
+        } catch (e) {
+          console.warn("loadMoreAttachedFootage failed:", e?.message || e);
+          return 0;
+        }
+      },
+
+      loadMoreReelDnaAssets: async (limit = RECENT_WINDOW) => {
+        if (isDemoMode()) return 0;
+        try {
+          const cur = stateRef.current.reelDnaAssets || [];
+          const oldest = cur.length ? cur[cur.length - 1]?.createdAt : null;
+          let q = supabase.from("reel_dna_assets").select("*")
+            .order("created_at", { ascending: false })
+            .limit(limit);
+          if (oldest) q = q.lt("created_at", oldest);
+          const { data, error } = await q;
+          if (error) throw error;
+          const items = (data || []).map(reelDnaAssetFromDb);
+          if (items.length) dispatch({ type: "APPEND_REEL_DNA_ASSETS", items });
+          return items.length;
+        } catch (e) {
+          console.warn("loadMoreReelDnaAssets failed:", e?.message || e);
+          return 0;
+        }
+      },
+
+      loadMoreEventLinks: async (limit = RECENT_WINDOW) => {
+        if (isDemoMode()) return 0;
+        try {
+          const cur = stateRef.current.eventLinks || [];
+          const oldest = cur.length ? cur[cur.length - 1]?.createdAt : null;
+          let q = supabase.from("monitor_event_links").select("*")
+            .order("created_at", { ascending: false })
+            .limit(limit);
+          if (oldest) q = q.lt("created_at", oldest);
+          const { data, error } = await q;
+          if (error) throw error;
+          const items = (data || []).map(eventLinkFromDb);
+          if (items.length) dispatch({ type: "APPEND_EVENT_LINKS", items });
+          return items.length;
+        } catch (e) {
+          console.warn("loadMoreEventLinks failed:", e?.message || e);
+          return 0;
+        }
       },
     },
   }), [state, wrap]);
