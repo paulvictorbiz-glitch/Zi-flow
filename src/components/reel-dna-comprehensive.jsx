@@ -15,22 +15,98 @@
    flows back through the `actions`/callbacks the page passes down.
    ========================================================= */
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { DnaTable } from "../pages/reel-dna.jsx";
 import { UnifiedDnaCard } from "./unified-dna-card.jsx";
+import { ReelPreviewModal } from "./reel-preview-modal.jsx";
 import { resolveBrief } from "../lib/reel-dna.jsx";
+import { useWorkflow } from "../store/store.jsx";
 import {
   emptyColumnFilters, applyColumnFilters, searchHaystack,
+  RD_HIDEABLE_COLUMNS,
 } from "../lib/reel-dna-filters.jsx";
 
+/* ---------------------------------------------------------------------------
+   Columns menu — a dropdown to hide/show the 8 hideable spreadsheet columns
+   (Feature A). Mirrors the gallery-only "Hide assets" affordance's placement in
+   .rdc-contentbar, gated to the Grid sub-view. Absolute-positioned inside a
+   position:relative wrapper (the contentbar has no overflow/transform, so NO
+   portal is needed); closes on outside-click + Esc. Reads/writes the per-user
+   `hiddenReelDnaCols` pref via the store actions passed in. */
+function ColumnsMenu({ hiddenCols, onToggle, onShowAll }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const hiddenSet = new Set(Array.isArray(hiddenCols) ? hiddenCols : []);
+  const hiddenCount = RD_HIDEABLE_COLUMNS.filter((c) => hiddenSet.has(c.key)).length;
+  return (
+    <span className="rdc-columns" ref={wrapRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        className={"rdc-columns-btn" + (hiddenCount ? " is-on" : "")}
+        aria-haspopup="true"
+        aria-expanded={open}
+        title="Show / hide spreadsheet columns"
+        onClick={() => setOpen((o) => !o)}
+      >
+        ▦ Columns{hiddenCount ? ` · ${hiddenCount} hidden` : ""}
+      </button>
+      {open && (
+        <div className="rdc-columns-menu" role="menu">
+          {RD_HIDEABLE_COLUMNS.map((c) => {
+            const shown = !hiddenSet.has(c.key);
+            return (
+              <label key={c.key} className="rdc-columns-item">
+                <input type="checkbox" checked={shown} onChange={() => onToggle(c.key)} />
+                <span>{c.label}</span>
+              </label>
+            );
+          })}
+          <button type="button" className="rdc-columns-showall" onClick={() => { onShowAll(); }}>
+            Show all
+          </button>
+        </div>
+      )}
+    </span>
+  );
+}
+
 export function ReelDnaComprehensive({
-  items, now, actions, onView, onDeconstruct, onSend, onDelete, onOpenAssets, isOwner,
+  items, now, actions, onView, onDeconstruct, onSend, onBack, onDelete, onOpenAssets, isOwner,
 }) {
   const list = Array.isArray(items) ? items : [];
+  // Per-user column-hide + visited-link prefs come from the store (contracts
+  // C1 + C5). DnaTable stays a pure renderer — it receives these as props.
+  const {
+    hiddenReelDnaCols, visitedReelDnaIds, lastVisitedReelDnaId,
+    actions: storeActions,
+  } = useWorkflow();
+  const hiddenCols = Array.isArray(hiddenReelDnaCols) ? hiddenReelDnaCols : [];
+  const visitedIds = Array.isArray(visitedReelDnaIds) ? visitedReelDnaIds : [];
+
+  // Defensive wrappers — the store actions (contracts C1/C5) are owned by TEAM
+  // STORE; guard so a not-yet-landed action can never crash a click handler.
+  const toggleCol  = (key) => storeActions?.toggleReelDnaCol?.(key);
+  const showAllCols = () => storeActions?.setReelDnaCols?.([]);
+  const markVisited = (id) => storeActions?.markReelDnaVisited?.(id);
+
   const [sub, setSub] = useState("grid"); // grid | gallery
   const [q, setQ] = useState("");          // single global search (both sub-views)
   const [colFilters, setColFilters] = useState(emptyColumnFilters); // Grid column headers
   const [modalId, setModalId] = useState(null); // row → centered UnifiedDnaCard modal
+  const [previewItem, setPreviewItem] = useState(null); // row link → in-app reel preview
   const [hideAllAssets, setHideAllAssets] = useState(false); // Gallery: hide every card's assets (session state)
   const [favOnly, setFavOnly] = useState(false);   // ★ show only starred rows
   const [colorFilter, setColorFilter] = useState(null); // hex → show only rows with that color tag
@@ -83,6 +159,13 @@ export function ReelDnaComprehensive({
           <span className="rdc-result-count">
             {filtered.length} of {list.length} reel{list.length === 1 ? "" : "s"}
           </span>
+          {sub === "grid" && (
+            <ColumnsMenu
+              hiddenCols={hiddenCols}
+              onToggle={toggleCol}
+              onShowAll={showAllCols}
+            />
+          )}
           {sub === "gallery" && (
             <button
               type="button"
@@ -108,11 +191,16 @@ export function ReelDnaComprehensive({
             empty <div> is kept for Gallery only (no headers to preserve there). */}
         {sub === "grid" ? (
           <DnaTable items={filtered} now={now} actions={actions}
-                    onView={onView} onDeconstruct={onDeconstruct} onSend={onSend} onDelete={onDelete}
+                    onView={onView} onDeconstruct={onDeconstruct} onSend={onSend} onBack={onBack} onDelete={onDelete}
                     onOpenAssets={onOpenAssets} onOpenCard={(it) => setModalId(it.id)}
                     colFilters={colFilters} onColFilter={onColFilter} onClearColFilters={clearColFilters}
                     favOnly={favOnly} onFavFilter={setFavOnly}
-                    colorFilter={colorFilter} onColorFilter={setColorFilter} colorsInUse={colorsInUse} />
+                    colorFilter={colorFilter} onColorFilter={setColorFilter} colorsInUse={colorsInUse}
+                    hiddenCols={hiddenCols}
+                    onOpenPreview={(it) => setPreviewItem(it)}
+                    onLinkClick={(it) => markVisited(it.id)}
+                    visitedReelDnaIds={visitedIds}
+                    lastVisitedReelDnaId={lastVisitedReelDnaId ?? null} />
         ) : filtered.length === 0 ? (
           <div className="rd-empty">No reels match these filters.</div>
         ) : (
@@ -138,6 +226,9 @@ export function ReelDnaComprehensive({
           </div>
         </div>
       )}
+
+      {/* In-app reel preview — opened by a plain left-click on a Reel link. */}
+      <ReelPreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
     </div>
   );
 }

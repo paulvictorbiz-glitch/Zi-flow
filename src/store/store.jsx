@@ -1152,6 +1152,30 @@ function workflowReducer(state, action) {
         : [...state.hiddenLaneIds, action.laneId] };
     }
 
+    /* ----- Reel DNA spreadsheet: hidden columns (per-user, persisted to user_preferences) ----- */
+    case "SET_HIDDEN_REEL_DNA_COLS":
+      return { ...state, hiddenReelDnaCols: action.keys || [] };
+
+    case "TOGGLE_REEL_DNA_COL": {
+      const has = state.hiddenReelDnaCols.includes(action.key);
+      return { ...state, hiddenReelDnaCols: has
+        ? state.hiddenReelDnaCols.filter(k => k !== action.key)
+        : [...state.hiddenReelDnaCols, action.key] };
+    }
+
+    /* ----- Reel DNA spreadsheet: visited-link tracking (per-user, persisted to user_preferences) ----- */
+    case "SET_VISITED_REEL_DNA":
+      return { ...state, visitedReelDnaIds: action.ids || [], lastVisitedReelDnaId: action.last ?? null };
+
+    case "MARK_REEL_DNA_VISITED": {
+      const has = state.visitedReelDnaIds.includes(action.id);
+      return {
+        ...state,
+        visitedReelDnaIds: has ? state.visitedReelDnaIds : [...state.visitedReelDnaIds, action.id],
+        lastVisitedReelDnaId: action.id,
+      };
+    }
+
     /* ----- Training module content (owner per-field overrides) ----- */
     case "SET_MODULE_CONTENT": {
       const mod = { ...(state.moduleContent[action.moduleId] || {}), [action.fieldPath]: action.value };
@@ -1762,6 +1786,9 @@ const INITIAL_STATE = {
   collapsedReelIds: [],        // reel IDs the current user has collapsed on the pipeline board
   hiddenLaneIds: [],           // lane/person IDs the current user has hidden on the pipeline board
   prefetchHeavyTabs: false,    // owner pref: eagerly prefetch the code-split heavy tabs (per-user, user_preferences)
+  hiddenReelDnaCols: [],       // Reel DNA spreadsheet: hidden column KEYS (per-user, user_preferences). [] = all visible
+  visitedReelDnaIds: [],       // Reel DNA spreadsheet: reel_dna ids the user has opened (per-user, user_preferences)
+  lastVisitedReelDnaId: null,  // Reel DNA spreadsheet: the single most-recently opened reel_dna id
   loaded: false,
   error: null,
 };
@@ -2066,7 +2093,7 @@ function WorkflowProvider({ children }) {
         const { data } = await supabase
           .from("user_preferences").select("key, value")
           .eq("person_id", _authPerson.id)
-          .in("key", ["pipeline_collapsed", "pipeline_hidden_lanes", "prefetch_heavy_tabs"]);
+          .in("key", ["pipeline_collapsed", "pipeline_hidden_lanes", "prefetch_heavy_tabs", "reel_dna_hidden_cols", "reel_dna_visited"]);
         for (const row of (data || [])) {
           if (row.key === "pipeline_collapsed")
             dispatch({ type: "SET_COLLAPSED_REEL_IDS", ids: row.value?.ids || [] });
@@ -2074,6 +2101,10 @@ function WorkflowProvider({ children }) {
             dispatch({ type: "SET_HIDDEN_LANE_IDS", ids: row.value?.ids || [] });
           if (row.key === "prefetch_heavy_tabs")
             dispatch({ type: "SET_PREFETCH_HEAVY_TABS", next: !!row.value?.enabled });
+          if (row.key === "reel_dna_hidden_cols")
+            dispatch({ type: "SET_HIDDEN_REEL_DNA_COLS", keys: row.value?.keys || [] });
+          if (row.key === "reel_dna_visited")
+            dispatch({ type: "SET_VISITED_REEL_DNA", ids: row.value?.ids || [], last: row.value?.last || null });
         }
       } catch (e) {
         console.warn("user_preferences not available (run migration 0070?):", e?.message || e);
@@ -2492,6 +2523,9 @@ function WorkflowProvider({ children }) {
     collapsedReelIds: state.collapsedReelIds,
     hiddenLaneIds: state.hiddenLaneIds,
     prefetchHeavyTabs: state.prefetchHeavyTabs,
+    hiddenReelDnaCols: state.hiddenReelDnaCols,
+    visitedReelDnaIds: state.visitedReelDnaIds,
+    lastVisitedReelDnaId: state.lastVisitedReelDnaId,
     /* Is this reel locked to its editor? (gamify on + work started or graded).
        UI uses this to disable assign controls / show an owner confirm. */
     isReelLocked: (reelId) => {
@@ -2771,6 +2805,66 @@ function WorkflowProvider({ children }) {
             }
           } catch (e) {
             console.error("createReelWithFootage persist failed:", e);
+            dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          }
+        })();
+      },
+
+      /* Multi-editor fan-out: create one INDEPENDENT reel copy per editor, each
+         in that editor's "Not started" lane, titled " (FirstName)". Mirrors
+         createReelWithFootage / duplicateReel: optimistic dispatch then sequential
+         FK-ordered persist (reel before its footage). The N reel ids are computed
+         UP FRONT from the current reels so a batch never collides on nextReelId
+         (which would otherwise hand out the same id to every editor). Each copy
+         gets a FRESH copy of footageRows with new unique ids. Empty editors[] is a
+         no-op. Never throws past the action (errors -> SET_ERROR). No reel_dna
+         clone (matches createReelWithFootage scope); no orphan/base card. */
+      createReelForEditors: (baseReel, footageRows = [], editors = []) => {
+        if (!Array.isArray(editors) || editors.length === 0) return;
+        const current = stateRef.current;
+
+        // Compute N sequential REEL-NNN ids UP FRONT (no per-editor nextReelId).
+        const nums = (current.reels || [])
+          .map(r => { const m = /^REEL-(\d+)$/.exec(r?.id || ""); return m ? parseInt(m[1], 10) : -1; })
+          .filter(n => n >= 0);
+        const baseNum = nums.length ? Math.max(...nums) + 1 : 0;
+
+        const now = new Date().toISOString();
+        const groups = editors.map((editor, i) => {
+          const newId = "REEL-" + String(baseNum + i).padStart(3, "0");
+          const firstName = editor.firstName || editor.id;
+          const reel = {
+            ...baseReel,
+            id: newId,
+            title: ((baseReel && baseReel.title) || "Reel") + " (" + firstName + ")",
+            owner: editor.id,
+            lane: editor.id,
+            stage: "not_started",
+            board_order: undefined,
+            displayNumber: undefined,
+            stageEnteredAt: now,
+          };
+          const footage = (footageRows || []).map(f => ({
+            ...f,
+            id: `footage-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            reel_id: newId,
+          }));
+          return { reel, footage };
+        });
+
+        // ── Optimistic dispatches (all reels, then all footage) ──────────────
+        groups.forEach(g => dispatch({ type: "CREATE_REEL", reel: g.reel }));
+        groups.forEach(g => g.footage.forEach(item => dispatch({ type: "ADD_ATTACHED_FOOTAGE", item })));
+
+        // ── Persist (sequential, FK order enforced: reel before its footage) ──
+        (async () => {
+          try {
+            for (const g of groups) {
+              await persistCreateReel(g.reel);
+              for (const item of g.footage) await persistAddAttachedFootage(item);
+            }
+          } catch (e) {
+            console.error("createReelForEditors persist failed:", e);
             dispatch({ type: "SET_ERROR", error: e.message || String(e) });
           }
         })();
@@ -3671,6 +3765,53 @@ function WorkflowProvider({ children }) {
         }
       },
 
+      /* Reverse of sendReelDnaToPipeline: pull the linked pipeline reel's editable
+         TEXT back into the card, UNLINK it (clear reel_id) so the "→ Pipeline"
+         button resets, and flip the card back to captured. Assets (footage /
+         locations / news the editor added in the pipeline) are migrated back by
+         the caller via seedAssetsFromPipeline BEFORE this runs (it needs the
+         still-set reel_id); the pipeline reel is soft-archived by the caller via
+         archiveReel AFTER (soft, so the migrated footage rows survive and the
+         card's new asset links stay resolvable). Returns the card id. */
+      returnReelFromPipeline: (reelId) => {
+        const cur = stateRef.current;
+        const reel = (cur.reels || []).find(r => r.id === reelId);
+        const card = (cur.reelDna || []).find(d => d.reelId === reelId && !d.deletedAt);
+        if (!card) throw new Error("No linked Reel DNA card for " + reelId);
+
+        // Append anything the editor wrote in the pipeline back onto the card's
+        // quickNotes, under a per-reel header (deduped so re-runs can't stack).
+        let quickNotes = card.quickNotes || "";
+        if (reel) {
+          const header = `↩ From pipeline ${reelId}`;
+          if (!quickNotes.includes(header)) {
+            const lines = [];
+            if (reel.logline) lines.push(`Logline: ${reel.logline}`);
+            if (reel.note)    lines.push(reel.note);
+            if (reel.vo)      lines.push(`VO: ${reel.vo}`);
+            if (reel.script)  lines.push(`Script: ${reel.script}`);
+            if (reel.audio)   lines.push(`Audio: ${reel.audio}`);
+            if (lines.length) {
+              quickNotes = [quickNotes.trim(), `${header}\n${lines.join("\n")}`]
+                .filter(Boolean).join("\n\n");
+            }
+          }
+        }
+
+        // Unlink + reset so "→ Pipeline" returns; flip status back to captured.
+        const patch = { reelId: null, status: "captured", quickNotes };
+        dispatch({ type: "UPDATE_REEL_DNA", id: card.id, patch });
+        (async () => {
+          try {
+            await persistUpdateReelDna(card.id, patch);
+          } catch (e) {
+            console.error("returnReelFromPipeline persist failed:", e);
+            dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          }
+        })();
+        return card.id;
+      },
+
       /* Manually run the news-monitor ingest now (the "Refresh now" button).
          Hits the same route the Hetzner cron uses, authed with the owner's
          Supabase JWT. New poller rows arrive live via realtime; this returns
@@ -3880,6 +4021,45 @@ function WorkflowProvider({ children }) {
           { person_id: _authPerson.id, key: "prefetch_heavy_tabs", value: { enabled }, updated_at: new Date().toISOString() },
           { onConflict: "person_id,key" }
         ).then(({ error }) => { if (error) console.error("prefetch_heavy_tabs persist failed:", error); });
+      },
+
+      /* Reel DNA spreadsheet: per-user hidden columns — persisted to
+         user_preferences (key reel_dna_hidden_cols), mirroring toggleReelCollapsed.
+         toggleReelDnaCol toggles ONE column key; setReelDnaCols replaces the whole
+         set (setReelDnaCols([]) = Show all). */
+      toggleReelDnaCol: (key) => {
+        const cols = stateRef.current.hiddenReelDnaCols;
+        const next = cols.includes(key) ? cols.filter(k => k !== key) : [...cols, key];
+        dispatch({ type: "TOGGLE_REEL_DNA_COL", key });
+        if (isDemoMode() || !_authPerson?.id) return;
+        supabase.from("user_preferences").upsert(
+          { person_id: _authPerson.id, key: "reel_dna_hidden_cols", value: { keys: next }, updated_at: new Date().toISOString() },
+          { onConflict: "person_id,key" }
+        ).then(({ error }) => { if (error) console.error("reel_dna_hidden_cols persist failed:", error); });
+      },
+
+      setReelDnaCols: (keys) => {
+        const next = Array.isArray(keys) ? keys : [];
+        dispatch({ type: "SET_HIDDEN_REEL_DNA_COLS", keys: next });
+        if (isDemoMode() || !_authPerson?.id) return;
+        supabase.from("user_preferences").upsert(
+          { person_id: _authPerson.id, key: "reel_dna_hidden_cols", value: { keys: next }, updated_at: new Date().toISOString() },
+          { onConflict: "person_id,key" }
+        ).then(({ error }) => { if (error) console.error("reel_dna_hidden_cols persist failed:", error); });
+      },
+
+      /* Reel DNA spreadsheet: per-user visited-link tracking — persisted to
+         user_preferences (key reel_dna_visited), mirroring toggleReelCollapsed.
+         Idempotent add to the visited set + records the most-recent id. */
+      markReelDnaVisited: (id) => {
+        const ids = stateRef.current.visitedReelDnaIds;
+        const next = ids.includes(id) ? ids : [...ids, id];
+        dispatch({ type: "MARK_REEL_DNA_VISITED", id });
+        if (isDemoMode() || !_authPerson?.id) return;
+        supabase.from("user_preferences").upsert(
+          { person_id: _authPerson.id, key: "reel_dna_visited", value: { ids: next, last: id }, updated_at: new Date().toISOString() },
+          { onConflict: "person_id,key" }
+        ).then(({ error }) => { if (error) console.error("reel_dna_visited persist failed:", error); });
       },
 
       /* Editor self-assessment: store the set of checked sub-item ids for

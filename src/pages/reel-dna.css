@@ -378,10 +378,26 @@
 
 /* ── Spreadsheet / log view ────────────────────────────── */
 .rd-table-wrap {
-  overflow-x: auto;
+  /* Bounded-height 2-D scroll box so the table scrolls INSIDE the wrapper.
+     This is what lets the header row (position:sticky;top:0) and the first
+     column (position:sticky;left:0) actually freeze — sticky pins to the
+     nearest scroll container, so the wrapper itself must be the scroller
+     (a page-level scroll would carry the header away with it). */
+  overflow: auto;
+  max-height: calc(100vh - 200px);
+  max-height: calc(100dvh - 200px); /* dvh tracks mobile browser chrome */
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg-2);
+}
+/* Mobile: less vertical chrome above the table, so give it more room — the
+   freeze (sticky header row + sticky first column) works identically here,
+   it just needs the wrapper to stay the scroll container. */
+@media (max-width: 720px) {
+  .rd-table-wrap {
+    max-height: calc(100vh - 130px);
+    max-height: calc(100dvh - 130px);
+  }
 }
 .rd-table {
   width: 100%; border-collapse: collapse;
@@ -446,6 +462,8 @@
   cursor: pointer;
 }
 .rd-row-btn:hover { background: color-mix(in srgb, var(--c-violet) 14%, transparent); }
+.rd-row-btn--back { color: var(--c-amber); border-color: color-mix(in srgb, var(--c-amber) 38%, transparent); }
+.rd-row-btn--back:hover { background: color-mix(in srgb, var(--c-amber) 14%, transparent); }
 .rd-row-btn--archive { color: var(--fg-dim); border-color: var(--line-soft); }
 .rd-row-btn--archive:hover { color: var(--c-red); border-color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }
 
@@ -887,3 +905,292 @@
 .rdc-modal-close:hover { color: var(--c-red); border-color: var(--c-red); }
 /* The card inside the modal gets the full width (no grid cell squeezing it). */
 .rdc-modal .rd-card { margin: 0; }
+
+/* =========================================================
+   COLUMN HIDE / FREEZE + VISITED LINKS + PREVIEW MODAL
+   APPEND-ONLY. Feature A (freeze col 0 only) + Feature C
+   (visited underline + youtube/fallback inside the reused
+   .rdc-modal). Reuses existing tokens; does NOT fork modal
+   base styles. Nothing here overrides the inline per-row tint
+   with !important.
+   ========================================================= */
+
+/* ── FEATURE A: freeze the first column (mark, ~56px) only ──
+   We do NOT freeze the Reel column (240px would eat a 360px
+   viewport). The mark <th>, the mark body <td>, and the
+   filter-row col-0 cell all get position:sticky; left:0.
+   Z-index ladder (so the frozen column paints above scrolled
+   body cells, and the two sticky corners sit on top of both
+   the sticky header row and the frozen column):
+     · frozen body td .................. 2
+     · sticky header th / filter td .... 3  (bumped 1 -> 3)
+     · the two corners (col-0 header,
+       col-0 filter) ................... 5
+   Dividers come from box-shadow inset because collapsed
+   table borders don't paint on sticky cells. Backgrounds are
+   per-region opaque so scrolled content never shows through. */
+
+/* Bump the existing sticky header + filter row above the frozen body column. */
+.rd-table thead th { z-index: 3; }
+.rd-colfilter-td   { z-index: 3; }
+
+/* Frozen body cell (mark column, col 0). */
+.rd-table td.rd-td-mark {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  /* Opaque per-region base so scrolled cells never bleed through.
+     The inline per-row tint is tracked below via JS-set bg; this is
+     the fallback for untinted rows. */
+  background: var(--bg-2);
+  /* Right divider (collapsed borders don't render on sticky cells). */
+  box-shadow: inset -1px 0 0 var(--line);
+  width: 56px;
+}
+
+/* Preserve the .rd-tr 3px status accent on the frozen col-0 cell so the
+   opaque background doesn't paint over the row's left-edge status color.
+   Mirror the same status -> color mapping the .rd-tr modifiers use. */
+.rd-tr td.rd-td-mark { border-left: 3px solid transparent; }
+.rd-tr.rd-status--captured    td.rd-td-mark { border-left-color: var(--c-blue); }
+.rd-tr.rd-status--in_progress td.rd-td-mark { border-left-color: var(--c-amber); }
+.rd-tr.rd-status--done        td.rd-td-mark { border-left-color: var(--c-green); }
+
+/* Header corner (col-0 header). BOTH axes sticky -> top:0 + left:0. */
+.rd-table thead th.rd-th-mark {
+  position: sticky;
+  top: 0;       /* header row */
+  left: 0;      /* frozen column */
+  z-index: 5;   /* above both the sticky header row and the frozen column */
+  background: var(--bg-3);
+  box-shadow: inset -1px 0 0 var(--line);
+  width: 56px;
+}
+
+/* Filter corner (col-0 filter cell). top:30px = the sticky header row's
+   height (8px top + 8px bottom padding + ~14px line at font-size:10px),
+   matching the existing .rd-colfilter-td top:30px offset. */
+.rd-colfilter-td.rd-colfilter-mark {
+  position: sticky;
+  top: 30px;    /* sits just under the sticky header row (= header height) */
+  left: 0;      /* frozen column */
+  z-index: 5;   /* corner: above both sticky regions */
+  background: var(--bg-2);
+  box-shadow: inset -1px 0 0 var(--line);
+}
+
+/* ── FEATURE C: visited-link tracking on the Reel cell ──────
+   The row already uses star (favorite), rowColor tint, and the
+   3px status accent, so an UNDERLINE is a non-colliding
+   "visited" signal; the single most-recent click is brighter +
+   heavier so you never lose your place. */
+.rd-cell-link.is-visited {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--c-cyan) 55%, transparent);
+}
+.rd-cell-link.is-last {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-decoration-color: var(--c-cyan);
+  color: var(--c-cyan);
+}
+
+/* ── FEATURE C: preview-modal body (reuses .rdc-modal-overlay /
+   .rdc-modal — base styles are NOT forked here, only the
+   in-modal content). ─────────────────────────────────────── */
+.rd-preview-body {
+  display: flex; flex-direction: column; gap: 12px;
+  margin-top: 4px;
+}
+
+/* Responsive 16:9 wrapper for the YouTube iframe (and any embed). */
+.rd-preview-embed {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.rd-preview-embed iframe {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  border: 0; display: block;
+}
+/* Fallback for browsers without aspect-ratio (keeps the 16:9 box). */
+@supports not (aspect-ratio: 16 / 9) {
+  .rd-preview-embed { height: 0; padding-bottom: 56.25%; }
+}
+
+/* IG / local-video player slot (ReelPlayer renders its own chrome). */
+.rd-preview-player {
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Clean fallback card for platforms that block embedding (tiktok / fb). */
+.rd-preview-fallback {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 20px 16px;
+  border: 1px dashed var(--dash);
+  border-radius: 8px;
+  background: var(--bg-3);
+  text-align: center;
+}
+.rd-preview-fallback-plat {
+  font-family: var(--f-mono); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+  color: var(--fg-mute);
+}
+.rd-preview-fallback-url {
+  font-family: var(--f-mono); font-size: 11px;
+  color: var(--fg-dim); word-break: break-all;
+  max-width: 100%;
+}
+
+/* "Open original ↗" anchor — always rendered regardless of platform. */
+.rd-preview-open {
+  align-self: center;
+  display: inline-block;
+  appearance: none; cursor: pointer; text-decoration: none;
+  font-family: var(--f-mono); font-size: 12px; font-weight: 700;
+  border-radius: 6px; padding: 7px 16px;
+  color: var(--c-cyan);
+  background: color-mix(in srgb, var(--c-cyan) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-cyan) 45%, transparent);
+  transition: background .14s ease, border-color .14s ease;
+}
+.rd-preview-open:hover {
+  background: color-mix(in srgb, var(--c-cyan) 18%, transparent);
+  border-color: var(--c-cyan);
+}
+
+/* Small platform/url caption row under the embed. */
+.rd-preview-meta {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: var(--f-mono); font-size: 10.5px; color: var(--fg-dim);
+}
+
+/* Works at the 720px mobile breakpoint (the modal already maxes at 720px). */
+@media (max-width: 720px) {
+  .rd-preview-fallback { padding: 16px 12px; }
+}
+
+/* ── FEATURE C (actual modal classes used by reel-preview-modal.jsx) ──
+   The component emits .rpv-* selectors; these style the YouTube iframe,
+   IG embed slot, and the tiktok/fb fallback card inside the reused
+   .rdc-modal. Base overlay/modal chrome is inherited (not forked). */
+.rpv-modal { max-width: 720px; }
+.rpv-body { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+
+/* Responsive 16:9 YouTube embed. */
+.rpv-embed {
+  position: relative; width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--bg-0);
+  border: 1px solid var(--line); border-radius: 8px;
+  overflow: hidden;
+}
+.rpv-iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+@supports not (aspect-ratio: 16 / 9) {
+  .rpv-embed { height: 0; padding-bottom: 56.25%; }
+}
+
+/* Vertical embed (TikTok) — 9:16, centered, capped so it doesn't dominate. */
+.rpv-embed--tall {
+  aspect-ratio: 9 / 16;
+  max-width: 340px;
+  margin: 0 auto;
+}
+@supports not (aspect-ratio: 9 / 16) {
+  .rpv-embed--tall { height: 0; padding-bottom: 177.78%; }
+}
+
+/* Instagram player slot (ReelPlayer is 9:16) — centered + capped. */
+.rpv-player { width: 100%; max-width: 360px; margin: 0 auto; }
+
+/* tiktok / fb (embedding blocked) fallback card. */
+.rpv-fallback {
+  display: flex; flex-direction: column; gap: 10px; align-items: center;
+  padding: 24px 16px;
+  border: 1px dashed var(--line-hard, var(--line)); border-radius: 8px;
+  background: var(--bg-3); text-align: center;
+}
+.rpv-fallback-plat {
+  font-family: var(--f-mono); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em; color: var(--fg-mute);
+}
+.rpv-fallback-msg { font-size: 12px; color: var(--fg-dim); }
+.rpv-fallback-url {
+  font-family: var(--f-mono); font-size: 11px; color: var(--fg-dim);
+  word-break: break-all; max-width: 100%; text-decoration: none;
+}
+.rpv-fallback-url:hover { text-decoration: underline; }
+
+/* "Open original ↗" — always present (foot of modal + the big fallback button). */
+.rpv-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
+.rpv-open, .rpv-open-big {
+  display: inline-block; appearance: none; cursor: pointer; text-decoration: none;
+  font-family: var(--f-mono); font-size: 12px; font-weight: 700;
+  border-radius: 6px; padding: 7px 16px;
+  color: var(--c-cyan);
+  background: color-mix(in srgb, var(--c-cyan) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-cyan) 45%, transparent);
+  transition: background .14s ease, border-color .14s ease;
+}
+.rpv-open:hover, .rpv-open-big:hover {
+  background: color-mix(in srgb, var(--c-cyan) 18%, transparent);
+  border-color: var(--c-cyan);
+}
+
+/* The explicit "↗" new-tab pip in the Reel cell sub-row (Feature C). */
+.rd-cell-newtab {
+  font-size: 10px; line-height: 1; text-decoration: none;
+  color: var(--fg-dim);
+}
+.rd-cell-newtab:hover { color: var(--c-cyan); }
+
+/* ── FEATURE A: the "Columns" dropdown menu in .rdc-contentbar ──
+   Absolute-positioned inside a position:relative wrapper (the
+   contentbar has no overflow/transform, so no portal). z-index ~40
+   sits below the .rdc-modal-overlay (z60). Closes on outside-click +
+   Esc (handled in the component). */
+.rdc-columns-btn {
+  appearance: none; cursor: pointer;
+  font-family: var(--f-mono); font-size: 11px; font-weight: 600;
+  border-radius: 6px; padding: 5px 10px;
+  color: var(--fg-dim);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.rdc-columns-btn:hover { color: var(--fg); border-color: var(--line-hard, var(--line)); }
+.rdc-columns-btn.is-on { color: var(--c-cyan); border-color: color-mix(in srgb, var(--c-cyan) 45%, transparent); }
+.rdc-columns-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  min-width: 180px;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-hard, var(--line)); border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.rdc-columns-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 5px; cursor: pointer;
+  font-family: var(--f-mono); font-size: 11.5px; color: var(--fg);
+}
+.rdc-columns-item:hover { background: var(--bg-3); }
+.rdc-columns-item input { cursor: pointer; }
+.rdc-columns-showall {
+  margin-top: 4px; appearance: none; cursor: pointer;
+  font-family: var(--f-mono); font-size: 11px; font-weight: 600;
+  border-radius: 5px; padding: 6px 8px;
+  color: var(--c-cyan);
+  background: color-mix(in srgb, var(--c-cyan) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-cyan) 35%, transparent);
+}
+.rdc-columns-showall:hover { background: color-mix(in srgb, var(--c-cyan) 18%, transparent); }

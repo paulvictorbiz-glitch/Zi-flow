@@ -22,6 +22,41 @@ import {
 } from "./reel-dna.jsx";
 
 /* ---------------------------------------------------------------------------
+   RD_COLUMNS — the ORDERED 11-column model of the DnaTable spreadsheet, index-
+   aligned to the three hardcoded render sites (thead / ColumnFilterRow / tbody).
+   `hideable:false` columns (mark, reel, actions) can never be hidden. The store
+   persists ONLY these key strings (per-user "reel_dna_hidden_cols"); alignment
+   is enforced by single-owner coupling, so the store does NOT import this. */
+export const RD_COLUMNS = [
+  { key: "mark",     label: "Mark",          hideable: false },
+  { key: "reel",     label: "Reel",          hideable: false },
+  { key: "location", label: "Location",      hideable: true },
+  { key: "music",    label: "Music",         hideable: true },
+  { key: "font",     label: "Font",          hideable: true },
+  { key: "sfx",      label: "SFX",           hideable: true },
+  { key: "story",    label: "Story / Pacing", hideable: true },
+  { key: "notes",    label: "Notes",         hideable: true },
+  { key: "status",   label: "Status",        hideable: true },
+  { key: "assets",   label: "Assets",        hideable: true },
+  { key: "actions",  label: "",              hideable: false },
+];
+
+/* The 8 columns a user is allowed to hide (drives the "Columns" menu). */
+export const RD_HIDEABLE_COLUMNS = RD_COLUMNS.filter((c) => c.hideable);
+
+/* makeColVisibility(hiddenCols) => (key) => boolean.
+   Pure, provider-free, defensive vs a non-array. A non-hideable column is
+   ALWAYS visible (can't be hidden even if its key somehow lands in the set). */
+export function makeColVisibility(hiddenCols) {
+  const set = new Set(Array.isArray(hiddenCols) ? hiddenCols : []);
+  return (key) => {
+    const col = RD_COLUMNS.find((c) => c.key === key);
+    if (col && col.hideable === false) return true;
+    return !set.has(key);
+  };
+}
+
+/* ---------------------------------------------------------------------------
    Per-row searchable text for each filterable column. Lower-cased lazily by
    the matchers. `get` returns a plain string (may be empty). */
 export const RD_TEXT_COLUMNS = [
@@ -159,3 +194,6 @@ export function toggleFacet(state, key, value) {
   const next = arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value];
   return { ...state, [key]: next };
 }
+
+/* RD_COLUMNS / RD_HIDEABLE_COLUMNS / makeColVisibility (contract C3) are
+   defined near the TOP of this module (the column registry). */

@@ -36,9 +36,17 @@ import { ReelDnaComprehensive } from "../components/reel-dna-comprehensive.jsx";
 import { ReelAssetsPage } from "./reel-assets-page.jsx";
 import { useReelDnaAssets } from "../lib/reel-dna-assets.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
+import { useRoster } from "../lib/roster.jsx";
+import { ROLES } from "../lib/shared-data.jsx";
 // RD_SELECT_COLUMNS feeds ColumnFilterRow's select dropdowns. The other filter
-// helpers (column + facet) now live inside ReelDnaComprehensive.
-import { RD_SELECT_COLUMNS } from "../lib/reel-dna-filters.jsx";
+// helpers (column + facet) now live inside ReelDnaComprehensive. RD_COLUMNS +
+// makeColVisibility drive the per-column hide/show (Feature A).
+import { RD_SELECT_COLUMNS, RD_TEXT_COLUMNS, RD_COLUMNS, makeColVisibility } from "../lib/reel-dna-filters.jsx";
+
+/* The text-column filter keys (location, music, font, sfx, story, notes, reel) —
+   used by DnaTable's FILTER-ON-HIDDEN auto-clear to reset a per-column text
+   filter when its column is hidden. The `status` select clears separately. */
+const RD_TEXT_COLUMN_KEYS = RD_TEXT_COLUMNS.map((c) => c.key);
 
 /* The bookmarklet shown in the page footer. Navigates to our own origin with
    the current page URL prefilled — no CORS, no API call (the form does the
@@ -395,24 +403,30 @@ function ColFilterSelectCell({ k, colFilters, onColFilter }) {
   );
 }
 
-function ColumnFilterRow({ colFilters, onColFilter, onClear }) {
+function ColumnFilterRow({ colFilters, onColFilter, onClear, visible = () => true }) {
   const T = (k) => <ColFilterTextCell k={k} colFilters={colFilters} onColFilter={onColFilter} />;
   const S = (k) => <ColFilterSelectCell k={k} colFilters={colFilters} onColFilter={onColFilter} />;
+  // Each cell is gated key-by-key against RD_COLUMNS order so it stays exactly
+  // index-aligned with the thead <th> and tbody <td> blocks. The mark and
+  // actions cells are filter-less placeholders (mark carries the sticky-freeze
+  // class; actions holds the clear-all ✕).
   return (
     <tr className="rd-colfilter-row">
-      <td className="rd-colfilter-td" />
-      {T("reel")}
-      {T("location")}
-      {T("music")}
-      {T("font")}
-      {T("sfx")}
-      {T("story")}
-      {T("notes")}
-      {S("status")}
-      <td className="rd-colfilter-td" />
-      <td className="rd-colfilter-td rd-colfilter-clear-td">
-        <button type="button" className="rd-colfilter-clear" title="Clear column filters" onClick={onClear}>✕</button>
-      </td>
+      {visible("mark")     && <td className="rd-colfilter-td rd-colfilter-mark" />}
+      {visible("reel")     && T("reel")}
+      {visible("location") && T("location")}
+      {visible("music")    && T("music")}
+      {visible("font")     && T("font")}
+      {visible("sfx")      && T("sfx")}
+      {visible("story")    && T("story")}
+      {visible("notes")    && T("notes")}
+      {visible("status")   && S("status")}
+      {visible("assets")   && <td className="rd-colfilter-td" />}
+      {visible("actions")  && (
+        <td className="rd-colfilter-td rd-colfilter-clear-td">
+          <button type="button" className="rd-colfilter-clear" title="Clear column filters" onClick={onClear}>✕</button>
+        </td>
+      )}
     </tr>
   );
 }
@@ -634,8 +648,16 @@ function ColorFilterDot({ value, onPick }) {
    across tabs via realtime. The chosen color tints the whole <tr>. */
 function RowMarkCell({ item, actions }) {
   const fav = !!item.favorite;
+  // The frozen col-0 cell is opaque (so scrolled cells don't bleed through),
+  // which would paint over the row's color tint. Re-apply the SAME 14%-over-bg-2
+  // tint as a gradient layered above the opaque base so a tinted row stays tinted
+  // even on the frozen cell. Untinted rows fall back to the CSS var(--bg-2).
+  const tint = rdRowTint(item.rowColor);
+  const cellStyle = tint
+    ? { background: `linear-gradient(${tint}, ${tint}), var(--bg-2)` }
+    : undefined;
   return (
-    <td className="rd-td-mark">
+    <td className="rd-td-mark" style={cellStyle}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
         <button
           type="button"
@@ -657,10 +679,49 @@ function RowMarkCell({ item, actions }) {
   );
 }
 
-/* ---------- Spreadsheet / log view ---------- */
-export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, onDelete,
+/* The Reel column cell — the title link is the PRIMARY in-app preview path.
+   A plain left-click opens the ReelPreviewModal (and marks the row visited);
+   Ctrl/Cmd/middle/shift/alt-click keeps the native href so a real new tab still
+   opens (and is still marked visited). The "↗" pip is an explicit new-tab
+   escape hatch. Visited rows get an underline; the single most-recent click is
+   the brighter `is-last`. */
+function ReelCellLink({ item, now, onOpenPreview, onLinkClick, isVisited, isLast }) {
+  const handleClick = (e) => {
+    if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      onOpenPreview?.(item);
+      onLinkClick?.(item);
+    } else {
+      // Let the browser open the new tab — still record the visit.
+      onLinkClick?.(item);
+    }
+  };
+  const cls = "rd-cell-link" + (isVisited ? " is-visited" : "") + (isLast ? " is-last" : "");
+  return (
+    <td className="rd-td-reel">
+      <a className={cls} href={item.reelUrl} target="_blank" rel="noreferrer"
+         title={item.reelUrl} onClick={handleClick} onAuxClick={(e) => { if (e.button === 1) onLinkClick?.(item); }}>
+        {item.reelUrl}
+      </a>
+      <div className="rd-cell-sub">
+        <span className="rd-tag sm">{platformLabel(item.platform)}</span>
+        <span className="rd-tag sm dim">{relTime(item.createdAt, now)}</span>
+        <a className="rd-cell-newtab" href={item.reelUrl} target="_blank" rel="noreferrer"
+           title="Open in a new tab" onClick={() => onLinkClick?.(item)}>↗</a>
+      </div>
+    </td>
+  );
+}
+
+/* ---------- Spreadsheet / log view ----------
+   PURE renderer: hide/visited state + callbacks arrive as props from
+   ReelDnaComprehensive (it owns the store reads). hiddenCols defaults to [] so
+   undefined => all columns visible (NEVER all hidden). */
+export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, onBack, onDelete,
                           onOpenAssets, onOpenCard, colFilters, onColFilter, onClearColFilters,
-                          favOnly, onFavFilter, colorFilter, onColorFilter }) {
+                          favOnly, onFavFilter, colorFilter, onColorFilter,
+                          hiddenCols = [], onOpenPreview, onLinkClick,
+                          visitedReelDnaIds = [], lastVisitedReelDnaId = null }) {
   const { reels } = useWorkflow();
   const [compareItem, setCompareItem] = useState(null);
 
@@ -672,88 +733,132 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
 
   const showFilters = !!colFilters && !!onColFilter;
 
+  // Build the visibility predicate ONCE per render from the hidden-keys list.
+  const visible = makeColVisibility(hiddenCols);
+  // The dynamic column count drives the empty-state colSpan AND the dev-only
+  // alignment assert (rendered <th> count must equal this).
+  const visibleCount = RD_COLUMNS.filter((c) => visible(c.key)).length;
+
+  // FILTER-ON-HIDDEN auto-clear: if a column with an active per-column filter
+  // gets hidden, clear that filter so a now-invisible constraint can't silently
+  // drop rows. Runs after render; cheap (only the active-filter keys).
+  useEffect(() => {
+    if (!showFilters || !onColFilter) return;
+    // Text columns clear to "", the status select clears to "all".
+    RD_TEXT_COLUMN_KEYS.forEach((k) => {
+      if (!visible(k) && (colFilters?.[k] || "").trim()) onColFilter(k, "");
+    });
+    if (!visible("status") && colFilters?.status && colFilters.status !== "all") onColFilter("status", "all");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenCols, colFilters, showFilters]);
+
+  // Dev-only guard against index drift between the three column sites: count the
+  // <th> elements actually rendered and compare to the model's visible count. A
+  // mismatch means a thead/filter/tbody block fell out of RD_COLUMNS alignment.
+  const headRowRef = React.useRef(null);
+  useEffect(() => {
+    if (typeof process !== "undefined" && process.env && process.env.NODE_ENV === "production") return;
+    const thCount = headRowRef.current ? headRowRef.current.querySelectorAll("th").length : visibleCount;
+    // eslint-disable-next-line no-console
+    console.assert(
+      thCount === visibleCount,
+      `[DnaTable] column drift: rendered ${thCount} <th> but model says ${visibleCount} visible`
+    );
+  });
+
   return (
     <div className="rd-table-wrap">
       <table className="rd-table">
         <thead>
-          <tr>
-            <th className="rd-th-mark" title="Filter by starred / color">
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {onFavFilter && <StarFilterButton active={!!favOnly} onToggle={onFavFilter} />}
-                {onColorFilter && <ColorFilterDot value={colorFilter} onPick={onColorFilter} />}
-              </span>
-            </th>
-            <th className="rd-th-reel">Reel</th>
-            <th>Location</th>
-            <th>Music</th>
-            <th>Font</th>
-            <th>SFX</th>
-            <th>Story / Pacing</th>
-            <th>Notes</th>
-            <th>Status</th>
-            <th className="rd-th-assets">Assets</th>
-            <th className="rd-th-act"></th>
+          <tr ref={headRowRef}>
+            {visible("mark") && (
+              <th className="rd-th-mark" title="Filter by starred / color">
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {onFavFilter && <StarFilterButton active={!!favOnly} onToggle={onFavFilter} />}
+                  {onColorFilter && <ColorFilterDot value={colorFilter} onPick={onColorFilter} />}
+                </span>
+              </th>
+            )}
+            {visible("reel")     && <th className="rd-th-reel">Reel</th>}
+            {visible("location") && <th>Location</th>}
+            {visible("music")    && <th>Music</th>}
+            {visible("font")     && <th>Font</th>}
+            {visible("sfx")      && <th>SFX</th>}
+            {visible("story")    && <th>Story / Pacing</th>}
+            {visible("notes")    && <th>Notes</th>}
+            {visible("status")   && <th>Status</th>}
+            {visible("assets")   && <th className="rd-th-assets">Assets</th>}
+            {visible("actions")  && <th className="rd-th-act"></th>}
           </tr>
           {showFilters && (
-            <ColumnFilterRow colFilters={colFilters} onColFilter={onColFilter} onClear={onClearColFilters} />
+            <ColumnFilterRow colFilters={colFilters} onColFilter={onColFilter}
+                             onClear={onClearColFilters} visible={visible} />
           )}
         </thead>
         <tbody>
           {items.length === 0 && (
             <tr className="rd-tr rd-tr--empty">
-              <td className="rd-td-empty" colSpan={11}>No reels match these filters.</td>
+              <td className="rd-td-empty" colSpan={visibleCount}>No reels match these filters.</td>
             </tr>
           )}
           {items.map(item => {
             const tags = resolveTags(item);
             const hasTimeline = item.timeline && item.timeline.length > 0;
+            const isVisited = Array.isArray(visitedReelDnaIds) && visitedReelDnaIds.includes(item.id);
+            const isLast = lastVisitedReelDnaId === item.id;
             return (
               <tr key={item.id} className={"rd-tr rd-status--" + item.status}
                   style={item.rowColor ? { background: rdRowTint(item.rowColor) } : undefined}>
-                <RowMarkCell item={item} actions={actions} />
-                <td className="rd-td-reel">
-                  <a className="rd-cell-link" href={item.reelUrl} target="_blank" rel="noreferrer" title={item.reelUrl}>
-                    {item.reelUrl}
-                  </a>
-                  <div className="rd-cell-sub">
-                    <span className="rd-tag sm">{platformLabel(item.platform)}</span>
-                    <span className="rd-tag sm dim">{relTime(item.createdAt, now)}</span>
-                  </div>
-                </td>
-                <td><EditableCell value={tags.location} placeholder="—" onSave={v => saveLocation(item, v)} /></td>
-                <td><EditableCell value={tags.music} placeholder="—" onSave={v => saveGeneField(item, "music", "track", v)} /></td>
-                <td><EditableCell value={tags.font} placeholder="—" onSave={v => saveGeneField(item, "font", "names", v)} /></td>
-                <td><EditableCell value={tags.sfx} placeholder="—" onSave={v => saveGeneField(item, "sfx", "notes", v)} /></td>
-                <td><EditableCell value={tags.story} placeholder="—" onSave={v => saveGeneField(item, "story", "styleNotes", v)} /></td>
-                <td><EditableCell value={item.quickNotes} placeholder="—" onSave={v => actions.updateReelDna(item.id, { quickNotes: v || null })} /></td>
-                <td>
-                  <select className="rd-cell-status" value={item.status}
-                          onChange={e => actions.updateReelDna(item.id, { status: e.target.value })}>
-                    {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-                  </select>
-                </td>
-                <AssetCountCell item={item} onOpen={onOpenAssets} />
-                <td className="rd-td-act">
-                  {onOpenCard && (
-                    <button className="rd-row-btn rd-row-btn--open" title="Open the full card to add assets" onClick={() => onOpenCard(item)}>⤢ Card</button>
-                  )}
-                  <button className="rd-row-btn rd-row-btn--compare" title="Side-by-side compare with current edit" onClick={() => setCompareItem(item)}>⇔</button>
-                  <button className="rd-row-btn" title="Open the visual DNA breakdown" onClick={() => onView(item)}>DNA</button>
-                  <button className="rd-row-btn" title={hasTimeline ? "Edit timeline" : "Build timeline"} onClick={() => onDeconstruct(item)}>
-                    {hasTimeline ? `▦ ${item.timeline.length}` : "▦"}
-                  </button>
-                  {item.reelId ? (
-                    <span className="rd-row-btn rd-row-btn--linked" title={"In pipeline · " + item.reelId}>▸ {item.reelId}</span>
-                  ) : (
-                    <button className="rd-row-btn rd-row-btn--send" title="Create a pipeline reel from this card" onClick={() => onSend(item)}>→ Pipeline</button>
-                  )}
-                  {item.archivedAt ? (
-                    <button className="rd-row-btn rd-row-btn--restore" title="Restore to Live" onClick={() => actions.restoreReelDna(item.id)}>↩</button>
-                  ) : (
-                    <button className="rd-row-btn rd-row-btn--archive" title="Archive" onClick={() => actions.archiveReelDna(item.id)}>⧉</button>
-                  )}
-                  <button className="rd-row-btn rd-row-btn--delete" title="Delete permanently" onClick={() => onDelete(item)}>✕</button>
-                </td>
+                {visible("mark") && <RowMarkCell item={item} actions={actions} />}
+                {visible("reel") && (
+                  <ReelCellLink item={item} now={now} onOpenPreview={onOpenPreview}
+                                onLinkClick={onLinkClick} isVisited={isVisited} isLast={isLast} />
+                )}
+                {visible("location") && <td><EditableCell value={tags.location} placeholder="—" onSave={v => saveLocation(item, v)} /></td>}
+                {visible("music") && <td><EditableCell value={tags.music} placeholder="—" onSave={v => saveGeneField(item, "music", "track", v)} /></td>}
+                {visible("font") && <td><EditableCell value={tags.font} placeholder="—" onSave={v => saveGeneField(item, "font", "names", v)} /></td>}
+                {visible("sfx") && <td><EditableCell value={tags.sfx} placeholder="—" onSave={v => saveGeneField(item, "sfx", "notes", v)} /></td>}
+                {visible("story") && <td><EditableCell value={tags.story} placeholder="—" onSave={v => saveGeneField(item, "story", "styleNotes", v)} /></td>}
+                {visible("notes") && <td><EditableCell value={item.quickNotes} placeholder="—" onSave={v => actions.updateReelDna(item.id, { quickNotes: v || null })} /></td>}
+                {visible("status") && (
+                  <td>
+                    <select className="rd-cell-status" value={item.status}
+                            onChange={e => actions.updateReelDna(item.id, { status: e.target.value })}>
+                      {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                    </select>
+                  </td>
+                )}
+                {visible("assets") && <AssetCountCell item={item} onOpen={onOpenAssets} />}
+                {visible("actions") && (
+                  <td className="rd-td-act">
+                    {onOpenCard && (
+                      <button className="rd-row-btn rd-row-btn--open" title="Open the full card to add assets" onClick={() => onOpenCard(item)}>⤢ Card</button>
+                    )}
+                    <button className="rd-row-btn rd-row-btn--compare" title="Side-by-side compare with current edit" onClick={() => setCompareItem(item)}>⇔</button>
+                    <button className="rd-row-btn" title="Open the visual DNA breakdown" onClick={() => onView(item)}>DNA</button>
+                    <button className="rd-row-btn" title={hasTimeline ? "Edit timeline" : "Build timeline"} onClick={() => onDeconstruct(item)}>
+                      {hasTimeline ? `▦ ${item.timeline.length}` : "▦"}
+                    </button>
+                    {item.reelId ? (
+                      <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                        <span className="rd-row-btn rd-row-btn--linked" title={"In pipeline · " + item.reelId}>▸ {item.reelId}</span>
+                        {onBack && (
+                          <button className="rd-row-btn rd-row-btn--back"
+                                  title="Pull everything (assets + notes) back to Reel DNA and free this card to send again"
+                                  onClick={() => onBack(item)}>↩ DNA</button>
+                        )}
+                      </span>
+                    ) : (
+                      <button className="rd-row-btn rd-row-btn--send" title="Create a pipeline reel from this card" onClick={() => onSend(item)}>→ Pipeline</button>
+                    )}
+                    {item.archivedAt ? (
+                      <button className="rd-row-btn rd-row-btn--restore" title="Restore to Live" onClick={() => actions.restoreReelDna(item.id)}>↩</button>
+                    ) : (
+                      <button className="rd-row-btn rd-row-btn--archive" title="Archive" onClick={() => actions.archiveReelDna(item.id)}>⧉</button>
+                    )}
+                    <button className="rd-row-btn rd-row-btn--delete" title="Delete permanently" onClick={() => onDelete(item)}>✕</button>
+                  </td>
+                )}
               </tr>
             );
           })}
@@ -795,7 +900,12 @@ function AssetsPageContainer({ item, onBack, isOwner, actions }) {
 export function ReelDna({ prefill }) {
   const { reelDna, reelDnaAssets, actions, error, igSyncRuns, igIngestLog } = useWorkflow();
   const { actions: locationActions } = useLocations();
+  const { peopleList } = useRoster();
   const { person: me } = useAuth();
+  /* Reel DNA → pipeline send: the "→ Pipeline" row button opens this editor
+     picker (sendItem = the card awaiting editor choice; sendSel = chosen ids). */
+  const [sendItem, setSendItem] = useState(null);
+  const [sendSel, setSendSel] = useState([]);
   const isOwner = me?.role === "owner";
   const now = useNow();
 
@@ -875,25 +985,77 @@ export function ReelDna({ prefill }) {
   // stays the safe option; Delete is the permanent one.
   const handleDelete = (item) => actions.deleteReelDna(item.id);
 
-  const handleSend = (item) => {
+  // Core send: create ONE pipeline reel from the card, owned by ownerId, and
+  // migrate the card's location pins onto it (footage + news migrate inside the
+  // store action). Returns the new reel id (links the card via reel_id).
+  const sendOne = (item, ownerId) => {
+    const newId = actions.sendReelDnaToPipeline(item.id, { owner: ownerId });
+    if (newId && typeof locationActions?.linkReel === "function") {
+      const locLinks = (reelDnaAssets || []).filter(
+        a => a && a.reelDnaId === item.id && a.assetType === "location"
+      );
+      for (const a of locLinks) locationActions.linkReel(a.assetId, newId);
+    }
+    return newId;
+  };
+
+  // The "→ Pipeline" row button opens the editor picker (instead of sending
+  // straight to `me`). Pre-selects the current user so a one-click Send still
+  // sends to self. Already-linked cards short-circuit.
+  const openSendPicker = (item) => {
     if (item.reelId) { setNotice({ tone: "ok", text: `Already in the pipeline as ${item.reelId}.` }); return; }
+    setSendSel(me?.id ? [me.id] : []);
+    setSendItem(item);
+  };
+
+  // Send the picked card to the pipeline for each selected editor. The first
+  // editor gets the real linked reel (so the card shows "▸ REEL-xxx" + supports
+  // ↩ Back); any additional editors get an INDEPENDENT copy in their Not Started
+  // (title " (FirstName)"), mirroring the multi-editor create flow.
+  const doSend = () => {
+    const item = sendItem;
+    if (!item) return;
+    const ids = sendSel.length ? sendSel : [me?.id].filter(Boolean);
+    if (!ids.length) { setNotice({ tone: "err", text: "Pick at least one editor." }); return; }
     try {
-      const newId = actions.sendReelDnaToPipeline(item.id, { owner: me?.id });
-      // Migrate the card's location pins onto the new pipeline reel via the
-      // LocationsProvider's linkReel — it updates the in-memory locations array
-      // (so the pin shows immediately on the pipeline Detail "Filming location"
-      // card) AND persists. The store action can't reach the provider, so doing
-      // it here is the single source of truth for location links (footage + news
-      // still migrate inside sendReelDnaToPipeline). linkReel de-dupes.
-      if (newId && typeof locationActions?.linkReel === "function") {
-        const locLinks = (reelDnaAssets || []).filter(
-          a => a && a.reelDnaId === item.id && a.assetType === "location"
-        );
-        for (const a of locLinks) locationActions.linkReel(a.assetId, newId);
+      const newId = sendOne(item, ids[0]);
+      for (const eid of ids.slice(1)) {
+        const p = (peopleList || []).find(pp => pp.id === eid) || {};
+        const firstName = p.short || (p.name || "").split(" ")[0] || eid;
+        if (newId) actions.duplicateReel(newId, eid, firstName);
       }
-      setNotice({ tone: "ok", text: `Added to the pipeline as ${newId} — open the Pipeline tab to edit it.` });
+      const names = ids.map(eid => {
+        const p = (peopleList || []).find(pp => pp.id === eid) || {};
+        return p.short || (p.name || "").split(" ")[0] || eid;
+      });
+      setNotice({ tone: "ok", text: `Sent to pipeline for ${names.join(", ")} — open the Pipeline tab to edit.` });
     } catch (e) {
       setNotice({ tone: "err", text: "Couldn't add to pipeline · " + (e.message || String(e)) });
+    }
+    setSendItem(null);
+    setSendSel([]);
+  };
+
+  // Reverse of handleSend — pull a card back out of the pipeline. Migrates the
+  // pipeline reel's assets (footage/locations/news) + text back onto the card,
+  // unlinks it (so "→ Pipeline" resets), and archives the now-empty pipeline
+  // reel off the board. Everything the editor added in the pipeline comes home.
+  const handleBack = async (item) => {
+    if (!item.reelId) return;
+    const reelId = item.reelId;
+    try {
+      // 1) Assets back onto the card — footage + locations + news the pipeline
+      //    gained (queries Supabase by the still-set reel_id; attaches as card
+      //    reel_dna_assets, deduped).
+      await actions.seedAssetsFromPipeline(item);
+      // 2) Text back + unlink + reset status so the "→ Pipeline" button returns.
+      actions.returnReelFromPipeline(reelId);
+      // 3) Remove the emptied reel from the pipeline board (soft archive, so the
+      //    migrated footage rows survive and the card's asset links resolve).
+      actions.archiveReel(reelId);
+      setNotice({ tone: "ok", text: `Pulled ${reelId} back to Reel DNA — assets + notes migrated, and you can send it to the pipeline again.` });
+    } catch (e) {
+      setNotice({ tone: "err", text: "Couldn't pull back · " + (e.message || String(e)) });
     }
   };
 
@@ -1016,7 +1178,7 @@ export function ReelDna({ prefill }) {
         ) : (
           <ReelDnaComprehensive items={baseList} now={now} actions={actions}
                                 onView={onView} onDeconstruct={onDeconstruct}
-                                onSend={handleSend} onDelete={handleDelete}
+                                onSend={openSendPicker} onBack={handleBack} onDelete={handleDelete}
                                 onOpenAssets={(it) => setAssetsId(it.id)} isOwner={isOwner} />
         )}
 
@@ -1046,6 +1208,41 @@ export function ReelDna({ prefill }) {
           onClose={closeOverlay}
           onSave={(segments) => actions.updateReelDna(activeItem.id, { timeline: segments })}
         />
+      )}
+
+      {/* Send-to-pipeline editor picker — opened by the "→ Pipeline" row button.
+          Pick one or more editors; the first gets the linked reel, the rest get
+          independent copies in their Not Started. */}
+      {sendItem && (
+        <div className="rdc-modal-overlay" onClick={() => setSendItem(null)}>
+          <div className="rdc-modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+            <button type="button" className="rdc-modal-close" title="Close" onClick={() => setSendItem(null)}>✕</button>
+            <div style={{ fontFamily: "var(--f-mono)", fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Send to pipeline</div>
+            <div style={{ fontSize: 12, color: "var(--fg-dim)", marginBottom: 12 }}>
+              Pick the editor(s) to send this reel to — each gets it in their Not Started box.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 300, overflowY: "auto" }}>
+              {(peopleList || []).filter(p => !p.archivedAt && p.role !== "reviewer").map(p => {
+                const on = sendSel.includes(p.id);
+                return (
+                  <label key={p.id}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 9px", borderRadius: 4, cursor: "pointer", fontSize: 12.5, background: on ? "rgba(107,214,224,0.08)" : "transparent" }}>
+                    <input type="checkbox" checked={on}
+                      onChange={() => setSendSel(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id])} />
+                    <span>{(p.short || (p.name || "").split(" ")[0] || p.id)} · {ROLES[p.role]?.short || p.role}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+              <button className="rd-row-btn" onClick={() => setSendItem(null)}>Cancel</button>
+              <button className="rd-row-btn rd-row-btn--send" disabled={!sendSel.length}
+                style={{ opacity: sendSel.length ? 1 : .5 }} onClick={doSend}>
+                → Send to {sendSel.length || ""} {sendSel.length === 1 ? "editor" : "editors"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       </>
       )}
