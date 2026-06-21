@@ -13,6 +13,8 @@
 ## Where we left off
 Master Save Point #1 (`7a95176`) is the current live state on `main`. The lean-FootageBrain plan is approved and its workflow file is ready to run. Nothing about the app changed yet — the workflow only edits the working tree when launched, so the save point stays intact.
 
+**End of session:** wrap-up doc commit `e8be7b7` **pushed** to `origin/main`; tag `master-save-point-1` **pushed**; the (code-unchanged) bundle was **re-deployed** `vercel --prod` → `dpl_BAguneUKUpUH1DuH589PjeskL3gM` (www.footagebrain.com) — a redundant re-ship of the save-point state, no app change. Build confirmed the pre-refactor baseline: single `index` chunk **1,331 kB** (gzip 383 kB) — WS2 code-splitting will break this up.
+
 ## Open blockers
 - None. (The prior session's possible Scout/Monitor prod regression was **resolved** by commit `7a95176` — "restore Scout quota card + scrape-error surfacing".)
 

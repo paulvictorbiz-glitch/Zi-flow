@@ -14,7 +14,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 **What we learned:** (1) **Hiding tabs alone changes nothing about load/traffic** — every page is a *static* import in `app.jsx` (only Landing + `/space` are lazy), and `store.jsx` fetches every table + opens 4 realtime channels regardless of role. Real lightness needs lazy-loading + role-gated boot. (2) `store.jsx` `user_preferences` is **not** a generic getter — new prefs must follow the existing `collapsedReelIds`/`toggleReelCollapsed` pattern, which is exactly the C→B `prefetchHeavyTabs`/`setPrefetchHeavyTabs` contract. (3) `.claude/` is gitignored, so the generated workflow file is **local-only** (won't commit/deploy). (4) An **annotated git tag** is the durable way to name a restore point (vs. only a SHA in memory). (5) The prior session's open blocker (Scout/Monitor isolated-deploy regression) is **resolved** by commit `7a95176`.
 
-**Status:** Planning + tooling only — NOT deployed, no migration applied. The `lean-footagebrain` workflow is ready to launch (owner will run it next session); migration `0086` + `vercel --prod` stay human-gated.
+**Status:** Planning + tooling only — **no app code shipped**. The wrap-up doc commit `e8be7b7` was pushed to `origin/main` and the tag `master-save-point-1` pushed; the code-unchanged bundle was re-deployed `vercel --prod` → `dpl_BAguneUKUpUH1DuH589PjeskL3gM` (a redundant re-ship of the save-point state). Build captured the pre-refactor baseline: single `index` chunk 1,331 kB (gzip 383 kB). The `lean-footagebrain` workflow is ready to launch next session; migration `0086` stays human-gated.
 
 ---
 
