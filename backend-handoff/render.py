@@ -27,10 +27,10 @@ DEPLOYMENT NOTE:
   The Caddyfile already forwards /api/render/* to backend:8000 — no Caddy change
   needed as long as the router is mounted at /api/render.
 
-STATUS:  Phase 0 skeleton — endpoints accept requests and update DB status.
-         ffmpeg filtergraph builder (_build_filtergraph) is a stub.
-         Implement per-feature filters in Phase 1 (trim/cut) → Phase 2 (transitions,
-         text, LUT) → Phase 3 (chroma key, audio mix).
+STATUS:  Phase 1 LIVE — _build_filtergraph does real per-clip trim + sequencing:
+         cut (concat) and crossfade (xfade/acrossfade), audio-less clips get
+         synthesized silence, single-clip fast path. Phase 2 (text/LUT/speed) and
+         Phase 3 (chroma key, audio mix) extend the same builder.
 """
 
 import asyncio
@@ -149,45 +149,168 @@ async def _download_drive_file(drive_id: str, dest: Path) -> None:
     await loop.run_in_executor(None, _sync_download)
 
 
-# ── ffmpeg filtergraph builder ────────────────────────────────────────────────
+# ── Source probe + clip-bounds helpers ────────────────────────────────────────
 
-def _build_filtergraph(timeline: dict, src_files: list[Path]) -> list[str]:
+async def _probe_async(path: Path) -> tuple[float, bool]:
+    """Return (duration_seconds, has_audio) via ffprobe. Tolerant of failure."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration:stream=codec_type",
+            "-of", "json", str(path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await proc.communicate()
+        info = json.loads(out.decode(errors="replace") or "{}")
+        dur = float((info.get("format") or {}).get("duration") or 0.0)
+        has_audio = any(s.get("codec_type") == "audio" for s in info.get("streams", []))
+        return (dur, has_audio)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ffprobe failed for %s: %s", path, exc)
+        return (0.0, False)
+
+
+def _clip_bounds(clip: dict, dur: float) -> tuple[float, float]:
+    """Resolve a clip's (trim_in, trim_out) in seconds, clamped to the real source
+    duration when known. Never trust the client past the actual media length."""
+    ti = float(clip.get("trim_in") or 0.0)
+    to_raw = clip.get("trim_out")
+    to = float(to_raw) if to_raw not in (None, "") else (dur if dur > 0 else ti + 10.0)
+    if dur > 0:
+        ti = max(0.0, min(ti, max(0.0, dur - 0.05)))
+        to = max(ti + 0.05, min(to, dur))
+    elif to <= ti:
+        to = ti + 0.05
+    return (ti, to)
+
+
+# ── ffmpeg filtergraph builder (Phase 1: trim/cut + crossfade) ────────────────
+
+def _build_filtergraph(timeline: dict, src_files: list[Path],
+                       metas: list[tuple[float, bool]]) -> list[str]:
     """
-    Build the ffmpeg CLI command from a timeline_json dict.
+    Build the ffmpeg CLI args (without the leading "ffmpeg" or the output path)
+    from a timeline_json dict.
 
-    Phase 0 stub — returns a passthrough copy command for the first source.
-    Implement per-phase:
-      Phase 1: trim/cut (concat demuxer), basic dissolve (xfade)
-      Phase 2: text overlay (drawtext/Pillow PNG), LUT (haldclut), speed (setpts/atempo)
-      Phase 3: chroma key (chromakey / OpenCV), audio mix (amix / loudnorm)
+    Phase 1 — per-clip trim + sequencing:
+      • each clip trimmed to [trim_in, trim_out], normalized to the output spec
+        (scale/pad to W×H, fps, yuv420p, sar 1:1) so segments are concat/xfade-safe
+      • `cut` transitions  → ffmpeg `concat`
+      • `xfade` transitions → chained `xfade` (video) + `acrossfade` (audio)
+      • clips with no audio stream get synthesized silence (anullsrc) so concat/
+        xfade always have a matching A/V pair
+    Phase 2 (text/LUT/speed) and Phase 3 (chroma/audio-mix) extend this builder.
 
-    xfade offset formula (MUST be correct — see plan BLOCK):
-      offset_n = sum(clip_durations[0..n-1]) - sum(transition_durations[0..n-1])
+    xfade offset (running composite): offset_n = cum_len_so_far − duration_n, where
+    cum_len after merging clip n via an xfade of length d = cum + seg_n − d.
 
     Args:
-        timeline: parsed project_json dict
+        timeline:  parsed project_json dict
         src_files: local Paths to downloaded source videos, in clip order
-
-    Returns:
-        ffmpeg CLI args list (without the leading "ffmpeg")
+        metas:     (duration, has_audio) per src file, same order (from _probe_async)
     """
     if not src_files:
         raise ValueError("No source files for render")
 
-    output_cfg = timeline.get("output", {})
-    width      = output_cfg.get("width", 1920)
-    height     = output_cfg.get("height", 1080)
-    fps        = output_cfg.get("fps", 30)
-    crf        = output_cfg.get("crf", 23)
+    out = timeline.get("output", {})
+    W   = int(out.get("width", 1920))
+    H   = int(out.get("height", 1080))
+    FPS = int(out.get("fps", 30))
+    CRF = int(out.get("crf", 23))
 
-    # Phase 0: passthrough — just re-encode the first source to the target spec.
-    # Replace this with a proper concat + filtergraph in Phase 1.
-    return [
-        "-i", str(src_files[0]),
-        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-               f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
-        "-r", str(fps),
-        "-c:v", "libx264", "-crf", str(crf), "-preset", "fast",
+    # Flatten video-track clips in the SAME order src_files were downloaded.
+    clips: list[dict] = []
+    for track in timeline.get("tracks", []):
+        if track.get("type") == "video":
+            for clip in track.get("clips", []):
+                if clip.get("source_drive_id"):
+                    clips.append(clip)
+    clips = clips[: len(src_files)] or [{} for _ in src_files]
+    while len(metas) < len(src_files):
+        metas.append((0.0, False))
+
+    vf_norm = (f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+               f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={FPS},format=yuv420p")
+
+    # ── Fast path: a single clip → input-seek + simple re-encode ──────────────
+    if len(src_files) == 1:
+        dur, has_audio = metas[0]
+        ti, to = _clip_bounds(clips[0], dur)
+        args: list[str] = []
+        if to > ti:
+            args += ["-ss", f"{ti:.3f}", "-to", f"{to:.3f}"]
+        args += ["-i", str(src_files[0]), "-vf", vf_norm, "-r", str(FPS),
+                 "-c:v", "libx264", "-crf", str(CRF), "-preset", "fast", "-pix_fmt", "yuv420p"]
+        args += (["-c:a", "aac", "-b:a", "192k"] if has_audio else ["-an"])
+        args += ["-movflags", "+faststart", "-y"]
+        return args
+
+    # ── Multi-clip path ───────────────────────────────────────────────────────
+    inputs: list[str] = []
+    for sf in src_files:
+        inputs += ["-i", str(sf)]
+    next_idx = len(src_files)
+
+    filters: list[str] = []
+    seg_durs: list[float] = []
+    for i, (sf, clip, (dur, has_audio)) in enumerate(zip(src_files, clips, metas)):
+        ti, to = _clip_bounds(clip, dur)
+        seg = max(0.05, to - ti)
+        seg_durs.append(seg)
+        filters.append(
+            f"[{i}:v]trim=start={ti:.3f}:end={to:.3f},setpts=PTS-STARTPTS,{vf_norm}[v{i}]"
+        )
+        if has_audio:
+            filters.append(
+                f"[{i}:a]atrim=start={ti:.3f}:end={to:.3f},asetpts=PTS-STARTPTS,"
+                f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a{i}]"
+            )
+        else:
+            # synthesize silence matching this segment's length
+            inputs += ["-f", "lavfi", "-t", f"{seg:.3f}", "-i",
+                       "anullsrc=channel_layout=stereo:sample_rate=48000"]
+            filters.append(f"[{next_idx}:a]asetpts=PTS-STARTPTS[a{i}]")
+            next_idx += 1
+
+    # Resolve transitions into clamped crossfade durations (0 = hard cut).
+    trans: list[float] = []
+    for i in range(len(clips) - 1):
+        t = clips[i].get("transition") or {}
+        if t.get("type") == "xfade":
+            d = float(t.get("duration") or 0.5)
+            d = min(d, seg_durs[i] - 0.05, seg_durs[i + 1] - 0.05)
+            trans.append(max(0.0, d))
+        else:
+            trans.append(0.0)
+
+    if all(d <= 0 for d in trans):
+        # All hard cuts → single concat.
+        concat_in = "".join(f"[v{i}][a{i}]" for i in range(len(clips)))
+        filters.append(f"{concat_in}concat=n={len(clips)}:v=1:a=1[vout][aout]")
+    else:
+        # Chain xfade / acrossfade (with concat for any interleaved hard cuts).
+        cur_v, cur_a = "[v0]", "[a0]"
+        cum = seg_durs[0]
+        for i in range(1, len(clips)):
+            d = trans[i - 1]
+            out_v, out_a = f"[vx{i}]", f"[ax{i}]"
+            if d > 0:
+                offset = cum - d
+                filters.append(f"{cur_v}[v{i}]xfade=transition=fade:duration={d:.3f}:offset={offset:.3f}{out_v}")
+                filters.append(f"{cur_a}[a{i}]acrossfade=d={d:.3f}{out_a}")
+                cum = cum + seg_durs[i] - d
+            else:
+                filters.append(f"{cur_v}[v{i}]concat=n=2:v=1:a=0{out_v}")
+                filters.append(f"{cur_a}[a{i}]concat=n=2:v=0:a=1{out_a}")
+                cum = cum + seg_durs[i]
+            cur_v, cur_a = out_v, out_a
+        filters.append(f"{cur_v}null[vout]")
+        filters.append(f"{cur_a}anull[aout]")
+
+    return inputs + [
+        "-filter_complex", ";".join(filters),
+        "-map", "[vout]", "-map", "[aout]",
+        "-c:v", "libx264", "-crf", str(CRF), "-preset", "fast", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         "-y",
@@ -242,12 +365,17 @@ async def _render_job(job_id: str) -> None:
                     "progress": pct, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 })
 
+            # ── Probe sources (duration + audio presence) ─────────────────────
+            metas = []
+            for sf in src_files:
+                metas.append(await _probe_async(sf))
+
             await _sb_patch(client, "render_jobs", job_id, {
                 "progress": 40, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
 
             # ── Build + run ffmpeg ────────────────────────────────────────────
-            ffmpeg_args = _build_filtergraph(timeline, src_files)
+            ffmpeg_args = _build_filtergraph(timeline, src_files, metas)
             cmd = ["ffmpeg"] + ffmpeg_args + [str(output_path)]
             logger.info("render_job %s: ffmpeg %s", job_id, " ".join(cmd))
 

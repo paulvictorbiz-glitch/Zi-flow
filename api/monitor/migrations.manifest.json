@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-20T20:34:55.383Z",
+  "generated": "2026-06-21T06:03:21.501Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -331,11 +331,15 @@
     },
     {
       "version": "0082_edit_collab.sql",
-      "checksum": "e7c1e13ebcd2c98e1b78b13ed4c3cf7af5cdec0d01674911c4e0e4a0d3f74731"
+      "checksum": "941352efd86e4b09006931afb5c992f13011240372073a6d253f54dd1e0bc7ca"
     },
     {
       "version": "0083_render_jobs.sql",
-      "checksum": "e9d8919ac146781f771d35b620463bf0adcd8a6dd3d8d474e3b140f2f0854f6d"
+      "checksum": "14f16bbbbb50dbe8b94e7ea1829d4573f932544fd392da8f83fcf6d348faf3e3"
+    },
+    {
+      "version": "0084_daily_tasks_color.sql",
+      "checksum": "8a689660c98502e5e1957ca0110917edcd777a24505228e715488464d15d7727"
     }
   ]
 }

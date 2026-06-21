@@ -156,6 +156,29 @@
   color: var(--fg-mute);
 }
 
+/* Timeline ⇄ OpenCut view toggle in the header */
+.editor-viewtoggle { display: inline-flex; gap: 6px; }
+
+/* Stage when the in-app timeline editor is active (replaces the iframe) */
+.editor-timeline-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.editor-render { flex: 0 0 auto; }
+.editor-render-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.editor-render-status { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+
 .editor-pill {
   font-family: var(--f-mono, monospace);
   font-size: 10px;

@@ -36,6 +36,17 @@ import { ingestWorldEvents } from "./_world-feeds.js";
 
 export const config = { maxDuration: 45 };
 
+// undici/fetch (and browsers) reject any HTTP header VALUE containing a code
+// point above U+00FF with: "String contains non ISO-8859-1 code point". So any
+// secret/env value placed in a header must be made Latin-1-safe first. We
+// percent-encode it (pure ASCII on the wire); the Scout backend decodes with
+// urllib.parse.unquote (main.py). Pure-ASCII input (e.g. a hex secret) encodes
+// to itself, so this is a no-op for clean values and a guard against a dirty one
+// (a stray smart-quote / non-breaking-space / BOM pasted into the env var).
+function asciiHeader(value) {
+  return encodeURIComponent(String(value ?? ""));
+}
+
 export default async function handler(req, res) {
   setCors(res, req);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -161,7 +172,7 @@ export default async function handler(req, res) {
       const r = await fetch(`${scoutUrl}/scrape-all`, {
         method: "POST",
         signal: ctrl.signal,
-        headers: { "x-scout-secret": encodeURIComponent(scoutSecret) },
+        headers: { "x-scout-secret": asciiHeader(scoutSecret) },
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) { res.status(502).json({ error: `Scout HTTP ${r.status}`, ...body }); return; }
@@ -171,6 +182,41 @@ export default async function handler(req, res) {
         res.status(202).json({ ok: true, started: true, pending: true }); return;
       }
       console.error("scout-scrape error:", e.message);
+      res.status(502).json({ error: `Couldn't reach Scout: ${e.message}` });
+    } finally {
+      clearTimeout(t);
+    }
+    return;
+  }
+
+  // ── Dispatch: live OpenRouter quota for the Scout backend's dossier key ────
+  // GET/POST /api/ai/suggest?action=scout-quota  (owner Bearer JWT). Proxies the
+  // fb-scout /quota endpoint so the Monitor "Scout" card shows REAL usage + tier
+  // (auto-detects the 50-vs-1,000/day free cap) instead of a hardcoded guess.
+  if (action === "scout-quota") {
+    try {
+      await verifyOwner(req);
+    } catch {
+      res.status(403).json({ error: "Owner only" }); return;
+    }
+    const scoutUrl = process.env.SCOUT_BACKEND_URL;
+    const scoutSecret = process.env.SCOUT_SCRAPE_SECRET;
+    if (!scoutUrl || !scoutSecret) {
+      res.status(500).json({ error: "Scout not configured (SCOUT_BACKEND_URL / SCOUT_SCRAPE_SECRET)" }); return;
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const r = await fetch(`${scoutUrl}/quota`, {
+        method: "GET",
+        signal: ctrl.signal,
+        headers: { "x-scout-secret": asciiHeader(scoutSecret) },
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Scout HTTP ${r.status}`, ...body }); return; }
+      res.status(200).json(body);
+    } catch (e) {
+      console.error("scout-quota error:", e.message);
       res.status(502).json({ error: `Couldn't reach Scout: ${e.message}` });
     } finally {
       clearTimeout(t);
@@ -483,6 +529,10 @@ export default async function handler(req, res) {
   // The caller polls status via ?action=render-status&id=<job_id> or watches
   // the render_jobs Supabase realtime subscription.
   if (action === "render-submit") {
+    // Owner-only gate at the API layer (the Editor UI is permission-gated, but a
+    // non-owner with a valid JWT must not be able to queue renders directly).
+    try { await verifyOwner(req); }
+    catch { res.status(403).json({ error: "Owner only" }); return; }
     const renderSecret = process.env.REEL_DECONSTRUCT_SECRET;
     if (!renderSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
     const body = typeof req.body === "string"
@@ -508,6 +558,8 @@ export default async function handler(req, res) {
   // Proxies to Hetzner /api/render/status/{job_id}. Returns { status, progress,
   // output_url (HMAC-signed), error }. output_url is re-minted on every poll.
   if (action === "render-status") {
+    try { await verifyOwner(req); }
+    catch { res.status(403).json({ error: "Owner only" }); return; }
     const renderSecret = process.env.REEL_DECONSTRUCT_SECRET;
     if (!renderSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
     const jobId = req.query?.id || url?.searchParams.get("id");

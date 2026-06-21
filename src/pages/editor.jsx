@@ -42,17 +42,49 @@
    footagebrain.com, then point OPENCUT_URL below at that origin.
    ========================================================= */
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { getFootageFileMetadata, footageFolderLabel } from "../lib/footage-brain-client.js";
+import Timeline, { buildProjectJson, timelineTotal, DEFAULT_XFADE } from "../components/editor/Timeline.jsx";
 import "./editor.css";
 
-/* Hosted OpenCut instance the iframe loads. Point this at a self-hosted
-   origin (one that allows framing from footagebrain.com) if the public
-   instance blocks embedding — see the header comment for the self-host path. */
-const OPENCUT_URL = "https://opencut.app/projects";
+/* api.footagebrain.com serves the render worker's HMAC-signed output paths
+   (e.g. /fb/renders/<job>/output.mp4?t=…). The proxy returns a relative path. */
+const RENDER_HOST = "https://api.footagebrain.com";
+
+/* Output presets for the render (the in-app timeline → ffmpeg pipeline). */
+const OUTPUT_PRESETS = [
+  { key: "vertical",   label: "Vertical 1080×1920",   width: 1080, height: 1920 },
+  { key: "square",     label: "Square 1080×1080",     width: 1080, height: 1080 },
+  { key: "horizontal", label: "Horizontal 1920×1080", width: 1920, height: 1080 },
+];
+
+/* Pull a Google Drive file id out of any of the Drive URL shapes we store
+   (/file/d/<id>/…, ?id=<id>, /open?id=<id>, /uc?id=<id>). Returns null if none. */
+function extractDriveId(url) {
+  if (!url || typeof url !== "string") return null;
+  const m = url.match(/\/file\/d\/([A-Za-z0-9_-]{10,})/)
+        || url.match(/[?&]id=([A-Za-z0-9_-]{10,})/)
+        || url.match(/\/d\/([A-Za-z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+
+/* compact mm:ss.s / s formatter for the render summary line */
+function fmt2(s) {
+  const n = Number(s) || 0;
+  const m = Math.floor(n / 60);
+  const sec = n - m * 60;
+  return m > 0 ? `${m}:${sec.toFixed(1).padStart(4, "0")}` : `${sec.toFixed(1)}s`;
+}
+
+/* Hosted OpenCut instance the iframe loads.
+   Set VITE_OPENCUT_URL in .env.local (and in Vercel env vars) to point at the
+   self-hosted fork once it's deployed at editor.footagebrain.com.
+   Falls back to the public instance for local dev — which will likely be blocked
+   by X-Frame-Options, triggering the fallback overlay below. */
+const OPENCUT_URL = import.meta.env.VITE_OPENCUT_URL || "https://opencut.app/projects";
 
 /* If the iframe hasn't fired `onLoad` within this window we assume framing
    was blocked (X-Frame-Options / CSP) and reveal the fallback overlay. */
@@ -65,7 +97,7 @@ const STATUS_OPTIONS = [
 ];
 
 /* ---------- attached-footage clip row (with Drive copy) ---------- */
-function ClipRow({ clip }) {
+function ClipRow({ clip, onAdd }) {
   const driveLink = clip.drive_url || clip.drive_folder_url || null;
   const folder = footageFolderLabel(clip.source_path);
   const [copied, setCopied] = useState(false);
@@ -91,6 +123,16 @@ function ClipRow({ clip }) {
         {clip.frame_rate ? ` · ${Math.round(clip.frame_rate)}fps` : ""}
       </div>
       <div className="editor-clip-actions">
+        {onAdd && (
+          <button
+            className="editor-btn primary"
+            onClick={() => onAdd(clip)}
+            disabled={!clip.driveId}
+            title={clip.driveId ? "Add this clip to the timeline" : "No Drive source id — can't render this clip"}
+          >
+            + Timeline
+          </button>
+        )}
         {driveLink ? (
           <>
             <button className="editor-btn" onClick={copy} title={driveLink}>
@@ -117,7 +159,7 @@ function ClipRow({ clip }) {
 }
 
 /* ========================================================= */
-export function VideoEditor({ reel: initialReel, onOpen }) {
+export function VideoEditor({ reel: initialReel, onOpen, reelDnaId }) {
   const { reels, attachedFootage, actions } = useWorkflow();
   const { person: me } = useAuth();
 
@@ -184,19 +226,27 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
     return reelClipsRaw.map(f => {
       const fetched = driveById[f.footage_file_id] || {};
       const hit = footageDrive[f.footage_file_id] || byKey[f.footage_file_id] || byKey[f.filename] || {};
+      const drive_url = f.drive_url || hit.drive_url || fetched.drive_url || null;
+      const drive_folder_url = f.drive_folder_url || hit.drive_folder_url || fetched.drive_folder_url || null;
       return {
         ...f,
-        drive_url: f.drive_url || hit.drive_url || fetched.drive_url || null,
-        drive_folder_url: f.drive_folder_url || hit.drive_folder_url || fetched.drive_folder_url || null,
+        drive_url,
+        drive_folder_url,
+        driveId: extractDriveId(drive_url) || extractDriveId(drive_folder_url),
       };
     });
   }, [reelClipsRaw, reel?.detail, driveById]);
+
+  /* Timeline ⇄ OpenCut view — declared here (before the iframe-load effect that
+     reads it in its dep array) to avoid a temporal-dead-zone access. */
+  const [view, setView] = useState("timeline");          // timeline | opencut
 
   /* ---------- iframe load detection ---------- */
   const [iframeBlocked, setIframeBlocked] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);   // bump to retry the embed
   const loadedRef = useRef(false);
   useEffect(() => {
+    if (view !== "opencut") return;   // only arm detection when the iframe is mounted
     loadedRef.current = false;
     setIframeBlocked(false);
     const t = setTimeout(() => {
@@ -204,7 +254,7 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
       if (!loadedRef.current) setIframeBlocked(true);
     }, IFRAME_LOAD_TIMEOUT_MS);
     return () => clearTimeout(t);
-  }, [iframeKey]);
+  }, [iframeKey, view]);
 
   /* ===================== edit_sessions ===================== */
   const [session, setSession] = useState(null);
@@ -214,6 +264,32 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+
+  /* ===================== timeline + render ===================== */
+  const [timeline, setTimeline] = useState([]);          // assembled clip blocks
+  const [outputKey, setOutputKey] = useState("vertical");
+  const [fps, setFps] = useState(30);
+  const [renderJob, setRenderJob] = useState(null);      // { id, status, progress, outputUrl, error }
+  const [rendering, setRendering] = useState(false);     // submit in flight
+  const [renderMsg, setRenderMsg] = useState("");        // inline error/info
+
+  const timelineKeyRef = useRef(0);   // stable id source for new timeline blocks
+
+  // Add an attached clip to the timeline (full-length by default).
+  const addToTimeline = useCallback((clip) => {
+    if (!clip.driveId) return;
+    const dur = Number(clip.duration_seconds) || 0;
+    setTimeline(prev => [...prev, {
+      id: `tl_${Date.now()}_${timelineKeyRef.current++}`,
+      clipId: clip.footage_file_id || clip.id,
+      driveId: clip.driveId,
+      filename: clip.filename || "(clip)",
+      sourceDuration: dur,
+      trimIn: 0,
+      trimOut: dur > 0 ? dur : 10,
+      transition: { type: "cut", duration: DEFAULT_XFADE },
+    }]);
+  }, []);
 
   // Load (or note the absence of) this reel's session whenever the reel changes.
   useEffect(() => {
@@ -245,6 +321,9 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
       setStatus(row?.status || "in_progress");
       setExportUrl(row?.export_url || "");
       setNotes(row?.edit_plan?.notes || "");
+      setTimeline(Array.isArray(row?.edit_plan?.timeline) ? row.edit_plan.timeline : []);
+      setRenderJob(null);
+      setRenderMsg("");
       setSessionState("ready");
     })();
     return () => { alive = false; };
@@ -254,8 +333,8 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
     if (!reelId) return;
     setSaving(true);
     const now = new Date().toISOString();
-    // Preserve any existing edit_plan keys; we only own `notes` in the UI.
-    const edit_plan = { ...(session?.edit_plan || {}), notes };
+    // Preserve any existing edit_plan keys; we own `notes` + the assembled `timeline`.
+    const edit_plan = { ...(session?.edit_plan || {}), notes, timeline };
     const clips_used = reelClips.map(c => c.footage_file_id).filter(Boolean);
 
     const payload = {
@@ -314,6 +393,92 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
     }
   };
 
+  /* ---------- render: submit the assembled timeline to the worker ---------- */
+  const renderableCount = useMemo(() => timeline.filter(it => it.driveId).length, [timeline]);
+
+  const submitRender = useCallback(async () => {
+    const items = timeline.filter(it => it.driveId);
+    if (!items.length) { setRenderMsg("Add at least one clip with a Drive source to the timeline."); return; }
+    const preset = OUTPUT_PRESETS.find(p => p.key === outputKey) || OUTPUT_PRESETS[0];
+    const project_json = buildProjectJson(items, { width: preset.width, height: preset.height, fps, crf: 23 });
+
+    setRendering(true);
+    setRenderMsg("");
+    try {
+      const { data: { session: sess } } = await supabase.auth.getSession();
+      if (!sess) { setRenderMsg("Not signed in — render skipped."); return; }
+      const r = await fetch("/api/ai/suggest?action=render-submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${sess.access_token}` },
+        body: JSON.stringify({
+          project_id: reelId,
+          reel_dna_id: reelDnaId || null,
+          project_json,
+          render_mode: "draft",
+          submitted_by: me?.id || null,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // Surface the worker's real error (409 single-flight, 429 queue full, 403 owner-only, 502 worker down).
+        const why = r.status === 409 ? "A render is already running for this reel."
+                  : r.status === 429 ? "Render queue is full — try again shortly."
+                  : r.status === 403 ? "Rendering is owner-only."
+                  : (d.error || d.detail || `HTTP ${r.status}`);
+        setRenderMsg(`Render failed: ${why}`);
+        return;
+      }
+      if (!d.job_id) { setRenderMsg("Render submitted but no job id returned."); return; }
+      setRenderJob({ id: d.job_id, status: "queued", progress: 0, outputUrl: null, error: null });
+    } catch (e) {
+      setRenderMsg(`Couldn't reach the render service: ${e.message}`);
+    } finally {
+      setRendering(false);
+    }
+  }, [timeline, outputKey, fps, reelId, reelDnaId, me?.id]);
+
+  // Poll the job's status while it's queued/rendering. Stops on done/failed.
+  useEffect(() => {
+    const id = renderJob?.id;
+    if (!id) return;
+    if (renderJob.status === "done" || renderJob.status === "failed") return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const { data: { session: sess } } = await supabase.auth.getSession();
+        if (!sess) return;
+        const r = await fetch(`/api/ai/suggest?action=render-status&id=${encodeURIComponent(id)}`, {
+          headers: { Authorization: `Bearer ${sess.access_token}` },
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!alive) return;
+        if (!r.ok) {
+          setRenderJob(j => (j && j.id === id) ? { ...j, status: "failed", error: d.error || `HTTP ${r.status}` } : j);
+          return;
+        }
+        setRenderJob(j => (j && j.id === id) ? {
+          ...j,
+          status: d.status || j.status,
+          progress: typeof d.progress === "number" ? d.progress : j.progress,
+          outputUrl: d.output_url || j.outputUrl,
+          error: d.error || null,
+        } : j);
+      } catch { /* transient — keep polling */ }
+    };
+    const handle = setInterval(tick, 2500);
+    tick();
+    return () => { alive = false; clearInterval(handle); };
+  }, [renderJob?.id, renderJob?.status]);
+
+  // Promote a finished render to the reel's export link (reuses saveSession's flow).
+  const useRenderAsExport = useCallback(() => {
+    if (!renderJob?.outputUrl) return;
+    const full = renderJob.outputUrl.startsWith("http") ? renderJob.outputUrl : RENDER_HOST + renderJob.outputUrl;
+    setExportUrl(full);
+    setStatus("exported");
+    setRenderMsg("Set as export link — click \"Save progress\" to push it to the reel.");
+  }, [renderJob]);
+
   const statusMeta = STATUS_OPTIONS.find(s => s.value === status) || STATUS_OPTIONS[0];
 
   return (
@@ -330,6 +495,23 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
           </div>
         </div>
         <div className="actions" style={{ alignItems: "center", gap: 8 }}>
+          {/* Timeline ⇄ OpenCut view toggle */}
+          <div className="editor-viewtoggle">
+            <button
+              className={"editor-btn" + (view === "timeline" ? " primary" : "")}
+              onClick={() => setView("timeline")}
+              title="Assemble + render a cut in-app"
+            >
+              ⛶ Timeline
+            </button>
+            <button
+              className={"editor-btn" + (view === "opencut" ? " primary" : "")}
+              onClick={() => setView("opencut")}
+              title="Advanced manual editing in OpenCut"
+            >
+              ▣ OpenCut
+            </button>
+          </div>
           {/* Reel selector */}
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <span className="mono dim" style={{ fontSize: 10 }}>reel</span>
@@ -361,7 +543,7 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
           {/* Attached footage */}
           <div className="editor-card">
             <div className="editor-card-h">
-              <span>Attached footage · import into OpenCut</span>
+              <span>{view === "timeline" ? "Attached footage · add to timeline" : "Attached footage · import into OpenCut"}</span>
               <span>{reelClips.length}</span>
             </div>
             {!reel ? (
@@ -372,7 +554,9 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {reelClips.map(c => <ClipRow key={c.id} clip={c} />)}
+                {reelClips.map(c => (
+                  <ClipRow key={c.id} clip={c} onAdd={view === "timeline" ? addToTimeline : undefined} />
+                ))}
               </div>
             )}
           </div>
@@ -456,39 +640,124 @@ export function VideoEditor({ reel: initialReel, onOpen }) {
           </div>
         </div>
 
-        {/* ===================== EMBEDDED OPENCUT ===================== */}
+        {/* ===================== STAGE: TIMELINE or OPENCUT ===================== */}
         <div className="editor-stage">
-          <iframe
-            key={iframeKey}
-            title="OpenCut video editor"
-            src={OPENCUT_URL}
-            allow="fullscreen; clipboard-read; clipboard-write; camera; microphone"
-            /* OpenCut needs same-origin + scripts for its WASM/ffmpeg pipeline;
-               allow-downloads lets exports save. No allow-top-navigation so it
-               can't navigate the dashboard away. */
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"
-            onLoad={() => { loadedRef.current = true; setIframeBlocked(false); }}
-          />
+          {view === "timeline" ? (
+            <div className="editor-timeline-stage">
+              <Timeline items={timeline} onChange={setTimeline} disabled={!reel} />
 
-          {iframeBlocked && (
-            <div className="editor-overlay">
-              <h3>OpenCut couldn't be embedded here</h3>
-              <p>
-                The public OpenCut instance blocks being shown inside another site
-                (its <code>X-Frame-Options</code> / <code>frame-ancestors</code> policy).
-                Open it in a new tab to edit, or self-host OpenCut on an origin that
-                allows framing from footagebrain.com and point <code>OPENCUT_URL</code> at it
-                (see the comment at the top of <code>editor.jsx</code>).
-              </p>
-              <div style={{ display: "flex", gap: 10 }}>
-                <a className="editor-btn primary" href={OPENCUT_URL} target="_blank" rel="noopener noreferrer">
-                  ↗ Open OpenCut in a new tab
-                </a>
-                <button className="editor-btn" onClick={() => setIframeKey(k => k + 1)}>
-                  ↻ Retry embed
-                </button>
+              {/* Render controls */}
+              <div className="editor-card editor-render">
+                <div className="editor-card-h">
+                  <span>Render draft</span>
+                  <span>{renderableCount} / {timeline.length} clip{timeline.length === 1 ? "" : "s"} renderable</span>
+                </div>
+
+                <div className="editor-render-row">
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span className="mono dim" style={{ fontSize: 10 }}>format</span>
+                    <select className="editor-select" style={{ width: "auto" }}
+                      value={outputKey} onChange={e => setOutputKey(e.target.value)}>
+                      {OUTPUT_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                    </select>
+                  </label>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span className="mono dim" style={{ fontSize: 10 }}>fps</span>
+                    <select className="editor-select" style={{ width: "auto" }}
+                      value={fps} onChange={e => setFps(Number(e.target.value))}>
+                      {[24, 30, 60].map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </label>
+                  <button
+                    className="editor-btn primary"
+                    onClick={submitRender}
+                    disabled={rendering || renderableCount === 0 || (renderJob && (renderJob.status === "queued" || renderJob.status === "rendering"))}
+                    title={renderableCount === 0 ? "Add clips with a Drive source first" : "Render this cut on the server"}
+                  >
+                    {rendering ? "Submitting…" : "▶ Render draft"}
+                  </button>
+                </div>
+
+                {/* progress / result */}
+                {renderJob && (
+                  <div className="editor-render-status">
+                    {(renderJob.status === "queued" || renderJob.status === "rendering") && (
+                      <>
+                        <div className="tl-render-bar">
+                          <div className="tl-render-fill" style={{ width: `${renderJob.progress || 0}%` }} />
+                        </div>
+                        <span className="editor-clip-meta">
+                          {renderJob.status === "queued" ? "Queued…" : `Rendering… ${renderJob.progress || 0}%`}
+                        </span>
+                      </>
+                    )}
+                    {renderJob.status === "done" && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span className="editor-pill ok">Done</span>
+                        <a className="editor-btn" href={renderJob.outputUrl?.startsWith("http") ? renderJob.outputUrl : RENDER_HOST + (renderJob.outputUrl || "")}
+                           target="_blank" rel="noopener noreferrer">↗ Open / download</a>
+                        <button className="editor-btn primary" onClick={useRenderAsExport}>Use as export link</button>
+                      </div>
+                    )}
+                    {renderJob.status === "failed" && (
+                      <span className="editor-clip-meta" style={{ color: "var(--c-red, #ef4444)" }}>
+                        Render failed: {renderJob.error || "unknown error"}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {renderMsg && (
+                  <div className="editor-clip-meta" style={{ color: "var(--c-amber, #f59e0b)", marginTop: 6 }}>
+                    {renderMsg}
+                  </div>
+                )}
+                <div className="editor-clip-meta" style={{ marginTop: 6, lineHeight: 1.5 }}>
+                  Final length {fmt2(timelineTotal(timeline))}. Drag a clip to reorder, drag its edges to
+                  trim, click the marker between clips to switch cut ↔ crossfade. Save progress to keep the layout.
+                </div>
               </div>
             </div>
+          ) : (
+            <>
+              <iframe
+                key={iframeKey}
+                title="OpenCut video editor"
+                src={reelDnaId ? `${OPENCUT_URL}?reel_dna_id=${encodeURIComponent(reelDnaId)}` : OPENCUT_URL}
+                allow="fullscreen; clipboard-read; clipboard-write; camera; microphone"
+                /* OpenCut needs same-origin + scripts for its WASM/ffmpeg pipeline;
+                   allow-downloads lets exports save. No allow-top-navigation so it
+                   can't navigate the dashboard away. */
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"
+                onLoad={() => { loadedRef.current = true; setIframeBlocked(false); }}
+              />
+
+              {iframeBlocked && (
+                <div className="editor-overlay">
+                  <h3>OpenCut couldn't be embedded here</h3>
+                  <p>
+                    The public OpenCut instance blocks being shown inside another site
+                    (its <code>X-Frame-Options</code> / <code>frame-ancestors</code> policy).
+                    Open it in a new tab to edit, or self-host OpenCut on an origin that
+                    allows framing from footagebrain.com and point <code>OPENCUT_URL</code> at it
+                    (see the comment at the top of <code>editor.jsx</code>).
+                  </p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <a
+                      className="editor-btn primary"
+                      href={reelDnaId ? `${OPENCUT_URL}?reel_dna_id=${encodeURIComponent(reelDnaId)}` : OPENCUT_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      ↗ Open OpenCut in a new tab
+                    </a>
+                    <button className="editor-btn" onClick={() => setIframeKey(k => k + 1)}>
+                      ↻ Retry embed
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

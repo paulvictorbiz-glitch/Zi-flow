@@ -1,0 +1,194 @@
+/* =========================================================
+   Timeline — visual drag editor styles. Own file; uses the app
+   theme vars (--fg, --bg, --border, --c-cyan, …) like editor.css.
+   ========================================================= */
+
+.tl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--line-hard, var(--border));
+  border-radius: 8px;
+  background: var(--bg-2, var(--bg-alt));
+  padding: 10px 12px;
+}
+
+.tl-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.tl-total {
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  color: var(--c-cyan, #22d3ee);
+}
+.tl-zoom { display: flex; align-items: center; gap: 6px; }
+.tl-zoom-lbl {
+  font-family: var(--f-mono, monospace);
+  font-size: 10px;
+  color: var(--fg-mute);
+  min-width: 48px;
+  text-align: center;
+}
+
+/* horizontal scroller holding the ruler + track */
+.tl-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 6px;
+}
+
+.tl-ruler {
+  position: relative;
+  height: 16px;
+  min-width: 100%;
+}
+.tl-tick {
+  position: absolute;
+  top: 0;
+  font-family: var(--f-mono, monospace);
+  font-size: 9px;
+  color: var(--fg-mute);
+  transform: translateX(-2px);
+  border-left: 1px solid var(--line, var(--border));
+  padding-left: 3px;
+  height: 12px;
+  white-space: nowrap;
+}
+
+.tl-track {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 64px;
+  min-width: 100%;
+}
+
+.tl-empty {
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--fg-mute);
+  font-family: var(--f-mono, monospace);
+  padding: 0 8px;
+}
+
+/* a clip block */
+.tl-clip {
+  position: relative;
+  flex: 0 0 auto;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--c-cyan, #22d3ee);
+  border-radius: 6px;
+  background: rgba(34, 211, 238, 0.10);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;            /* let pointer events drive the drag */
+  display: flex;
+  align-items: stretch;
+}
+.tl-clip.dragging { cursor: grabbing; opacity: 0.75; outline: 1px dashed var(--c-cyan, #22d3ee); }
+
+.tl-clip-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;          /* body drag is handled by the wrapper */
+}
+.tl-clip-name {
+  font-size: 11px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-clip-dur {
+  font-family: var(--f-mono, monospace);
+  font-size: 9.5px;
+  color: var(--fg-mute);
+}
+
+/* trim handles on each edge */
+.tl-handle {
+  flex: 0 0 7px;
+  cursor: ew-resize;
+  background: var(--c-cyan, #22d3ee);
+  opacity: 0.35;
+  touch-action: none;
+}
+.tl-handle:hover { opacity: 0.85; }
+
+.tl-remove {
+  position: absolute;
+  top: 2px;
+  right: 9px;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  text-align: center;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--fg);
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.tl-clip:hover .tl-remove { opacity: 0.8; }
+.tl-remove:hover { opacity: 1; color: var(--c-red, #ef4444); }
+
+/* gap between two clips holding the transition control */
+.tl-gap {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 2px;
+}
+.tl-trans {
+  border: 1px solid var(--line-hard, var(--border));
+  background: var(--bg, #0b0e14);
+  color: var(--fg-mute);
+  border-radius: 4px;
+  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  padding: 0;
+}
+.tl-trans.xfade { border-color: var(--c-amber, #f59e0b); color: var(--c-amber, #f59e0b); }
+.tl-trans-dur {
+  width: 38px;
+  background: var(--bg, #0b0e14);
+  border: 1px solid var(--line, var(--border));
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: var(--f-mono, monospace);
+  font-size: 9.5px;
+  padding: 2px 3px;
+  text-align: center;
+}
+
+/* ---------- render progress (lives in editor.css scope but defined here) ---------- */
+.tl-render-bar {
+  height: 8px;
+  border-radius: 5px;
+  background: var(--bg, #0b0e14);
+  border: 1px solid var(--line, var(--border));
+  overflow: hidden;
+}
+.tl-render-fill {
+  height: 100%;
+  background: var(--c-cyan, #22d3ee);
+  transition: width 0.4s ease;
+}
