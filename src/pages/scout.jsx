@@ -168,10 +168,18 @@ export function Scout() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { showToast("Not signed in — refresh skipped."); return; }
-      await fetch("/api/ai/suggest?action=scout-scrape", {
+      const r = await fetch("/api/ai/suggest?action=scout-scrape", {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
+      // 200 = done, 202 = fire-and-forget timeout (scrape still running). Both OK.
+      // Anything else: surface the server's real error instead of a false "started"
+      // — otherwise a 502 (e.g. the non-ISO-8859-1 Headers masquerade) shows as success.
+      if (!r.ok && r.status !== 202) {
+        const body = await r.json().catch(() => ({}));
+        showToast(`Scrape failed (${r.status}): ${body.error || "unknown error"}`);
+        return;
+      }
       showToast("Scraping started — reload in ~2 minutes when new products arrive.");
     } catch {
       showToast("Could not reach the scraper. Try again.");

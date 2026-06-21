@@ -10,6 +10,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import "./monitor.css";
 import { Card, DPill } from "../components/components.jsx";
 import { supabase } from "../lib/supabase-client.js";
+import { scoutSupabase } from "../lib/scout-supabase.js";
 import { PLATFORMS, CONNECT_URLS, fetchConnections, runHealthChecks, deriveStatus, invalidateConnectionsCache } from "../lib/social-client.js";
 import { useWorkflow } from "../store/store.jsx";
 import { useRoster } from "../lib/roster.jsx";
@@ -1375,6 +1376,114 @@ function AiCreditsSection() {
   );
 }
 
+/* ── Scout — MicroSaaS radar: free-pull limits + live usage ──
+   The binding free-tier constraint is the AI dossier step: each newly-found
+   product triggers ONE OpenRouter free-model call. The scrape sources (PH/HN/
+   GitHub) sit far below their own caps at one daily pull, so OpenRouter's
+   per-day cap is what actually limits "free pulls". Live counts read from the
+   Scout Supabase (a separate project); degrades to limits-only if unreachable. */
+const SCOUT_LLM_DAILY_FREE = 50;     // OpenRouter :free models, <$10 credits ever (fallback)
+
+function ScoutSection() {
+  const [s, setS] = useState(null);      // usage counts from the Scout Supabase
+  const [q, setQ] = useState(null);      // live OpenRouter quota via fb-scout proxy
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // 1) Live OpenRouter quota (owner-gated proxy → fb-scout → OpenRouter).
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const r = await fetch("/api/ai/suggest?action=scout-quota", {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+          if (r.ok && alive) setQ(await r.json());
+        }
+      } catch (_) { /* card still renders with documented defaults */ }
+
+      // 2) Usage counts from the Scout Supabase (a separate project).
+      try {
+        const now = new Date();
+        // OpenRouter's daily quota resets at 00:00 UTC — count "today" in UTC to match.
+        const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+        const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString();
+        const [pRes, dDay, dMonth, newWk, lastRun] = await Promise.all([
+          scoutSupabase.from("products").select("*", { count: "exact", head: true }),
+          scoutSupabase.from("dossiers").select("*", { count: "exact", head: true }).gte("generated_at", dayStart),
+          scoutSupabase.from("dossiers").select("*", { count: "exact", head: true }).gte("generated_at", monthStart),
+          scoutSupabase.from("products").select("*", { count: "exact", head: true }).gte("first_seen", weekAgo),
+          scoutSupabase.from("scrape_runs").select("finished_at,new").order("finished_at", { ascending: false }).limit(1),
+        ]);
+        if (!alive) return;
+        setS({
+          products: pRes.count || 0,
+          dossiersToday: dDay.count || 0,
+          dossiersMonth: dMonth.count || 0,
+          newThisWeek: newWk.count || 0,
+          lastRun: (lastRun.data && lastRun.data[0]) || null,
+        });
+      } catch (_) {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const today = s?.dossiersToday ?? 0;
+  const live = !!(q && q.ok);
+  const dailyCap = (live && q.daily_free_limit) || SCOUT_LLM_DAILY_FREE;
+  const pct = Math.round((today / dailyCap) * 100);
+  const tierLabel = !live ? "—" : q.is_free_tier ? "Free · 50/day" : "Credited · 1,000/day";
+  // OpenRouter's rate_limit field is deprecated (returns requests:-1) — ignore it
+  // and show the documented free-model policy (20 req/min).
+  const rl = live && q.rate_limit;
+  const rlLabel = rl && rl.requests > 0 ? `${rl.requests} / ${rl.interval || "min"}` : "20 / min";
+  const money = (n) => (n == null ? "—" : "$" + Number(n).toFixed(2));
+
+  return (
+    <div className="mon-section-body">
+      <UsageBar
+        label={`AI dossiers today — ${s ? today : "—"} / ${dailyCap} ${live ? "(live cap)" : "(free tier)"}`}
+        pct={s ? pct : null}
+        detail="1 dossier per newly-found product = 1 OpenRouter free-model call"
+      />
+
+      <div className="mon-stats-grid" style={{ marginTop: 8 }}>
+        <StatRow label="OpenRouter tier"        value={tierLabel} tone={live ? "ok" : undefined} />
+        <StatRow label="Credits used / balance" value={live ? `${money(q.total_usage)} / ${money(q.total_credits)}` : "—"} />
+        <StatRow label="Free pulls / day"        value={`${dailyCap}${live ? "" : "  (50 free · 1,000 w/ $10 credit)"}`} tone="ok" />
+        <StatRow label="Free pulls / month"      value={`~${fmt(dailyCap * 30)}`} tone="ok" />
+        <StatRow label="Dossiers this month"     value={s ? fmt(s.dossiersMonth) : "—"} />
+        <StatRow label="Products tracked"        value={s ? fmt(s.products) : "—"} />
+        <StatRow label="New this week"           value={s ? fmt(s.newThisWeek) : "—"} />
+        <StatRow label="Last scrape"             value={s?.lastRun?.finished_at ? `${fmtAgo(s.lastRun.finished_at)} · +${fmt(s.lastRun.new || 0)}` : "—"} />
+      </div>
+
+      <div className="mon-hint" style={{ margin: "10px 0 4px", opacity: 0.7 }}>
+        Source caps (free tier) — none come close at one scrape/day
+      </div>
+      <div className="mon-stats-grid">
+        <StatRow label="OpenRouter models" value={`${rlLabel} · failed calls count`} />
+        <StatRow label="Hacker News"       value="~unlimited" />
+        <StatRow label="GitHub Search"     value="30 req/min" />
+        <StatRow label="Product Hunt"      value="6,250 pts / 15 min" />
+      </div>
+
+      <div className="mon-hint">
+        The AI dossier step is the binding limit: each newly-found product = 1 OpenRouter free-model
+        call. Free tier = 50 requests/day (auto-jumps to 1,000/day after a one-time $10 credit that
+        never expires); 20/min; failed calls still count. Auto-scrape runs daily at 06:00 UTC; manual
+        ↻ Refresh anytime.{!live ? "  (live quota unavailable — showing documented limits.)" : ""}{failed ? "  (Scout DB counts unavailable.)" : ""}{" "}
+        <a href="https://openrouter.ai/settings/credits" target="_blank" rel="noreferrer"
+           style={{ color: "var(--c-cyan)" }}>OpenRouter credits ↗</a>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Monitor component ──────────────────────────────── */
 export function Monitor() {
   const [data, setData]       = useState(null);
@@ -1537,6 +1646,10 @@ export function Monitor() {
         <Card title="World Monitor" footLeft="Free APIs · Limits · Usage">
           {data?.worldMonitor?._stale && <StaleTag />}
           <WorldMonitorSection data={data?.worldMonitor} />
+        </Card>
+
+        <Card title="Scout" footLeft="MicroSaaS radar · free pull limits">
+          <ScoutSection />
         </Card>
 
         <Card title="Vercel" footLeft="Hosting · Functions · Bandwidth">
