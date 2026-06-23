@@ -207,8 +207,137 @@ function PresenceAvatar({ p }) {
   );
 }
 
+/* =========================================================
+   EmbeddedEditor (EM1/EM2) — iframe-backed OpenCut editor mode.
+
+   Behind the EDITOR_EMBED_ENABLED flag (default OFF). When ON, renders an
+   <iframe src={editorOrigin + "/editor/" + projectId}> filling the editor
+   area and implements the PARENT side of the frozen postMessage SSO
+   handshake (contract C1):
+
+     1. iframe (OpenCut) on load → postMessage({type:"EDITOR_READY"}) to parent.
+     2. parent receives EDITOR_READY (validate event.origin === editorOrigin)
+        → posts {type:"FB_AUTH", jwt, projectId, reelId} to iframe.contentWindow
+        with targetOrigin = editorOrigin. jwt comes from the live Supabase
+        session — NEVER from the URL/query (referrer/log/history leak).
+     4. TOKEN REFRESH: the parent owns the session — on
+        supabase.auth.onAuthStateChange ("TOKEN_REFRESHED"|"SIGNED_IN") it
+        RE-posts {type:"FB_AUTH", jwt, ...} to the iframe.
+
+   EM2: if neither onLoad nor EDITOR_READY fires within ~9s (framing blocked),
+   show an "open in a new tab" overlay AND fall back to the native editor so
+   the user is never stuck. Listener + auth subscription + timeout are all
+   cleaned up on unmount.
+   ========================================================= */
+const EMBED_LOAD_TIMEOUT_MS = 9000; // mirror the historical iframe-load fallback
+
+function EmbeddedEditor({ projectId, reelId, editorOrigin, onFrameBlocked, onBackToProjects }) {
+  const iframeRef = useRef(null);
+  const readyRef = useRef(false);     // EDITOR_READY (or onLoad) seen?
+  const [blocked, setBlocked] = useState(false);
+  const editorUrl = useMemo(
+    () => `${editorOrigin}/editor/${encodeURIComponent(projectId || "")}`,
+    [editorOrigin, projectId]
+  );
+
+  /* Post the current Supabase JWT to the iframe (targetOrigin pinned to the
+     editor origin so the token can never leak to another framed origin). */
+  const postAuth = useCallback(async () => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    let jwt = null;
+    try {
+      const { data } = await supabase.auth.getSession();
+      jwt = data?.session?.access_token || null;
+    } catch { jwt = null; }
+    if (!jwt) return;
+    win.postMessage({ type: "FB_AUTH", jwt, projectId, reelId: reelId || null }, editorOrigin);
+  }, [editorOrigin, projectId, reelId]);
+
+  /* EM1/C1: listen for EDITOR_READY from the iframe and reply with FB_AUTH.
+     Validate event.origin on EVERY message (strict === editorOrigin). */
+  useEffect(() => {
+    const onMessage = (event) => {
+      if (event.origin !== editorOrigin) return;          // origin allow-list
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+      if (data.type === "EDITOR_READY") {
+        readyRef.current = true;
+        postAuth();
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [editorOrigin, postAuth]);
+
+  /* C1 step 4 — the PARENT owns the session: re-post FB_AUTH on token refresh
+     / sign-in so the iframe replaces its stored token. */
+  useEffect(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((evt) => {
+      if (evt === "TOKEN_REFRESHED" || evt === "SIGNED_IN") {
+        if (readyRef.current) postAuth();
+      }
+    });
+    return () => { try { sub?.subscription?.unsubscribe(); } catch { /* noop */ } };
+  }, [postAuth]);
+
+  /* EM2 — framing-blocked fallback: if neither onLoad nor EDITOR_READY fires
+     within ~9s, surface the overlay AND fall back to the native editor. */
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!readyRef.current) {
+        setBlocked(true);
+        if (typeof onFrameBlocked === "function") onFrameBlocked();
+      }
+    }, EMBED_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [editorUrl, onFrameBlocked]);
+
+  /* onLoad alone is enough to clear the timeout — but we still want EDITOR_READY
+     for the handshake. A successful frame load (even pre-handshake) means the
+     origin isn't framing-blocked, so mark it loaded to suppress the fallback. */
+  const onIframeLoad = useCallback(() => { readyRef.current = true; }, []);
+
+  return (
+    <div className="editor-embed-wrap" style={{ position: "relative", width: "100%", height: "100%", minHeight: 480 }}>
+      <iframe
+        ref={iframeRef}
+        src={editorUrl}
+        title="OpenCut editor"
+        onLoad={onIframeLoad}
+        allow="clipboard-read; clipboard-write; fullscreen"
+        style={{ width: "100%", height: "100%", minHeight: 480, border: 0, display: "block" }}
+      />
+      {blocked && (
+        <div
+          className="editor-embed-overlay"
+          style={{
+            position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 12, textAlign: "center",
+            background: "rgba(15,15,20,0.92)", padding: 24,
+          }}
+        >
+          <div className="editor-clip-name">The embedded editor couldn't load here.</div>
+          <div className="editor-clip-meta" style={{ maxWidth: 420, lineHeight: 1.5 }}>
+            Framing may be blocked. You can open the editor in a new tab, or use the built-in
+            editor below.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <a className="editor-btn primary" href={editorUrl} target="_blank" rel="noopener noreferrer">
+              ↗ Open editor in a new tab
+            </a>
+            {typeof onBackToProjects === "function" && (
+              <button className="editor-btn" onClick={() => onBackToProjects()}>← Projects</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ========================================================= */
-export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProjectId, onBackToProjects }) {
+export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProjectId, onBackToProjects, embedEnabled = false, editorOrigin }) {
   const { reels, attachedFootage, editProjects, musicTracks, actions } = useWorkflow();
   const { person: me } = useAuth();
 
@@ -217,6 +346,12 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
   const [projectState, setProjectState] = useState("loading"); // loading | ready | error
   const [projectErr, setProjectErr] = useState("");
   const resolvingRef = useRef(false);
+
+  /* EM1/EM2: iframe-embed mode is gated behind the flag (default OFF). If the
+     iframe can't load (framing blocked, EM2 9s timeout) we set frameBlocked so
+     the render falls back to the native editor and the user is never stuck. */
+  const [frameBlocked, setFrameBlocked] = useState(false);
+  const embedActive = !!embedEnabled && !!editorOrigin && !frameBlocked;
 
   const project = useMemo(
     () => (editProjects || []).find((p) => p.id === projectId) || null,
@@ -930,6 +1065,14 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
           <div className="editor-timeline-stage">
             {projectState === "loading" ? (
               <div className="editor-clip-meta">Loading project…</div>
+            ) : embedActive && projectId ? (
+              <EmbeddedEditor
+                projectId={projectId}
+                reelId={boundReelId}
+                editorOrigin={editorOrigin}
+                onFrameBlocked={() => setFrameBlocked(true)}
+                onBackToProjects={onBackToProjects}
+              />
             ) : (
               <>
                 {!iAmHolder && (

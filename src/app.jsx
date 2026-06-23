@@ -4,6 +4,15 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { DPill } from "./components/components.jsx";
 import { ROLES } from "./lib/shared-data.jsx";
 import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
+
+/* ── OpenCut-AI embedded editor (Phase 1) ────────────────────────────
+   Additive feature flag for the iframe-backed editor mode. DEFAULT OFF →
+   the native in-app multi-track editor renders exactly as today. When ON,
+   the editor area embeds the self-hosted OpenCut editor at EDITOR_ORIGIN
+   and authenticates it via postMessage SSO (no JWT in the URL). Flip to
+   true only after editor.footagebrain.com is stood up and framed-allowed. */
+const EDITOR_EMBED_ENABLED = false;
+const EDITOR_ORIGIN = "https://editor.footagebrain.com";
 /* ---- EAGER core pages (primary flow — never code-split so it never
    flashes a Suspense fallback). ---- */
 import { MyWork } from "./pages/my-work.jsx";
@@ -774,7 +783,7 @@ function AppShell() {
         {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
         {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} openCompare={autoCompare} onCompareMounted={() => setAutoCompare(false)} />}
         {view === "footage"   && <FootageLibrary onOpen={openReel} />}
-        {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} reelDnaId={selectedReel?.reelDnaId} editingProjectId={editingProjectId} onBackToProjects={() => goView("projects")} />}
+        {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} reelDnaId={selectedReel?.reelDnaId} editingProjectId={editingProjectId} onBackToProjects={() => goView("projects")} embedEnabled={EDITOR_EMBED_ENABLED} editorOrigin={EDITOR_ORIGIN} />}
         {view === "projects"  && <EditorProjects openEditorProject={openEditorProject} />}
         {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}
         {view === "export"    && <ExportView onOpen={openReel} />}
