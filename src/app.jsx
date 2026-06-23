@@ -23,6 +23,7 @@ const importAnalytics    = () => import("./pages/analytics.jsx");
 const importInbox        = () => import("./pages/inbox.jsx");
 const importTraining     = () => import("./pages/training.jsx");
 const importVideoEditor  = () => import("./pages/editor.jsx");
+const importEditorProjects = () => import("./pages/editor-projects.jsx");
 const importLosslessCut  = () => import("./pages/lossless.jsx");
 const importIdeaGenerator= () => import("./pages/idea-generator.jsx");
 const importLocations    = () => import("./pages/locations.jsx");
@@ -38,7 +39,7 @@ const importTeamChat     = () => import("./pages/team-chat.jsx");
 // Used by B3 prefetch: warm every heavy chunk on idle. Same factories as below.
 const LAZY_IMPORTERS = [
   importMonitorHub, importMusicLibrary, importAnalytics, importInbox, importTraining,
-  importVideoEditor, importLosslessCut, importIdeaGenerator, importLocations,
+  importVideoEditor, importEditorProjects, importLosslessCut, importIdeaGenerator, importLocations,
   importCoverage, importResources, importActivity, importRolesAdmin,
   importExportView, importArchivedView, importCalendarView, importListView,
   importTeamChat,
@@ -49,6 +50,7 @@ const Analytics    = React.lazy(() => importAnalytics().then((m)    => ({ defaul
 const Inbox        = React.lazy(() => importInbox().then((m)        => ({ default: m.Inbox })));
 const Training     = React.lazy(() => importTraining().then((m)     => ({ default: m.Training })));
 const VideoEditor  = React.lazy(() => importVideoEditor().then((m)  => ({ default: m.VideoEditor })));
+const EditorProjects = React.lazy(() => importEditorProjects().then((m) => ({ default: m.EditorProjects })));
 const LosslessCut  = React.lazy(() => importLosslessCut().then((m)  => ({ default: m.LosslessCut })));
 const IdeaGenerator= React.lazy(() => importIdeaGenerator().then((m)=> ({ default: m.IdeaGenerator })));
 const Locations    = React.lazy(() => importLocations().then((m)    => ({ default: m.Locations })));
@@ -97,7 +99,7 @@ const FEEDBACK_FORM_URL =
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
 // "monitor" is the consolidated owner hub (Infra/Pulse/AI Brain sub-tabs); the
 // former standalone "pulse"/"ai" views now live inside it (see monitor-hub.jsx).
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "projects", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -115,6 +117,7 @@ const TABS = [
   { key: "coverage",  label: "Coverage" },
   { key: "locations", label: "Locations" },
   { key: "editor",    label: "Editor" },
+  { key: "projects",  label: "Projects" },
   { key: "lossless",  label: "Lossless" },
   { key: "export",    label: "Export" },
   { key: "training",  label: "Training" },
@@ -165,6 +168,7 @@ function AppShell() {
   const [viewStack, setViewStack]       = useState([]);
   const [pipelineMode, setPipelineMode] = useState(() => localStorage.getItem("wb_pipeline_mode") || "board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
+  const [editingProjectId, setEditingProjectId] = useState(null);   // which Editor project the OpenCut editor opened from the Projects browser
   const [focusModule, setFocusModule]   = useState(null);   // training skillKey to auto-expand/scroll
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
@@ -345,6 +349,14 @@ function AppShell() {
     setViewStack(prev => [...prev.slice(-19), view]);
     setView(key);
     setNavOpen(false);
+  };
+
+  /* Open a saved Editor project from the Projects browser: stash its id so the
+     OpenCut <VideoEditor> mount can load it, then navigate to the editor view.
+     onBackToProjects (passed to VideoEditor) returns to the Projects browser. */
+  const openEditorProject = (id) => {
+    setEditingProjectId(id);
+    goView("editor");
   };
 
   const goBack = () => {
@@ -762,7 +774,8 @@ function AppShell() {
         {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
         {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} openCompare={autoCompare} onCompareMounted={() => setAutoCompare(false)} />}
         {view === "footage"   && <FootageLibrary onOpen={openReel} />}
-        {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
+        {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} reelDnaId={selectedReel?.reelDnaId} editingProjectId={editingProjectId} onBackToProjects={() => goView("projects")} />}
+        {view === "projects"  && <EditorProjects openEditorProject={openEditorProject} />}
         {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}
         {view === "export"    && <ExportView onOpen={openReel} />}
         {view === "analytics" && <Analytics />}

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-23T14:21:55.853Z",
+  "generated": "2026-06-23T16:27:06.716Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -372,6 +372,10 @@
     {
       "version": "0093_music_library.sql",
       "checksum": "dce409cc1aefe07c0f077c57a1f0aa853d1f24b0afc2d7a913978ed46562dca1"
+    },
+    {
+      "version": "0094_edit_collab_v2.sql",
+      "checksum": "db076786ec1a1a60b8e7bf6f1498befa68da5398ed5179c4aa08df0163466fbd"
     }
   ]
 }

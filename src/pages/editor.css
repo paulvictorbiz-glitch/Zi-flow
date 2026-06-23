@@ -190,3 +190,54 @@
 .editor-pill.ok    { color: var(--c-green, #4ade80); border-color: var(--c-green, #4ade80); }
 .editor-pill.amber { color: var(--c-amber, #f59e0b); border-color: var(--c-amber, #f59e0b); }
 .editor-pill.cyan  { color: var(--c-cyan, #22d3ee); border-color: var(--c-cyan, #22d3ee); }
+
+/* ── presence avatars (collaboration) ── */
+.editor-presence-row { display: inline-flex; align-items: center; gap: -6px; }
+.editor-presence-row > * + * { margin-left: -6px; }
+.editor-presence {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--f-mono, monospace);
+  font-size: 9px; font-weight: 700;
+  color: #fff;
+  border: 2px solid var(--bg-2, #0b0e14);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
+}
+.editor-presence.editing { box-shadow: 0 0 0 2px var(--c-green, #4ade80); }
+
+/* ── read-only banner (non-holder) ── */
+.editor-readonly-banner {
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  color: var(--c-amber, #f59e0b);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid var(--c-amber, #f59e0b);
+  border-radius: 6px;
+  padding: 7px 10px;
+  line-height: 1.5;
+}
+
+/* ── silence-cut suggestions ── */
+.editor-cuts { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.editor-cut {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  border: 1px solid var(--c-amber, #f59e0b);
+  background: rgba(245, 158, 11, 0.07);
+  border-radius: 5px;
+  padding: 5px 8px;
+}
+.editor-cut.rejected {
+  border-color: var(--line, var(--border));
+  background: transparent;
+  opacity: 0.55;
+}
+
+/* ── music search results ── */
+.editor-music-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 240px; overflow-y: auto; }
+.editor-music-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  border: 1px solid var(--line, var(--border));
+  border-radius: 5px;
+  padding: 6px 8px;
+}

@@ -335,6 +335,59 @@ function musicPlaylistTrackFromDb(row) {
   return { playlistId: row.playlist_id, trackId: String(row.track_id), position: row.position ?? 0, addedAt: row.added_at };
 }
 
+/* ---- OpenCut collaborative editor: edit_projects + editor_locks (migration 0094) ----
+   edit_projects is the v2 project gallery row (one per reel/freestanding edit).
+   timeline_json is the v2 doc {version,output,duration,tracks[]}. reel_id is TEXT
+   (matches reels.id — see 0094 CONTRACT DEVIATION note), reel_dna_id is uuid.
+   editor_locks is the project-level single-writer sentinel; track_id is ALWAYS
+   '__project__' (no per-track locks). We key the store slice by project_id since
+   only the project-level lock matters here. */
+function editProjectFromDb(row) {
+  if (!row) return row;
+  const { reel_dna_id, reel_id, created_by, timeline_json, export_url,
+          thumbnail_url, last_editor, locked_by, locked_until,
+          created_at, updated_at, ...rest } = row;
+  // rest carries id, title, version, status through untouched (same-name).
+  return {
+    ...rest,
+    reelDnaId: reel_dna_id ?? undefined,
+    reelId: reel_id ?? undefined,
+    createdBy: created_by ?? undefined,
+    timelineJson: timeline_json ?? undefined,
+    exportUrl: export_url ?? undefined,
+    thumbnailUrl: thumbnail_url ?? undefined,
+    lastEditor: last_editor ?? undefined,
+    lockedBy: locked_by ?? undefined,
+    lockedUntil: locked_until ?? undefined,
+    createdAt: created_at ?? undefined,
+    updatedAt: updated_at ?? undefined,
+  };
+}
+function editorLockFromDb(row) {
+  if (!row) return row;
+  const { project_id, track_id, locked_by, locked_at, expires_at, heartbeat_at, ...rest } = row;
+  return {
+    ...rest,
+    projectId: project_id,
+    trackId: track_id ?? "__project__",
+    lockedBy: locked_by ?? undefined,
+    lockedAt: locked_at ?? undefined,
+    expiresAt: expires_at ?? undefined,
+    heartbeatAt: heartbeat_at ?? undefined,
+  };
+}
+
+/* Empty v2 timeline doc — the default a fresh project starts from. Matches the
+   0094 backfill shape (one 'video' track) without any clips. */
+function emptyEditTimelineV2() {
+  return {
+    version: 2,
+    output: { width: 1080, height: 1920, fps: 30, crf: 23 },
+    duration: 0,
+    tracks: [{ id: "video_0", type: "video", name: "Main video", clips: [] }],
+  };
+}
+
 function monitorEventFromDb(row) {
   if (!row) return row;
   const { source_type, external_id, source_name, source_url,
@@ -988,6 +1041,44 @@ function workflowReducer(state, action) {
         musicPlaylistTracks: state.musicPlaylistTracks.filter(
           t => !(t.playlistId === action.playlistId && t.trackId === action.trackId)),
       };
+
+    /* OpenCut edit_projects (migration 0094) — same optimistic + realtime shape
+       as reel_dna. SET_* full-replace on hydrate; UPSERT prepends-or-replaces by
+       id (deduping the optimistic insert against its realtime echo). */
+    case "SET_EDIT_PROJECTS":
+      return { ...state, editProjects: action.items };
+
+    case "UPSERT_EDIT_PROJECT": {
+      const exists = state.editProjects.some(p => p.id === action.item.id);
+      return {
+        ...state,
+        editProjects: exists
+          ? state.editProjects.map(p => p.id === action.item.id ? { ...p, ...action.item } : p)
+          : [action.item, ...state.editProjects],
+      };
+    }
+
+    case "DELETE_EDIT_PROJECT_BY_ID":
+      return { ...state, editProjects: state.editProjects.filter(p => p.id !== action.id) };
+
+    /* editor_locks (migration 0094) — keyed by project_id (track is always
+       '__project__'). UPSERT replaces the lock row for a project; DELETE clears
+       it. Used for global lock badges on the gallery list. */
+    case "SET_EDITOR_LOCKS":
+      return { ...state, editorLocks: action.items };
+
+    case "UPSERT_EDITOR_LOCK": {
+      const exists = state.editorLocks.some(l => l.projectId === action.item.projectId);
+      return {
+        ...state,
+        editorLocks: exists
+          ? state.editorLocks.map(l => l.projectId === action.item.projectId ? action.item : l)
+          : [action.item, ...state.editorLocks],
+      };
+    }
+
+    case "DELETE_EDITOR_LOCK":
+      return { ...state, editorLocks: state.editorLocks.filter(l => l.projectId !== action.projectId) };
 
     /* Pulse Monitor events — same optimistic + realtime shape as reel_dna. */
     case "CREATE_MONITOR_EVENT":
@@ -1912,6 +2003,8 @@ const INITIAL_STATE = {
   reelDnaAssets: [],   // reel_dna card → footage/location/thumbnail/news links (migration 0067)
   igSyncRuns: [],     // ig_sync_runs — one row per IG DM poller run (migration 0073)
   igIngestLog: [],    // ig_ingest_log — per-message non-happy-path reasons (migration 0074)
+  editProjects: [],   // edit_projects — OpenCut v2 collaborative editor gallery (migration 0094)
+  editorLocks: [],    // editor_locks — project-level single-writer sentinel, keyed by project_id (migration 0094)
   // No locations table exists yet — kept as a static empty array so the Pulse
   // event-link picker (Team C) degrades gracefully instead of crashing.
   locations: [],
@@ -2060,6 +2153,35 @@ function WorkflowProvider({ children }) {
             if (!cancelled) dispatch({ type: "SET_MUSIC_TRACKS", items: (musicRes.data || []).map(musicTrackFromDb) });
           } catch (e) {
             console.warn("music_tracks not available (run migration 0092?):", e?.message || e);
+          }
+
+          /* OpenCut editor projects (migration 0094) — the collaborative-editor
+             gallery, available to every team member (not owner-only), so it
+             hydrates here in the shared background block alongside music_tracks.
+             Windowed to the RECENT most-recently-updated projects. Degrades to []
+             if 0094 hasn't been applied — a missing table must NEVER brick boot
+             (mirrors the music_tracks/reel_dna_assets defensive hydrate). */
+          try {
+            const editProjectsRes = await supabase
+              .from("edit_projects").select("*")
+              .order("updated_at", { ascending: false })
+              .limit(RECENT_WINDOW);
+            if (editProjectsRes.error) throw editProjectsRes.error;
+            if (!cancelled) dispatch({ type: "SET_EDIT_PROJECTS", items: (editProjectsRes.data || []).map(editProjectFromDb) });
+          } catch (e) {
+            console.warn("edit_projects not available (run migration 0094?):", e?.message || e);
+          }
+
+          /* editor_locks (migration 0094) — project-level single-writer sentinels
+             for global lock badges on the gallery. Small table (one row per
+             actively-edited project). Degrades to [] if 0094 hasn't run. */
+          try {
+            const editorLocksRes = await supabase
+              .from("editor_locks").select("*");
+            if (editorLocksRes.error) throw editorLocksRes.error;
+            if (!cancelled) dispatch({ type: "SET_EDITOR_LOCKS", items: (editorLocksRes.data || []).map(editorLockFromDb) });
+          } catch (e) {
+            console.warn("editor_locks not available (run migration 0094?):", e?.message || e);
           }
 
           /* Reel ↔ chat refs (migration 0046) — degrade to []. */
@@ -2632,11 +2754,78 @@ function WorkflowProvider({ children }) {
       console.warn("ig-sync-realtime channel registration failed:", e?.message || e);
     }
 
+    /* OpenCut edit_projects gallery realtime — its OWN channel so a missing
+       table (migration 0094 not applied) only kills its own realtime, not
+       workflow-realtime. Drives the gallery list + thumbnail/rename/lock-badge.
+       NOTE: this is the GALLERY-LEVEL stream (whole-table) — the per-PROJECT
+       id=eq row stream for the open editor is OWNED BY TEAM_COLLAB's editor
+       channel, NOT here (no filter:"id=eq.X" listener belongs in the store). */
+    let editProjectsChannel = null;
+    try {
+      editProjectsChannel = supabase
+        .channel("edit-projects-realtime")
+        .on("postgres_changes",
+            { event: "*", schema: "public", table: "edit_projects" },
+            (payload) => {
+              if (payload.eventType === "DELETE") {
+                dispatch({ type: "DELETE_EDIT_PROJECT_BY_ID", id: payload.old?.id });
+              } else if (payload.new) {
+                // A new project, rename, thumbnail set, or autosave from any
+                // teammate reflects live on the gallery list.
+                dispatch({ type: "UPSERT_EDIT_PROJECT", item: editProjectFromDb(payload.new) });
+              }
+            })
+        .subscribe((status, err) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn(
+              `edit-projects-realtime ${status} — live editor-gallery updates OFF ` +
+              `(edit_projects likely not in supabase_realtime publication; ` +
+              `run migration 0094).`,
+              err || "");
+          }
+        });
+    } catch (e) {
+      console.warn("edit-projects-realtime channel registration failed:", e?.message || e);
+    }
+
+    /* editor_locks realtime — its OWN channel so a missing table only kills its
+       own realtime. Drives the GLOBAL lock badges on the gallery (who holds the
+       single-writer lock on each project). Keyed by project_id in the reducer. */
+    let editorLocksChannel = null;
+    try {
+      editorLocksChannel = supabase
+        .channel("editor-locks-realtime")
+        .on("postgres_changes",
+            { event: "*", schema: "public", table: "editor_locks" },
+            (payload) => {
+              if (payload.eventType === "DELETE") {
+                // Release/expiry — clear the project's lock badge.
+                dispatch({ type: "DELETE_EDITOR_LOCK", projectId: payload.old?.project_id });
+              } else if (payload.new) {
+                // A teammate took/renewed the single-writer lock — show the badge.
+                dispatch({ type: "UPSERT_EDITOR_LOCK", item: editorLockFromDb(payload.new) });
+              }
+            })
+        .subscribe((status, err) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn(
+              `editor-locks-realtime ${status} — live lock badges OFF ` +
+              `(editor_locks likely not in supabase_realtime publication; ` +
+              `run migration 0094).`,
+              err || "");
+          }
+        });
+    } catch (e) {
+      console.warn("editor-locks-realtime channel registration failed:", e?.message || e);
+    }
+
     return () => {
       supabase.removeChannel(channel);
       if (monitorChannel) { try { supabase.removeChannel(monitorChannel); } catch (_) {} }
       if (reelDnaAssetsChannel) { try { supabase.removeChannel(reelDnaAssetsChannel); } catch (_) {} }
       if (igSyncChannel) { try { supabase.removeChannel(igSyncChannel); } catch (_) {} }
+      if (editProjectsChannel) { try { supabase.removeChannel(editProjectsChannel); } catch (_) {} }
+      if (editorLocksChannel) { try { supabase.removeChannel(editorLocksChannel); } catch (_) {} }
     };
   }, [state.loaded, _isDemo, queueRtOp, _isOwner]);
 
@@ -2648,6 +2837,21 @@ function WorkflowProvider({ children }) {
   // Current user's role, for the gamify editor-lock guard (owner can override).
   const authRoleRef = React.useRef(_authPerson?.role);
   React.useEffect(() => { authRoleRef.current = _authPerson?.role; }, [_authPerson?.role]);
+
+  /* OpenCut autosave debounce state (saveEditProjectTimeline). Per-project
+     timers in a ref so a stable useMemo'd action can debounce without re-creating
+     on every render. For each project we track:
+       · idle  — the trailing-edge ~800ms idle timer (reset on each call)
+       · maxTs — the timestamp of the FIRST pending edit (enforces a ~4s max-wait
+                 ceiling so a continuously-typing user still gets periodic flushes)
+       · pending — the latest { id, timelineJson } to persist on flush
+     Cleared on unmount (flush is NOT forced on unmount — the optimistic local doc
+     is already in state; the lock holder's next edit re-arms the save). */
+  const autosaveRef = React.useRef(new Map());
+  React.useEffect(() => {
+    const map = autosaveRef.current;
+    return () => { for (const e of map.values()) { try { clearTimeout(e.idle); } catch (_) {} } map.clear(); };
+  }, []);
 
   /* Gamify editor-lock guard. Returns true if a reassignment of `reel` to
      `toOwner` should be BLOCKED for the current caller. A reel locks once
@@ -2731,6 +2935,9 @@ function WorkflowProvider({ children }) {
     hiddenReelDnaCols: state.hiddenReelDnaCols,
     visitedReelDnaIds: state.visitedReelDnaIds,
     lastVisitedReelDnaId: state.lastVisitedReelDnaId,
+    // OpenCut collaborative editor (migration 0094) — gallery list + global locks.
+    editProjects: state.editProjects,
+    editorLocks: state.editorLocks,
     /* Is this reel locked to its editor? (gamify on + work started or graded).
        UI uses this to disable assign controls / show an owner confirm. */
     isReelLocked: (reelId) => {
@@ -4718,6 +4925,394 @@ function WorkflowProvider({ children }) {
         } catch (e) {
           console.warn("loadMoreEventLinks failed:", e?.message || e);
           return 0;
+        }
+      },
+
+      /* ═══════════════════════════════════════════════════════════════════════
+         OpenCut collaborative editor (migration 0094 — HUMAN-GATED apply).
+         edit_projects gallery CRUD + autosave + versions + AI/render wrappers.
+         All never throw past the boundary (return {ok,...}); writes degrade if
+         migration 0094 hasn't been applied (a missing table can't crash a click).
+         ═══════════════════════════════════════════════════════════════════════ */
+
+      /* Hydrated gallery list (boot-hydrated into state.editProjects). Exposed as
+         an action so consumers have a single entry point matching the contract. */
+      listEditProjects: () => stateRef.current.editProjects || [],
+
+      /* Fetch ONE project fresh from the DB (authoritative timeline_json + lock
+         metadata for opening the editor). Also UPSERTs it into the gallery so a
+         project created in another tab opens cleanly. Never throws. */
+      loadEditProject: async (id) => {
+        if (!id) return { ok: false, error: "id required" };
+        try {
+          const { data, error } = await supabase
+            .from("edit_projects").select("*").eq("id", id).maybeSingle();
+          if (error) throw error;
+          if (!data) return { ok: false, error: "Project not found" };
+          const project = editProjectFromDb(data);
+          dispatch({ type: "UPSERT_EDIT_PROJECT", item: project });
+          return { ok: true, project };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      /* Create a new edit project. Optimistic UPSERT (the realtime echo dedupes
+         by id) using the wrap(optimistic, persist) pattern. timeline_json defaults
+         to the empty-v2 doc. created_by = me. reel_id is a TEXT reel id; reel_dna_id
+         is a uuid. Never throws — on persist error the optimistic row is removed
+         and { ok:false } is returned. */
+      createEditProject: async ({ reelId, reelDnaId, title } = {}) => {
+        const me = _authPerson?.id || null;
+        const id = (globalThis.crypto?.randomUUID?.() || `ep_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+        const now = new Date().toISOString();
+        const timelineJson = emptyEditTimelineV2();
+        const project = {
+          id,
+          title: (title || "").trim() || "Untitled edit",
+          reelId: reelId ?? undefined,
+          reelDnaId: reelDnaId ?? undefined,
+          createdBy: me ?? undefined,
+          timelineJson,
+          version: 1,
+          status: "draft",
+          createdAt: now,
+          updatedAt: now,
+        };
+        // Optimistic insert NOW (deduped against the realtime echo by id).
+        dispatch({ type: "UPSERT_EDIT_PROJECT", item: project });
+        try {
+          const row = {
+            id,
+            title: project.title,
+            created_by: me,
+            timeline_json: timelineJson,
+            status: "draft",
+          };
+          if (reelId != null)    row.reel_id = reelId;
+          if (reelDnaId != null) row.reel_dna_id = reelDnaId;
+          const { data, error } = await supabase
+            .from("edit_projects").insert(row).select("*").maybeSingle();
+          if (error) throw error;
+          const saved = data ? editProjectFromDb(data) : project;
+          dispatch({ type: "UPSERT_EDIT_PROJECT", item: saved });
+          return { ok: true, project: saved };
+        } catch (e) {
+          // Roll back the optimistic insert — it never persisted.
+          dispatch({ type: "DELETE_EDIT_PROJECT_BY_ID", id });
+          console.warn("createEditProject failed:", e?.message || e);
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      /* DEBOUNCED + HOLDER-GUARDED autosave of timeline_json.
+         · iAmHolder (default true) — the EDITOR flips this from its lock state;
+           a non-holder call is a NO-OP (viewers never write).
+         · Debounce: ~800ms idle (trailing edge), with a ~4s MAX-WAIT ceiling so a
+           continuously-editing holder still flushes periodically.
+         · On flush: UPDATE timeline_json, version=version+1, updated_at=now(),
+           last_editor=me. Optimistically reflects the new doc locally so the
+           editor stays responsive. On persist error we SURFACE (console + SET_ERROR)
+           but do NOT roll back the user's local edits (work is never lost). */
+      saveEditProjectTimeline: (id, timelineJson, iAmHolder = true) => {
+        if (!id) return;
+        if (!iAmHolder) return; // holder-guard: viewers/non-holders never persist
+        const me = _authPerson?.id || null;
+        // Optimistic local reflect — the editor's doc is the source of truth.
+        dispatch({ type: "UPSERT_EDIT_PROJECT", item: { id, timelineJson, updatedAt: new Date().toISOString() } });
+
+        const map = autosaveRef.current;
+        const entry = map.get(id) || { idle: null, maxTs: 0, pending: null };
+        entry.pending = { id, timelineJson };
+        if (!entry.maxTs) entry.maxTs = Date.now();
+
+        const flush = async () => {
+          const e0 = map.get(id);
+          if (!e0 || !e0.pending) return;
+          const { timelineJson: doc } = e0.pending;
+          // Clear the debounce bookkeeping before the await so edits arriving
+          // mid-flush re-arm a fresh cycle.
+          try { clearTimeout(e0.idle); } catch (_) {}
+          map.delete(id);
+          try {
+            const cur = (stateRef.current.editProjects || []).find(p => p.id === id);
+            const nextVersion = (cur?.version ?? 1) + 1;
+            const { error } = await supabase
+              .from("edit_projects")
+              .update({
+                timeline_json: doc,
+                version: nextVersion,
+                updated_at: new Date().toISOString(),
+                last_editor: me,
+              })
+              .eq("id", id);
+            if (error) throw error;
+            // Reflect the bumped version locally (the realtime echo will confirm).
+            dispatch({ type: "UPSERT_EDIT_PROJECT", item: { id, version: nextVersion, lastEditor: me ?? undefined } });
+          } catch (err) {
+            // Surface but DO NOT roll back — the user's local edits stay intact.
+            console.error("saveEditProjectTimeline persist failed:", err?.message || err);
+            dispatch({ type: "SET_ERROR", error: err?.message || String(err) });
+          }
+        };
+
+        try { clearTimeout(entry.idle); } catch (_) {}
+        const MAX_WAIT = 4000, IDLE = 800;
+        const sinceFirst = Date.now() - entry.maxTs;
+        if (sinceFirst >= MAX_WAIT) {
+          // Ceiling hit — flush immediately rather than re-arming the idle timer.
+          map.set(id, entry);
+          flush();
+          return;
+        }
+        const wait = Math.min(IDLE, MAX_WAIT - sinceFirst);
+        entry.idle = setTimeout(flush, wait);
+        map.set(id, entry);
+      },
+
+      /* Manual checkpoint — INSERT into edit_project_versions with the CURRENT
+         timeline_json + version + saved_by. Never throws. */
+      saveEditProjectVersion: async (id, label) => {
+        if (!id) return { ok: false, error: "id required" };
+        const me = _authPerson?.id || null;
+        try {
+          const cur = (stateRef.current.editProjects || []).find(p => p.id === id);
+          let timelineJson = cur?.timelineJson;
+          let version = cur?.version;
+          // Fall back to a fresh read if the project isn't in local state.
+          if (timelineJson === undefined || version === undefined) {
+            const { data, error } = await supabase
+              .from("edit_projects").select("timeline_json, version").eq("id", id).maybeSingle();
+            if (error) throw error;
+            timelineJson = data?.timeline_json;
+            version = data?.version;
+          }
+          const { error } = await supabase
+            .from("edit_project_versions")
+            .insert({
+              project_id: id,
+              version: version ?? 1,
+              label: (label || "").trim() || null,
+              timeline_json: timelineJson ?? emptyEditTimelineV2(),
+              saved_by: me,
+            });
+          if (error) throw error;
+          return { ok: true };
+        } catch (e) {
+          console.warn("saveEditProjectVersion failed:", e?.message || e);
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      /* Restore a saved version. (1) Fetch that version's timeline_json. (2) FIRST
+         save a SAFETY CHECKPOINT of the CURRENT doc (so a restore is undoable).
+         (3) THEN persist the restored doc via the same UPDATE path as autosave
+         (holder-guarded by the caller — restore is a holder-only action). Never
+         throws. */
+      restoreEditProjectVersion: async (id, versionId) => {
+        if (!id || !versionId) return { ok: false, error: "id and versionId required" };
+        const me = _authPerson?.id || null;
+        try {
+          // (1) Fetch the version's doc.
+          const { data: ver, error: verErr } = await supabase
+            .from("edit_project_versions").select("timeline_json").eq("id", versionId).maybeSingle();
+          if (verErr) throw verErr;
+          if (!ver) return { ok: false, error: "Version not found" };
+          const restoredDoc = ver.timeline_json ?? emptyEditTimelineV2();
+
+          // (2) Safety checkpoint of the CURRENT doc before overwriting it.
+          const cur = (stateRef.current.editProjects || []).find(p => p.id === id);
+          let curDoc = cur?.timelineJson;
+          let curVersion = cur?.version;
+          if (curDoc === undefined || curVersion === undefined) {
+            const { data: cp } = await supabase
+              .from("edit_projects").select("timeline_json, version").eq("id", id).maybeSingle();
+            curDoc = cp?.timeline_json;
+            curVersion = cp?.version;
+          }
+          try {
+            await supabase.from("edit_project_versions").insert({
+              project_id: id,
+              version: curVersion ?? 1,
+              label: "Before restore",
+              timeline_json: curDoc ?? emptyEditTimelineV2(),
+              saved_by: me,
+            });
+          } catch (cpErr) {
+            // Checkpoint failure must not block the restore itself — log + continue.
+            console.warn("restore safety-checkpoint failed:", cpErr?.message || cpErr);
+          }
+
+          // (3) Persist the restored doc (version bump + last_editor), and reflect
+          // locally. Use the direct UPDATE path (not the debounced autosave) so a
+          // restore lands immediately.
+          const nextVersion = (curVersion ?? 1) + 1;
+          dispatch({ type: "UPSERT_EDIT_PROJECT", item: { id, timelineJson: restoredDoc, version: nextVersion, updatedAt: new Date().toISOString(), lastEditor: me ?? undefined } });
+          const { error: updErr } = await supabase
+            .from("edit_projects")
+            .update({ timeline_json: restoredDoc, version: nextVersion, updated_at: new Date().toISOString(), last_editor: me })
+            .eq("id", id);
+          if (updErr) throw updErr;
+          return { ok: true };
+        } catch (e) {
+          console.warn("restoreEditProjectVersion failed:", e?.message || e);
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      /* Rename — optimistic UPSERT + persist. Never throws. */
+      renameEditProject: async (id, title) => {
+        if (!id) return;
+        const clean = (title || "").trim() || "Untitled edit";
+        dispatch({ type: "UPSERT_EDIT_PROJECT", item: { id, title: clean, updatedAt: new Date().toISOString() } });
+        try {
+          await supabase.from("edit_projects").update({ title: clean, updated_at: new Date().toISOString() }).eq("id", id);
+        } catch (e) { console.warn("renameEditProject failed:", e?.message || e); }
+      },
+
+      /* Set the gallery thumbnail — optimistic UPSERT + persist. Never throws. */
+      setEditProjectThumbnail: async (id, url) => {
+        if (!id) return;
+        dispatch({ type: "UPSERT_EDIT_PROJECT", item: { id, thumbnailUrl: url ?? undefined, updatedAt: new Date().toISOString() } });
+        try {
+          await supabase.from("edit_projects").update({ thumbnail_url: url ?? null, updated_at: new Date().toISOString() }).eq("id", id);
+        } catch (e) { console.warn("setEditProjectThumbnail failed:", e?.message || e); }
+      },
+
+      /* Delete the project row + drop it locally (versions/locks cascade server-side
+         via FK ON DELETE CASCADE). Optimistic remove; re-add on persist failure. */
+      deleteEditProject: async (id) => {
+        if (!id) return;
+        const prev = (stateRef.current.editProjects || []).find(p => p.id === id);
+        dispatch({ type: "DELETE_EDIT_PROJECT_BY_ID", id });
+        try {
+          const { error } = await supabase.from("edit_projects").delete().eq("id", id);
+          if (error) throw error;
+        } catch (e) {
+          console.warn("deleteEditProject failed:", e?.message || e);
+          if (prev) dispatch({ type: "UPSERT_EDIT_PROJECT", item: prev });
+        }
+      },
+
+      /* ───── AI / render client wrappers — POST/GET to api/ai/suggest.js with the
+         session JWT, mirroring the epidemic/deconstruct call sites. They consume
+         the FROZEN captions / silence / render action shapes and NEVER throw
+         (always return {ok,...}). The worker secret stays server-side. ───── */
+
+      // POST ?action=captions-submit  → { ok, jobId }
+      submitCaptions: async (projectId, sourceDriveId, opts = {}) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in" };
+          const body = { project_id: projectId, source_drive_id: sourceDriveId };
+          if (opts?.language !== undefined) body.language = opts.language;
+          const res = await fetch("/api/ai/suggest?action=captions-submit", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) return { ok: false, error: json?.error || `Captions submit failed (${res.status})` };
+          return { ok: true, jobId: json.job_id };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      // GET ?action=captions-status&id= → { ok, status, progress, captions }
+      pollCaptions: async (jobId) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in" };
+          if (!jobId) return { ok: false, error: "jobId required" };
+          const res = await fetch(`/api/ai/suggest?action=captions-status&id=${encodeURIComponent(jobId)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) return { ok: false, error: json?.error || `Captions status failed (${res.status})` };
+          return { ok: true, status: json.status, progress: json.progress, captions: Array.isArray(json.captions) ? json.captions : [] };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      // POST ?action=silence-submit  → { ok, jobId }
+      submitSilenceScan: async (projectId, sourceDriveId, opts = {}) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in" };
+          const body = { project_id: projectId, source_drive_id: sourceDriveId };
+          if (opts?.options !== undefined) body.options = opts.options;
+          const res = await fetch("/api/ai/suggest?action=silence-submit", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) return { ok: false, error: json?.error || `Silence submit failed (${res.status})` };
+          return { ok: true, jobId: json.job_id };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      // GET ?action=silence-status&id= → { ok, status, progress, suggestedCuts }
+      pollSilence: async (jobId) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in" };
+          if (!jobId) return { ok: false, error: "jobId required" };
+          const res = await fetch(`/api/ai/suggest?action=silence-status&id=${encodeURIComponent(jobId)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) return { ok: false, error: json?.error || `Silence status failed (${res.status})` };
+          return { ok: true, status: json.status, progress: json.progress, suggestedCuts: Array.isArray(json.suggestedCuts) ? json.suggestedCuts : [] };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      // POST ?action=render-submit  → { ok, jobId }
+      submitProjectRender: async (projectId, projectJson, opts = {}) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in" };
+          const body = { project_id: projectId, project_json: projectJson };
+          if (opts?.renderMode !== undefined) body.render_mode = opts.renderMode;
+          const res = await fetch("/api/ai/suggest?action=render-submit", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) return { ok: false, error: json?.error || `Render submit failed (${res.status})` };
+          return { ok: true, jobId: json.job_id };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      // GET ?action=render-status&id= → { ok, status, progress, output_url, error }
+      pollRenderJob: async (jobId) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in" };
+          if (!jobId) return { ok: false, error: "jobId required" };
+          const res = await fetch(`/api/ai/suggest?action=render-status&id=${encodeURIComponent(jobId)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) return { ok: false, error: json?.error || `Render status failed (${res.status})` };
+          return { ok: true, status: json.status, progress: json.progress, output_url: json.output_url, error: json.error };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
         }
       },
     },

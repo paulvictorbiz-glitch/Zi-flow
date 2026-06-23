@@ -531,10 +531,12 @@ export default async function handler(req, res) {
   // The caller polls status via ?action=render-status&id=<job_id> or watches
   // the render_jobs Supabase realtime subscription.
   if (action === "render-submit") {
-    // Owner-only gate at the API layer (the Editor UI is permission-gated, but a
-    // non-owner with a valid JWT must not be able to queue renders directly).
-    try { await verifyOwner(req); }
-    catch { res.status(403).json({ error: "Owner only" }); return; }
+    // AUTHENTICATED draft path (owner-approved gate change, pairs with migration
+    // 0094 opening render_jobs to authenticated-manage so any signed-in editor can
+    // self-serve a DRAFT render). The top-level gate (:61-72) already rejected
+    // anonymous callers — a valid Supabase Bearer JWT OR the cron secret is
+    // required to reach here — so no extra verifyOwner() is needed. Final/1080p
+    // gating is out of scope; existing render_mode handling in `body` is untouched.
     const renderSecret = process.env.REEL_DECONSTRUCT_SECRET;
     if (!renderSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
     const body = typeof req.body === "string"
@@ -556,12 +558,12 @@ export default async function handler(req, res) {
   }
 
   // ── Dispatch: poll a render job's status ────────────────────────────────────
-  // GET /api/ai/suggest?action=render-status&id=<job_id>  (owner Bearer JWT)
+  // GET /api/ai/suggest?action=render-status&id=<job_id>  (authenticated JWT)
   // Proxies to Hetzner /api/render/status/{job_id}. Returns { status, progress,
   // output_url (HMAC-signed), error }. output_url is re-minted on every poll.
+  // AUTHENTICATED draft path (owner-approved, pairs with 0094) — the top-level
+  // gate (:61-72) already rejected anonymous; any signed-in editor may poll.
   if (action === "render-status") {
-    try { await verifyOwner(req); }
-    catch { res.status(403).json({ error: "Owner only" }); return; }
     const renderSecret = process.env.REEL_DECONSTRUCT_SECRET;
     if (!renderSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
     const jobId = req.query?.id || url?.searchParams.get("id");
@@ -577,6 +579,129 @@ export default async function handler(req, res) {
     } catch (e) {
       console.error("render-status error:", e.message);
       res.status(502).json({ error: `Couldn't reach render worker: ${e.message}` });
+    }
+    return;
+  }
+
+  // ── Dispatch: auto-captions (whisper word-timestamps) ──────────────────────
+  // POST /api/ai/suggest?action=captions-submit  (authenticated JWT — NOT owner)
+  //   Body: { project_id, source_drive_id, language? }
+  //   Fire-and-forget proxy → Hetzner edit_ai.py /api/edit/captions/submit.
+  //   Returns { ok:true, job_id }. The caller polls ?action=captions-status&id=.
+  // The REEL_DECONSTRUCT_SECRET is appended to the upstream URL server-side and
+  // NEVER returned to the client. The top-level gate (:61-72) already rejected
+  // anonymous — any signed-in team member may reach here (the draft AI path).
+  if (action === "captions-submit") {
+    const editSecret = process.env.REEL_DECONSTRUCT_SECRET;
+    if (!editSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+    if (!body.source_drive_id) { res.status(400).json({ error: "source_drive_id required" }); return; }
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/edit/captions/submit?secret=${encodeURIComponent(editSecret)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: body.project_id,
+            source_drive_id: body.source_drive_id,
+            language: body.language,
+          }),
+        });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Captions worker HTTP ${r.status}`, ...data }); return; }
+      res.status(200).json({ ok: true, ...data });
+    } catch (e) {
+      console.error("captions-submit error:", e.message);
+      res.status(502).json({ error: `Couldn't reach captions worker: ${e.message}` });
+    }
+    return;
+  }
+
+  // ── Dispatch: poll an auto-captions job ────────────────────────────────────
+  // GET /api/ai/suggest?action=captions-status&id=<job_id>  (authenticated JWT)
+  //   Proxies → Hetzner /api/edit/captions/status/{id}.
+  //   Returns { ok:true, status, progress, captions:[{text,startAt,endAt}] }.
+  if (action === "captions-status") {
+    const editSecret = process.env.REEL_DECONSTRUCT_SECRET;
+    if (!editSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
+    const jobId = req.query?.id || url?.searchParams.get("id");
+    if (!jobId || !/^[0-9a-f-]{36}$/i.test(jobId)) {
+      res.status(400).json({ error: "Valid job id required" }); return;
+    }
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/edit/captions/status/${encodeURIComponent(jobId)}?secret=${encodeURIComponent(editSecret)}`);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Captions worker HTTP ${r.status}`, ...data }); return; }
+      res.status(200).json({ ok: true, ...data });
+    } catch (e) {
+      console.error("captions-status error:", e.message);
+      res.status(502).json({ error: `Couldn't reach captions worker: ${e.message}` });
+    }
+    return;
+  }
+
+  // ── Dispatch: silence/filler cut suggestions ───────────────────────────────
+  // POST /api/ai/suggest?action=silence-submit  (authenticated JWT — NOT owner)
+  //   Body: { project_id, source_drive_id, options:{silenceDb,minSilenceSec,fillers[]} }
+  //   Fire-and-forget proxy → Hetzner /api/edit/silence/submit.
+  //   Returns { ok:true, job_id }. The caller polls ?action=silence-status&id=.
+  // Secret is server-side only. Anonymous already rejected by the top gate.
+  if (action === "silence-submit") {
+    const editSecret = process.env.REEL_DECONSTRUCT_SECRET;
+    if (!editSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+    if (!body.source_drive_id) { res.status(400).json({ error: "source_drive_id required" }); return; }
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/edit/silence/submit?secret=${encodeURIComponent(editSecret)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: body.project_id,
+            source_drive_id: body.source_drive_id,
+            options: body.options,
+          }),
+        });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Silence worker HTTP ${r.status}`, ...data }); return; }
+      res.status(200).json({ ok: true, ...data });
+    } catch (e) {
+      console.error("silence-submit error:", e.message);
+      res.status(502).json({ error: `Couldn't reach silence worker: ${e.message}` });
+    }
+    return;
+  }
+
+  // ── Dispatch: poll a silence/filler-cut job ────────────────────────────────
+  // GET /api/ai/suggest?action=silence-status&id=<job_id>  (authenticated JWT)
+  //   Proxies → Hetzner /api/edit/silence/status/{id}. Validates id is a UUID
+  //   before proxying (mirrors render-status). On worker 502/timeout returns a
+  //   clean { error } with the upstream status — never a raw stack.
+  //   Returns { ok:true, status, progress,
+  //             suggestedCuts:[{start,end,kind:"silence"|"filler",word?}] }.
+  if (action === "silence-status") {
+    const editSecret = process.env.REEL_DECONSTRUCT_SECRET;
+    if (!editSecret) { res.status(500).json({ error: "REEL_DECONSTRUCT_SECRET not configured" }); return; }
+    const jobId = req.query?.id || url?.searchParams.get("id");
+    if (!jobId || !/^[0-9a-f-]{36}$/i.test(jobId)) {
+      res.status(400).json({ error: "Valid job id required" }); return;
+    }
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/edit/silence/status/${encodeURIComponent(jobId)}?secret=${encodeURIComponent(editSecret)}`);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Silence worker HTTP ${r.status}`, ...data }); return; }
+      res.status(200).json({ ok: true, ...data });
+    } catch (e) {
+      console.error("silence-status error:", e.message);
+      res.status(502).json({ error: `Couldn't reach silence worker: ${e.message}` });
     }
     return;
   }

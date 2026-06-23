@@ -28,6 +28,7 @@ export const VIEW_CAPS = [
   { key: "detail",    label: "Reel detail" },
   { key: "footage",   label: "Footage library" },
   { key: "editor",    label: "Video editor (OpenCut)" },
+  { key: "projects",  label: "Editor projects" },
   { key: "lossless",  label: "Lossless cut (in-browser)" },
   { key: "export",    label: "Export" },
   { key: "analytics", label: "Analytics" },
@@ -88,7 +89,7 @@ export const EDITABLE_ROLES = [
    the DB), but owner/infra/AI-cost surfaces stay hidden.
    ========================================================= */
 export const DEMO_VIEWS = new Set([
-  "mywork", "pipeline", "detail", "footage", "editor", "lossless",
+  "mywork", "pipeline", "detail", "footage", "editor", "projects", "lossless",
   "export", "analytics", "inbox", "locations", "coverage", "reeldna",
   // hidden on purpose: generate (paid AI), training, activity,
   // resources, monitor, ai, settings
@@ -125,7 +126,7 @@ export function defaultPermsForRole(roleKey) {
      left untouched. The owner can re-enable any of these per-role or
      per-person in the admin — this only moves the DEFAULT. */
   const LEAN_HIDDEN = [
-    "editor", "lossless", "export", "analytics",
+    "editor", "projects", "lossless", "export", "analytics",
     "inbox", "locations", "coverage", "generate", "music",
   ];
   for (const v of LEAN_HIDDEN) views[v] = false;
