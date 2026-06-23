@@ -283,6 +283,30 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
           </div>
         </div>
 
+        {/* ── Inline progress strip — visible for ALL formats while analyzing.
+              Sits between the footer controls and the format-specific panels so
+              there's always immediate feedback near the Analyze button. ── */}
+        {analyzing && (
+          <div className="udc-inline-progress" role="status" aria-live="polite">
+            <div className="udc-inline-progress-head">
+              <span className="udc-inline-progress-label">
+                {mediaStatus === "pending_analyze"
+                  ? "Queued — waiting for worker…"
+                  : (progressStep(item.progress) || "Deconstructing…")}
+              </span>
+              {mediaStatus !== "pending_analyze" && (
+                <span className="udc-inline-progress-pct">{progressPct(item.progress)}%</span>
+              )}
+            </div>
+            <div className="udc-inline-progress-track">
+              {mediaStatus === "pending_analyze"
+                ? <div className="udc-inline-progress-indeterminate" />
+                : <div className="udc-inline-progress-fill"
+                       style={{ width: `${Math.max(progressPct(item.progress), 3)}%` }} />}
+            </div>
+          </div>
+        )}
+
         {/* ── Longform Story panel — ONLY for format==='long' (short cards
               render exactly as before). Presentational + null-safe. ── */}
         {isLong && <ReelStoryPanel item={item} />}
@@ -292,42 +316,28 @@ export function UnifiedDnaCard({ item, now, actions, onView, onDeconstruct, onSe
               source couldn't be acquired) an "upload the file" CTA. When the
               worker has written assetManifest/pacing: downloadable asset
               layers + cut-pacing sparkline. All children are null-safe. ── */}
-        {isShort && (analyzing || failed || hasReelAssets) && (
+        {/* Progress while analyzing is now handled by the inline strip above.
+              This section handles completed states only. */}
+        {isShort && (failed || hasReelAssets) && (
           <div className="udc-reel-deconstruct">
-            {analyzing && (
-              <div className="udc-reel-progress" role="status" aria-live="polite">
-                <div className="udc-reel-progress-head">
-                  <span className="udc-reel-progress-label">
-                    {progressStep(item.progress) || "Deconstructing reel…"}
-                  </span>
-                  <span className="udc-reel-progress-pct">{progressPct(item.progress)}%</span>
-                </div>
-                <div className="udc-reel-progress-track">
-                  <div className="udc-reel-progress-fill"
-                       style={{ width: `${progressPct(item.progress)}%` }} />
-                </div>
-                {progressMsg(item.progress) && (
-                  <div className="udc-reel-progress-msg">{progressMsg(item.progress)}</div>
-                )}
-              </div>
-            )}
 
             {!analyzing && failed && (
               <div className="udc-reel-failed" role="alert">
                 <div className="udc-reel-failed-msg">
-                  ⚠ {item.mediaError || "Reel deconstruction failed."}
+                  ⚠ {acquireFailed ? "Couldn't download this video" : "Processing failed"}
                 </div>
-                {acquireFailed && (
-                  <div className="udc-reel-failed-cta">
-                    Couldn't fetch the source video.{" "}
-                    {isOwner && typeof actions.analyzeReelDna === "function" && (
-                      <button type="button" className="udc-reel-retry" onClick={runAnalyze}>
-                        Retry
-                      </button>
-                    )}
-                    {" "}Or upload the file and re-analyze.
-                  </div>
-                )}
+                <div className="udc-reel-failed-cta">
+                  {acquireFailed
+                    ? "Source video couldn't be fetched — upload the file manually and re-analyze."
+                    : (item.mediaError
+                        ? item.mediaError.slice(0, 120) + (item.mediaError.length > 120 ? "…" : "")
+                        : "An error occurred during processing.")}
+                  {isOwner && typeof actions.analyzeReelDna === "function" && (
+                    <button type="button" className="udc-reel-retry" onClick={runAnalyze}>
+                      {acquireFailed ? "Retry" : "Try again"}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 

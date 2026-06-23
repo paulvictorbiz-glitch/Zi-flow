@@ -36,6 +36,7 @@ export const VIEW_CAPS = [
   { key: "coverage",  label: "Coverage" },
   { key: "generate",  label: "Generate (AI · paid)" },
   { key: "reeldna",   label: "Reel DNA (capture library)" },
+  { key: "music",     label: "Music Library (Epidemic Sound)" },
   { key: "training",  label: "Training (editor course)" },
   { key: "activity",  label: "Activity (CapCut tracker)" },
   { key: "resources", label: "Resources (link sheet)" },
@@ -125,7 +126,7 @@ export function defaultPermsForRole(roleKey) {
      per-person in the admin — this only moves the DEFAULT. */
   const LEAN_HIDDEN = [
     "editor", "lossless", "export", "analytics",
-    "inbox", "locations", "coverage", "generate",
+    "inbox", "locations", "coverage", "generate", "music",
   ];
   for (const v of LEAN_HIDDEN) views[v] = false;
 

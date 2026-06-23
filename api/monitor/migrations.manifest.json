@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-21T11:07:41.472Z",
+  "generated": "2026-06-23T14:21:55.853Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -348,6 +348,30 @@
     {
       "version": "0086_perf_samples.sql",
       "checksum": "c482595b73a7241c2155a0d46acc14ccaadeafcc7a72ed8c2ead85559842d1ab"
+    },
+    {
+      "version": "0087_planable_pushes.sql",
+      "checksum": "90e3582a0fb806f7dd49d263b12fc2dddba3efd713b3d1661e89538a76713001"
+    },
+    {
+      "version": "0088_planable_media.sql",
+      "checksum": "1c6818067145adead8770492c7216d3a3ec2f4c261c95919b89b1386ec6399d1"
+    },
+    {
+      "version": "0089_reel_dna_row_color_favorite.sql",
+      "checksum": "d34c96b84bd74be2d5207397fd137f40cc54ff40da1675c1c97f88efab4d791e"
+    },
+    {
+      "version": "0090_planable_pushes_grouping.sql",
+      "checksum": "c270211c25ef9f4d6da24fbe5363e8f5c18cde2d0ced2ee0ce3b996409f2c4c9"
+    },
+    {
+      "version": "0092_music_tracks.sql",
+      "checksum": "cbc8b4f5c73a5b92c05e9c75f06e263e79df83ddd98c5790dd162d7341fbf28c"
+    },
+    {
+      "version": "0093_music_library.sql",
+      "checksum": "dce409cc1aefe07c0f077c57a1f0aa853d1f24b0afc2d7a913978ed46562dca1"
     }
   ]
 }

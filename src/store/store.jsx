@@ -268,6 +268,73 @@ function thumbnailToDb(item) {
   };
 }
 
+/* ---- Epidemic Sound music_tracks (migration 0092) ----------------------
+   mapTrack is the FROZEN cross-team shape TEAM_API returns and the UI/store
+   pass around:
+     { id, title, artist, bpm, lengthSec, moods, genres, coverUrl, previewUrl }
+   musicTrackFromDb maps a music_tracks row → mapTrack (preferring the stored
+   `raw` blob, which IS the untouched mapTrack, then falling back to columns so
+   an older/raw-less row still resolves). rowFromMapTrack maps a mapTrack →
+   music_tracks row for the idempotent cache upsert. */
+function musicTrackFromDb(row) {
+  if (!row) return row;
+  // `raw` is the untouched mapTrack we cached; prefer it for forward-compat.
+  if (row.raw && typeof row.raw === "object") {
+    const r = row.raw;
+    return {
+      id: String(row.id ?? r.id ?? ""),
+      title: r.title ?? row.title ?? "",
+      artist: r.artist ?? row.artist ?? "",
+      bpm: r.bpm ?? (row.bpm ?? null),
+      lengthSec: r.lengthSec ?? (row.length_sec ?? null),
+      moods: r.moods ?? row.moods ?? [],
+      genres: r.genres ?? row.genres ?? [],
+      coverUrl: r.coverUrl ?? row.cover_url ?? null,
+      previewUrl: r.previewUrl ?? row.preview_url ?? null,
+    };
+  }
+  return {
+    id: String(row.id ?? ""),
+    title: row.title ?? "",
+    artist: row.artist ?? "",
+    bpm: row.bpm ?? null,
+    lengthSec: row.length_sec ?? null,
+    moods: row.moods ?? [],
+    genres: row.genres ?? [],
+    coverUrl: row.cover_url ?? null,
+    previewUrl: row.preview_url ?? null,
+  };
+}
+function rowFromMapTrack(track) {
+  const t = track || {};
+  return {
+    id: String(t.id ?? ""),
+    title: t.title ?? null,
+    artist: t.artist ?? null,
+    bpm: t.bpm ?? null,
+    length_sec: t.lengthSec ?? null,
+    cover_url: t.coverUrl ?? null,
+    preview_url: t.previewUrl ?? null,
+    moods: Array.isArray(t.moods) ? t.moods : [],
+    genres: Array.isArray(t.genres) ? t.genres : [],
+    raw: t,            // untouched mapTrack for forward-compat
+  };
+}
+
+/* Music library (favorites + playlists, migration 0093) — per-user, camelCased. */
+function musicFavoriteFromDb(row) {
+  if (!row) return row;
+  return { trackId: String(row.track_id), personId: row.person_id, createdAt: row.created_at };
+}
+function musicPlaylistFromDb(row) {
+  if (!row) return row;
+  return { id: row.id, personId: row.person_id, name: row.name ?? "Untitled playlist", createdAt: row.created_at, updatedAt: row.updated_at };
+}
+function musicPlaylistTrackFromDb(row) {
+  if (!row) return row;
+  return { playlistId: row.playlist_id, trackId: String(row.track_id), position: row.position ?? 0, addedAt: row.added_at };
+}
+
 function monitorEventFromDb(row) {
   if (!row) return row;
   const { source_type, external_id, source_name, source_url,
@@ -421,9 +488,10 @@ export function resolveReelDnaAssets(reelDnaId, sources = {}) {
     locations = [],
     thumbnailDna = [],
     monitorEvents = [],
+    musicTracks = [],
   } = sources;
 
-  const out = { footage: [], locations: [], thumbnails: [], news: [] };
+  const out = { footage: [], locations: [], thumbnails: [], news: [], music: [] };
   if (!reelDnaId) return out;
 
   // Index each source by string id once (asset_id is text in the DB).
@@ -435,6 +503,8 @@ export function resolveReelDnaAssets(reelDnaId, sources = {}) {
   for (const t of thumbnailDna) if (t && t.id != null) thumbById.set(String(t.id), t);
   const newsById = new Map();
   for (const n of monitorEvents) if (n && n.id != null) newsById.set(String(n.id), n);
+  const musicById = new Map();
+  for (const m of musicTracks) if (m && m.id != null) musicById.set(String(m.id), m);
 
   for (const link of reelDnaAssets) {
     if (!link || link.reelDnaId !== reelDnaId) continue;
@@ -460,6 +530,11 @@ export function resolveReelDnaAssets(reelDnaId, sources = {}) {
         if (row) out.news.push(row);
         break;
       }
+      case "music": {
+        const row = musicById.get(key);
+        if (row) out.music.push(row);
+        break;
+      }
       default:
         break;
     }
@@ -475,7 +550,8 @@ export function assetCountsForReelDna(reelDnaId, sources = {}) {
   const locations = r.locations.length;
   const thumbnails = r.thumbnails.length;
   const news = r.news.length;
-  return { footage, locations, thumbnails, news, total: footage + locations + thumbnails + news };
+  const music = r.music.length;
+  return { footage, locations, thumbnails, news, music, total: footage + locations + thumbnails + news + music };
 }
 
 function monitorSourceFromDb(row) {
@@ -851,6 +927,67 @@ function workflowReducer(state, action) {
       const have = new Set(state.thumbnailDna.map(d => d.id));
       return { ...state, thumbnailDna: [...state.thumbnailDna, ...action.items.filter(d => !have.has(d.id))] };
     }
+
+    /* Music tracks (Epidemic Sound cache, migration 0092) — mirrors
+       thumbnailDna's hydrate-replace + realtime-upsert shape. */
+    case "SET_MUSIC_TRACKS":   // full replace — used by the hydrate fetch
+      return { ...state, musicTracks: action.items };
+
+    case "UPSERT_MUSIC_TRACK": {
+      const exists = state.musicTracks.some(d => d.id === action.item.id);
+      return {
+        ...state,
+        musicTracks: exists
+          ? state.musicTracks.map(d => d.id === action.item.id ? action.item : d)
+          : [action.item, ...state.musicTracks],
+      };
+    }
+
+    case "DELETE_MUSIC_TRACK_BY_ID":
+      return { ...state, musicTracks: state.musicTracks.filter(d => d.id !== action.id) };
+
+    /* Music library — favorites + playlists (migration 0093), per-user. */
+    case "SET_MUSIC_FAVORITES":
+      return { ...state, musicFavorites: action.items };
+    case "UPSERT_MUSIC_FAVORITE": {
+      const exists = state.musicFavorites.some(f => f.trackId === action.item.trackId);
+      return exists ? state : { ...state, musicFavorites: [action.item, ...state.musicFavorites] };
+    }
+    case "DELETE_MUSIC_FAVORITE":
+      return { ...state, musicFavorites: state.musicFavorites.filter(f => f.trackId !== action.trackId) };
+
+    case "SET_MUSIC_PLAYLISTS":
+      return { ...state, musicPlaylists: action.items };
+    case "UPSERT_MUSIC_PLAYLIST": {
+      const exists = state.musicPlaylists.some(p => p.id === action.item.id);
+      return {
+        ...state,
+        musicPlaylists: exists
+          ? state.musicPlaylists.map(p => p.id === action.item.id ? { ...p, ...action.item } : p)
+          : [action.item, ...state.musicPlaylists],
+      };
+    }
+    case "DELETE_MUSIC_PLAYLIST_BY_ID":
+      return {
+        ...state,
+        musicPlaylists: state.musicPlaylists.filter(p => p.id !== action.id),
+        // cascade locally so a deleted playlist's tracks vanish immediately
+        musicPlaylistTracks: state.musicPlaylistTracks.filter(t => t.playlistId !== action.id),
+      };
+
+    case "SET_MUSIC_PLAYLIST_TRACKS":
+      return { ...state, musicPlaylistTracks: action.items };
+    case "UPSERT_MUSIC_PLAYLIST_TRACK": {
+      const exists = state.musicPlaylistTracks.some(
+        t => t.playlistId === action.item.playlistId && t.trackId === action.item.trackId);
+      return exists ? state : { ...state, musicPlaylistTracks: [...state.musicPlaylistTracks, action.item] };
+    }
+    case "DELETE_MUSIC_PLAYLIST_TRACK":
+      return {
+        ...state,
+        musicPlaylistTracks: state.musicPlaylistTracks.filter(
+          t => !(t.playlistId === action.playlistId && t.trackId === action.trackId)),
+      };
 
     /* Pulse Monitor events — same optimistic + realtime shape as reel_dna. */
     case "CREATE_MONITOR_EVENT":
@@ -1765,6 +1902,10 @@ const INITIAL_STATE = {
   dailyTasks: [],
   reelDna: [],
   thumbnailDna: [],
+  musicTracks: [],   // music_tracks — cached Epidemic Sound tracks (migration 0092)
+  musicFavorites: [],       // music_favorites — per-user ♥ (migration 0093)
+  musicPlaylists: [],       // music_playlists — per-user named lists (migration 0093)
+  musicPlaylistTracks: [],  // music_playlist_tracks — playlist membership (migration 0093)
   monitorEvents: [],
   monitorSources: [],
   eventLinks: [],
@@ -1905,6 +2046,20 @@ function WorkflowProvider({ children }) {
             if (!cancelled) dispatch({ type: "SET_REEL_DNA_ASSETS", items: (assetsRes.data || []).map(reelDnaAssetFromDb) });
           } catch (e) {
             console.warn("reel_dna_assets not available (run migration 0067?)", e?.message || e);
+          }
+
+          /* Music tracks (Epidemic Sound cache, migration 0092) — degrade to
+             [] if the table is absent so a missing migration can't brick boot
+             (mirrors the reel_dna_assets/thumbnail_dna defensive hydrate). */
+          try {
+            const musicRes = await supabase
+              .from("music_tracks").select("*")
+              .order("created_at", { ascending: false })
+              .limit(RECENT_WINDOW);
+            if (musicRes.error) throw musicRes.error;
+            if (!cancelled) dispatch({ type: "SET_MUSIC_TRACKS", items: (musicRes.data || []).map(musicTrackFromDb) });
+          } catch (e) {
+            console.warn("music_tracks not available (run migration 0092?):", e?.message || e);
           }
 
           /* Reel ↔ chat refs (migration 0046) — degrade to []. */
@@ -2112,6 +2267,39 @@ function WorkflowProvider({ children }) {
     })();
   }, [_authPerson?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* Music library (favorites + playlists, migration 0093) — per-user, auth-keyed.
+     Mirrors the user_preferences effect: depends on _authPerson.id, degrades to []
+     if 0093 hasn't been applied yet (a missing table must never brick boot). */
+  React.useEffect(() => {
+    if (!_authPerson?.id) return;
+    (async () => {
+      try {
+        const [favRes, plRes] = await Promise.all([
+          supabase.from("music_favorites").select("*").eq("person_id", _authPerson.id),
+          supabase.from("music_playlists").select("*").eq("person_id", _authPerson.id).order("created_at", { ascending: false }),
+        ]);
+        if (favRes.error) throw favRes.error;
+        if (plRes.error) throw plRes.error;
+        dispatch({ type: "SET_MUSIC_FAVORITES", items: (favRes.data || []).map(musicFavoriteFromDb) });
+        const playlists = (plRes.data || []).map(musicPlaylistFromDb);
+        dispatch({ type: "SET_MUSIC_PLAYLISTS", items: playlists });
+        // Playlist membership for the user's own playlists (RLS also scopes it).
+        const ids = playlists.map(p => p.id);
+        if (ids.length) {
+          const { data: ptData, error: ptErr } = await supabase
+            .from("music_playlist_tracks").select("*").in("playlist_id", ids)
+            .order("position", { ascending: true });
+          if (ptErr) throw ptErr;
+          dispatch({ type: "SET_MUSIC_PLAYLIST_TRACKS", items: (ptData || []).map(musicPlaylistTrackFromDb) });
+        } else {
+          dispatch({ type: "SET_MUSIC_PLAYLIST_TRACKS", items: [] });
+        }
+      } catch (e) {
+        console.warn("music library not available (run migration 0093?):", e?.message || e);
+      }
+    })();
+  }, [_authPerson?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* Realtime sync — once the initial hydrate completes, open a
      postgres-changes channel for reels / review_lane_cards /
      tasks. Each payload is normalised through the same fromDb()
@@ -2241,6 +2429,19 @@ function WorkflowProvider({ children }) {
             } else if (payload.new) {
               // A capture made in another tab appears live, no refresh.
               dispatch({ type: "UPSERT_THUMBNAIL_DNA", item: thumbnailFromDb(payload.new) });
+            }
+          })
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "music_tracks" },
+          (payload) => {
+            // Mirrors thumbnail_dna's realtime handler on its OWN channel.
+            // Tolerant of the table being absent (the subscription simply never
+            // fires) so a missing migration 0092 can't brick boot.
+            if (payload.eventType === "DELETE") {
+              dispatch({ type: "DELETE_MUSIC_TRACK_BY_ID", id: payload.old?.id });
+            } else if (payload.new) {
+              // A track cached in another tab appears live, no refresh.
+              dispatch({ type: "UPSERT_MUSIC_TRACK", item: musicTrackFromDb(payload.new) });
             }
           })
       .on("postgres_changes",
@@ -2506,6 +2707,10 @@ function WorkflowProvider({ children }) {
     dailyTasks: state.dailyTasks,
     reelDna: state.reelDna,
     thumbnailDna: state.thumbnailDna,
+    musicTracks: state.musicTracks,
+    musicFavorites: state.musicFavorites,
+    musicPlaylists: state.musicPlaylists,
+    musicPlaylistTracks: state.musicPlaylistTracks,
     monitorEvents: state.monitorEvents,
     monitorSources: state.monitorSources,
     eventLinks: state.eventLinks,
@@ -3106,14 +3311,24 @@ function WorkflowProvider({ children }) {
       analyzeReelDna: async (id) => {
         // Optimistic + persisted: row is queued before we ever hit the network.
         // Same dispatch+persist path as updateReelDna(id, { mediaStatus }).
+        console.log("[Analyze] queuing id:", id);
         wrap(
           { type: "UPDATE_REEL_DNA", id, patch: { mediaStatus: "pending_analyze" } },
-          () => persistUpdateReelDna(id, { mediaStatus: "pending_analyze" }));
+          async () => {
+            try {
+              await persistUpdateReelDna(id, { mediaStatus: "pending_analyze" });
+              console.log("[Analyze] DB persist OK — media_status=pending_analyze written");
+            } catch (e) {
+              console.error("[Analyze] DB persist FAILED:", e);
+              throw e;
+            }
+          });
         if (isDemoMode()) return { ok: false, demo: true };
         try {
           const { data: { session } } = await supabase.auth.getSession();
           const token = session?.access_token;
           if (!token) throw new Error("Not signed in");
+          console.log("[Analyze] firing Vercel proxy → Hetzner");
           const res = await fetch("/api/ai/suggest?action=deconstruct", {
             method: "POST",
             headers: {
@@ -3123,12 +3338,13 @@ function WorkflowProvider({ children }) {
             body: JSON.stringify({ id }),
           });
           const body = await res.json().catch(() => ({}));
+          console.log("[Analyze] Vercel response:", res.status, body);
           if (!res.ok) throw new Error(body?.error || `Analyze trigger failed (${res.status})`);
           return body;
         } catch (e) {
           // Tolerate trigger failure — the row is already pending_analyze and the
           // Hetzner cron will drain it. Surface the error like triggerIgSync does.
-          console.error("analyzeReelDna trigger failed:", e);
+          console.error("[Analyze] trigger failed:", e);
           dispatch({ type: "SET_ERROR", error: e.message || String(e) });
           return { ok: false, queued: true, error: e.message || String(e) };
         }
@@ -3678,6 +3894,186 @@ function WorkflowProvider({ children }) {
           for (const a of removed) dispatch({ type: "UPSERT_REEL_DNA_ASSET", item: a });
           dispatch({ type: "SET_ERROR", error: e.message || String(e) });
         });
+      },
+
+      /* ----- Epidemic Sound music library (migration 0092) ----------------
+         Server-side proxy ONLY — the Epidemic/Keycloak token NEVER reaches the
+         browser. Each wrapper attaches the caller's Supabase JWT (mirrors the
+         deconstruct/discord-notify call sites) and hits the frozen TEAM_API
+         HTTP contract at POST /api/ai/suggest?action=epidemic-*. They NEVER
+         throw — a network failure returns { ok:false, error }. The
+         'epidemic_token_expired' upstream error is surfaced VERBATIM so the UI
+         can show the "reconnect — see Paul" banner. */
+      searchMusic: async (term, opts = {}) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in", tracks: [] };
+          const { limit, offset, filters } = opts || {};
+          const body = { term: term ?? "" };
+          if (limit !== undefined)   body.limit = limit;
+          if (offset !== undefined)  body.offset = offset;
+          if (filters !== undefined) body.filters = filters;
+          const res = await fetch("/api/ai/suggest?action=epidemic-search", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) {
+            return { ok: false, error: json?.error || `Search failed (${res.status})`, tracks: [] };
+          }
+          return { ok: true, tracks: Array.isArray(json.tracks) ? json.tracks : [] };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e), tracks: [] };
+        }
+      },
+
+      getMusicTrack: async (id) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in" };
+          const res = await fetch("/api/ai/suggest?action=epidemic-track", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ id }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) {
+            return { ok: false, error: json?.error || `Track fetch failed (${res.status})` };
+          }
+          return { ok: true, track: json.track };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      getMusicDownload: async (id, opts = {}) => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (!token) return { ok: false, error: "Not signed in" };
+          const { format, quality } = opts || {};
+          const body = { id };
+          if (format !== undefined)  body.format = format;
+          if (quality !== undefined) body.quality = quality;
+          const res = await fetch("/api/ai/suggest?action=epidemic-download", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json?.ok === false) {
+            return { ok: false, error: json?.error || `Download failed (${res.status})` };
+          }
+          return { ok: true, url: json.url, expires: json.expires };
+        } catch (e) {
+          return { ok: false, error: e?.message || String(e) };
+        }
+      },
+
+      /* Cache a mapTrack into music_tracks. Idempotent on id (upsert, NOT
+         ignoreDuplicates so a re-cache refreshes the row). Never throws. */
+      upsertMusicTrack: async (track) => {
+        // Guard the empty/absent id too — an id-less mapTrack would upsert an
+        // empty-string PRIMARY KEY (and never resolve against an attached link).
+        if (!track || track.id == null || String(track.id) === "") return;
+        // Optimistic: seed musicTracks NOW so a just-attached track resolves in
+        // resolveReelDnaAssets immediately, instead of blank until the realtime
+        // echo lands. The echo (musicTrackFromDb) replaces this row by id.
+        dispatch({ type: "UPSERT_MUSIC_TRACK", item: { ...track, id: String(track.id) } });
+        try {
+          const { error } = await supabase
+            .from("music_tracks")
+            .upsert(rowFromMapTrack(track), { onConflict: "id", ignoreDuplicates: false });
+          if (error) console.warn("upsertMusicTrack failed:", error.message || error);
+        } catch (e) {
+          console.warn("upsertMusicTrack failed:", e?.message || e);
+        }
+      },
+
+      /* ----- Music library: favorites + playlists (migration 0093) -----
+         Per-user, optimistic + persist (mirrors the user_preferences setters).
+         A save first mirrors the track into music_tracks so it renders from the
+         cache without re-hitting Epidemic. All never throw past the boundary. */
+      toggleMusicFavorite: async (track) => {
+        const personId = _authPerson?.id;
+        if (!personId || !track || track.id == null) return;
+        const trackId = String(track.id);
+        const isFav = (stateRef.current.musicFavorites || []).some(f => f.trackId === trackId);
+        if (isFav) {
+          dispatch({ type: "DELETE_MUSIC_FAVORITE", trackId });
+          try {
+            await supabase.from("music_favorites").delete()
+              .match({ person_id: personId, track_id: trackId });
+          } catch (e) { console.warn("unfavorite failed:", e?.message || e); }
+        } else {
+          dispatch({ type: "UPSERT_MUSIC_FAVORITE", item: { trackId, personId, createdAt: new Date().toISOString() } });
+          dispatch({ type: "UPSERT_MUSIC_TRACK", item: { ...track, id: trackId } });
+          try {
+            await supabase.from("music_tracks").upsert(rowFromMapTrack(track), { onConflict: "id", ignoreDuplicates: false });
+            await supabase.from("music_favorites")
+              .upsert({ person_id: personId, track_id: trackId }, { onConflict: "person_id,track_id", ignoreDuplicates: true });
+          } catch (e) { console.warn("favorite failed:", e?.message || e); }
+        }
+      },
+
+      createMusicPlaylist: async (name) => {
+        const personId = _authPerson?.id;
+        if (!personId) return null;
+        const id = (globalThis.crypto?.randomUUID?.() || `pl_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+        const clean = (name || "").trim() || "Untitled playlist";
+        dispatch({ type: "UPSERT_MUSIC_PLAYLIST", item: { id, personId, name: clean, createdAt: new Date().toISOString() } });
+        try {
+          await supabase.from("music_playlists").insert({ id, person_id: personId, name: clean });
+        } catch (e) { console.warn("createMusicPlaylist failed:", e?.message || e); }
+        return id;
+      },
+
+      renameMusicPlaylist: async (id, name) => {
+        if (!id) return;
+        const clean = (name || "").trim() || "Untitled playlist";
+        dispatch({ type: "UPSERT_MUSIC_PLAYLIST", item: { id, name: clean } });
+        try {
+          await supabase.from("music_playlists").update({ name: clean, updated_at: new Date().toISOString() }).eq("id", id);
+        } catch (e) { console.warn("renameMusicPlaylist failed:", e?.message || e); }
+      },
+
+      deleteMusicPlaylist: async (id) => {
+        if (!id) return;
+        dispatch({ type: "DELETE_MUSIC_PLAYLIST_BY_ID", id });
+        try {
+          // playlist_tracks rows cascade server-side (FK ON DELETE CASCADE).
+          await supabase.from("music_playlists").delete().eq("id", id);
+        } catch (e) { console.warn("deleteMusicPlaylist failed:", e?.message || e); }
+      },
+
+      addTrackToPlaylist: async (playlistId, track) => {
+        if (!playlistId || !track || track.id == null) return;
+        const trackId = String(track.id);
+        const already = (stateRef.current.musicPlaylistTracks || [])
+          .some(t => t.playlistId === playlistId && t.trackId === trackId);
+        if (already) return;
+        const position = (stateRef.current.musicPlaylistTracks || [])
+          .filter(t => t.playlistId === playlistId).length;
+        dispatch({ type: "UPSERT_MUSIC_PLAYLIST_TRACK", item: { playlistId, trackId, position, addedAt: new Date().toISOString() } });
+        dispatch({ type: "UPSERT_MUSIC_TRACK", item: { ...track, id: trackId } });
+        try {
+          await supabase.from("music_tracks").upsert(rowFromMapTrack(track), { onConflict: "id", ignoreDuplicates: false });
+          await supabase.from("music_playlist_tracks")
+            .upsert({ playlist_id: playlistId, track_id: trackId, position }, { onConflict: "playlist_id,track_id", ignoreDuplicates: true });
+        } catch (e) { console.warn("addTrackToPlaylist failed:", e?.message || e); }
+      },
+
+      removeTrackFromPlaylist: async (playlistId, trackId) => {
+        if (!playlistId || trackId == null) return;
+        const tid = String(trackId);
+        dispatch({ type: "DELETE_MUSIC_PLAYLIST_TRACK", playlistId, trackId: tid });
+        try {
+          await supabase.from("music_playlist_tracks").delete()
+            .match({ playlist_id: playlistId, track_id: tid });
+        } catch (e) { console.warn("removeTrackFromPlaylist failed:", e?.message || e); }
       },
 
       /* Seed a card's assets from its linked PIPELINE reel (owner decision 1b).

@@ -70,6 +70,18 @@ with the stderr tail in media_error (the queue is never poisoned). System deps
 DEPLOY.md.
 """
 
+# ── INFRA (human-gated — owner runs these, not the worker) ─────────────────
+# Fresh cookies SCP (from Windows terminal / GitBash):
+#   scp "C:/Users/Mi/Downloads/ziflow project-final/www.youtube.com_cookies.txt" \
+#       root@178.105.14.144:/srv/footagebrain/footage-brain-test/deploy/hetzner/data/cookies/ig_cookies.txt
+#   ssh root@178.105.14.144 'chmod 600 /srv/footagebrain/footage-brain-test/deploy/hetzner/data/cookies/ig_cookies.txt'
+# Verify (no restart needed — cookies read per-job, not at startup):
+#   ssh root@178.105.14.144 'docker exec fb-backend python3 -c "import app.api.reel_deconstruct as m; print(m._ytdlp_cookies())"'
+# NOTE: YouTube cookies fix YouTube reel downloads only.
+#       Instagram reels need fresh Instagram cookies (different domain).
+#       Export IG cookies from Chrome → instagram.com → "Get cookies.txt LOCALLY" extension.
+# ────────────────────────────────────────────────────────────────────────────
+
 from __future__ import annotations
 
 import os
@@ -745,7 +757,12 @@ def _acquire_reel_video(src: str | None, work: str) -> str:
          "-o", os.path.join(work, "base.%(ext)s"), src])
     cp = _run(cmd, timeout=REEL_VIDEO_TIMEOUT)
     if cp.returncode != 0:
-        hint = "" if _ytdlp_cookies() else " (no YTDLP_COOKIES configured — bot-gated/login-walled sources need one)"
+        hint = ""
+        if not _ytdlp_cookies():
+            hint = " (no YTDLP_COOKIES configured — bot-gated/login-walled sources need one)"
+        elif any(kw in (cp.stderr or "").lower() for kw in
+                 ("csrf", "login required", "rate-limit", "rate limit", "cookie", "no authentication")):
+            hint = " (cookies may be stale or expired — re-upload a fresh cookies.txt to Hetzner)"
         raise _AcquireError("yt-dlp video failed: " + _stderr_tail(cp) + hint)
     out = _find_uploaded_video(work)
     if not out:

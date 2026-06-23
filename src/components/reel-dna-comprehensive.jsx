@@ -16,7 +16,7 @@
    ========================================================= */
 
 import React, { useMemo, useState, useEffect, useRef } from "react";
-import { DnaTable } from "../pages/reel-dna.jsx";
+import { DnaTable, resolveTags } from "../pages/reel-dna.jsx";
 import { UnifiedDnaCard } from "./unified-dna-card.jsx";
 import { ReelPreviewModal } from "./reel-preview-modal.jsx";
 import { resolveBrief } from "../lib/reel-dna.jsx";
@@ -25,6 +25,39 @@ import {
   emptyColumnFilters, applyColumnFilters, searchHaystack,
   RD_HIDEABLE_COLUMNS,
 } from "../lib/reel-dna-filters.jsx";
+
+function csvEscape(v) {
+  const s = v == null ? "" : String(v);
+  return s.includes(",") || s.includes('"') || s.includes("\n")
+    ? '"' + s.replace(/"/g, '""') + '"'
+    : s;
+}
+
+function downloadReelDnaCsv(items) {
+  const headers = ["URL", "Platform", "Captured", "Location", "Music", "Font", "SFX", "Story / Pacing", "Notes"];
+  const rows = items.map((item) => {
+    const tags = resolveTags(item);
+    return [
+      item.reelUrl || "",
+      item.platform || "",
+      item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "",
+      tags.location,
+      tags.music,
+      tags.font,
+      tags.sfx,
+      tags.story,
+      item.quickNotes || "",
+    ].map(csvEscape).join(",");
+  });
+  const csv = [headers.map(csvEscape).join(","), ...rows].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "reel-dna.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 /* ---------------------------------------------------------------------------
    Columns menu — a dropdown to hide/show the 8 hideable spreadsheet columns
@@ -159,6 +192,14 @@ export function ReelDnaComprehensive({
           <span className="rdc-result-count">
             {filtered.length} of {list.length} reel{list.length === 1 ? "" : "s"}
           </span>
+          <button
+            type="button"
+            className="rdc-csv-btn"
+            title="Download visible rows as CSV"
+            onClick={() => downloadReelDnaCsv(filtered)}
+          >
+            ↓ CSV
+          </button>
           {sub === "grid" && (
             <ColumnsMenu
               hiddenCols={hiddenCols}

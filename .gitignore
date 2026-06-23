@@ -36,7 +36,12 @@ __pycache__/
 auth.json
 screenshots/
 
+# Multi-account bug-audit diagnostics — creds, auth states, captures, report (never commit)
+diagnostics/
+
 # Instagram / yt-dlp cookies — contain live session tokens, never commit
 ig_cookies.txt
 cookies.txt
 *.cookies.txt
+*_cookies.txt
+www.youtube.com_cookies.txt

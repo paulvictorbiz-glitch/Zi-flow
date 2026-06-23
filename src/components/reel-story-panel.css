@@ -259,3 +259,40 @@
 }
 .udc-analyze:hover:not(:disabled) { background: color-mix(in srgb, var(--c-cyan) 22%, transparent); }
 .udc-analyze:disabled { opacity: .5; cursor: progress; }
+
+/* ── Inline progress strip (below footer, above story/reel panels) ── */
+.udc-inline-progress {
+  padding: 6px 14px 8px;
+  border-top: 1px solid var(--line-hard);
+  background: color-mix(in srgb, var(--c-cyan) 4%, transparent);
+}
+.udc-inline-progress-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 5px;
+}
+.udc-inline-progress-label {
+  font-family: var(--f-mono); font-size: 10px; font-weight: 600;
+  letter-spacing: .04em; color: var(--c-cyan);
+}
+.udc-inline-progress-pct {
+  font-family: var(--f-mono); font-size: 10px; color: var(--fg-dim);
+}
+.udc-inline-progress-track {
+  height: 3px; border-radius: 2px;
+  background: color-mix(in srgb, var(--c-cyan) 15%, transparent);
+  overflow: hidden;
+}
+.udc-inline-progress-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--c-cyan);
+  transition: width .4s ease;
+}
+@keyframes udc-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.udc-inline-progress-indeterminate {
+  height: 100%; width: 25%; border-radius: 2px;
+  background: var(--c-cyan);
+  animation: udc-indeterminate 1.4s ease-in-out infinite;
+}

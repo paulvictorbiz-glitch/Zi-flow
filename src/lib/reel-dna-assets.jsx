@@ -15,7 +15,7 @@ import { useWorkflow, resolveReelDnaAssets, assetCountsForReelDna } from "../sto
 import { useLocations } from "../lib/locations-data.jsx";
 
 export function useReelDnaAssets(reelDnaId) {
-  const { reelDnaAssets, attachedFootage, thumbnailDna, monitorEvents } = useWorkflow();
+  const { reelDnaAssets, attachedFootage, thumbnailDna, monitorEvents, musicTracks } = useWorkflow();
   const { locations } = useLocations();
 
   // Defensive defaults — never hand undefined to the pure selectors.
@@ -24,6 +24,7 @@ export function useReelDnaAssets(reelDnaId) {
   const safeLocations = locations || [];
   const safeThumbnailDna = thumbnailDna || [];
   const safeMonitorEvents = monitorEvents || [];
+  const safeMusicTracks = musicTracks || [];
 
   return useMemo(() => {
     const sources = {
@@ -32,6 +33,7 @@ export function useReelDnaAssets(reelDnaId) {
       locations: safeLocations,
       thumbnailDna: safeThumbnailDna,
       monitorEvents: safeMonitorEvents,
+      musicTracks: safeMusicTracks,
     };
     const assets = resolveReelDnaAssets(reelDnaId, sources);
     const counts = assetCountsForReelDna(reelDnaId, sources);
@@ -44,5 +46,6 @@ export function useReelDnaAssets(reelDnaId) {
     safeLocations,
     safeThumbnailDna,
     safeMonitorEvents,
+    safeMusicTracks,
   ]);
 }

@@ -1,0 +1,429 @@
+/* =========================================================
+   Music Library page. Scoped under .ml-page so nothing leaks.
+   Reuses the global design tokens (--bg-*, --fg, --line, --c-*,
+   --f-mono) with conservative fallbacks so the page renders even
+   if a token is missing.
+   ========================================================= */
+
+.ml-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 22px 56px;
+  color: var(--fg, #e6e6e6);
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.ml-head { display: flex; flex-direction: column; gap: 4px; }
+.ml-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.ml-sub {
+  margin: 0;
+  max-width: 720px;
+  font-size: 13px;
+  color: var(--fg-dim, #9aa0a6);
+  line-height: 1.5;
+}
+
+/* ── Banners ────────────────────────────────────────────── */
+.ml-banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-family: var(--f-mono, monospace);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.ml-banner--warn {
+  border: 1px solid var(--c-amber, #e2b340);
+  background: color-mix(in srgb, var(--c-amber, #e2b340) 12%, transparent);
+  color: var(--c-amber, #e2b340);
+}
+.ml-banner--error {
+  border: 1px dashed var(--c-red, #e2554a);
+  background: color-mix(in srgb, var(--c-red, #e2554a) 10%, transparent);
+  color: var(--c-red, #e2554a);
+}
+
+/* ── Search bar ─────────────────────────────────────────── */
+.ml-searchbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ml-search {
+  flex: 1;
+  max-width: 520px;
+  background: var(--bg-3, #1a1c20);
+  border: 1px solid var(--line, #34373d);
+  border-radius: 8px;
+  color: var(--fg, #e6e6e6);
+  font-size: 14px;
+  padding: 10px 14px;
+}
+.ml-search:focus {
+  outline: none;
+  border-color: var(--c-cyan, #4fb8c9);
+}
+.ml-search-status {
+  font-family: var(--f-mono, monospace);
+  font-size: 12px;
+  color: var(--fg-dim, #9aa0a6);
+}
+
+/* ── Filter chips ───────────────────────────────────────── */
+.ml-chips { display: flex; flex-direction: column; gap: 8px; }
+.ml-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.ml-chip-label {
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim, #9aa0a6);
+  margin-right: 4px;
+}
+.ml-chip {
+  background: var(--bg-3, #1a1c20);
+  border: 1px solid var(--line, #34373d);
+  border-radius: 999px;
+  color: var(--fg, #e6e6e6);
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.ml-chip:hover { border-color: var(--c-cyan, #4fb8c9); }
+.ml-chip.is-active {
+  background: var(--c-cyan, #4fb8c9);
+  border-color: var(--c-cyan, #4fb8c9);
+  color: #07121a;
+  font-weight: 600;
+}
+
+/* ── Hidden single-instance audio element ───────────────── */
+.ml-audio { display: none; }
+
+/* ── Results ────────────────────────────────────────────── */
+.ml-results { display: flex; flex-direction: column; gap: 12px; }
+.ml-empty {
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--fg-dim, #9aa0a6);
+}
+
+.ml-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.ml-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2, #14161a);
+  border: 1px solid var(--line, #34373d);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.12s, transform 0.12s;
+}
+.ml-card:hover {
+  border-color: var(--c-cyan, #4fb8c9);
+}
+
+/* Cover + play overlay */
+.ml-cover {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: var(--bg-3, #1a1c20);
+  overflow: hidden;
+}
+.ml-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ml-cover-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  color: var(--fg-dim, #6c7077);
+}
+.ml-play {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+  transition: background 0.12s, transform 0.1s;
+}
+.ml-play:hover { background: var(--c-cyan, #4fb8c9); color: #07121a; }
+.ml-play.is-playing {
+  background: var(--c-cyan, #4fb8c9);
+  color: #07121a;
+}
+
+/* Meta */
+.ml-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px 6px;
+}
+.ml-track-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ml-track-artist {
+  font-size: 12px;
+  color: var(--fg-dim, #9aa0a6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ml-track-stats {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+.ml-stat {
+  font-family: var(--f-mono, monospace);
+  font-size: 11px;
+  color: var(--fg-dim, #9aa0a6);
+}
+.ml-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.ml-tag {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line, #34373d);
+  color: var(--fg-dim, #9aa0a6);
+  white-space: nowrap;
+}
+.ml-tag--genre { border-color: color-mix(in srgb, var(--c-cyan, #4fb8c9) 50%, var(--line, #34373d)); }
+.ml-tag--mood  { border-color: color-mix(in srgb, var(--c-violet, #9a7cf0) 50%, var(--line, #34373d)); }
+
+/* Actions */
+.ml-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px 12px;
+  margin-top: auto;
+}
+.ml-btn {
+  border: 1px solid var(--line, #34373d);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 12px;
+  cursor: pointer;
+  background: var(--bg-3, #1a1c20);
+  color: var(--fg, #e6e6e6);
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+.ml-btn:disabled { opacity: 0.55; cursor: default; }
+.ml-btn--primary {
+  background: var(--c-cyan, #4fb8c9);
+  border-color: var(--c-cyan, #4fb8c9);
+  color: #07121a;
+  flex: 1;
+}
+.ml-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.ml-btn--ghost:hover { border-color: var(--c-cyan, #4fb8c9); }
+
+/* ── Attach-to-reel modal ───────────────────────────────── */
+.ml-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 24px;
+}
+.ml-modal {
+  width: 100%;
+  max-width: 420px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2, #14161a);
+  border: 1px solid var(--line, #34373d);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.ml-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line, #34373d);
+  font-size: 14px;
+  font-weight: 600;
+}
+.ml-modal-close {
+  border: none;
+  background: transparent;
+  color: var(--fg-dim, #9aa0a6);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.ml-modal-close:hover { color: var(--fg, #e6e6e6); }
+.ml-reel-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 6px;
+}
+.ml-reel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: var(--fg, #e6e6e6);
+  font-size: 13px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+.ml-reel-row:hover { background: var(--bg-3, #1a1c20); }
+.ml-reel-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ml-reel-plat {
+  font-family: var(--f-mono, monospace);
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--fg-dim, #9aa0a6);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 560px) {
+  .ml-page { padding: 14px 14px 48px; }
+  .ml-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+}
+
+/* ── View nav (Search / Browse / Favorites / Playlists) ──────────────── */
+.ml-viewnav { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line, #34373d); padding-bottom: 8px; }
+.ml-viewtab {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--fg-dim, #9aa0a6);
+  font-size: 13px; font-weight: 600; padding: 7px 13px; cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ml-viewtab:hover { color: var(--fg, #e6e6e6); background: var(--bg-3, #1a1c20); }
+.ml-viewtab.is-active { color: var(--fg, #e6e6e6); background: var(--bg-3, #1a1c20); border-color: var(--line, #34373d); }
+.ml-count {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; background: var(--c-accent, #6aa9ff); color: #0b0d10;
+}
+
+/* ── Favorite heart (overlaid on the cover) ──────────────────────────── */
+.ml-fav {
+  position: absolute; top: 6px; right: 6px;
+  width: 30px; height: 30px; border-radius: 50%;
+  border: none; cursor: pointer; font-size: 16px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.5); color: #fff; transition: transform 0.1s, color 0.12s;
+}
+.ml-fav:hover { transform: scale(1.1); }
+.ml-fav.is-fav { color: #ff5a7a; }
+
+/* ── Add-to-playlist / attach popover menu ───────────────────────────── */
+.ml-menuwrap { position: relative; display: inline-block; }
+.ml-menu {
+  position: absolute; z-index: 30; top: calc(100% + 4px); right: 0;
+  min-width: 200px; max-height: 280px; overflow-y: auto;
+  background: var(--bg-2, #141619); border: 1px solid var(--line, #34373d);
+  border-radius: 9px; padding: 6px; box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.ml-menu-item {
+  text-align: left; border: none; background: transparent; color: var(--fg, #e6e6e6);
+  font-size: 13px; padding: 7px 9px; border-radius: 6px; cursor: pointer;
+}
+.ml-menu-item:hover { background: var(--bg-3, #1a1c20); }
+.ml-menu-empty { font-size: 12px; color: var(--fg-dim, #9aa0a6); padding: 6px 9px; }
+.ml-menu-new { display: flex; gap: 6px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line, #34373d); }
+.ml-menu-input {
+  flex: 1; min-width: 0; background: var(--bg-1, #0e1013); color: var(--fg, #e6e6e6);
+  border: 1px solid var(--line, #34373d); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+}
+
+/* ── Button variants ─────────────────────────────────────────────────── */
+.ml-btn--mini { padding: 4px 9px; font-size: 11px; }
+.ml-btn--danger { border-color: #5a2a32; color: #ff8197; }
+.ml-btn--danger:hover { background: #2a181c; }
+
+/* ── Browse taxonomy ─────────────────────────────────────────────────── */
+.ml-browse { display: flex; flex-direction: column; gap: 16px; }
+.ml-browse-group { display: flex; flex-direction: column; gap: 8px; }
+.ml-chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.ml-browse-results { margin-top: 18px; }
+.ml-section-title { font-size: 15px; font-weight: 700; margin: 0 0 12px; }
+
+/* ── Playlists ───────────────────────────────────────────────────────── */
+.ml-newplaylist { display: flex; gap: 8px; align-items: center; }
+.ml-newplaylist .ml-search { max-width: 320px; }
+.ml-playlist-list { display: flex; flex-direction: column; gap: 8px; }
+.ml-playlist-row {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line, #34373d); border-radius: 9px; background: var(--bg-2, #141619); padding: 4px 4px 4px 0;
+}
+.ml-playlist-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: transparent; border: none; cursor: pointer; color: var(--fg, #e6e6e6);
+  padding: 12px 14px; border-radius: 8px; text-align: left;
+}
+.ml-playlist-open:hover { background: var(--bg-3, #1a1c20); }
+.ml-playlist-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ml-playlist-count { font-size: 12px; color: var(--fg-dim, #9aa0a6); flex: 0 0 auto; }
+.ml-playlist-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.ml-playlist-title-input {
+  flex: 1; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 7px;
+  color: var(--fg, #e6e6e6); font-size: 18px; font-weight: 700; padding: 6px 10px;
+}
+.ml-playlist-title-input:hover { border-color: var(--line, #34373d); }
+.ml-playlist-title-input:focus { border-color: var(--c-accent, #6aa9ff); outline: none; background: var(--bg-1, #0e1013); }

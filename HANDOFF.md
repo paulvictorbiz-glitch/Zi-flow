@@ -1,36 +1,58 @@
-# Handoff — last updated 2026-06-21
+# Handoff — last updated 2026-06-23
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
+> This session was 100% the **Epidemic Sound Music Library** feature. Owner is pausing and will resume this topic later.
 
 ## TL;DR of this session
-- Built a batch of **Reel DNA spreadsheet** enhancements (planned via `/qa-verified-plan`, built via a generated `/workflow-file-creation` workflow `reel-dna-cols-and-multi-editor.js`, then hardened against live testing):
-  1. **Hide/collapse columns** ("Columns" menu, per-user persisted) + **freeze header row & first ★/color column** (desktop + mobile).
-  2. **Send a captured card to the pipeline for chosen editor(s)** — the **→ Pipeline** button now opens an editor-picker modal (first editor = linked reel, extras = independent `(FirstName)` copies). FAB "Create new reel" also got a multi-editor dropdown.
-  3. **In-app reel preview popup** on link click — embeds **IG / YouTube / TikTok / Facebook** (YT+FB autoplay), click-out to keep taking notes, + persistent **visited-link underline**.
-  4. **"Back to Reel DNA"** (↩ DNA) — reverse of Send-to-Pipeline: migrates assets + text back, unlinks/reset, soft-archives the pipeline reel.
-- Fixed real bugs the first workflow build left: freeze needed a **bounded-height scroll container** (`.rd-table-wrap` → `overflow:auto` + `max-height: calc(100dvh - 200px)`); preview modal **class-name drift** (`.rd-preview-*` vs `.rpv-*`) + **Facebook mis-detection** (`platformFromUrl` never returns `"fb"`).
-- **Reverted** a mis-placed "Send to editors" multi-select from the pipeline card ⋯ menu (`components.jsx`) — owner wanted it on the Reel DNA side, not pipeline cards.
-- No DB migration this session (uses live `user_preferences` 0070 + existing `reels`/`reel_dna` columns).
+- Built the **Epidemic Sound Music Library** end-to-end: a swap-ready server proxy (`api/ai/_epidemic.js` + 3 `?action=epidemic-*` branches in `suggest.js`), a **Music Library** tab (search/preview/licensed-download), and a per-reel **Attach Music** card (music reuses `reel_dna_assets` as `asset_type='music'`). Built via the generated workflow `.claude/workflows/epidemic-sound-music-library.js` (~36 min).
+- Ran `/code-review high` → found + **fixed 3 feature-breaking bugs**: the `reel_dna_assets` CHECK constraint blocked `'music'` (fixed in `0092`), the shared `useReelDnaAssets` hook didn't pass `musicTracks`, and `upsertMusicTrack` had no optimistic update. Plus a `MusicPickerModal` audio-preview cleanup.
+- **Expanded the Library tab** to 4 views: **Search · Browse (genre/mood) · Favorites · Playlists** (new migration `0093_music_library.sql` + store actions + UI rewrite).
+- Wired `EPIDEMIC_TOKEN` into `.env.local` AND Vercel env (dev+prod), and stood up local dev (`vercel dev` :3001 + `npm run dev` :8000).
+- **🔴 Discovered THE blocker:** the workflow guessed Epidemic's private host `api.epidemicsound.com` — it **does not resolve**. Search/Browse/Download are inert until the owner provides the real endpoint from a logged-in DevTools capture.
+- Everything is `npm run build` green. **Nothing committed, nothing deployed.**
 
 ## Where we left off
-All Reel DNA work is **LIVE on www.footagebrain.com** (`dpl_53XjnpzdMdbT9koUgPH7wfVNSXpj`). The reel-dna files + docs are **committed (`694e0c6`) + pushed to `origin/main`**. Owner authorized a **full-tree deploy**, so the parallel Planable-grouping WIP **also shipped** (still uncommitted — see Pending).
+All Music Library code is written and builds clean, but the feature **cannot pull music yet** — it's blocked on two gates (below). The local dev servers have since stopped (the `npm run dev` background task exited code 4); restart them to resume testing. The owner is pausing this topic and will come back to it.
 
 ## Open blockers
-- **None for the Reel DNA work** (live + verified-buildable + committed).
-- ⚠ The **full-tree deploy shipped the parallel Planable-grouping WIP** (`suggest.js`/`export-view.jsx`/`_planable.js` + `0090`) to prod **uncommitted and unverified by this session**. The Planable owner should smoke-test the Planable push/grouping on prod and commit those files (no clean git ref == live for them yet — the recurring trap). Migration `0090` is **written, not applied** — if the shipped Planable code references 0090 columns, apply it (owner-gated).
+- **🔴 Epidemic endpoint calibration (needs owner DevTools) — THE blocker.** The guessed private host `api.epidemicsound.com` does NOT resolve (`curl https://api.epidemicsound.com/` → `http=000`; `www.`/`partner-content-api.`/`login.` all resolve fine). To unblock: owner logs into epidemicsound.com → DevTools → Network → Fetch/XHR → run a search → copy the **request URL that returns tracks**; click **Download** on a track → copy that URL. Then patch the 3 `// CALIBRATION-REQUIRED` constants (`BASE_URL`, `EP_SEARCH_PATH`, `EP_DOWNLOAD_PATH`) + `mapTrack` field names in `api/ai/_epidemic.js`. The Partner-API siblings (`partner-content-api.epidemicsound.com/v0/tracks/...`, which DOES resolve) are the documented identical-shaped fallback if the private path can't be captured.
+- **Migrations `0092` + `0093` not applied** — needed for Attach Music + Favorites/Playlists persistence (apply is human-gated; see Pending).
 
 ## Pending (written but not yet live)
-- Planable **grouping** files are **deployed-but-uncommitted** (`_planable.js`, `suggest.js`, `export-view.jsx`, `0090`) — parallel effort; commit + verify pending (its owner).
-- Migration `0090` written, **not applied**. No migration was needed for the Reel DNA work.
+- **Migration `0092_music_tracks.sql`** — music metadata cache table + EXTENDS `reel_dna_assets` CHECK to allow `'music'`. NOT applied.
+- **Migration `0093_music_library.sql`** — `music_favorites` + `music_playlists` + `music_playlist_tracks` (per-user RLS). NOT applied.
+  - Apply via the **Supabase SQL editor** for JUST these two (do NOT `npm run migrate:apply` — it would also sweep in other parked threads' pending migrations e.g. 0089/Planable). Or ask for the exact single-file SQL.
+- **All Music Library code** — uncommitted, undeployed. After calibration + a clean-tree check, deploy is `vercel --prod` (human-gated; remember it ships the WHOLE dirty tree).
+- `EPIDEMIC_TOKEN` is in `.env.local` + Vercel dev/prod env. **Expires ~2026-07-20** (30-day Keycloak user JWT, no refresh) — re-grab from DevTools and re-`vercel env add` when the "reconnect — see Paul" banner appears.
 
 ## Next session — start here
-1. **Verify on prod** (`www.footagebrain.com` → Reel DNA tab): Columns menu + freeze (desktop+mobile), → Pipeline editor picker, link-preview popup (IG/YT/TikTok/FB), ↩ DNA round-trip.
-2. **Planable owner:** smoke the Planable push/grouping that rode along on this deploy; commit those files; apply `0090` if its code needs it.
-3. (Owner) Calibrate Planable phase-2 `/media` constants on a real upload (still `// CONFIRM`), if continuing Planable.
+1. **Get the Epidemic calibration capture** from the owner's DevTools (search URL + download URL) and patch `api/ai/_epidemic.js`. This unblocks Search/Browse/Preview/Download instantly (no rebuild — `vercel dev` hot-reloads functions).
+2. **Apply migrations `0092` + `0093`** via the Supabase SQL editor (human-gated) so Attach Music + Favorites + Playlists persist.
+3. Restart local dev and smoke-test the full flow: `vercel dev --listen 3001` + `npm run dev` (:8000), hard-refresh, then Search → preview → download → favorite → add to playlist → attach to a reel.
+4. After it works: commit the Music Library files, clean-tree check, `vercel --prod`.
+5. (Optional) If the private API proves too brittle, apply for an official Epidemic Partner key → set `EPIDEMIC_AUTH_MODE=partner` + the `epidemic_live_` key (zero frontend change).
 
 ## Verification commands (to confirm current state on resume)
-- `git -C "c:/Users/Mi/Downloads/ziflow project-final" log --oneline -3` — `694e0c6` (reel-dna batch) on top of `origin/main`.
-- `git -C "c:/Users/Mi/Downloads/ziflow project-final" status --short` — only the Planable files (`suggest.js`, `export-view.jsx`, `_planable.js`, `0090`, `detail.jsx`, manifest) remain dirty (deployed-but-uncommitted).
-- `curl -sI https://www.footagebrain.com | head -1` — prod reachable (deploy `dpl_53XjnpzdMdbT9koUgPH7wfVNSXpj`).
-- Browser: `www.footagebrain.com` → Reel DNA tab → exercise the four features.
+```bash
+# 1. Local servers are DOWN after this session — restart both:
+#    Terminal A:  vercel dev --listen 3001
+#    Terminal B:  npm run dev          # SPA on :8000, proxies /api -> :3001
+
+# 2. Confirm the Epidemic host still doesn't resolve (the blocker):
+curl -s -o /dev/null -w "%{http_code}\n" https://api.epidemicsound.com/        # expect 000
+curl -s -o /dev/null -w "%{http_code}\n" https://partner-content-api.epidemicsound.com/  # 302 (fallback host)
+
+# 3. Confirm the function is wired (once vercel dev :3001 is up) — 401 = good (auth gate), not 404/500:
+curl -s -o /dev/null -w "%{http_code}\n" -X POST "http://localhost:3001/api/ai/suggest?action=epidemic-search" -H "Content-Type: application/json" -d '{"term":"lofi"}'
+
+# 4. Direct Epidemic calibration test (bypasses HTTP/auth — hits the real API with the token):
+node --env-file=.env.local -e "import('./api/ai/_epidemic.js').then(m=>m.searchTracks({term:'lofi',limit:3})).then(r=>console.log(JSON.stringify(r)))"
+#    Currently returns {ok:false, error:'fetch failed'} because the host is wrong — should return tracks after calibration.
+
+# 5. Build gate:
+npm run build      # green; emits a music-library chunk
+
+# 6. Migrations present (NOT applied):
+ls supabase/migrations/0092_music_tracks.sql supabase/migrations/0093_music_library.sql
+```

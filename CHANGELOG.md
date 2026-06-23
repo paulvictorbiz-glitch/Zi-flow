@@ -4,6 +4,114 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-23 — Music Library expansion: Browse (genre/mood) · Favorites · Playlists
+
+**What changed:** Grew the Music Library tab from a single search box into a 4-view library (**Search · Browse · Favorites · Playlists**). Browse exposes the curated Epidemic genre (28) + mood (26) taxonomy as chips → filtered catalog search. Favorites = a per-user ♥ on every track. Playlists = create/rename/delete named lists and add tracks via a ＋ Playlist menu. Per-user, private to each editor.
+
+**Where:** New migration `supabase/migrations/0093_music_library.sql` (3 tables: `music_favorites`, `music_playlists`, `music_playlist_tracks`, per-user RLS mirroring `0070_user_preferences`). `src/store/store.jsx` (state + auth-keyed hydrate effect + 6 optimistic actions: `toggleMusicFavorite`/`createMusicPlaylist`/`renameMusicPlaylist`/`deleteMusicPlaylist`/`addTrackToPlaylist`/`removeTrackFromPlaylist`). Rewrote `src/pages/music-library.jsx` (view switcher + shared `TrackCard`). Appended `src/pages/music-library.css`.
+
+**Path we took:** Owner asked for genre browsing + saved playlists/favorites "like the Epidemic app." Studied the existing `user_preferences` per-user pattern (migration 0070 RLS: `person_id = (SELECT id FROM people WHERE user_id = auth.uid())` + owner-all) and the auth-keyed hydrate effect, then mirrored it exactly. Reused the existing generic store plumbing; favorites/playlists use hydrate + optimistic dispatch with NO realtime client handler (matching `user_preferences`), even though the migration adds the tables to the realtime publication. `node --check` can't lint `.jsx` (JSX) — relied on `npm run build` as the gate (green, 11.89s).
+
+**What we learned:** (1) `actionsRef` does NOT exist in the store (only `stateRef`) — an action cannot call a sibling action via a ref; inline the logic (caching a track now duplicates `rowFromMapTrack` + `UPSERT_MUSIC_TRACK` dispatch inline). (2) Per-user RLS for a child table (`music_playlist_tracks`) checks ownership by selecting the PARENT table (`music_playlists`) — cross-table, NOT self-reference, so no recursion trap. (3) Playlist ids are minted client-side (`crypto.randomUUID()`) and inserted explicitly so the optimistic row needs no id reconciliation.
+
+**Status:** Built, `npm run build` green, **NOT committed / NOT deployed**. Inert until the two gates below clear: migration `0093` applied + Epidemic calibration (Browse/Search need the live API; creating empty playlists works once `0093` is applied).
+
+---
+
+## 2026-06-23 — Epidemic Sound Music Library (build + review fixes + the calibration blocker)
+
+**What changed:** Built a full Music Library feature so editors can use the owner's Epidemic Sound subscription: a server-side proxy + a **Music Library** tab (search/preview/licensed-download) + a per-reel **Attach Music** card on the detail page (music as a sibling `reel_dna_assets` type). Generated and ran the multi-agent workflow `.claude/workflows/epidemic-sound-music-library.js` (~36 min) which produced the code; then a `/code-review high` pass found + fixed 3 feature-breaking bugs.
+
+**Where:** NEW: `api/ai/_epidemic.js` (swap-ready proxy helper), `src/pages/music-library.jsx` + `.css`, `src/components/MusicPickerModal.jsx`, `supabase/migrations/0092_music_tracks.sql`. EDITED: `api/ai/suggest.js` (3 `?action=epidemic-*` branches + import), `src/store/store.jsx` (search/download/attach wrappers + resolver `music` bucket + `musicTracks` realtime), `src/app.jsx` (Library-group tab), `src/lib/permissions-catalog.js` (`music` view cap + LEAN_HIDDEN), `src/pages/detail.jsx` (Attach Music card), `src/components/reel-assets.jsx` (5th section), `src/lib/reel-dna-assets.jsx` (review fix). Plan: `C:\Users\Mi\.claude\plans\i-got-epidemic-sound-partitioned-dolphin.md`.
+
+**Path we took:** Owner pasted an Epidemic API key. Decoded it → a **Keycloak USER session JWT** (`aud/azp: epidemic-api`, `iss: login.epidemicsound.com/auth/realms/accounts`, `email: samvictor0160@gmail.com`, exp **~2026-07-20**), NOT the official Partner API key. Chose: private token now + swap-ready (`AUTH_MODE` flag → official `epidemic_live_` Partner key later), both placements, full search/preview/download. Built via workflow under locked file-ownership. `/code-review high` (8 finder angles) confirmed 3 bugs and I fixed all: (a) `reel_dna_assets` has a CHECK constraint `asset_type IN ('footage','location','thumbnail','news')` — `'music'` would FAIL every attach → `0092` now extends the CHECK; (b) the shared `useReelDnaAssets` hook never passed `musicTracks` → Music rendered empty everywhere but detail.jsx; (c) `upsertMusicTrack` did no optimistic state update → attached track blank until the realtime echo. Set up local testing: `EPIDEMIC_TOKEN` in `.env.local` + `vercel env add` (development+production), launched `vercel dev` (:3001) + `npm run dev` (:8000).
+
+**What we learned:** (1) **THE BLOCKER:** the workflow GUESSED Epidemic's private host as `api.epidemicsound.com` — that host **DOES NOT RESOLVE** (`curl` → `http=000`; `www.`/`partner-content-api.`/`login.` all resolve). So Search/Preview/Download are inert until the real endpoint is calibrated, which needs the owner's logged-in **DevTools Network** capture (the real request URL/path) — I can't discover it without it. The helper is swap-ready, and the Partner-API siblings (`partner-content-api.epidemicsound.com/v0/tracks/...`) are the documented identical-shaped fallback. (2) **`vercel dev` uses CLOUD env, not `.env.local`** (CLAUDE.md rule #5 confirmed: the cloud `SUGGEST_CRON_SECRET` differs → 401 with the `.env.local` value) — so the token had to go into Vercel env via `vercel env add`. (3) Correct local API setup is TWO processes: `vercel dev --listen 3001` (functions) + `npm run dev` (:8000 SPA, whose vite proxy forwards `/api`→:3001). Running `vercel dev --listen 8000` ALONE fails — vite's own `/api`→:3001 proxy shadows the function runtime → 500. (4) Reused the EXISTING generic `attachAsset/detachAsset` for `asset_type='music'` — low-risk, no new attach path.
+
+**Status:** Built, `npm run build` green, both API files `node --check` clean. **NOT committed / NOT deployed.** Two human-gated gates remain: apply migrations `0092`+`0093`, and the Epidemic endpoint calibration (owner DevTools). `EPIDEMIC_TOKEN` is in `.env.local` + Vercel dev/prod env (expires ~2026-07-20).
+
+---
+
+## 2026-06-22 — Payment infrastructure plan (Stripe · one-time credits · external customers)
+
+**What changed:** No code deployed. Designed the complete payment infrastructure for selling Reel DNA analysis credits to **external customers** via Stripe. Created `obsidian-vault/05 - Roadmap/Payment Infrastructure Plan.md` (architecture diagram, migration SQL, Vercel function scaffolds, 4-phase build plan) and updated `BUILD LIST.md` with a new Payments/Revenue section.
+
+**Where:** `obsidian-vault/05 - Roadmap/Payment Infrastructure Plan.md` (new). `obsidian-vault/05 - Roadmap/BUILD LIST.md` (updated — Payments/Revenue section). Plan also at `C:\Users\Mi\.claude\plans\make-a-plan-to-agile-wilkinson.md`.
+
+**Path we took:** User asked to plan a payment integration for the front page. Ran two parallel Explore agents — one to understand the codebase (found existing `credits-modal.jsx` mockup: $9/$29/$59 credit tiers, Pay button disabled, no Stripe code anywhere, project at 12/12 Vercel function cap), one to research Stripe pricing vs alternatives. Clarified two key questions: (1) who buys — external customers, not the internal team; (2) payment model — one-time credit packs matching the existing UI mockup. Designed full architecture: landing page pricing section → `api/billing-checkout.js` → Stripe Hosted Checkout → `api/billing-webhook.js` → `0091_customer_credits.sql` (separate `customers` table, not `people`).
+
+**What we learned:** (1) **Stripe has no monthly fee** — 2.9% + $0.30 per US card transaction; test mode is free forever. Lemon Squeezy/Paddle (5% + $0.50) only win for high international volume needing Merchant of Record VAT handling — not relevant for a US-first launch. (2) **Project is at 12/12 Vercel functions** (Hobby cap) — adding two billing functions requires **Vercel Pro ($20/mo)**, the right call for a revenue-generating product; attempting to fold billing into `suggest.js?action=` would fail because `bodyParser: false` (required for webhook signature verification) applies to the whole file. (3) External customers need their own `customers` table (not `people`) to keep the internal team roster clean — use an atomic `increment_customer_credits` SECURITY DEFINER RPC for safe concurrent credit increments. (4) Open-source payment boilerplates carry CI/CD supply-chain risk; use the official `stripe` npm package only.
+
+**Status:** Plan documented. No code written. Phase 1 (Stripe account + migration + billing functions) is the first build task.
+
+---
+
+## 2026-06-22 — PAW integration research + future product requirements documented
+
+**What changed:** No code deployed. Researched the [programasweights/programasweights-python](https://github.com/programasweights/programasweights-python) (PAW) repo for integration with the `/space` 3D avatar. Documented two future product requirements: (1) pricing plans editable from within the admin panel, (2) mandatory sign-up gate before any purchase + a public create-account flow.
+
+**Where:** Plan file `C:\Users\Mi\.claude\plans\how-much-bandwitdh-does-cryptic-twilight.md` (new). No source files modified.
+
+**Path we took:** User asked how much bandwidth/compute the PAW fork would cost and whether it would crowd out the app. Spawned two parallel Explore agents: one to audit the existing 3D space implementation, one to fetch the GitHub repo. Found PAW is a 169 KB Python SDK using llama.cpp for local LLM inference (134–594 MB model, 5–22 MB compiled programs). The 3D space already has ~3,600 lines of React Three Fiber code, a floating astronaut avatar, and all primitives procedurally generated. Documented two integration paths (browser WASM vs Hetzner microservice). User then asked to document pricing plan flexibility and signup-before-purchase as future requirements; added these to the plan file.
+
+**What we learned:** (1) PAW's JavaScript SDK can run GPT-2 compiled programs in-browser via WebAssembly — zero Hetzner cost for the avatar integration path. (2) The astronaut in `Astronaut.jsx` (101 lines) is purely decorative with no rigging — avatar "control" requires two separate workstreams: PAW intent routing + Three.js animation work. (3) The current FootageBrain auth model (owner-invite only) needs an entirely new `CreateAccountScreen` before any public-facing purchase flow can exist; that's independent of the PAW integration.
+
+**Status:** Plan documented. No code written. PAW integration and pricing/signup features are deferred future builds.
+
+---
+
+## 2026-06-22 — Reel DNA Analyze: exhaustive gap diagnosis + fix workflow generated
+
+**What changed:** No code was deployed this session, but the root causes of ALL Analyze button failures were confirmed via exhaustive code reading, and a multi-team fix workflow (`analyze-button-fix.js`) was authored and queued to run. Three distinct code gaps were identified that explain why the Analyze button gives poor feedback even when the worker chain works correctly.
+
+**Where:** `.claude/workflows/analyze-button-fix.js` (new workflow file, 300 lines). The three gaps confirmed: `src/components/unified-dna-card.css` (missing CSS), `src/components/unified-dna-card.jsx` (analyze_failed has no retry), `backend-handoff/reel_deconstruct.py` (stale-cookie hint misfires).
+
+**Path we took:** User reported "Analyze button not working." Ran `curl https://api.footagebrain.com/api/reel/status` → all flags green (`feature_enabled:true, cookies_set:true, inflight:0`). Read `unified-dna-card.jsx` (444 lines), `unified-dna-card.css` (79 lines), `reel-story-panel.css` (299 lines), `reel_deconstruct.py` (1216 lines), and `store.jsx` mapper. Ran `/qa-verified-plan` (3 domain agents: Infra, Backend, Frontend) for structured analysis. Then ran `/workflow-file-creation` to generate the authoritative multi-team fix workflow.
+
+**What we learned:** (1) `cookies_set:true` in `/api/reel/status` only checks FILE EXISTENCE — not that the cookies inside are valid. The old ig_cookies.txt from 2026-06-20 exists but its Instagram tokens are stale. (2) The CSS classes `.udc-reel-deconstruct`, `.udc-reel-failed*`, `.udc-reel-retry` are COMPLETELY ABSENT from all stylesheets — the error block renders with browser defaults only. (3) `analyze_failed` has zero retry path: the CTA block is `{acquireFailed && (...)}` gated, so only `acquire_failed` gets a retry button; `analyze_failed` silently shows raw 1500-char yt-dlp stderr with no way to re-trigger. (4) Worker's staleness hint (reel_deconstruct.py line 748) fires only when NO cookies are configured — when stale cookies are configured, the hint stays empty and the raw `"No csrf token set by Instagram API"` lands in `media_error` with no actionable guidance. (5) Fresh YouTube cookies (`www.youtube.com_cookies.txt`) are on disk locally — SCP to Hetzner will fix YouTube reel downloads but NOT Instagram (domain mismatch — IG needs its own cookies).
+
+**Status:** Workflow file written, not yet launched. Three code files have pending fixes that the workflow will apply. SCP of YouTube cookies to Hetzner is a human-gated step the owner needs to run.
+
+---
+
+## 2026-06-22 — Reel DNA Analyze: inline progress strip + debug logging deployed
+
+**What changed:** The Analyze button in the Reel DNA unified card now shows an **inline progress strip** directly below the footer controls — an animated indeterminate sliding bar while `pending_analyze` (queued, waiting for worker), and a live fill bar with percentage while `analyzing`. This is visible for ALL reel formats (long and short). Added `[Analyze]` **debug console.log statements** at every step of the fire-and-forget chain (queuing, DB persist OK/FAILED, Vercel proxy fire, Vercel response) so failures are immediately visible in the browser console without guessing which layer stalled.
+
+**Where:** `src/components/unified-dna-card.jsx` (added `udc-inline-progress` strip below the footer; removed the old short-reel-only progress block so the new strip handles all formats); `src/components/reel-story-panel.css` (`.udc-inline-progress*` + `@keyframes udc-indeterminate`); `src/store/store.jsx` (`analyzeReelDna`: 4× `console.log` at queuing, DB persist callback, Vercel fire, and Vercel response + explicit `try/catch` around DB persist with `console.error`).
+
+**Path we took:** Owner clicked Analyze on a short-form IG reel and saw "Deconstructing reel… 0%" with no change — a stagnant screen. Ran Playwright (`scripts/smoke-screenshot.mjs`) to capture the dev console. Found `[Analyze] Vercel response: 500 {}` in dev mode — because Vite (`npm run dev :5173`) does NOT serve Vercel serverless functions; `vercel dev (:8000)` is required for API testing. Switched to prod: console confirmed `[Analyze] Vercel response: 200 Object` (chain works). Queried Supabase directly (service role) — the reel row showed `media_status = "acquire_failed"` with `media_error: "No csrf token set by Instagram API / rate-limit reached or login required"`. Root cause confirmed.
+
+**What we learned:** The `inflight=0` mystery (10 min of polling with no change) had a simple explanation: the worker **completed in <10 seconds** (fast failure, not a stall), so the 10s polling interval never caught `inflight=1`. The real issue is **Instagram cookies expired** — `ig_cookies.txt` on Hetzner was dropped 2026-06-20 and IG cookies typically rotate in days-to-weeks. By 2026-06-22 they were invalid. This means ALL Instagram reels return `acquire_failed` until the owner re-exports fresh cookies. **YouTube reels are unaffected** (yt-dlp is less bot-gated there). **Playwright cannot re-export Instagram cookies** — this requires the user's real logged-in browser session with genuine browser fingerprint; Instagram detects headless Chromium and either blocks it or produces immediately-invalidated cookies. Cookie re-export is a manual owner step (see next session).
+
+**Status:** **LIVE** (`dpl_SV5dkFDtfWVYbv4uySpuDLM2G1y1`, www.footagebrain.com). Files **deployed but uncommitted** (recurring no-clean-ref==live state).
+
+---
+
+## 2026-06-22 — Push to Planable: group posts + fix video attach + per-platform titles + posting-time input
+
+**What changed:** Reworked the Export-tab Planable push from "one separate card per platform per reel" into a **grouped** model: one push now creates **one Planable campaign** bundling all selected reels, and **each reel becomes its own grouped cross-page post** (`pageIds` array → one `groupId`) fanned across every selected channel. **Video now actually attaches** (the imported text was the only thing showing before). The post **title** for YouTube/LinkedIn/Pinterest now comes from the **reel card title** (caption stays the logline). Added a **posting-time `<input type="time">`** to the Export push UI so each reel lands on its own assigned date at the chosen time.
+
+**Where:** `api/ai/_planable.js` (rewrite: `pushReelToPlanable` now takes `pageIds[]`/`mediaUrls[]`/`campaignId`/`titles`/`scheduledAt`; new `createPlanableCampaign`; deleted the two-step `/media` block — media is a direct public-URL array; `youtubeTitle`/`linkedinVideoTitle`/`pinterest.title` capped 100/150/100), `api/ai/suggest.js` (`?action=planable-push` rewrite: `platforms[]` allow-list guard, one campaign per call, per-reel grouped post via `Promise.allSettled`, one DB row per reel with `campaign_id`/`group_id`/`page_ids`/`batch_id`, still writes `media_path` for the cleanup cron), `src/pages/export-view.jsx` (single grouped fetch, `postTime` state threaded into `composeSchedule`, sends `title`, per-reel status). New migration `supabase/migrations/0090_planable_pushes_grouping.sql` (additive nullable cols + 2 indexes; RLS inherited from 0087) — **APPLIED to live DB this session**.
+
+**Path we took:** Planned via `/qa-verified-plan`, verified the grouping/media/title mechanics against the **live Planable OpenAPI spec** (`api.planable.io/api/v1/openapi.json`), generated `.claude/workflows/planable-grouping-fixes.js` via `/workflow-file-creation` (3 disjoint-ownership teams + adversarial QA), the owner ran it, then build-gated (`npm run build` + `node --check` green). Applied **only** 0090 via a one-off `exec_sql` script (left the unrelated `0086_perf_samples` pending). Did the mandatory pre-deploy tree check, then full-tree `vercel --prod`.
+
+**What we learned:** The OpenAPI spec resolved three wrong assumptions baked into the shipped code: (1) `POST /posts` **accepts a `pageIds` array** → one grouped cross-page post sharing a `groupId` (the old code looped one `pageId` = separate cards); (2) **`campaignId` + `POST /campaigns`** is the only way to bundle *different* reels — `groupId` only fans one piece of content across pages; (3) `media` is **"an array of public URLs Planable downloads server-side"** — the prior phase-2 two-step (`POST /media` → poll → media id) used the **wrong field name** (`url` vs `mediaUrls`) AND fed a *media id* where a *URL* belongs, so video never attached. **⚠ This directly contradicts the prior empirical finding** (memory said a raw external URL "does NOT attach" and required the two-step). The likely reconciliation: that test used a non-directly-downloadable link (Drive/Frame.io), whereas a real **signed `reel-videos` MP4 URL** is downloadable → direct `media:[url]` should attach. **NOT yet confirmed against the live token — the calibration push is the deciding test; if video still doesn't attach, a *corrected* two-step (right field names) may need restoring.**
+
+**Status:** **LIVE** (`dpl_Ab5JtD1Wdwofi47opLziga5yxpfn`, www.footagebrain.com), migration 0090 **applied**. Files **deployed but still uncommitted**. **Calibration push pending** (owner, live Planable token) — the one open verification.
+
+## 2026-06-22 — Permissions: remove Leroy ("maya")'s full-access bypass
+
+**What changed:** Leroy Crosby (DB id `maya`, reviewer role) no longer gets blanket owner-level / full-access treatment. `isOwnerRole()` dropped the `|| person?.id === "maya"` clause, and the two `signedInPerson?.id === "maya"` full-access bypasses in `canView`/`canAct` were removed — Leroy's access is now governed by his role + the normal per-person permission config like everyone else.
+
+**Where:** `src/lib/permissions.jsx` (3 deletions).
+
+**Path we took:** This change was already dirty in the working tree (from a parallel thread, not this session's Planable work). It surfaced during the mandatory pre-deploy tree-conflict check; the owner confirmed the revocation is intended, so it shipped with the full-tree Planable deploy rather than being stashed out.
+
+**What we learned:** The pre-deploy `git status` check did its job — it caught an unrelated access-control change that `vercel --prod` (full-tree build) would have shipped silently. Always reconcile every dirty file against intent before deploying, especially permission edits.
+
+**Status:** **LIVE** (`dpl_Ab5JtD1Wdwofi47opLziga5yxpfn`, www.footagebrain.com) — deployed, still uncommitted.
+
 ## 2026-06-21 — Reel DNA spreadsheet: "Back to Reel DNA" — reverse of Send-to-Pipeline
 
 **What changed:** A linked card in the Reel DNA spreadsheet now shows an amber **↩ DNA** button next to its **▸ REEL-xxx** badge. Clicking it pulls the reel back out of the pipeline: migrates the pipeline reel's **assets** (footage/locations/news the editor added) and **text** (logline/brief/VO/script/audio) back onto the card, **unlinks** it (clears `reel_id`, status → captured) so the **→ Pipeline** button resets and is selectable again, and **soft-archives** the now-empty pipeline reel off the board. Round-trips cleanly.

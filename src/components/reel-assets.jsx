@@ -1,8 +1,8 @@
 /* =========================================================
    ReelAssets — pure renderer for a reel card's attached assets.
 
-   Renders FOUR collapsible AssetSections (Footage, Locations,
-   Thumbnails, News) from the resolved `assets` shape. Data arrives
+   Renders FIVE collapsible AssetSections (Footage, Locations,
+   Thumbnails, News, Music) from the resolved `assets` shape. Data arrives
    via props — NO store/hook access here, keeping the component pure
    and reusable in both the compact panel and the full page.
 
@@ -55,6 +55,7 @@ export function ReelAssets({
   const locations = assets?.locations || [];
   const thumbnails = assets?.thumbnails || [];
   const news = assets?.news || [];
+  const music = assets?.music || [];
 
   const canDetach = typeof actions?.detachAsset === "function";
   const detach = (type, sourceId) => {
@@ -197,6 +198,46 @@ export function ReelAssets({
             <DetachBtn type="news" sourceId={n.id} />
           </div>
         ))}
+      </AssetSection>
+
+      <AssetSection
+        icon="♪"
+        label="Music"
+        count={music.length}
+        defaultOpen={allOpen}
+        compact={compact}
+        emptyText="No music attached"
+      >
+        {music.map(m => {
+          // Mirror detail.jsx / MusicPickerModal's broader accessor set so the
+          // link still resolves if a music_tracks row arrives snake_case
+          // (preview_url) rather than the camelCase the store mapper normally
+          // emits. Defensive only — additive, no behaviour change for camelCase.
+          const href =
+            m.previewUrl || m.preview_url || m.preview ||
+            m.url ||
+            m.downloadUrl || m.download_url ||
+            m.audioUrl || m.audio_url || m.mp3 ||
+            "";
+          const name = m.title || m.name || "Music";
+          const artistRaw = m.artist ?? m.artist_name ?? m.creator ?? "";
+          const artist = Array.isArray(artistRaw)
+            ? artistRaw.map(a => (typeof a === "string" ? a : a?.name || "")).filter(Boolean).join(", ")
+            : (typeof artistRaw === "string" ? artistRaw : artistRaw?.name || "");
+          return (
+            <div className="rd-asset-row" key={m.id}>
+              {href ? (
+                <a className="rd-asset-name rd-asset-link" href={href} target="_blank" rel="noreferrer" title={name}>
+                  {name}
+                </a>
+              ) : (
+                <span className="rd-asset-name">{name}</span>
+              )}
+              {artist ? <span className="rd-tag sm dim">{artist}</span> : null}
+              <DetachBtn type="music" sourceId={m.id} />
+            </div>
+          );
+        })}
       </AssetSection>
     </>
   );

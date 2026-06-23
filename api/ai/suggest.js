@@ -27,14 +27,16 @@
  *   30 8 * * * curl -s "https://footagebrain.com/api/ai/suggest?action=insights&secret=YOUR_SECRET" > /dev/null
  */
 
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED, classifyCaller, verifyOwner } from "../admin/_auth.js";
 import { runInsights } from "./_insights-core.js";
 import { ingestSources, validateFeedUrl, parseYouTubePlaylistFeed } from "./_rss.js";
 import { ingestWorldEvents } from "./_world-feeds.js";
+import { pushReelToPlanable, planablePostHasMedia, createPlanableCampaign } from "./_planable.js";
+import { searchTracks, getTrack, getDownloadUrl } from "./_epidemic.js";
 
-export const config = { maxDuration: 45 };
+export const config = { maxDuration: 60 }; // Hobby ceiling — margin for the planable two-step media poll.
 
 // undici/fetch (and browsers) reject any HTTP header VALUE containing a code
 // point above U+00FF with: "String contains non ISO-8859-1 code point". So any
@@ -575,6 +577,543 @@ export default async function handler(req, res) {
     } catch (e) {
       console.error("render-status error:", e.message);
       res.status(502).json({ error: `Couldn't reach render worker: ${e.message}` });
+    }
+    return;
+  }
+
+  // ── Dispatch: read-only Planable config for the Export-tab selector/preview ─
+  // GET /api/ai/suggest?action=planable-config  (owner Bearer JWT only)
+  // Returns the UI-safe shape derived from app_settings.planable_config. The
+  // Planable API TOKEN (PLANABLE_API_TOKEN) is NEVER read or returned here — only
+  // workspace/scheduling metadata and the per-platform page allow-list as booleans.
+  if (action === "planable-config") {
+    try { await verifyOwner(req); }
+    catch { res.status(403).json({ error: "Owner only" }); return; }
+    try {
+      const sb = adminClient();
+      const { data: cfgRow, error: cfgErr } = await sb
+        .from("app_settings")
+        .select("value")
+        .eq("key", "planable_config")
+        .maybeSingle();
+      if (cfgErr) { res.status(500).json({ error: cfgErr.message }); return; }
+      const cfg = cfgRow?.value;
+      if (!cfg || typeof cfg !== "object") {
+        // Not configured yet — report unconfigured rather than erroring so the UI
+        // can show a "set up Planable" state. Token presence is irrelevant here.
+        res.status(200).json({ configured: false, platforms: [] });
+        return;
+      }
+      const pages = (cfg.pages && typeof cfg.pages === "object") ? cfg.pages : {};
+      const handles = (cfg.handles && typeof cfg.handles === "object") ? cfg.handles : {};
+      // Surface every platform that has a mapped page (the allow-list). Never
+      // expose the raw page id — only a hasPage boolean + an optional handle.
+      const platforms = Object.keys(pages)
+        .filter((k) => pages[k])
+        .map((k) => {
+          const p = { key: k, hasPage: true };
+          if (handles[k]) p.handle = String(handles[k]);
+          return p;
+        });
+      res.status(200).json({
+        configured: true,
+        workspaceId: cfg.workspaceId || cfg.workspace_id || undefined,
+        defaultTime: cfg.defaultTime || cfg.default_time || undefined,
+        timezone: cfg.timezone || cfg.tz || undefined,
+        platforms,
+      });
+    } catch (e) {
+      console.error("planable-config error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+    return;
+  }
+
+  // ── Dispatch: push posted reels to Planable as scheduled DRAFT posts ─────────
+  // POST /api/ai/suggest?action=planable-push  (owner Bearer JWT only)
+  // Body: { platforms:string[], force?, items:[{ reelId, caption, title?, scheduled,
+  //         mediaPath?, mediaUrl?, renderJobId? }] }
+  // Returns 200 { ok:true, campaignId?:string|null, campaignWarning?:string,
+  //              results:[{ reelId, ok, planablePostId?, groupId?, withMedia?, skipped?, error? }] }
+  //
+  // SEMANTICS: ONE Planable campaign per call bundles ALL reels; EACH reel = ONE
+  // grouped post fanned across the selected platforms' pageIds (its own groupId);
+  // each reel uses its OWN item.scheduled (assigned date + posting time).
+  //
+  // CROSS-POSTING GUARD (over the ARRAY): pageIds are resolved SERVER-SIDE from the
+  // app_settings.planable_config allow-list (config.pages[platform]); the client may
+  // send only platform KEYS and any raw page id it sends is ignored. Empty / unmapped /
+  // >20 platforms are a 400 — this allow-list is the guard for the shared Planable
+  // workspace.
+  if (action === "planable-push") {
+    // Owner-only gate at the API layer (the Export UI is permission-gated, but a
+    // non-owner with a valid JWT must not be able to push to the shared workspace).
+    try { await verifyOwner(req); }
+    catch { res.status(403).json({ error: "Owner only" }); return; }
+
+    const planableToken = process.env.PLANABLE_API_TOKEN;
+    if (!planableToken) { res.status(500).json({ error: "PLANABLE_API_TOKEN not configured" }); return; }
+
+    const sb = adminClient();
+
+    // Load the Planable config (workspace + page allow-list) server-side.
+    const { data: cfgRow, error: cfgErr } = await sb
+      .from("app_settings")
+      .select("value")
+      .eq("key", "planable_config")
+      .maybeSingle();
+    if (cfgErr) { res.status(500).json({ error: cfgErr.message }); return; }
+    const config = cfgRow?.value;
+    if (!config || typeof config !== "object") {
+      res.status(500).json({ error: "planable_config not set in app_settings" }); return;
+    }
+
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+    const platforms = Array.isArray(body.platforms) ? body.platforms : [];
+    const force = body.force === true;
+    const items = Array.isArray(body.items) ? body.items : [];
+
+    // CROSS-POSTING GUARD over the ARRAY: resolve EACH platform key to its page id from
+    // the server-side allow-list. The client may pass only KEYS; any raw page id it
+    // sends is ignored (we never look at the client's ids — only at config.pages[key]).
+    // Reject: empty platforms, any unmapped platform key, or >20 / <1 resolved pages.
+    const pages = (config.pages && typeof config.pages === "object") ? config.pages : {};
+    if (platforms.length === 0) {
+      res.status(400).json({ error: "platforms required (non-empty array of keys)" }); return;
+    }
+    const unmapped = platforms.filter((p) => typeof p !== "string" || !pages[p]);
+    if (unmapped.length > 0) {
+      res.status(400).json({ error: `Unmapped platform(s): ${unmapped.join(", ")}` }); return;
+    }
+    const pageIds = platforms.map((p) => pages[p]);
+    if (pageIds.length < 1 || pageIds.length > 20) {
+      res.status(400).json({ error: `pageIds must be 1..20 (got ${pageIds.length})` }); return;
+    }
+    const workspaceId = config.workspaceId || config.workspace_id;
+    if (!workspaceId) {
+      res.status(500).json({ error: "planable_config missing workspaceId" }); return;
+    }
+
+    // The platform-set string recorded on EACH reel's row (one row per reel).
+    const platformsCsv = platforms.join(",");
+
+    // One batch id ties every reel row from THIS call together (audit + re-query).
+    const batchId = randomUUID();
+
+    // Resolve the caller's person id for the pushed_by audit column. verifyOwner
+    // already proved this is the owner; we don't re-throw if the lookup is empty.
+    let pushedBy = null;
+    try {
+      const callerToken = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+      if (callerToken) {
+        const { data: { user } } = await sb.auth.getUser(callerToken);
+        if (user) {
+          const { data: person } = await sb
+            .from("people")
+            .select("id")
+            .eq("user_id", user.id)
+            .maybeSingle();
+          pushedBy = person?.id || null;
+        }
+      }
+    } catch { /* non-fatal — pushed_by is nullable */ }
+
+    // ── ONE campaign per call bundles ALL reels ──────────────────────────────────
+    // Open-decision default (reconciled): on POST /campaigns failure the push PROCEEDS
+    // campaign-less (campaignId=null) and returns a top-level campaignWarning — a
+    // transient /campaigns outage must NEVER drop an entire batch of drafts. Each reel
+    // still groups across its pages via its own groupId; only the cross-reel bundle is
+    // lost. We do this ONE extra round-trip up-front; the budget accounts for it.
+    let campaignId = null;
+    let campaignWarning;
+    {
+      const campaignName = `FootageBrain push ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+      const camp = await createPlanableCampaign({ workspaceId, name: campaignName, token: planableToken });
+      if (camp && camp.ok && camp.campaignId) {
+        campaignId = camp.campaignId;
+      } else {
+        campaignId = null;
+        campaignWarning = `campaign-less: ${camp?.error || "campaign create failed"}`;
+        console.warn(`[planable-push] proceeding campaign-less — ${campaignWarning}`);
+      }
+    }
+
+    // HARD media-poll budget: the handler must return before Vercel kills it at
+    // maxDuration (60s). The campaign create above is one extra round-trip, so the
+    // budget is 45s (was 50s) to keep ~15s headroom for that + the post calls.
+    // Threaded into pushReelToPlanable so a slow/un-ingestable video degrades to a
+    // text-only draft instead of a killed request (the "failed · network error" bug).
+    const pushDeadlineMs = Date.now() + 45_000;
+
+    // Platforms where a video is mandatory: a caption-only draft is NOT useful, so
+    // a reel with no resolvable public video is reported ok:false instead. Applied
+    // when ANY selected platform is video-first.
+    const VIDEO_FIRST = new Set(["ig", "tiktok", "yt"]);
+    const anyVideoFirst = platforms.some((p) => VIDEO_FIRST.has(p));
+    const renderSecret = process.env.REEL_DECONSTRUCT_SECRET;
+    const HTTP_RE = /^https?:\/\//i;
+    const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+    // MEDIA RESOLUTION (server-side, per the reconciled finding): there is NO
+    // reliable DB join from a pipeline reel to a render_jobs row, so resolution is:
+    //   (1) render_jobs path — OPT-IN ONLY: active iff the client passes an explicit
+    //       valid renderJobId. Re-mint a FRESH HMAC-signed url by REUSING the
+    //       existing render-status mechanism (the same Hetzner endpoint the
+    //       ?action=render-status branch above proxies) — we do NOT duplicate the
+    //       HMAC secret/logic, only call the endpoint and read its re-minted url.
+    //   (2) mediaPath path (NEW, PREFERRED) — the owner-uploaded FINAL video lives in
+    //       the "reel-videos" Supabase Storage bucket. When the client passes a
+    //       non-empty mediaPath, mint a FRESH SHORT-LIVED SIGNED url server-side
+    //       (createSignedUrl), so Planable's two-step ingest fetches a valid url. We
+    //       record media_path on success so the cleanup cron can delete the source
+    //       file once Planable has ingested it.
+    //   (3) DEMOTED: a bare client item.mediaUrl (the attachUrl Frame.io/Drive link)
+    //       is NOT a real uploaded final video — it MUST NOT be fed into Planable's
+    //       media array (those links aren't public downloadable MP4s). Only an
+    //       uploaded final (renderJobId/mediaPath) attaches; a bare attachUrl pushes
+    //       the draft TEXT-ONLY.
+    //   (4) else null.
+    // Returns { url, fromPath } — fromPath is the bucket path to persist when the
+    // signed-url path produced the media (so cleanup can find + remove the object).
+    // RISK: the signed-URL TTL is short; if Planable's async ingest somehow lags past
+    // the TTL the fetch could 404 — the two-step poll happens promptly, and the
+    // cleanup cron only deletes AFTER confirmed ingestion, so the file is never lost
+    // prematurely. Flagged to render/Hetzner owners (deferredRisks).
+    const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1h — short-lived; minted fresh per push.
+    async function resolveMediaUrl(item) {
+      // (1) render_jobs path — opt-in via explicit renderJobId.
+      if (renderSecret && item.renderJobId && UUID_RE.test(String(item.renderJobId))) {
+        try {
+          const r = await fetch(
+            `https://api.footagebrain.com/api/render/status/${encodeURIComponent(item.renderJobId)}?secret=${encodeURIComponent(renderSecret)}`);
+          const d = await r.json().catch(() => ({}));
+          if (r.ok && d && d.status === "done" && d.output_url && HTTP_RE.test(String(d.output_url))) {
+            return { url: String(d.output_url), fromPath: null };
+          }
+        } catch { /* fall through to the next resolution step */ }
+      }
+      // (2) mediaPath path (PREFERRED) — fresh short-lived signed url from reel-videos.
+      if (item.mediaPath && typeof item.mediaPath === "string" && item.mediaPath.trim()) {
+        const mediaPath = item.mediaPath.trim();
+        try {
+          const { data: signed, error: signErr } = await sb
+            .storage
+            .from("reel-videos")
+            .createSignedUrl(mediaPath, SIGNED_URL_TTL_SECONDS);
+          if (!signErr && signed && signed.signedUrl && HTTP_RE.test(String(signed.signedUrl))) {
+            return { url: String(signed.signedUrl), fromPath: mediaPath };
+          }
+        } catch { /* fall through to the client candidate */ }
+      }
+      // (3) DEMOTED — a bare item.mediaUrl (attachUrl) is NOT media-eligible; deliberately
+      // NOT returned here so the reel pushes text-only rather than attaching a
+      // non-downloadable Frame.io/Drive link.
+      // (4) none.
+      return { url: null, fromPath: null };
+    }
+
+    // ── Per REEL, in parallel; one failure never aborts the batch (allSettled) ───
+    // Each reel = ONE pushReelToPlanable call with the SAME pageIds array → its own
+    // grouped post/groupId, all sharing the one campaignId.
+    const settled = await Promise.allSettled(items.map(async (item) => {
+      const reelId = item && item.reelId;
+      if (!reelId) return { reelId: reelId || null, ok: false, error: "missing reelId" };
+
+      // Idempotency (REEL axis, not (reel,platform)): unless force, skip a reel already
+      // pushed in this campaign-style batch. We dedupe on reel_id alone — a reel now
+      // fans across all selected platforms in ONE grouped post, so the old per-platform
+      // axis no longer applies.
+      if (!force) {
+        const { data: existing, error: dErr } = await sb
+          .from("planable_pushes")
+          .select("id")
+          .eq("reel_id", reelId)
+          .limit(1);
+        if (!dErr && existing && existing.length > 0) {
+          return { reelId, ok: true, skipped: true };
+        }
+      }
+
+      // Resolve the best public video URL server-side. `fromPath` is set only when
+      // the owner-uploaded final video (reel-videos bucket) produced the url — that's
+      // the value cleanup needs to delete the source object after Planable ingests.
+      // A bare attachUrl is DEMOTED (not media) so it never attaches a non-MP4 link.
+      const tStart = Date.now();
+      const { url: mediaUrl, fromPath: mediaPath } = await resolveMediaUrl(item);
+      if (!mediaUrl && anyVideoFirst) {
+        return { reelId, ok: false, error: "no public video available for a video-first platform" };
+      }
+
+      // Build this reel's platform-specific titles from its OWN item.title, gated by
+      // whether the matching platform is in the selected set.
+      const titles = {};
+      if (item.title != null && String(item.title).trim() !== "") {
+        if (platforms.includes("yt"))        titles.youtubeTitle       = item.title;
+        if (platforms.includes("linkedin"))  titles.linkedinVideoTitle = item.title;
+        if (platforms.includes("pinterest")) titles.pinterestTitle     = item.title;
+      }
+
+      const pushRes = await pushReelToPlanable({
+        token: planableToken,
+        workspaceId,
+        pageIds,
+        text: item.caption || "",
+        scheduledAt: item.scheduled,
+        mediaUrls: mediaUrl ? [mediaUrl] : undefined,
+        titles,
+        campaignId: campaignId || undefined,
+        deadlineMs: pushDeadlineMs,
+      });
+      // Timing breadcrumb — surfaces in Vercel runtime logs which reel/step was slow.
+      console.log(`[planable-push] reel=${reelId} platforms=${platformsCsv} media=${mediaUrl ? "y" : "n"} withMedia=${pushRes.withMedia === true} ms=${Date.now() - tStart}`);
+      if (!pushRes.ok) {
+        return { reelId, ok: false, error: pushRes.error || "Planable push failed" };
+      }
+
+      // Record ONE row per reel (audit + idempotency). Columns:
+      // [reel_id, platform, planable_post_id, scheduled, with_media, media_path,
+      //  pushed_by, campaign_id, group_id, page_ids, batch_id] (+ media_deleted_at NULL).
+      // platform = the platforms CSV; media_path is recorded ONLY when the media came
+      // from the reel-videos bucket AND it actually attached (withMedia) — so the
+      // cleanup cron never targets a file for a draft that went up text-only.
+      const recordMediaPath = (mediaPath && pushRes.withMedia === true) ? mediaPath : null;
+      const { error: insErr } = await sb.from("planable_pushes").insert({
+        reel_id: reelId,
+        platform: platformsCsv,
+        planable_post_id: pushRes.postId || null,
+        scheduled: item.scheduled || null,
+        with_media: pushRes.withMedia === true,
+        media_path: recordMediaPath,
+        pushed_by: pushedBy,
+        campaign_id: campaignId,
+        group_id: pushRes.groupId || null,
+        page_ids: pageIds,
+        batch_id: batchId,
+        media_deleted_at: null,
+      });
+      if (insErr) {
+        // The draft went up in Planable but we couldn't record it — surface it but
+        // still mark ok so the human knows the draft exists.
+        return { reelId, ok: true, planablePostId: pushRes.postId || null,
+                 groupId: pushRes.groupId || null, withMedia: pushRes.withMedia === true,
+                 error: `recorded-failed: ${insErr.message}` };
+      }
+      return { reelId, ok: true, planablePostId: pushRes.postId || null,
+               groupId: pushRes.groupId || null, withMedia: pushRes.withMedia === true };
+    }));
+
+    const results = settled.map((s, i) =>
+      s.status === "fulfilled"
+        ? s.value
+        : { reelId: (items[i] && items[i].reelId) || null, ok: false, error: String(s.reason?.message || s.reason || "push error") });
+
+    res.status(200).json({ ok: true, campaignId, ...(campaignWarning ? { campaignWarning } : {}), results });
+    return;
+  }
+
+  // ── Dispatch: post-ingest cleanup of uploaded source videos ──────────────────
+  // POST /api/ai/suggest?action=planable-cleanup  (cron SECRET in query OR owner JWT)
+  // Hetzner cron (secret): 0 */6 * * * curl ".../api/ai/suggest?action=planable-cleanup&secret=…"
+  // For every planable_pushes row that still references a source object in the
+  // reel-videos bucket (media_path set, with_media=true, planable_post_id present,
+  // not yet deleted), CONFIRM Planable has fully ingested the post's media, then
+  // delete the storage object and stamp media_deleted_at. We NEVER delete a file
+  // whose ingestion is unconfirmed (planablePostHasMedia must return ingested:true).
+  // One row's failure never aborts the batch (allSettled).
+  if (action === "planable-cleanup") {
+    // Auth: the top-level gate already required EITHER the cron secret (SUGGEST_CRON_SECRET
+    // in the query) OR a valid Bearer JWT. For this storage-mutating action a NON-cron
+    // caller must additionally be the OWNER — a plain authenticated JWT is not enough.
+    const secretAuthed = !!secret && secret === process.env.SUGGEST_CRON_SECRET;
+    if (!secretAuthed) {
+      try { await verifyOwner(req); }
+      catch { res.status(403).json({ error: "Owner only" }); return; }
+    }
+
+    const planableToken = process.env.PLANABLE_API_TOKEN;
+    if (!planableToken) { res.status(500).json({ error: "PLANABLE_API_TOKEN not configured" }); return; }
+
+    const sb = adminClient();
+
+    // Candidate rows: an uploaded source object still present, attached with media, with
+    // a Planable post to confirm against, not yet cleaned up.
+    const { data: rows, error: selErr } = await sb
+      .from("planable_pushes")
+      .select("id, planable_post_id, media_path")
+      .not("media_path", "is", null)
+      .is("media_deleted_at", null)
+      .eq("with_media", true)
+      .not("planable_post_id", "is", null);
+    if (selErr) { res.status(500).json({ error: selErr.message }); return; }
+
+    const candidates = Array.isArray(rows) ? rows : [];
+    let deleted = 0;
+    let skipped = 0;
+    const errors = [];
+
+    const settled = await Promise.allSettled(candidates.map(async (row) => {
+      // CONFIRM ingestion BEFORE any delete — the safe default (ingested:false) keeps
+      // the file so a transient/unverified check just retries next run.
+      const check = await planablePostHasMedia({ token: planableToken, postId: row.planable_post_id });
+      if (!check || check.ok !== true || check.ingested !== true) {
+        skipped++;
+        return; // try again next run; never delete on an unconfirmed ingest.
+      }
+
+      // Ingested → delete the source object, then stamp the row.
+      const { error: rmErr } = await sb.storage.from("reel-videos").remove([row.media_path]);
+      if (rmErr) {
+        errors.push({ id: row.id, error: rmErr.message });
+        return; // leave media_deleted_at NULL so a later run retries the delete.
+      }
+      const { error: updErr } = await sb
+        .from("planable_pushes")
+        .update({ media_deleted_at: new Date().toISOString() })
+        .eq("id", row.id);
+      if (updErr) {
+        // The object is gone but the stamp failed; surface it. Next run will see the
+        // object already removed (remove() is idempotent) and re-stamp.
+        errors.push({ id: row.id, error: `deleted-but-unstamped: ${updErr.message}` });
+        deleted++;
+        return;
+      }
+      deleted++;
+    }));
+
+    // allSettled never rejects, but capture any unexpected rejection defensively.
+    for (let i = 0; i < settled.length; i++) {
+      if (settled[i].status === "rejected") {
+        const r = settled[i].reason;
+        errors.push({ id: candidates[i]?.id || null, error: String(r?.message || r || "cleanup error") });
+      }
+    }
+
+    res.status(200).json({ ok: true, checked: candidates.length, deleted, skipped, errors });
+    return;
+  }
+
+  // ── Dispatch: report where the UI should upload the final video ──────────────
+  // GET /api/ai/suggest?action=planable-upload-target  (owner Bearer JWT only)
+  // Capacity-aware: the UI uploads to the reel-videos Supabase bucket by default;
+  // only near ~80% of the configured quota does it switch to the (human-gated)
+  // Hetzner upload seam. Best-effort measurement — if usage can't be measured we
+  // default to supabase + capacityPct:null + a message (never a silent failure).
+  if (action === "planable-upload-target") {
+    try { await verifyOwner(req); }
+    catch { res.status(403).json({ error: "Owner only" }); return; }
+
+    const sb = adminClient();
+    const HETZNER_SWITCH_PCT = 80; // switch to the Hetzner seam at/above this %.
+    // Quota (bytes) the reel-videos bucket is measured against. Configurable via env
+    // so the owner can right-size it without a code change; defaults to 1 GiB.
+    const quotaBytes = Number(process.env.PLANABLE_BUCKET_QUOTA_BYTES) || (1 * 1024 * 1024 * 1024);
+
+    // Best-effort usage measurement: sum object sizes in the reel-videos bucket via
+    // the Storage list API (metadata.size). This is approximate (top-level listing,
+    // capped page) and degrades gracefully — any failure → unmeasurable.
+    let usedBytes = null;
+    try {
+      const { data: objs, error: listErr } = await sb
+        .storage
+        .from("reel-videos")
+        .list("", { limit: 1000, sortBy: { column: "name", order: "asc" } });
+      if (!listErr && Array.isArray(objs)) {
+        usedBytes = objs.reduce((sum, o) => {
+          const size = o && o.metadata && Number(o.metadata.size);
+          return sum + (Number.isFinite(size) ? size : 0);
+        }, 0);
+      }
+    } catch { /* unmeasurable — fall through to the default below */ }
+
+    if (usedBytes === null || !Number.isFinite(quotaBytes) || quotaBytes <= 0) {
+      // RISK: capacity is unmeasurable (Storage list failed, or no quota configured).
+      // Default to supabase + flag it so the UI can surface that capacity is unknown.
+      res.status(200).json({
+        target: "supabase",
+        bucket: "reel-videos",
+        capacityPct: null,
+        message: "Storage capacity could not be measured; defaulting to Supabase upload. Set PLANABLE_BUCKET_QUOTA_BYTES and ensure the reel-videos bucket is listable.",
+      });
+      return;
+    }
+
+    const capacityPct = Math.round((usedBytes / quotaBytes) * 1000) / 10; // 1-decimal %.
+    if (capacityPct >= HETZNER_SWITCH_PCT) {
+      // ── Hetzner upload seam (HUMAN-GATED, NOT live) ──────────────────────────
+      // Near capacity the UI should upload to the Hetzner backend (the file holder,
+      // no body cap) instead of the Supabase bucket. That upload endpoint does NOT
+      // exist yet — mirroring the bytes-mode Hetzner seam in api/ai/_planable.js,
+      // this is a CLEARLY-COMMENTED seam the UI surfaces (never a silent failure).
+      // TODO(hetzner): build a POST upload endpoint on api.footagebrain.com that
+      // stores the final MP4 and returns a path/url the push can attach, then wire
+      // the UI's 'hetzner' branch to it.
+      res.status(200).json({
+        target: "hetzner",
+        bucket: "reel-videos",
+        capacityPct,
+        message: `Supabase storage is at ~${capacityPct}% of quota. The Hetzner upload fallback is not yet wired (human-gated backend work) — uploads should pause or the quota be raised.`,
+      });
+      return;
+    }
+
+    res.status(200).json({ target: "supabase", bucket: "reel-videos", capacityPct });
+    return;
+  }
+
+  // ── Dispatch: Epidemic Sound music library (proxy) ─────────────────────────
+  // Server-side proxy so the owner's Epidemic token (read ONLY inside _epidemic.js
+  // from process.env.EPIDEMIC_TOKEN) NEVER reaches the browser. The top-level
+  // Bearer-JWT auth (above, :60-71) is the gate — NO verifyOwner here, because the
+  // 3 editors must be able to search/preview/download licensed tracks. Folded into
+  // this route (underscore helper does not count) to stay under the 12-function cap.
+  // Frozen contract:
+  //   epidemic-search   { term, limit?, offset?, filters?:{moods?[],genres?[]} } -> { ok:true, tracks }
+  //   epidemic-track    { id }                                                   -> { ok:true, track }
+  //   epidemic-download { id, format?:'mp3'|'wav', quality? }                    -> { ok:true, url, expires }
+  // Errors: 500 'EPIDEMIC_TOKEN not configured' (env missing); 502 'epidemic_token_expired'
+  // (Epidemic 401/403 → UI "reconnect — see Paul"); 502 { error } otherwise.
+  // The token NEVER appears in any response; the signed CDN url is short-lived.
+  if (action === "epidemic-search" || action === "epidemic-track" || action === "epidemic-download") {
+    if (!process.env.EPIDEMIC_TOKEN) {
+      res.status(500).json({ error: "EPIDEMIC_TOKEN not configured" });
+      return;
+    }
+    // Tolerant body parse (mirrors the other proxy branches, e.g. :251-253).
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+
+    let result;
+    if (action === "epidemic-search") {
+      result = await searchTracks({
+        term: body.term,
+        limit: body.limit,
+        offset: body.offset,
+        filters: body.filters,
+      });
+    } else if (action === "epidemic-track") {
+      result = await getTrack(body.id);
+    } else {
+      result = await getDownloadUrl(body.id, { format: body.format, quality: body.quality });
+    }
+
+    if (result && result.expired) {
+      res.status(502).json({ error: "epidemic_token_expired" });
+      return;
+    }
+    if (!result || !result.ok) {
+      res.status(502).json({ error: (result && result.error) || "epidemic upstream failed" });
+      return;
+    }
+
+    if (action === "epidemic-search") {
+      res.status(200).json({ ok: true, tracks: result.tracks });
+    } else if (action === "epidemic-track") {
+      res.status(200).json({ ok: true, track: result.track });
+    } else {
+      res.status(200).json({ ok: true, url: result.url, expires: result.expires });
     }
     return;
   }

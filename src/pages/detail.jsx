@@ -14,12 +14,15 @@ import { ReelCompareModal } from "../components/ReelCompareModal.jsx";
 import { shareReelToChannel } from "../lib/social-client.js";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
+import { supabase } from "../lib/supabase-client.js";
 import { usePermissions, useIsOwner } from "../lib/permissions.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { useNotifications } from "../components/notifications.jsx";
 import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
 import { getFootageFileMetadata, driveDownloadUrl } from "../lib/footage-brain-client.js";
 import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
+import { MusicPickerModal } from "../components/MusicPickerModal.jsx";
+import { resolveReelDnaAssets } from "../store/store.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
 import { PipelineDnaAssets } from "../components/pipeline-dna-assets.jsx";
 import { SKILLS } from "../lib/training-curriculum.jsx";
@@ -208,7 +211,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   /* Hook into the canonical store. `stored` is the DB-backed
      record for the currently displayed reel — what we read seed
      values from and what we write Blueprint edits back into. */
-  const { reels, actions } = useWorkflow();
+  const { reels, actions, reelDnaAssets, musicTracks } = useWorkflow();
   const { can } = usePermissions();
   const isOwner = useIsOwner();
   const { peopleList } = useRoster();
@@ -393,6 +396,47 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
     setSearchModalOpen(true);
   };
   const closeSearchModal = () => { setSearchModalOpen(false); setFolderToBrowse(null); };
+
+  /* Attached-music modal state. The music attaches to the reel's DNA card id
+     (the same id PipelineDnaAssets uses), falling back to the reel's own id so
+     the picker still works for reels not minted from a Reel DNA row. */
+  const reelDnaId =
+    current.reelDnaId ||
+    stored?.detail?.fromReelDna ||
+    current.detail?.fromReelDna ||
+    current.id;
+  const [musicModalOpen, setMusicModalOpen] = useState(false);
+  // Resolve attached music tracks from the polymorphic reel_dna_assets join.
+  const attachedMusic = useMemo(
+    () =>
+      resolveReelDnaAssets(reelDnaId, {
+        reelDnaAssets: reelDnaAssets || [],
+        musicTracks: musicTracks || [],
+      }).music,
+    [reelDnaId, reelDnaAssets, musicTracks]
+  );
+  // Per-track download UI state: { [id]: "loading" | "error" }.
+  const [musicDlState, setMusicDlState] = useState({});
+  const handleMusicDownload = async (track) => {
+    const id = track?.id;
+    if (id == null) return;
+    setMusicDlState(s => ({ ...s, [id]: "loading" }));
+    try {
+      const res = await actions.getMusicDownload(id);
+      if (res?.ok && res.url) {
+        window.open(res.url, "_blank", "noopener,noreferrer");
+        setMusicDlState(s => { const n = { ...s }; delete n[id]; return n; });
+      } else {
+        setMusicDlState(s => ({ ...s, [id]: "error" }));
+      }
+    } catch {
+      setMusicDlState(s => ({ ...s, [id]: "error" }));
+    }
+  };
+  const handleRemoveMusic = (track) => {
+    if (track?.id == null) return;
+    actions.detachAsset(reelDnaId, "music", track.id);
+  };
 
   /* Get attached footage for this reel from store */
   const { attachedFootage } = useWorkflow();
@@ -595,6 +639,105 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
     if (stored && stored.attachUrl !== trimmed) {
       actions.updateReel(current.id, { attachUrl: trimmed });
     }
+  };
+
+  /* ── OWNER-ONLY "Final video" MP4 upload ─────────────────────────────────
+     ADDITIVE to the attachUrl text field above. On file pick we ask the
+     capacity-aware target endpoint (?action=planable-upload-target) where to
+     upload. supabase → upload to the PRIVATE "reel-videos" bucket (same idiom
+     as locations.jsx) and persist mediaPath/mediaTarget (the source of
+     truth — the push action mints a fresh signed url at push time). hetzner →
+     the documented near-capacity fallback seam is owner-gated/not-yet-wired,
+     so we surface the server message and stop rather than fail silently.
+     Consumes ONLY the frozen contract names — reel.mediaPath is the single
+     end-to-end field: detail.jsx writes it, export-view.jsx resolveRow reads it,
+     and the planable-push server reads it (suggest.js item.mediaPath). Local
+     vars are named to MATCH that contract (not attachPath/attachTarget) so the
+     reel field name is unambiguous across the two UI files. */
+  const mediaPath   = stored?.mediaPath || "";
+  const mediaTarget = stored?.mediaTarget || "";
+  // null | 'uploading' | 'done' | 'error'  (mirrors the locations 'uploading' pattern)
+  const [videoUploadState, setVideoUploadState] = useState(null);
+  const [videoUploadMsg, setVideoUploadMsg] = useState("");
+
+  const handleFinalVideoUpload = async (e) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    setVideoUploadState("uploading");
+    setVideoUploadMsg("");
+    try {
+      // 1) ask the capacity-aware target endpoint where to upload
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        // FAIL loudly — no auth means the owner-gated contract can't be honored
+        setVideoUploadState("error");
+        setVideoUploadMsg("Not signed in — cannot upload.");
+        return;
+      }
+      const res = await fetch("/api/ai/suggest?action=planable-upload-target", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        setVideoUploadState("error");
+        setVideoUploadMsg(`Upload target check failed (${res.status}).`);
+        return;
+      }
+      const targetInfo = await res.json(); // { target, bucket, capacityPct, message }
+      const target = targetInfo?.target;
+      const bucket = targetInfo?.bucket || "reel-videos";
+
+      if (target === "hetzner") {
+        // Documented ~80%-capacity fallback seam — owner-gated backend work,
+        // not yet wired. Surface, don't silently swallow.
+        setVideoUploadState("error");
+        setVideoUploadMsg(
+          targetInfo?.message ||
+          "Storage near capacity — Hetzner upload is owner-gated and not yet wired."
+        );
+        return;
+      }
+      if (target !== "supabase") {
+        // Unexpected contract value — FAIL loudly.
+        setVideoUploadState("error");
+        setVideoUploadMsg(`Unexpected upload target: ${String(target)}`);
+        return;
+      }
+
+      // 2) supabase: upload to the PRIVATE reel-videos bucket (locations idiom)
+      const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
+      const path = `${current.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { data: uploadData, error } = await supabase.storage
+        .from(bucket)
+        .upload(path, file, { upsert: false });
+      if (error || !uploadData) {
+        setVideoUploadState("error");
+        setVideoUploadMsg(error?.message || "Upload failed.");
+        return;
+      }
+
+      // 3) persist the media reference on the reel. mediaPath is the source of
+      //    truth (private bucket → getPublicUrl is NOT playable; server mints a
+      //    signed url at push time). The key MUST be mediaPath/mediaTarget —
+      //    that is the frozen field the planable-push server reads
+      //    (suggest.js item.mediaPath). Leave the existing attachUrl untouched.
+      actions.updateReel(current.id, {
+        mediaPath: uploadData.path,
+        mediaTarget: "supabase",
+      });
+      setVideoUploadState("done");
+      setVideoUploadMsg("");
+    } catch (err) {
+      setVideoUploadState("error");
+      setVideoUploadMsg(err?.message || "Upload failed.");
+    }
+  };
+
+  const removeFinalVideo = () => {
+    actions.updateReel(current.id, { mediaPath: "", mediaTarget: "" });
+    setVideoUploadState(null);
+    setVideoUploadMsg("");
   };
 
   /* Reference links (audio + inspiration). Always editable post-create:
@@ -836,6 +979,51 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           <DPill onClick={editReelStateUrl}>
             {reelStateUrl ? "Edit link" : "+ Current reel state"}
           </DPill>
+          {/* OWNER-ONLY final-video MP4 upload — ADDITIVE; consumes the frozen
+              ?action=planable-upload-target contract + the "reel-videos" bucket. */}
+          {isOwner && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              {mediaPath ? (
+                <>
+                  <DPill title={mediaPath} style={{ cursor: "default" }}>
+                    ✓ Final video attached{mediaTarget ? ` (${mediaTarget})` : ""}
+                  </DPill>
+                  <DPill onClick={removeFinalVideo} title="Clear the attached final video">
+                    ✕ Remove
+                  </DPill>
+                </>
+              ) : (
+                <label
+                  className="dpill"
+                  style={{
+                    cursor: videoUploadState === "uploading" ? "wait" : "pointer",
+                    opacity: videoUploadState === "uploading" ? 0.6 : 1,
+                  }}
+                  title="Upload the final MP4 for this reel (owner only)"
+                >
+                  {videoUploadState === "uploading" ? "Uploading…" : "⬆ Final video"}
+                  <input
+                    type="file"
+                    accept="video/mp4,video/quicktime"
+                    style={{ display: "none" }}
+                    disabled={videoUploadState === "uploading"}
+                    onChange={handleFinalVideoUpload}
+                  />
+                </label>
+              )}
+              {videoUploadState === "done" && !mediaPath ? (
+                <span style={{ fontSize: 12, color: "var(--ok, #2e7d32)" }}>Uploaded ✓</span>
+              ) : null}
+              {videoUploadState === "error" ? (
+                <span
+                  title={videoUploadMsg}
+                  style={{ fontSize: 12, color: "var(--danger, #c62828)", maxWidth: 260 }}
+                >
+                  Failed{videoUploadMsg ? `: ${videoUploadMsg}` : ""}
+                </span>
+              ) : null}
+            </div>
+          )}
           {canAttach && (
             <DPill onClick={() => setSearchModalOpen(true)} primary>+ Search Footage</DPill>
           )}
@@ -936,6 +1124,157 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
               </div>
             )}
           </Card>
+
+          {/* ===== Attached Music — mirrors the Footage card above ===== */}
+          <Card
+            title="Attached Music"
+            right={<span className="count-tag cyan">{attachedMusic.length}</span>}
+            footLeft="Licensed tracks linked to this reel"
+          >
+            {attachedMusic.length === 0 && (
+              <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "4px 0 8px" }}>
+                No music attached yet.
+              </div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {attachedMusic.map((track) => {
+                const cover =
+                  track?.cover || track?.cover_url || track?.coverUrl ||
+                  track?.image || track?.image_url || track?.artwork ||
+                  track?.thumbnail || "";
+                const title = track?.title || track?.name || "Untitled track";
+                const artistRaw =
+                  track?.artist || track?.artists || track?.artist_name ||
+                  track?.creator || "";
+                const artist = Array.isArray(artistRaw)
+                  ? artistRaw.map(a => (typeof a === "string" ? a : a?.name || "")).filter(Boolean).join(", ")
+                  : (typeof artistRaw === "string" ? artistRaw : artistRaw?.name || "");
+                const preview =
+                  track?.preview_url || track?.previewUrl || track?.preview ||
+                  track?.audio_url || track?.mp3 || "";
+                const dl = musicDlState[track.id];
+                return (
+                  <div
+                    key={track.id}
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 4,
+                      padding: 8,
+                      background: "var(--bg-alt)",
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
+                    {/* Cover */}
+                    <div
+                      style={{
+                        width: 44, height: 44, borderRadius: 3, overflow: "hidden",
+                        flexShrink: 0, background: "var(--bg)", border: "1px solid var(--border)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}
+                    >
+                      {cover ? (
+                        <img
+                          src={cover}
+                          alt={title}
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          onError={(e) => { e.currentTarget.style.display = "none"; }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: 18 }} role="img" aria-label="music">🎵</span>
+                      )}
+                    </div>
+
+                    {/* Title + artist */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        title={title}
+                        style={{
+                          fontSize: 13, fontWeight: 500, color: "var(--fg)",
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                        }}
+                      >
+                        {title}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11, color: "var(--fg-mute)",
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                        }}
+                      >
+                        {artist || "Unknown artist"}
+                      </div>
+                      {/* Mini preview */}
+                      {preview && (
+                        <audio
+                          controls
+                          preload="none"
+                          src={preview}
+                          style={{ width: "100%", height: 28, marginTop: 4 }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Download */}
+                    <button
+                      type="button"
+                      onClick={() => handleMusicDownload(track)}
+                      disabled={dl === "loading"}
+                      title={dl === "error" ? "Download failed — retry" : "Download licensed track"}
+                      style={{
+                        padding: "6px 10px",
+                        background: "transparent",
+                        color: dl === "error" ? "var(--danger, #c62828)" : "var(--c-cyan, #22d3ee)",
+                        border: `1px solid ${dl === "error" ? "var(--danger, #c62828)" : "var(--c-cyan, #22d3ee)"}`,
+                        borderRadius: 3,
+                        cursor: dl === "loading" ? "default" : "pointer",
+                        fontSize: 11, fontWeight: 500, whiteSpace: "nowrap",
+                        opacity: dl === "loading" ? 0.6 : 1,
+                      }}
+                    >
+                      {dl === "loading" ? "…" : dl === "error" ? "⚠ Retry" : "⬇ Download"}
+                    </button>
+
+                    {/* Remove */}
+                    {canRemoveFootage && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMusic(track)}
+                        title="Remove this track from the reel"
+                        style={{
+                          padding: "6px 9px",
+                          background: "transparent",
+                          color: "var(--fg-mute)",
+                          border: "1px solid var(--border)",
+                          borderRadius: 3, cursor: "pointer",
+                          fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {canAttach && (
+              <div style={{ marginTop: 10 }}>
+                <DPill onClick={() => setMusicModalOpen(true)} primary={attachedMusic.length === 0}>
+                  + Add Music
+                </DPill>
+              </div>
+            )}
+          </Card>
+
+          {/* Attach-music modal — mirrors the Footage search modal */}
+          {musicModalOpen && (
+            <MusicPickerModal
+              reelDnaId={reelDnaId}
+              onClose={() => setMusicModalOpen(false)}
+            />
+          )}
+
           <LocationPicker reelId={current.id} />
           {(stored?.detail?.fromReelDna || current.detail?.fromReelDna) && (
             <PipelineDnaAssets

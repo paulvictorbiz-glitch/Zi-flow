@@ -18,6 +18,7 @@ import { ReelDna } from "./pages/reel-dna.jsx";
    are hoisted to module scope (LAZY_IMPORTERS) so B3 prefetch reuses the exact
    same chunk factories — no duplicate chunks. ---- */
 const importMonitorHub   = () => import("./pages/monitor-hub.jsx");
+const importMusicLibrary = () => import("./pages/music-library.jsx");
 const importAnalytics    = () => import("./pages/analytics.jsx");
 const importInbox        = () => import("./pages/inbox.jsx");
 const importTraining     = () => import("./pages/training.jsx");
@@ -36,13 +37,14 @@ const importListView     = () => import("./pages/list-view.jsx");
 const importTeamChat     = () => import("./pages/team-chat.jsx");
 // Used by B3 prefetch: warm every heavy chunk on idle. Same factories as below.
 const LAZY_IMPORTERS = [
-  importMonitorHub, importAnalytics, importInbox, importTraining,
+  importMonitorHub, importMusicLibrary, importAnalytics, importInbox, importTraining,
   importVideoEditor, importLosslessCut, importIdeaGenerator, importLocations,
   importCoverage, importResources, importActivity, importRolesAdmin,
   importExportView, importArchivedView, importCalendarView, importListView,
   importTeamChat,
 ];
 const MonitorHub   = React.lazy(() => importMonitorHub().then((m)   => ({ default: m.MonitorHub })));
+const MusicLibrary = React.lazy(() => importMusicLibrary().then((m) => ({ default: m.MusicLibrary })));
 const Analytics    = React.lazy(() => importAnalytics().then((m)    => ({ default: m.Analytics })));
 const Inbox        = React.lazy(() => importInbox().then((m)        => ({ default: m.Inbox })));
 const Training     = React.lazy(() => importTraining().then((m)     => ({ default: m.Training })));
@@ -108,6 +110,7 @@ const TABS = [
   { key: "pipeline",  label: "Pipeline" },
   { key: "generate",  label: "Generate" },
   { key: "reeldna",   label: "Reel DNA" },
+  { key: "music",     label: "Music Library" },
   { key: "footage",   label: "Footage" },
   { key: "coverage",  label: "Coverage" },
   { key: "locations", label: "Locations" },
@@ -130,7 +133,7 @@ const TABS = [
 const DEFAULT_TAB_GROUPS = [
   { key: "mywork_group",  label: "My Work",     tone: "cyan",   tabs: ["mywork"] },
   { key: "produce_group", label: "Produce",     tone: "amber",  tabs: ["pipeline", "generate"] },
-  { key: "library_group", label: "Library",     tone: "violet", tabs: ["reeldna", "footage", "coverage", "locations"] },
+  { key: "library_group", label: "Library",     tone: "violet", tabs: ["reeldna", "music", "footage", "coverage", "locations"] },
   { key: "edit_group",    label: "Edit & Ship", tone: "green",  tabs: ["editor", "lossless", "export"] },
   { key: "learn_group",   label: "Learn",       tone: "pink",   tabs: ["training", "resources"] },
   { key: "engage_group",  label: "Engage",      tone: "orange", tabs: ["inbox", "team", "analytics"] },
@@ -769,6 +772,7 @@ function AppShell() {
         {view === "coverage"  && <Coverage />}
         {view === "generate"  && <IdeaGenerator />}
         {view === "reeldna"   && <ReelDna prefill={capturePrefill} />}
+        {view === "music"     && <MusicLibrary />}
         {view === "training"  && <Training onOpen={openReel} personId={shownPerson?.id} focusModule={focusModule} onFocusConsumed={() => setFocusModule(null)} />}
         {view === "activity"  && <Activity />}
         {view === "resources" && <Resources />}
