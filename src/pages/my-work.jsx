@@ -138,11 +138,13 @@ function MyWork({ role, personId, onOpen, onNavigate, onSetPerson }) {
     : <SkilledWork me={me} onOpen={onOpen} role={role} />;
   return (
     <>
-      {dashboard}
-      {/* New Teams-chat messages — recent log + mute/mark-read (all roles). */}
-      <div style={{ padding: "0 22px 24px" }}>
+      {/* New Teams-chat messages — recent log + mute/mark-read (all roles).
+          Relocated to the TOP of My Work (MYW-rel) so unread team messages are
+          the first thing seen on entry, instead of being buried at page bottom. */}
+      <div style={{ padding: "16px 22px 0" }}>
         <TeamChatRecentCard onOpenTeam={() => onNavigate?.("team")} />
       </div>
+      {dashboard}
     </>
   );
 }

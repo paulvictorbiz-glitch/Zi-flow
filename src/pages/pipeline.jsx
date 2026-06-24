@@ -24,7 +24,6 @@ function Pipeline({ onOpen }) {
   const { peopleList } = useRoster();
   const { can } = usePermissions();
   const isOwner = useIsOwner();
-  const [filter, setFilter] = useState("all");
   const [scheduleModal, setScheduleModal] = useState(null);
   const [scheduleDate, setScheduleDate] = useState("");
 
@@ -150,7 +149,6 @@ function Pipeline({ onOpen }) {
   const cells = useMemo(() => {
     const m = {};
     items.forEach(r => {
-      if (filter === "blocked" && !(r.state === "block" || r.state === "warn")) return;
       const k = r.lane + "::" + r.stage;
       (m[k] = m[k] || []).push(r);
     });
@@ -164,7 +162,7 @@ function Pipeline({ onOpen }) {
         (groupBySeries ? seriesKey(a).localeCompare(seriesKey(b)) : 0) ||
         (a.board_order ?? Infinity) - (b.board_order ?? Infinity)));
     return m;
-  }, [items, filter, groupBySeries]);
+  }, [items, groupBySeries]);
 
   /* Flash the Completed column header red for 700 ms to signal a blocked drop. */
   const flashBlocked = useCallback((stage) => {
@@ -288,8 +286,6 @@ function Pipeline({ onOpen }) {
           </div>
         </div>
         <div className="actions">
-          <DPill active={filter === "all"} onClick={() => setFilter("all")}>All reels</DPill>
-          <DPill active={filter === "blocked"} onClick={() => setFilter("blocked")} tone="red">Blocked / warn</DPill>
           <DPill active={groupBySeries} onClick={() => setGroupBySeries(v => !v)}>Group by series</DPill>
           {/* Column visibility menu */}
           <div ref={colMenuRef} style={{ position: "relative" }}>
@@ -461,13 +457,16 @@ function Pipeline({ onOpen }) {
                     const groupActive = isSelected && selectedIds.size > 1;
                     const isThisDrag = dragging && dragging.id === r.id;
                     const isInGroupDrag = dragging && selectedIds.has(dragging.id) && selectedIds.size > 1 && isSelected;
-                    /* When grouping, drop a thin series label at each group boundary. */
-                    const showSeriesHeader = groupBySeries && cardView === "list" &&
+                    /* When grouping, drop a thin series label at each group boundary.
+                       In card (grid) views the label spans the full row so the
+                       grouping reads correctly across the 2×2 / 3×3 tiles. */
+                    const showSeriesHeader = groupBySeries &&
                       (idx === 0 || (reels[idx - 1].series || "") !== (r.series || ""));
                     return (
                       <React.Fragment key={r.id}>
                       {showSeriesHeader && (
-                        <div className="pipe-series-header">
+                        <div className="pipe-series-header"
+                             style={cardView !== "list" ? { gridColumn: "1 / -1" } : undefined}>
                           {r.series ? `⛓ ${r.series}` : "· no series"}
                         </div>
                       )}

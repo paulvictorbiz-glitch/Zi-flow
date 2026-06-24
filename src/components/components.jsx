@@ -148,7 +148,14 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
   };
 
   return (
-    <div className={cls} onClick={openReel} style={cardStyle}>
+    <div
+      className={cls}
+      onClick={openReel}
+      /* Compact (grid) cards clip to 58px via overflow:hidden; while the kebab
+         menu is open, let the dropdown escape that clamp (inline overrides the
+         stylesheet rule — styles.css is edit-locked). */
+      style={menuOpen && compact ? { ...cardStyle, overflow: "visible", zIndex: 5 } : cardStyle}
+    >
       <div className="head">
         <div>
           {!collapsed && !compact && (
@@ -184,14 +191,17 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
           )}
         </div>
         {!collapsed && !compact && pillText && <Pill tone={pillTone}>{pillText}</Pill>}
-        {!collapsed && !compact && showMenu && (
+        {!collapsed && showMenu && (
           <button
             className="reel-menu-btn"
             onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
             aria-label="Card actions"
+            /* Hover-reveal is unreliable on dense grid tiles — keep the kebab
+               visible in compact view so card-view actions are discoverable. */
+            style={compact ? { opacity: 1 } : undefined}
           >⋯</button>
         )}
-        {!collapsed && !compact && showMenu && menuOpen && (
+        {!collapsed && showMenu && menuOpen && (
           <div ref={menuRef} className="reel-menu" onClick={e => e.stopPropagation()}>
             {showDupePicker ? (<>
               <div style={{ padding:"5px 10px 3px", fontFamily:"var(--f-mono)", fontSize:10, color:"var(--fg-dim,#888)", textTransform:"uppercase", letterSpacing:".06em" }}>Duplicate for:</div>

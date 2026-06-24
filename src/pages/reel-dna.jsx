@@ -420,7 +420,6 @@ function ColumnFilterRow({ colFilters, onColFilter, onClear, visible = () => tru
       {visible("sfx")      && T("sfx")}
       {visible("story")    && T("story")}
       {visible("notes")    && T("notes")}
-      {visible("status")   && S("status")}
       {visible("assets")   && <td className="rd-colfilter-td" />}
       {visible("actions")  && (
         <td className="rd-colfilter-td rd-colfilter-clear-td">
@@ -786,7 +785,6 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
             {visible("sfx")      && <th>SFX</th>}
             {visible("story")    && <th>Story / Pacing</th>}
             {visible("notes")    && <th>Notes</th>}
-            {visible("status")   && <th>Status</th>}
             {visible("assets")   && <th className="rd-th-assets">Assets</th>}
             {visible("actions")  && <th className="rd-th-act"></th>}
           </tr>
@@ -820,14 +818,6 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                 {visible("sfx") && <td><EditableCell value={tags.sfx} placeholder="—" onSave={v => saveGeneField(item, "sfx", "notes", v)} /></td>}
                 {visible("story") && <td><EditableCell value={tags.story} placeholder="—" onSave={v => saveGeneField(item, "story", "styleNotes", v)} /></td>}
                 {visible("notes") && <td><EditableCell value={item.quickNotes} placeholder="—" onSave={v => actions.updateReelDna(item.id, { quickNotes: v || null })} /></td>}
-                {visible("status") && (
-                  <td>
-                    <select className="rd-cell-status" value={item.status}
-                            onChange={e => actions.updateReelDna(item.id, { status: e.target.value })}>
-                      {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-                    </select>
-                  </td>
-                )}
                 {visible("assets") && <AssetCountCell item={item} onOpen={onOpenAssets} />}
                 {visible("actions") && (
                   <td className="rd-td-act">

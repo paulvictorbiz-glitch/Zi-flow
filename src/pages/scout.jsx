@@ -11,7 +11,7 @@
    toggle, category-group + favorites/archived filters, and per-row star /
    archive / delete (anon writes to the Scout DB; see scout-supabase.js). */
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase-client.js";
 import {
   scoutSupabase,
@@ -132,7 +132,11 @@ export function Scout() {
 
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
-  const [groupFilter, setGroupFilter] = useState("all");
+  // Multi-select category-group filter (SCT-002). Empty set = all groups shown;
+  // any selected → only rows whose category_group is checked.
+  const [groupSel, setGroupSel] = useState(() => new Set());
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const groupMenuRef = useRef(null);
   const [scoreMin, setScoreMin] = useState(0);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -201,9 +205,34 @@ export function Scout() {
 
   const groupOptions = useMemo(() => {
     const set = new Set();
-    for (const p of products) if (p.category_group) set.add(p.category_group);
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    let hasUncat = false;
+    for (const p of products) { if (p.category_group) set.add(p.category_group); else hasUncat = true; }
+    const arr = Array.from(set).sort((a, b) => a.localeCompare(b));
+    if (hasUncat) arr.push("Uncategorized");
+    return arr;
   }, [products]);
+
+  // Count of archived rows — surfaced on the "Show archived" toggle so archiving
+  // a row doesn't feel like it vanished (SCT-006).
+  const archivedCount = useMemo(() => enriched.filter((r) => r.archived).length, [enriched]);
+
+  const toggleGroupSel = useCallback((name) => {
+    setGroupSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }, []);
+
+  // Close the group multi-select popover on outside click.
+  useEffect(() => {
+    if (!groupMenuOpen) return;
+    const handler = (e) => {
+      if (groupMenuRef.current && !groupMenuRef.current.contains(e.target)) setGroupMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [groupMenuOpen]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -211,7 +240,7 @@ export function Scout() {
       if (!showArchived && row.archived) return false;
       if (favoritesOnly && !row.starred) return false;
       if (sourceFilter !== "all" && row.source !== sourceFilter) return false;
-      if (groupFilter !== "all" && (row.category_group || "") !== groupFilter) return false;
+      if (groupSel.size > 0 && !groupSel.has(row.category_group || "Uncategorized")) return false;
       const score = scoreOf(row) ?? 0;
       if (score < scoreMin) return false;
       if (q) {
@@ -221,7 +250,7 @@ export function Scout() {
       }
       return true;
     });
-  }, [enriched, search, sourceFilter, groupFilter, scoreMin, favoritesOnly, showArchived]);
+  }, [enriched, search, sourceFilter, groupSel, scoreMin, favoritesOnly, showArchived]);
 
   const sorted = useMemo(() => {
     const rows = [...filtered];
@@ -299,7 +328,11 @@ export function Scout() {
     if (!res.ok) {
       setProducts((prev) => prev.map((p) => (p.id === row.id ? { ...p, archived: !next } : p)));
       showToast("Could not update archive state.");
+      return;
     }
+    // Tell the owner where the row went — archived rows are hidden unless the
+    // "Show archived" toggle is on (SCT-006).
+    showToast(next ? "Archived — turn on “Show archived” to view it." : "Unarchived.");
   }, [showToast]);
 
   const handleDelete = useCallback(async (row) => {
@@ -468,12 +501,42 @@ export function Scout() {
             <option key={s} value={s}>{srcLabel(s)}</option>
           ))}
         </select>
-        <select className="scout-select" value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
-          <option value="all">All groups</option>
-          {groupOptions.map((g) => (
-            <option key={g} value={g}>{g}</option>
-          ))}
-        </select>
+        <div className="scout-groupsel" ref={groupMenuRef} style={{ position: "relative" }}>
+          <button
+            type="button"
+            className="scout-select scout-groupsel-btn"
+            onClick={() => setGroupMenuOpen((o) => !o)}
+            title="Filter by one or more category groups"
+          >
+            {groupSel.size === 0 ? "All groups" : `${groupSel.size} group${groupSel.size === 1 ? "" : "s"}`} ▾
+          </button>
+          {groupMenuOpen && (
+            <div className="scout-groupsel-menu">
+              {groupOptions.length === 0 && (
+                <div className="scout-groupsel-empty">No groups yet</div>
+              )}
+              {groupOptions.map((g) => (
+                <label key={g} className="scout-groupsel-opt">
+                  <input
+                    type="checkbox"
+                    checked={groupSel.has(g)}
+                    onChange={() => toggleGroupSel(g)}
+                  />
+                  {g}
+                </label>
+              ))}
+              {groupSel.size > 0 && (
+                <button
+                  type="button"
+                  className="scout-groupsel-clear"
+                  onClick={() => setGroupSel(new Set())}
+                >
+                  Clear selection
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <div className="scout-score-filter">
           <span>Score ≥</span>
           <input
@@ -490,7 +553,7 @@ export function Scout() {
         </label>
         <label className="scout-check">
           <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
-          Show archived
+          Show archived{archivedCount ? ` (${archivedCount})` : ""}
         </label>
       </div>
 

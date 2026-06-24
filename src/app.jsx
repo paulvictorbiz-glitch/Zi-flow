@@ -104,9 +104,22 @@ import { getInboxSummary } from "./lib/social-client.js";
    the app's existing "loading…" idiom (mono dim text) — intentionally minimal so
    it never blocks paint and matches the store's "loading workflow…" treatment. */
 function ViewFallback() {
+  /* A clearly-visible centered loader (NAV-003). The old faint "loading…" text
+     read as a blank flash during chunk loads; a centered spinner makes the
+     lazy-load state obvious. Keyframe is inlined so it doesn't touch styles.css. */
   return (
-    <div className="mono dim" style={{ padding: "48px 24px", opacity: 0.7 }}>
-      loading…
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", gap: 14, padding: "72px 24px", minHeight: 240,
+    }}>
+      <style>{"@keyframes vf-spin{to{transform:rotate(360deg)}}"}</style>
+      <div style={{
+        width: 30, height: 30, borderRadius: "50%",
+        border: "3px solid var(--line-hard, #333)",
+        borderTopColor: "var(--c-cyan, #6bd6e0)",
+        animation: "vf-spin 0.8s linear infinite",
+      }} />
+      <div className="mono dim" style={{ fontSize: 12, letterSpacing: "0.08em" }}>Loading…</div>
     </div>
   );
 }
