@@ -24,6 +24,7 @@ import { useNow, formatDue, formatDuration } from "../lib/time.jsx";
 import { ROLES } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { supabase } from "../lib/supabase-client.js";
+import { TeamChatRecentCard } from "../components/team-chat-recent-card.jsx";
 import { startOfDayLocal, analyzeDay, fmtDuration, ONLINE_WINDOW_MS, loadDayRows } from "../lib/capcut-utils.js";
 import { getConnections, PLATFORMS } from "../lib/social-client.js";
 import JSZip from "jszip";
@@ -131,9 +132,19 @@ async function downloadAgentFiles(personId) {
 function MyWork({ role, personId, onOpen, onNavigate, onSetPerson }) {
   const { person } = useAuth();
   const me = whoseWork(role, person, personId);
-  if (role === "owner") return <OwnerDashboard me={me} onOpen={onOpen} onNavigate={onNavigate} onSetPerson={onSetPerson} />;
-  if (role === "reviewer") return <ReviewQueueWork me={me} onOpen={onOpen} />;
-  return <SkilledWork me={me} onOpen={onOpen} role={role} />;
+  const dashboard =
+    role === "owner"    ? <OwnerDashboard me={me} onOpen={onOpen} onNavigate={onNavigate} onSetPerson={onSetPerson} />
+    : role === "reviewer" ? <ReviewQueueWork me={me} onOpen={onOpen} />
+    : <SkilledWork me={me} onOpen={onOpen} role={role} />;
+  return (
+    <>
+      {dashboard}
+      {/* New Teams-chat messages — recent log + mute/mark-read (all roles). */}
+      <div style={{ padding: "0 22px 24px" }}>
+        <TeamChatRecentCard onOpenTeam={() => onNavigate?.("team")} />
+      </div>
+    </>
+  );
 }
 
 /* ─────────────────────────────────────────────────────── */

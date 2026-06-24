@@ -915,6 +915,30 @@ export async function shareReelToChannel({ reelId, feedback = "", channel = "pip
   }
 }
 
+/* Recent Rocket.Chat channel messages for the new-message notifier. The backend
+   verifies the caller's Supabase JWT and excludes the caller's OWN messages.
+   `since` is an ISO timestamp (the previous poll's server_time); pass "" for the
+   first/baseline poll. Returns { messages: Item[], server_time }; resolves to an
+   empty result on any error (incl. the endpoint not being deployed yet) so the
+   notifier degrades silently rather than throwing. */
+export async function fetchRecentTeamMessages({ since = "", limit = 40 } = {}) {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return { messages: [], server_time: "" };
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (since) qs.set("since", since);
+    const res = await fetch(`/fb/api/rocketchat/dashboard/recent-messages?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { messages: [], server_time: "" };
+    const j = await res.json().catch(() => ({}));
+    return { messages: Array.isArray(j.messages) ? j.messages : [], server_time: j.server_time || "" };
+  } catch (_) {
+    return { messages: [], server_time: "" };
+  }
+}
+
 /* ── util ───────────────────────────────────────────────────────────────── */
 function relTime(mins) {
   if (mins < 1) return "now";

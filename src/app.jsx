@@ -90,6 +90,8 @@ import { TimeProvider } from "./lib/time.jsx";
 import { MODULE_BY_SKILL } from "./lib/training-curriculum.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider } from "./components/notifications.jsx";
+import { TeamChatAlertsProvider, useTeamChatAlerts } from "./lib/team-chat-alerts.jsx";
+import { TeamChatToast } from "./components/team-chat-toast.jsx";
 import { PermissionsProvider, usePermissions, useIsOwner, ownsReviewQueue } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import GamifyWelcomePopup from "./components/GamifyWelcomePopup.jsx";
@@ -172,6 +174,8 @@ function AppShell() {
   // Real-role owner flag (NOT the previewed perspective) — drives owner-only
   // affordances: the perspective switcher, settings, and the Monitor hub.
   const isOwner = useIsOwner();
+  // Unread Teams-chat messages → Team-tab badge (new-message notifier).
+  const { unseenCount: teamUnseen } = useTeamChatAlerts();
   /* The "monitor" view is the consolidated owner hub — it's reachable if ANY of
      its three sub-views (infra/pulse/ai) is granted. Every other view gates on
      its own catalog key. Used by the nav drawer, the bounce safety-net, and
@@ -738,6 +742,9 @@ function AppShell() {
                     {t.key === "inbox" && inboxUnread > 0 && (
                       <span className="needs-badge">{inboxUnread}</span>
                     )}
+                    {t.key === "team" && teamUnseen > 0 && (
+                      <span className="needs-badge">{teamUnseen}</span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -820,6 +827,9 @@ function AppShell() {
       {/* Global create FAB */}
       <CreateFab />
 
+      {/* Global new-Teams-message toast (bottom-left). */}
+      <TeamChatToast onOpenTeam={() => goView("team")} />
+
       {/* Display & accessibility preferences (owner-only entry) */}
       {prefsOpen && <PreferencesModal onClose={() => setPrefsOpen(false)} />}
     </div>
@@ -892,6 +902,7 @@ function App() {
                 <WorkflowProvider>
                   <LocationsProvider>
                     <NotificationsProvider>
+                      <TeamChatAlertsProvider>
                       <PermissionsProvider>
                         {isSpace ? (
                           <React.Suspense
@@ -906,6 +917,7 @@ function App() {
                           </ThemeProvider>
                         )}
                       </PermissionsProvider>
+                      </TeamChatAlertsProvider>
                     </NotificationsProvider>
                   </LocationsProvider>
                 </WorkflowProvider>
