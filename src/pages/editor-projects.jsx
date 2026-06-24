@@ -20,10 +20,13 @@
    signed-in identity, not the previewed perspective).
    ========================================================= */
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useEffect } from "react";
 import { useWorkflow } from "../store/store.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { useIsOwner } from "../lib/permissions.jsx";
+import { useAuth } from "../auth.jsx";
+import { EditProjectMenu } from "../components/EditProjectMenu.jsx";
+import { loadEditorUiPreset, saveEditorUiPreset } from "../lib/editor-ui-preset.js";
 import "./editor-projects.css";
 
 /* ---------- helpers ---------- */
@@ -70,7 +73,7 @@ function liveLockFor(locks, projectId, now) {
 
 /* ---------- card ---------- */
 
-function ProjectCard({ project, lock, nameOf, onOpen, canManage, onArchive, onDelete }) {
+function ProjectCard({ project, lock, nameOf, onOpen, canManage, onRename, onArchive, onDelete }) {
   const creator = nameOf(project.created_by ?? project.createdBy);
   const lastEditor = nameOf(project.last_editor ?? project.lastEditor);
   const updated = project.updated_at ?? project.updatedAt;
@@ -127,25 +130,17 @@ function ProjectCard({ project, lock, nameOf, onOpen, canManage, onArchive, onDe
         </div>
       </div>
 
-      {/* Owner-only management footer — archive (reversible) + delete (permanent). */}
+      {/* Owner-only management footer — a single ⋯ overflow menu surfacing
+          Rename / Archive(or Unarchive) / Delete. EditProjectMenu portals its
+          dropdown to document.body so the card's overflow:hidden never clips it. */}
       {canManage && (
-        <div className="ep-card-foot">
-          <button
-            type="button"
-            className="ep-act"
-            onClick={() => onArchive(project)}
-            title={archived ? "Unarchive — return to your active projects" : "Archive — hide from the active list (reversible)"}
-          >
-            {archived ? "📤 Unarchive" : "🗄 Archive"}
-          </button>
-          <button
-            type="button"
-            className="ep-act ep-act--danger"
-            onClick={() => onDelete(project)}
-            title="Delete permanently — removes the project, timeline, versions and locks"
-          >
-            🗑 Delete
-          </button>
+        <div className="ep-card-foot" style={{ justifyContent: "flex-end" }}>
+          <EditProjectMenu
+            project={project}
+            onRename={onRename}
+            onArchive={onArchive}
+            onDelete={onDelete}
+          />
         </div>
       )}
     </div>
@@ -278,12 +273,30 @@ function CreateModal({ mode, reels, busy, error, onClose, onCreateBlank, onCreat
 export function EditorProjects({ openEditorProject }) {
   const { editProjects, editorLocks, reels, actions, loaded } = useWorkflow();
   const { peopleById, loaded: rosterLoaded } = useRoster();
+  const { person: me } = useAuth();
   const isOwner = useIsOwner();
 
   const [modal, setModal] = useState(null); // null | "blank" | "reel"
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showArchived, setShowArchived] = useState(false); // owner: reveal archived projects
+
+  /* CapCut | Classic editor view preset — the SAME per-user preference the
+     editor view top bar uses (shared helper), so picking a view here is what
+     the editor opens in. Hydrates once the auth person is known. */
+  const [uiPreset, setUiPreset] = useState("capcut");
+  useEffect(() => {
+    let alive = true;
+    if (!me?.id) return;
+    (async () => {
+      const resolved = await loadEditorUiPreset(me.id);
+      if (alive) setUiPreset(resolved);
+    })();
+    return () => { alive = false; };
+  }, [me?.id]);
+  const changePreset = useCallback((next) => {
+    setUiPreset(saveEditorUiPreset(me?.id, next));
+  }, [me?.id]);
 
   /* Resolve a person id -> short display name via the live roster. */
   const nameOf = useCallback((id) => {
@@ -360,9 +373,19 @@ export function EditorProjects({ openEditorProject }) {
   const createBlank = useCallback((title) => runCreate({ title }), [runCreate]);
   const createFromReel = useCallback((payload) => runCreate(payload), [runCreate]);
 
-  /* Owner management — archive (reversible soft-hide) + delete (permanent).
-     Both call the never-throwing store actions; the gallery re-derives from the
-     optimistic store update + realtime. */
+  /* Owner management — rename + archive (reversible soft-hide) + delete
+     (permanent). All call the never-throwing store actions; the gallery
+     re-derives from the optimistic store update + realtime. */
+  const handleRename = useCallback((project) => {
+    if (typeof actions?.renameEditProject !== "function") return;
+    const current = project.title || "Untitled project";
+    const next = window.prompt("Rename project", current);
+    if (next == null) return;                       // user cancelled
+    const clean = next.trim();
+    if (!clean || clean === current) return;        // unchanged / empty
+    actions.renameEditProject(project.id, clean);
+  }, [actions]);
+
   const handleArchive = useCallback((project) => {
     if (typeof actions?.archiveEditProject !== "function") return;
     const isArchived = statusClass(project.status) === "archived";
@@ -394,6 +417,35 @@ export function EditorProjects({ openEditorProject }) {
           </p>
         </div>
         <div className="ep-actions">
+          {/* CapCut | Classic view toggle — segmented control. Sets the
+              per-user editor_ui_preset; the editor opens in the chosen view.
+              Mirrors the toggle in the editor top bar (same shared helper). */}
+          <div
+            className="ep-preset-toggle"
+            role="group"
+            aria-label="Editor view preset"
+            style={{ display: "inline-flex", border: "1px solid var(--c-line, #2a2d33)", borderRadius: 8, overflow: "hidden" }}
+            title="Choose how the editor looks — Classic OpenCut (default) or a CapCut-styled layout"
+          >
+            {[
+              { key: "classic", label: "Classic" },
+              { key: "capcut", label: "CapCut" },
+            ].map((opt) => {
+              const active = uiPreset === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  className={"ep-btn" + (active ? " ep-btn--primary" : "")}
+                  onClick={() => changePreset(opt.key)}
+                  aria-pressed={active}
+                  style={{ border: "none", borderRadius: 0, fontWeight: active ? 700 : 600, opacity: active ? 1 : 0.8 }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
           {isOwner && archivedCount > 0 && (
             <button
               type="button"
@@ -464,6 +516,7 @@ export function EditorProjects({ openEditorProject }) {
               nameOf={nameOf}
               onOpen={openProject}
               canManage={isOwner}
+              onRename={handleRename}
               onArchive={handleArchive}
               onDelete={handleDelete}
             />

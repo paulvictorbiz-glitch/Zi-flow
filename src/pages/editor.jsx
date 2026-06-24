@@ -52,6 +52,8 @@ import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { getFootageFileMetadata, footageFolderLabel } from "../lib/footage-brain-client.js";
+import { loadEditorUiPreset, saveEditorUiPreset } from "../lib/editor-ui-preset.js";
+import { useEditorUsageSession } from "../lib/editor-usage.js";
 import Timeline, {
   buildProjectJsonV2,
   normalizeTimeline,
@@ -243,13 +245,18 @@ function PresenceAvatar({ p }) {
    ========================================================= */
 const EMBED_LOAD_TIMEOUT_MS = 9000; // mirror the historical iframe-load fallback
 
-function EmbeddedEditor({ projectId, reelId, editorOrigin, onFrameBlocked, onBackToProjects, me }) {
+function EmbeddedEditor({ projectId, reelId, editorOrigin, onFrameBlocked, onBackToProjects, me, preset = "classic" }) {
   const iframeRef = useRef(null);
   const readyRef = useRef(false);     // EDITOR_READY (or onLoad) seen?
   const [blocked, setBlocked] = useState(false);
+  /* CC5 — FB→FORK PRESET HANDOFF (URL leg). The fork's parsePreset() reads
+     ?ui=<preset> on first paint (URL is authoritative). The classic editorUrl
+     historically had NO query, so appending is clean. Unknown/absent ui →
+     classic on the fork side (fail-safe), so we only ever send the two literals. */
+  const uiParam = preset === "capcut" ? "capcut" : "classic";
   const editorUrl = useMemo(
-    () => `${editorOrigin}/editor/${encodeURIComponent(projectId || "")}`,
-    [editorOrigin, projectId]
+    () => `${editorOrigin}/editor/${encodeURIComponent(projectId || "")}?ui=${uiParam}`,
+    [editorOrigin, projectId, uiParam]
   );
 
   /* Post the current Supabase JWT to the iframe (targetOrigin pinned to the
@@ -277,10 +284,15 @@ function EmbeddedEditor({ projectId, reelId, editorOrigin, onFrameBlocked, onBac
         name: me?.name || null,                            // people.name display name
         personId,
         color: personId ? presenceColorFor(personId) : null, // stable, deterministic from the slug
+        /* CC5 — PRESET HANDOFF (postMessage leg, belt-and-suspenders to ?ui=).
+           Frozen field key `uiPreset`, values `classic`|`capcut`. The fork upgrades
+           via parsePreset('?ui='+uiPreset) when present; URL stays authoritative on
+           first paint. The fork tolerates absence (JWT-derived/classic fallback). */
+        uiPreset: uiParam,
       },
       editorOrigin
     );
-  }, [editorOrigin, projectId, reelId, me?.id, me?.name]);
+  }, [editorOrigin, projectId, reelId, me?.id, me?.name, uiParam]);
 
   /* EM1/C1: listen for EDITOR_READY from the iframe and reply with FB_AUTH.
      Validate event.origin on EVERY message (strict === editorOrigin). */
@@ -384,6 +396,35 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
   const [embedMaximized, setEmbedMaximized] = useState(false); // cover the whole browser window
   const embedWrapRef = useRef(null);                           // target for the Fullscreen API
   const embedActive = !!embedEnabled && !!editorOrigin;
+
+  /* ===================== CapCut | Classic view preset (CC5) ===================== */
+  /* The chosen editor UI preset for the embedded OpenCut editor. 'capcut' is the
+     DEFAULT (owner decision 2026-06-24 — the reskinned CapCut layout); 'classic'
+     is the byte-for-byte-unchanged classic OpenCut view, still reachable via the
+     CapCut | Classic toggle. Persisted PER-USER in user_preferences
+     (key 'editor_ui_preset') per CLAUDE.md rule 6 — hydrated in a SEPARATE effect
+     keyed on the auth person's id, NEVER inside an all-or-nothing boot hydrate, so
+     a missing table can never brick the editor. localStorage is the offline/
+     unavailable fallback. No store.jsx edit (we own no preset store action). */
+  const [uiPreset, setUiPreset] = useState("capcut");
+
+  // Hydrate the preset once the auth person is known (user_preferences ->
+  // localStorage -> 'classic'). Shared helper so the editor view and the
+  // projects gallery toggle stay in sync. Failures degrade to 'classic'.
+  useEffect(() => {
+    let alive = true;
+    if (!me?.id) return;
+    (async () => {
+      const resolved = await loadEditorUiPreset(me.id);
+      if (alive) setUiPreset(resolved);
+    })();
+    return () => { alive = false; };
+  }, [me?.id]);
+
+  // Set + persist the preset (optimistic local set, then shared persist).
+  const changePreset = useCallback((next) => {
+    setUiPreset(saveEditorUiPreset(me?.id, next));
+  }, [me?.id]);
 
   const project = useMemo(
     () => (editProjects || []).find((p) => p.id === projectId) || null,
@@ -560,6 +601,22 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
     () => attachedFootage.filter((f) => f.reel_id === boundReelId),
     [attachedFootage, boundReelId]
   );
+
+  /* ===================== usage history (Monitor tracker) ===================== */
+  /* Durable log of every editor open, heartbeated while mounted and stamped on
+     close (editor_usage_sessions, migration 0097). FB-side only — the OpenCut
+     fork is untouched. Active whenever a project is loaded & ready, in EITHER
+     the embedded (iframe) or native editor. All writes degrade silently, so a
+     not-yet-applied 0097 can never affect the editor. The owner-only "Editor
+     usage" card on the Monitor hub reads this for per-person/per-project history. */
+  useEditorUsageSession({
+    projectId,
+    reelId: boundReelId,
+    person: me,
+    preset: uiPreset,
+    source: embedActive ? "embed" : "native",
+    active: projectState === "ready" && !!projectId,
+  });
 
   const [driveById, setDriveById] = useState({});
   useEffect(() => {
@@ -936,7 +993,36 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
           <span className="editor-pill cyan">
             OpenCut editor{project?.title ? ` · ${project.title}` : ""}
           </span>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+            {/* CapCut | Classic view toggle — segmented control. Switching reloads
+                the iframe with the new ?ui= preset (and re-posts uiPreset on the
+                next FB_AUTH). Per-user persisted to user_preferences. */}
+            <div
+              className="editor-preset-toggle"
+              role="group"
+              aria-label="Editor view preset"
+              style={{ display: "inline-flex", border: "1px solid var(--line,#2a2d33)", borderRadius: 8, overflow: "hidden" }}
+            >
+              {[
+                { key: "classic", label: "Classic", title: "Classic OpenCut editor (default)" },
+                { key: "capcut", label: "CapCut", title: "CapCut-styled layout over the same engine" },
+              ].map((opt) => {
+                const active = uiPreset === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className={"editor-btn" + (active ? " primary" : "")}
+                    onClick={() => changePreset(opt.key)}
+                    aria-pressed={active}
+                    title={opt.title}
+                    style={{ border: "none", borderRadius: 0, fontWeight: active ? 700 : 600, opacity: active ? 1 : 0.8 }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
             <button
               className="editor-btn"
               onClick={() => setEmbedMaximized((m) => !m)}
@@ -955,6 +1041,7 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
             reelId={boundReelId}
             editorOrigin={editorOrigin}
             me={me}
+            preset={uiPreset}
             onFrameBlocked={() => { /* stay on the embed; overlay handles genuine load failures */ }}
             onBackToProjects={onBackToProjects}
           />
@@ -1169,6 +1256,7 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
                 onFrameBlocked={() => setFrameBlocked(true)}
                 onBackToProjects={onBackToProjects}
                 me={me}
+                preset={uiPreset}
               />
             ) : (
               <>
