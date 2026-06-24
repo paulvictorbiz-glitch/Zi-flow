@@ -1,58 +1,48 @@
-# Handoff — last updated 2026-06-23
+# Handoff — last updated 2026-06-24 (session j)
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
-> This session was 100% the **Epidemic Sound Music Library** feature. Owner is pausing and will resume this topic later.
 
-## TL;DR of this session
-- Built the **Epidemic Sound Music Library** end-to-end: a swap-ready server proxy (`api/ai/_epidemic.js` + 3 `?action=epidemic-*` branches in `suggest.js`), a **Music Library** tab (search/preview/licensed-download), and a per-reel **Attach Music** card (music reuses `reel_dna_assets` as `asset_type='music'`). Built via the generated workflow `.claude/workflows/epidemic-sound-music-library.js` (~36 min).
-- Ran `/code-review high` → found + **fixed 3 feature-breaking bugs**: the `reel_dna_assets` CHECK constraint blocked `'music'` (fixed in `0092`), the shared `useReelDnaAssets` hook didn't pass `musicTracks`, and `upsertMusicTrack` had no optimistic update. Plus a `MusicPickerModal` audio-preview cleanup.
-- **Expanded the Library tab** to 4 views: **Search · Browse (genre/mood) · Favorites · Playlists** (new migration `0093_music_library.sql` + store actions + UI rewrite).
-- Wired `EPIDEMIC_TOKEN` into `.env.local` AND Vercel env (dev+prod), and stood up local dev (`vercel dev` :3001 + `npm run dev` :8000).
-- **🔴 Discovered THE blocker:** the workflow guessed Epidemic's private host `api.epidemicsound.com` — it **does not resolve**. Search/Browse/Download are inert until the owner provides the real endpoint from a logged-in DevTools capture.
-- Everything is `npm run build` green. **Nothing committed, nothing deployed.**
+## TL;DR of this session (j) — playback freeze FIXED + Replicate/Pexels wired + fork committed
+- **Fixed the session-i open blocker: playback freeze.** Root cause was NOT a decode/HEVC/AI hang — it was a **speed-0 bug** in the fork's `PlaybackManager`: normal `play()` ran the playhead at `speed = shuttleSpeed = 0` (only the shuttle controls ever set `shuttleSpeed`). Fix: play at 1× when `shuttleDirection === null`.
+- **Diagnosed empirically with Playwright** via the real embedded path (`:8000 → iframe :3000`): a canvas-pixel-hash sampler + `playback-update`/`playback-seek` event counters proved the timer fired every frame while `currentTime` stayed pinned. Reusable harness committed at `scripts/oc-embed-diag.mjs`.
+- **Verified live on localhost:** after rebuild+restart, `lastTime` advances 4.9→10.5 at 1× and the canvas animates ("NO FREEZE REPRODUCED").
+- **Wired the owner's Replicate token** (`NEXT_PUBLIC_REPLICATE_API_TOKEN` in fork `.env.local`) — confirmed baked into the client bundle. **Pexels image search went live** (the prod-server restart loaded the saved key; `/api/images/search` returns photos). Freesound still works (no regression).
+- **Committed + pushed the FORK** (`69842d6` → `origin/opencut-ai-fb main`) — playback fix + all session-i Phase-2 runtime fixes + collab dirs. FootageBrain build is **green**.
 
 ## Where we left off
-All Music Library code is written and builds clean, but the feature **cannot pull music yet** — it's blocked on two gates (below). The local dev servers have since stopped (the `npm run dev` background task exited code 4); restart them to resume testing. The owner is pausing this topic and will come back to it.
+**Playback works end-to-end on localhost.** Two background servers run: **FB dev `:8000`** (`npm run dev`) and the **fork PRODUCTION build `:3000`** (rebuilt this session: `bun run build:web` → `next start`). Open `localhost:8000` (logged in) → Editor tab → ← Projects → open a project → embedded OpenCut editor → play advances and the preview animates. Migrations 0095+0096 are applied to the shared Supabase. The **fork is committed + pushed**; the **FootageBrain repo is committed in this wrap-up's doc batch** (Phase-2 embed + 0096 + diagnostic + docs). **Nothing deployed to prod.**
 
 ## Open blockers
-- **🔴 Epidemic endpoint calibration (needs owner DevTools) — THE blocker.** The guessed private host `api.epidemicsound.com` does NOT resolve (`curl https://api.epidemicsound.com/` → `http=000`; `www.`/`partner-content-api.`/`login.` all resolve fine). To unblock: owner logs into epidemicsound.com → DevTools → Network → Fetch/XHR → run a search → copy the **request URL that returns tracks**; click **Download** on a track → copy that URL. Then patch the 3 `// CALIBRATION-REQUIRED` constants (`BASE_URL`, `EP_SEARCH_PATH`, `EP_DOWNLOAD_PATH`) + `mapTrack` field names in `api/ai/_epidemic.js`. The Partner-API siblings (`partner-content-api.epidemicsound.com/v0/tracks/...`, which DOES resolve) are the documented identical-shaped fallback if the private path can't be captured.
-- **Migrations `0092` + `0093` not applied** — needed for Attach Music + Favorites/Playlists persistence (apply is human-gated; see Pending).
+- None. (Playback freeze — the prior blocker — is fixed and verified.)
 
 ## Pending (written but not yet live)
-- **Migration `0092_music_tracks.sql`** — music metadata cache table + EXTENDS `reel_dna_assets` CHECK to allow `'music'`. NOT applied.
-- **Migration `0093_music_library.sql`** — `music_favorites` + `music_playlists` + `music_playlist_tracks` (per-user RLS). NOT applied.
-  - Apply via the **Supabase SQL editor** for JUST these two (do NOT `npm run migrate:apply` — it would also sweep in other parked threads' pending migrations e.g. 0089/Planable). Or ask for the exact single-file SQL.
-- **All Music Library code** — uncommitted, undeployed. After calibration + a clean-tree check, deploy is `vercel --prod` (human-gated; remember it ships the WHOLE dirty tree).
-- `EPIDEMIC_TOKEN` is in `.env.local` + Vercel dev/prod env. **Expires ~2026-07-20** (30-day Keycloak user JWT, no refresh) — re-grab from DevTools and re-`vercel env add` when the "reconnect — see Paul" banner appears.
+- **Prod editor cutover is NOT done and is the real remaining lift.** The playback fix lives in the FORK, which is not on prod; prod's `EDITOR_EMBED_ENABLED` is OFF and points at `editor.footagebrain.com` (not stood up). Making the editor live in prod = the documented human-gated Hetzner sequence in `docs/opencut-phase1-deploy.md` (DNS → stand up the fork on Hetzner w/ Docker + throwaway PG + Caddy frame-ancestors + env incl. the Supabase SSO vars + Freesound/Pexels/Replicate keys → flip `EDITOR_EMBED_ENABLED=true` → `vercel --prod`). `vercel --prod` alone does NOT surface the fix.
+- **Two-browser collab smoke** (presence + Take/Release across two sessions) still not run.
+- Carried: re-commit/merge `feat`→`main`; Epidemic + 0092/0093; IG cookies; optional local AI backend (Docker) for captions.
 
 ## Next session — start here
-1. **Get the Epidemic calibration capture** from the owner's DevTools (search URL + download URL) and patch `api/ai/_epidemic.js`. This unblocks Search/Browse/Preview/Download instantly (no rebuild — `vercel dev` hot-reloads functions).
-2. **Apply migrations `0092` + `0093`** via the Supabase SQL editor (human-gated) so Attach Music + Favorites + Playlists persist.
-3. Restart local dev and smoke-test the full flow: `vercel dev --listen 3001` + `npm run dev` (:8000), hard-refresh, then Search → preview → download → favorite → add to playlist → attach to a reel.
-4. After it works: commit the Music Library files, clean-tree check, `vercel --prod`.
-5. (Optional) If the private API proves too brittle, apply for an official Epidemic Partner key → set `EPIDEMIC_AUTH_MODE=partner` + the `epidemic_live_` key (zero frontend change).
+1. **Continue the professional-features plan** (the owner's stated next focus — the plan was already generated). Bring more pro OpenCut features online on localhost.
+2. **Two-browser collab smoke** (presence + Take/Release control).
+3. When the owner is ready for prod: execute the human-gated **editor Hetzner stand-up** (`docs/opencut-phase1-deploy.md`) as a deliberate step.
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-# 1. Local servers are DOWN after this session — restart both:
-#    Terminal A:  vercel dev --listen 3001
-#    Terminal B:  npm run dev          # SPA on :8000, proxies /api -> :3001
+# Both servers (restart if down — see below):
+curl -s -o /dev/null -w "FB :8000 = %{http_code}\n" http://localhost:8000
+curl -s -o /dev/null -w "fork :3000 = %{http_code}\n" http://localhost:3000
+# Pexels + Freesound live server-side:
+curl -s "http://localhost:3000/api/images/search?q=ocean&page=1" | head -c 80
+curl -s "http://localhost:3000/api/sounds/search?q=drum&type=effects&page=1" | head -c 80
 
-# 2. Confirm the Epidemic host still doesn't resolve (the blocker):
-curl -s -o /dev/null -w "%{http_code}\n" https://api.epidemicsound.com/        # expect 000
-curl -s -o /dev/null -w "%{http_code}\n" https://partner-content-api.epidemicsound.com/  # 302 (fallback host)
+# Re-run the playback diagnostic (expects "NO FREEZE REPRODUCED"):
+cd "/c/Users/Mi/Downloads/ziflow project-final" && node scripts/oc-embed-diag.mjs ./oc-shots play
 
-# 3. Confirm the function is wired (once vercel dev :3001 is up) — 401 = good (auth gate), not 404/500:
-curl -s -o /dev/null -w "%{http_code}\n" -X POST "http://localhost:3001/api/ai/suggest?action=epidemic-search" -H "Content-Type: application/json" -d '{"term":"lofi"}'
+# Restart the servers if down:
+#   FB:   cd "/c/Users/Mi/Downloads/ziflow project-final" && npm run dev          # :8000
+#   FORK (prod): cd /c/Users/Mi/Downloads/opencut-ai/apps/web && bun run start     # :3000 (after bun run build:web)
+#   (free port 3000 first: Get-NetTCPConnection -LocalPort 3000 -State Listen | %{ Stop-Process -Id $_.OwningProcess -Force })
 
-# 4. Direct Epidemic calibration test (bypasses HTTP/auth — hits the real API with the token):
-node --env-file=.env.local -e "import('./api/ai/_epidemic.js').then(m=>m.searchTracks({term:'lofi',limit:3})).then(r=>console.log(JSON.stringify(r)))"
-#    Currently returns {ok:false, error:'fetch failed'} because the host is wrong — should return tracks after calibration.
-
-# 5. Build gate:
-npm run build      # green; emits a music-library chunk
-
-# 6. Migrations present (NOT applied):
-ls supabase/migrations/0092_music_tracks.sql supabase/migrations/0093_music_library.sql
+# Fork commit is pushed:
+cd /c/Users/Mi/Downloads/opencut-ai && git log --oneline -1   # 69842d6 fix(playback)…
 ```

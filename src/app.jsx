@@ -11,8 +11,15 @@ import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
    the editor area embeds the self-hosted OpenCut editor at EDITOR_ORIGIN
    and authenticates it via postMessage SSO (no JWT in the URL). Flip to
    true only after editor.footagebrain.com is stood up and framed-allowed. */
-const EDITOR_EMBED_ENABLED = false;
-const EDITOR_ORIGIN = "https://editor.footagebrain.com";
+/* LOCALHOST DEMO (Phase 2 collab): on localhost ONLY, auto-embed the locally-running
+   OpenCut fork dev server (:3000). Production hostnames stay OFF and point at the real
+   editor origin — so this is SAFE to leave in / commit (prod is inert until the real
+   Phase-1 cutover). For the prod cutover, set EDITOR_EMBED_ENABLED = true unconditionally
+   per docs/opencut-phase1-deploy.md step 7 once editor.footagebrain.com is live. */
+const __isLocalhost =
+  typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+const EDITOR_EMBED_ENABLED = __isLocalhost;
+const EDITOR_ORIGIN = __isLocalhost ? "http://localhost:3000" : "https://editor.footagebrain.com";
 /* ---- EAGER core pages (primary flow — never code-split so it never
    flashes a Suspense fallback). ---- */
 import { MyWork } from "./pages/my-work.jsx";

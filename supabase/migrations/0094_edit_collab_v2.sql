@@ -19,6 +19,15 @@
 -- autosave + read-only viewer UI, NOT by row-level security. editor_locks was
 -- already "authenticated manage" in 0082 and is intentionally left untouched.
 --
+-- ── DB5 ORDER-BY DRIFT FIX (FLAGGED — owner-acknowledged, already LIVE) ────────
+-- The DB5 backfill orders by `s.last_active` (NOT `s.updated_at`). This 2-line
+-- delta vs the file's first commit is the documented prior collab-session drift
+-- fix: the LIVE, manually-created public.edit_sessions table exposes `last_active`
+-- but NOT `updated_at`, so ordering by `updated_at` would HARD-FAIL the apply
+-- (column does not exist). This migration already shipped LIVE with this fix and
+-- is relied upon; it is intentionally retained over a pure read-only revert.
+-- (See memory reference_migration-tracking-drift.md — live cols differ from repo.)
+--
 -- ── CONTRACT DEVIATION (FLAGGED — type-safety override) ───────────────────────
 -- The frozen contract (§G / DB2) specifies `reel_id UUID REFERENCES reels(id)`.
 -- BUT public.reels.id is TEXT (0001_init.sql) and public.edit_sessions.reel_id is
@@ -153,7 +162,7 @@ CREATE POLICY "authenticated view edit_ai_jobs"
 -- ════════════════════════════════════════════════════════════════════════════
 -- DB5 — BACKFILL edit_sessions -> edit_projects (idempotent, non-destructive)
 -- ════════════════════════════════════════════════════════════════════════════
--- One project per reel_id (latest edit_sessions row by updated_at). Skips any
+-- One project per reel_id (latest edit_sessions row by last_active). Skips any
 -- reel_id that already has an edit_projects row (WHERE NOT EXISTS) so re-running
 -- is a no-op. KEEPS edit_sessions intact — the legacy editor degrades gracefully.
 -- The flat edit_plan.timeline array is normalized into the v2 timeline_json shape
@@ -185,7 +194,7 @@ WHERE s.reel_id IS NOT NULL
   AND NOT EXISTS (
     SELECT 1 FROM public.edit_projects ep WHERE ep.reel_id = s.reel_id
   )
-ORDER BY s.reel_id, s.updated_at DESC;
+ORDER BY s.reel_id, s.last_active DESC;
 
 
 -- ════════════════════════════════════════════════════════════════════════════

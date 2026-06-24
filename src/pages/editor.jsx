@@ -115,6 +115,18 @@ function fmt2(s) {
 let _seq = 0;
 const localId = (p) => `${p}_${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
+/* Stable presence color for a person slug — derived DETERMINISTICALLY from the
+   people.id slug so the same person always gets the same avatar color. Mirrors
+   the presence palette + hash in ../lib/editor-collab.jsx (kept inline here so
+   this file stays self-contained — editor-collab.jsx is a frozen contract we
+   never edit). The fork TOLERATES absence of this field (JWT-derived fallback). */
+const PRESENCE_COLORS = { paul: "#6366f1", alex: "#10b981", sam: "#f59e0b", maya: "#ef4444" };
+function presenceColorFor(personId) {
+  return PRESENCE_COLORS[personId] ||
+    "#" + ((personId || "").split("").reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0) & 0xFFFFFF)
+      .toString(16).padStart(6, "0");
+}
+
 /* ---------- v2 doc helpers (pure, local) ---------- */
 
 const EMPTY_V2 = (output) => ({
@@ -231,7 +243,7 @@ function PresenceAvatar({ p }) {
    ========================================================= */
 const EMBED_LOAD_TIMEOUT_MS = 9000; // mirror the historical iframe-load fallback
 
-function EmbeddedEditor({ projectId, reelId, editorOrigin, onFrameBlocked, onBackToProjects }) {
+function EmbeddedEditor({ projectId, reelId, editorOrigin, onFrameBlocked, onBackToProjects, me }) {
   const iframeRef = useRef(null);
   const readyRef = useRef(false);     // EDITOR_READY (or onLoad) seen?
   const [blocked, setBlocked] = useState(false);
@@ -251,8 +263,24 @@ function EmbeddedEditor({ projectId, reelId, editorOrigin, onFrameBlocked, onBac
       jwt = data?.session?.access_token || null;
     } catch { jwt = null; }
     if (!jwt) return;
-    win.postMessage({ type: "FB_AUTH", jwt, projectId, reelId: reelId || null }, editorOrigin);
-  }, [editorOrigin, projectId, reelId]);
+    /* CC1 — EXTENDED (additive) FB_AUTH so the fork labels presence with the
+       real FootageBrain person. The existing {type, jwt, projectId, reelId}
+       fields + targetOrigin pinning + origin validation are UNCHANGED; the
+       fork tolerates absence of the 3 new fields (JWT-derived fallback). */
+    const personId = me?.id || null;                       // people.id SLUG (e.g. "paul"), NOT the auth uuid
+    win.postMessage(
+      {
+        type: "FB_AUTH",
+        jwt,
+        projectId,
+        reelId: reelId || null,
+        name: me?.name || null,                            // people.name display name
+        personId,
+        color: personId ? presenceColorFor(personId) : null, // stable, deterministic from the slug
+      },
+      editorOrigin
+    );
+  }, [editorOrigin, projectId, reelId, me?.id, me?.name]);
 
   /* EM1/C1: listen for EDITOR_READY from the iframe and reply with FB_AUTH.
      Validate event.origin on EVERY message (strict === editorOrigin). */
@@ -347,11 +375,15 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
   const [projectErr, setProjectErr] = useState("");
   const resolvingRef = useRef(false);
 
-  /* EM1/EM2: iframe-embed mode is gated behind the flag (default OFF). If the
-     iframe can't load (framing blocked, EM2 9s timeout) we set frameBlocked so
-     the render falls back to the native editor and the user is never stuck. */
+  /* EM1/EM2: iframe-embed mode is gated behind the flag (default OFF in prod).
+     When ON (localhost), we render the OpenCut editor FULL-BLEED and commit to
+     it — we do NOT silently fall back to the native editor on a load timeout
+     (that masked the real editor + confused which editor you were in). A genuine
+     framing failure surfaces EmbeddedEditor's own "open in a new tab" overlay. */
   const [frameBlocked, setFrameBlocked] = useState(false);
-  const embedActive = !!embedEnabled && !!editorOrigin && !frameBlocked;
+  const [embedMaximized, setEmbedMaximized] = useState(false); // cover the whole browser window
+  const embedWrapRef = useRef(null);                           // target for the Fullscreen API
+  const embedActive = !!embedEnabled && !!editorOrigin;
 
   const project = useMemo(
     () => (editProjects || []).find((p) => p.id === projectId) || null,
@@ -867,6 +899,70 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
   const total = timelineTotal(videoTrackClips);
   const tracksDisabled = !iAmHolder || projectState !== "ready" || !projectId;
 
+  /* FULL-BLEED EMBED (localhost): when the OpenCut editor is embedded, it IS the
+     editor — render only a slim back-bar + the iframe edge-to-edge. No native
+     rail / header / timeline / render controls (OpenCut has its own), and no
+     native collab chrome (collaboration lives inside the iframe via oc-collab).
+     Prod with the flag OFF never reaches this branch. */
+  if (embedActive && projectId) {
+    const goFullscreen = () => {
+      const el = embedWrapRef.current;
+      if (el?.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else if (el?.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    };
+    const wrapStyle = embedMaximized
+      ? {
+          // Cover the ENTIRE browser window (breaks out of the FootageBrain shell).
+          position: "fixed", inset: 0, zIndex: 9999,
+          background: "var(--bg, #0b0b0f)",
+          display: "flex", flexDirection: "column", height: "100vh",
+        }
+      : { display: "flex", flexDirection: "column", height: "100%", minHeight: "86vh" };
+    return (
+      <div ref={embedWrapRef} className="editor-page editor-embed-page" style={wrapStyle}>
+        <div
+          className="page-head"
+          style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 10, flex: "0 0 auto" }}
+        >
+          {typeof onBackToProjects === "function" && (
+            <button
+              className="editor-btn"
+              onClick={() => { setEmbedMaximized(false); onBackToProjects(); }}
+              title="Back to the Projects browser"
+            >
+              ← Projects
+            </button>
+          )}
+          <span className="editor-pill cyan">
+            OpenCut editor{project?.title ? ` · ${project.title}` : ""}
+          </span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+            <button
+              className="editor-btn"
+              onClick={() => setEmbedMaximized((m) => !m)}
+              title={embedMaximized ? "Restore to the dashboard layout" : "Maximize — fill the whole browser window"}
+            >
+              {embedMaximized ? "🗗 Restore" : "🗖 Maximize"}
+            </button>
+            <button className="editor-btn" onClick={goFullscreen} title="Fullscreen — take the whole screen (Esc to exit)">
+              ⛶ Fullscreen
+            </button>
+          </div>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          <EmbeddedEditor
+            projectId={projectId}
+            reelId={boundReelId}
+            editorOrigin={editorOrigin}
+            me={me}
+            onFrameBlocked={() => { /* stay on the embed; overlay handles genuine load failures */ }}
+            onBackToProjects={onBackToProjects}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="editor-page">
       <div className="page-head" style={{ padding: "16px 0 4px" }}>
@@ -1072,6 +1168,7 @@ export function VideoEditor({ reel: initialReel, onOpen, reelDnaId, editingProje
                 editorOrigin={editorOrigin}
                 onFrameBlocked={() => setFrameBlocked(true)}
                 onBackToProjects={onBackToProjects}
+                me={me}
               />
             ) : (
               <>

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-23T16:27:06.716Z",
+  "generated": "2026-06-24T07:56:16.718Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -375,7 +375,15 @@
     },
     {
       "version": "0094_edit_collab_v2.sql",
-      "checksum": "db076786ec1a1a60b8e7bf6f1498befa68da5398ed5179c4aa08df0163466fbd"
+      "checksum": "eab5b638f878f7ab21162c34de27849474ee5b7369d965f6c769181796dea840"
+    },
+    {
+      "version": "0095_oc_projects.sql",
+      "checksum": "95102547a73788aebd79c522b7c715c8fba14fd1932b7d98b1ab4d418b8d55ae"
+    },
+    {
+      "version": "0096_oc_locks.sql",
+      "checksum": "0d5b717cc76ffe2d55a54505e5e451e056ce446e50e539e6b142075bd22e24ea"
     }
   ]
 }
