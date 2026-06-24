@@ -87,15 +87,53 @@
   border-radius: 12px;
   background: var(--bg-2, #15171b);
   overflow: hidden;
-  cursor: pointer;
-  text-align: left;
-  padding: 0;
   color: inherit;
   font: inherit;
   transition: border-color .12s ease, transform .12s ease;
 }
 .ep-card:hover { border-color: var(--c-blue, #4a90e2); transform: translateY(-2px); }
-.ep-card:focus-visible { outline: 2px solid var(--c-blue, #4a90e2); outline-offset: 2px; }
+
+/* The clickable "open" surface (thumb + body). A div with role=button so the
+   archive/delete buttons can live alongside it without illegal button nesting. */
+.ep-card-open {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  text-align: left;
+}
+.ep-card-open:focus-visible { outline: 2px solid var(--c-blue, #4a90e2); outline-offset: 2px; }
+
+/* Archived projects render dimmed wherever they're shown. */
+.ep-card--archived { opacity: .62; }
+.ep-card--archived:hover { opacity: 1; }
+
+/* Owner management footer */
+.ep-card-foot {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line, #2a2d33);
+  background: var(--bg-3, #1a1c20);
+}
+.ep-act {
+  appearance: none;
+  cursor: pointer;
+  flex: 1;
+  border-radius: 7px;
+  border: 1px solid var(--line, #2a2d33);
+  background: var(--bg-2, #15171b);
+  color: var(--fg-dim, #9aa0a6);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 8px;
+  transition: border-color .12s ease, color .12s ease, background .12s ease;
+}
+.ep-act:hover { border-color: var(--c-blue, #4a90e2); color: var(--fg, #e6e6e6); }
+.ep-act--danger:hover {
+  border-color: var(--c-red, #e2554a);
+  color: var(--c-red, #e2554a);
+  background: color-mix(in srgb, var(--c-red, #e2554a) 10%, transparent);
+}
 
 /* Thumbnail */
 .ep-thumb {
@@ -173,6 +211,7 @@
 .ep-status--review    { color: var(--c-amber, #e2b340); border-color: color-mix(in srgb, var(--c-amber, #e2b340) 50%, var(--line, #2a2d33)); }
 .ep-status--done,
 .ep-status--rendered  { color: var(--c-green, #4ec27a); border-color: color-mix(in srgb, var(--c-green, #4ec27a) 50%, var(--line, #2a2d33)); }
+.ep-status--archived  { color: var(--fg-dim, #9aa0a6); opacity: .85; }
 
 /* Card body */
 .ep-body {

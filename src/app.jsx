@@ -18,7 +18,12 @@ import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
    per docs/opencut-phase1-deploy.md step 7 once editor.footagebrain.com is live. */
 const __isLocalhost =
   typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
-const EDITOR_EMBED_ENABLED = __isLocalhost;
+/* PROD CUTOVER (2026-06-24): editor.footagebrain.com is stood up on Hetzner
+   (SSO config baked into the bundle, LE cert live, frame-ancestors allows the
+   dashboard), so the embed is now ON everywhere. Localhost still points at the
+   local fork dev server (:3000); prod points at the live editor origin. Roll
+   back by setting this back to `__isLocalhost` and redeploying. */
+const EDITOR_EMBED_ENABLED = true;
 const EDITOR_ORIGIN = __isLocalhost ? "http://localhost:3000" : "https://editor.footagebrain.com";
 /* ---- EAGER core pages (primary flow — never code-split so it never
    flashes a Suspense fallback). ---- */

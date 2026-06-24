@@ -5194,6 +5194,27 @@ function WorkflowProvider({ children }) {
         }
       },
 
+      /* Archive (soft-hide) / unarchive a project — flips status to 'archived'
+         (reversible to 'draft'). Optimistic UPSERT + persist; on failure the
+         prior status is restored. Owner-gated in the UI; RLS still governs the
+         write. Never throws. */
+      archiveEditProject: async (id, archived = true) => {
+        if (!id) return;
+        const status = archived ? "archived" : "draft";
+        const prevStatus = (stateRef.current.editProjects || []).find(p => p.id === id)?.status;
+        dispatch({ type: "UPSERT_EDIT_PROJECT", item: { id, status, updatedAt: new Date().toISOString() } });
+        try {
+          const { error } = await supabase
+            .from("edit_projects")
+            .update({ status, updated_at: new Date().toISOString() })
+            .eq("id", id);
+          if (error) throw error;
+        } catch (e) {
+          console.warn("archiveEditProject failed:", e?.message || e);
+          dispatch({ type: "UPSERT_EDIT_PROJECT", item: { id, status: prevStatus ?? "draft" } });
+        }
+      },
+
       /* ───── AI / render client wrappers — POST/GET to api/ai/suggest.js with the
          session JWT, mirroring the epidemic/deconstruct call sites. They consume
          the FROZEN captions / silence / render action shapes and NEVER throw

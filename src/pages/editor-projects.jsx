@@ -70,54 +70,85 @@ function liveLockFor(locks, projectId, now) {
 
 /* ---------- card ---------- */
 
-function ProjectCard({ project, lock, nameOf, onOpen }) {
+function ProjectCard({ project, lock, nameOf, onOpen, canManage, onArchive, onDelete }) {
   const creator = nameOf(project.created_by ?? project.createdBy);
   const lastEditor = nameOf(project.last_editor ?? project.lastEditor);
   const updated = project.updated_at ?? project.updatedAt;
   const status = project.status || "draft";
+  const archived = statusClass(status) === "archived";
   const thumb = project.thumbnail_url ?? project.thumbnailUrl;
   const lockName = lock ? nameOf(lock.lockedBy ?? lock.locked_by) : null;
 
+  const open = () => onOpen(project.id);
+
   return (
-    <button
-      type="button"
-      className="ep-card"
-      onClick={() => onOpen(project.id)}
-      title={project.title || "Untitled project"}
-    >
-      <div className="ep-thumb">
-        {thumb
-          ? <img src={thumb} alt="" loading="lazy" />
-          : <div className="ep-thumb-empty" aria-hidden="true">🎬</div>}
+    <div className={"ep-card" + (archived ? " ep-card--archived" : "")}>
+      {/* Clickable open surface (role=button so action buttons can sit outside
+          it — a real <button> can't legally contain other buttons). */}
+      <div
+        className="ep-card-open"
+        role="button"
+        tabIndex={0}
+        onClick={open}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } }}
+        title={project.title || "Untitled project"}
+      >
+        <div className="ep-thumb">
+          {thumb
+            ? <img src={thumb} alt="" loading="lazy" />
+            : <div className="ep-thumb-empty" aria-hidden="true">🎬</div>}
 
-        {lock && (
-          <span className="ep-lock" title={`${lockName} is editing this project`}>
-            <span className="ep-lock-dot" aria-hidden="true" />
-            🔒 {lockName} editing
-          </span>
-        )}
+          {lock && (
+            <span className="ep-lock" title={`${lockName} is editing this project`}>
+              <span className="ep-lock-dot" aria-hidden="true" />
+              🔒 {lockName} editing
+            </span>
+          )}
 
-        <span className={`ep-status ep-status--${statusClass(status)}`}>{status}</span>
-      </div>
+          <span className={`ep-status ep-status--${statusClass(status)}`}>{status}</span>
+        </div>
 
-      <div className="ep-body">
-        <h3 className="ep-card-title">{project.title || "Untitled project"}</h3>
-        <div className="ep-meta">
-          <span className="ep-meta-row">
-            <span className="ep-meta-k">Creator</span>
-            <span className="ep-meta-v">{creator}</span>
-          </span>
-          <span className="ep-meta-row">
-            <span className="ep-meta-k">Last edit</span>
-            <span className="ep-meta-v">{lastEditor}</span>
-          </span>
-          <span className="ep-meta-row">
-            <span className="ep-meta-k">Updated</span>
-            <span className="ep-meta-v">{relTime(updated)}</span>
-          </span>
+        <div className="ep-body">
+          <h3 className="ep-card-title">{project.title || "Untitled project"}</h3>
+          <div className="ep-meta">
+            <span className="ep-meta-row">
+              <span className="ep-meta-k">Creator</span>
+              <span className="ep-meta-v">{creator}</span>
+            </span>
+            <span className="ep-meta-row">
+              <span className="ep-meta-k">Last edit</span>
+              <span className="ep-meta-v">{lastEditor}</span>
+            </span>
+            <span className="ep-meta-row">
+              <span className="ep-meta-k">Updated</span>
+              <span className="ep-meta-v">{relTime(updated)}</span>
+            </span>
+          </div>
         </div>
       </div>
-    </button>
+
+      {/* Owner-only management footer — archive (reversible) + delete (permanent). */}
+      {canManage && (
+        <div className="ep-card-foot">
+          <button
+            type="button"
+            className="ep-act"
+            onClick={() => onArchive(project)}
+            title={archived ? "Unarchive — return to your active projects" : "Archive — hide from the active list (reversible)"}
+          >
+            {archived ? "📤 Unarchive" : "🗄 Archive"}
+          </button>
+          <button
+            type="button"
+            className="ep-act ep-act--danger"
+            onClick={() => onDelete(project)}
+            title="Delete permanently — removes the project, timeline, versions and locks"
+          >
+            🗑 Delete
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -252,6 +283,7 @@ export function EditorProjects({ openEditorProject }) {
   const [modal, setModal] = useState(null); // null | "blank" | "reel"
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showArchived, setShowArchived] = useState(false); // owner: reveal archived projects
 
   /* Resolve a person id -> short display name via the live roster. */
   const nameOf = useCallback((id) => {
@@ -281,6 +313,17 @@ export function EditorProjects({ openEditorProject }) {
       return tb - ta;
     });
   }, [projects]);
+
+  /* Archived projects are soft-hidden from the active grid (status 'archived')
+     and only revealed via the owner's "Show archived" toggle. */
+  const archivedCount = useMemo(
+    () => sortedProjects.filter((p) => statusClass(p.status) === "archived").length,
+    [sortedProjects]
+  );
+  const visibleProjects = useMemo(
+    () => sortedProjects.filter((p) => showArchived || statusClass(p.status) !== "archived"),
+    [sortedProjects, showArchived]
+  );
 
   const closeModal = useCallback(() => {
     if (busy) return;
@@ -317,6 +360,26 @@ export function EditorProjects({ openEditorProject }) {
   const createBlank = useCallback((title) => runCreate({ title }), [runCreate]);
   const createFromReel = useCallback((payload) => runCreate(payload), [runCreate]);
 
+  /* Owner management — archive (reversible soft-hide) + delete (permanent).
+     Both call the never-throwing store actions; the gallery re-derives from the
+     optimistic store update + realtime. */
+  const handleArchive = useCallback((project) => {
+    if (typeof actions?.archiveEditProject !== "function") return;
+    const isArchived = statusClass(project.status) === "archived";
+    actions.archiveEditProject(project.id, !isArchived);
+  }, [actions]);
+
+  const handleDelete = useCallback((project) => {
+    if (typeof actions?.deleteEditProject !== "function") return;
+    const name = project.title || "Untitled project";
+    const ok = window.confirm(
+      `Delete “${name}”?\n\nThis permanently removes the project, its timeline, ` +
+      `saved versions and any edit lock. This cannot be undone.`
+    );
+    if (!ok) return;
+    actions.deleteEditProject(project.id);
+  }, [actions]);
+
   /* Loading: wait for the store boot AND the roster (names) to hydrate. */
   const isLoading = !loaded || !rosterLoaded;
 
@@ -331,6 +394,16 @@ export function EditorProjects({ openEditorProject }) {
           </p>
         </div>
         <div className="ep-actions">
+          {isOwner && archivedCount > 0 && (
+            <button
+              type="button"
+              className={"ep-btn" + (showArchived ? " ep-btn--primary" : "")}
+              onClick={() => setShowArchived((v) => !v)}
+              title={showArchived ? "Hide archived projects" : "Show archived projects"}
+            >
+              {showArchived ? `Hide archived (${archivedCount})` : `Show archived (${archivedCount})`}
+            </button>
+          )}
           <button
             type="button"
             className="ep-btn"
@@ -373,15 +446,26 @@ export function EditorProjects({ openEditorProject }) {
             + New blank project
           </button>
         </div>
+      ) : visibleProjects.length === 0 ? (
+        <div className="ep-state">
+          <div className="ep-state-icon" aria-hidden="true">🗄</div>
+          <div className="ep-state-title">All projects are archived</div>
+          <div className="ep-state-sub">
+            Use “Show archived” above to view and unarchive them.
+          </div>
+        </div>
       ) : (
         <div className="ep-grid">
-          {sortedProjects.map((p) => (
+          {visibleProjects.map((p) => (
             <ProjectCard
               key={p.id}
               project={p}
               lock={liveLockFor(editorLocks, p.id, now)}
               nameOf={nameOf}
               onOpen={openProject}
+              canManage={isOwner}
+              onArchive={handleArchive}
+              onDelete={handleDelete}
             />
           ))}
         </div>
