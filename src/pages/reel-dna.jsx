@@ -62,6 +62,21 @@ export function relTime(iso, now) {
   } catch { return ""; }
 }
 
+/* Plain-language meaning + transient/actionable class for each poller issue
+   type (DNA-018 — "logs show errors, fix these"). `transient:true` = expected /
+   self-healing (Instagram API limits, non-reel messages) that the next sync
+   retries — NOT something the owner must act on; `transient:false` = a real
+   failure worth a closer look. Unknown types fall back to actionable so a new
+   error kind is never silently dismissed. */
+const IG_ISSUE_INFO = {
+  graph_error:  { label: "IG API error",  transient: true,  hint: "Instagram's API rate-limited or 500'd this thread — transient; the next sync retries it. Not a data-loss bug on our side." },
+  message_skip: { label: "skipped",       transient: true,  hint: "A message carried no shareable reel link (text / sticker / non-reel) — nothing to capture." },
+  unfulfilled:  { label: "unresolved",    transient: true,  hint: "A share couldn't be resolved to a reel URL this run — usually fills in on a later sync." },
+  insert_error: { label: "save failed",   transient: false, hint: "A row failed to write to the database — this one is worth a closer look (re-run Refresh; if it persists, flag it)." },
+  stale_cookie: { label: "login expired", transient: false, hint: "Instagram's session cookie expired — reconnect Instagram so the poller can read DMs again." },
+};
+const igIssueInfo = (type) => IG_ISSUE_INFO[type] || { label: type || "unknown", transient: false, hint: "Unrecognized issue type — review the detail below." };
+
 /* ---------- IG Sync Health strip ----------
    A quiet presentational summary of the latest IG poller run. Reconciliation:
    green "Reconciled" only when run.reconciled === true; red banner (grouped
@@ -139,16 +154,40 @@ function IgSyncHealth({ runs, log, igDmCount, open, onToggle }) {
             <b>Errors / issues this run ({runLog.length})</b>
             {runLog.length === 0 ? (
               <div className="rd-igsync-muted">No errors logged for the latest run. 🎉</div>
-            ) : (
-              runLog.map(l => (
-                <div key={l.id} className="rd-igsync-issue">
-                  <span className={"rd-tag sm rd-issue rd-issue-" + (l.issueType || "unknown")}>
-                    {l.issueType || "unknown"}
-                  </span>
-                  <span className="rd-igsync-issue-detail">{l.detail || "—"}</span>
-                </div>
-              ))
-            )}
+            ) : (() => {
+              const actionable = runLog.filter(l => !igIssueInfo(l.issueType).transient).length;
+              const transient = runLog.length - actionable;
+              return (
+                <>
+                  <div className="rd-igsync-muted" style={{ marginBottom: 6 }}>
+                    {actionable === 0
+                      ? `All ${transient} expected / self-healing (Instagram API limits or non-reel messages) — they retry on the next sync, nothing to fix.`
+                      : `${actionable} need attention · ${transient} expected / auto-retried.`}
+                  </div>
+                  {runLog.map(l => {
+                    const info = igIssueInfo(l.issueType);
+                    return (
+                      <div key={l.id} className="rd-igsync-issue">
+                        <span className={"rd-tag sm rd-issue rd-issue-" + (l.issueType || "unknown")} title={info.hint}>
+                          {info.label}
+                        </span>
+                        <span
+                          className="rd-tag sm"
+                          title={info.hint}
+                          style={{
+                            color: info.transient ? "var(--fg-dim)" : "var(--c-red)",
+                            borderColor: info.transient ? "var(--line-hard)" : "var(--c-red-soft)",
+                          }}
+                        >
+                          {info.transient ? "auto-retried" : "needs attention"}
+                        </span>
+                        <span className="rd-igsync-issue-detail">{l.detail || "—"}</span>
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
