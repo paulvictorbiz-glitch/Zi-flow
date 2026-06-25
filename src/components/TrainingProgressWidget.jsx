@@ -33,12 +33,12 @@ function Bar({ pct }) {
   );
 }
 
-export function TrainingProgressWidget({ personId, isOwner, roster = [], onOpenPerson }) {
+export function TrainingProgressWidget({ personId, isOwner, roster = [], onOpenPerson, bare = false }) {
   const { actions } = useWorkflow();
 
   /* ── Owner roster mode ─────────────────────────────────────────── */
   if (isOwner) {
-    return <OwnerRoster actions={actions} roster={roster} onOpenPerson={onOpenPerson} />;
+    return <OwnerRoster actions={actions} roster={roster} onOpenPerson={onOpenPerson} bare={bare} />;
   }
 
   /* ── Editor self mode ──────────────────────────────────────────── */
@@ -91,7 +91,7 @@ function EditorBar({ personId }) {
 }
 
 /* Owner's roster — per-editor completed-module count. */
-function OwnerRoster({ actions, roster, onOpenPerson }) {
+function OwnerRoster({ actions, roster, onOpenPerson, bare = false }) {
   const [rows, setRows] = useState(null); // [{person_id, module_id, done}]
 
   useEffect(() => {
@@ -118,14 +118,8 @@ function OwnerRoster({ actions, roster, onOpenPerson }) {
     [roster]
   );
 
-  return (
-    <div className="tr-widget">
-      <div className="tr-widget-head">
-        <span className="tr-widget-title">🎓 Team training progress</span>
-        <span className="tr-widget-meta">{editors.length} editor{editors.length === 1 ? "" : "s"}</span>
-      </div>
-
-      {rows === null ? (
+  const content = (
+      rows === null ? (
         <div className="tr-widget-sub">Loading…</div>
       ) : editors.length === 0 ? (
         <div className="tr-widget-sub">No editors on the roster.</div>
@@ -157,7 +151,18 @@ function OwnerRoster({ actions, roster, onOpenPerson }) {
             );
           })}
         </div>
-      )}
+      )
+  );
+
+  if (bare) return content;
+
+  return (
+    <div className="tr-widget">
+      <div className="tr-widget-head">
+        <span className="tr-widget-title">🎓 Team training progress</span>
+        <span className="tr-widget-meta">{editors.length} editor{editors.length === 1 ? "" : "s"}</span>
+      </div>
+      {content}
     </div>
   );
 }

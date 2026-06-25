@@ -570,6 +570,62 @@ async def _rc_user_id_for_email(email: str) -> str:
     return rc_id
 
 
+# Cache admin-minted per-user auth tokens so the dashboard notifier can read each
+# caller's OWN rooms/DMs AS that user (personalized), not the whole team firehose.
+_RC_TOKEN_CACHE: dict[str, tuple[str, str]] = {}
+
+
+async def _rc_user_token(client: httpx.AsyncClient, rc_id: str) -> tuple[str, str]:
+    """Admin-mint (and cache) an auth token for a Rocket.Chat user id.
+    Returns (authToken, userId), or ('', '') if unavailable (e.g. the
+    users.createToken admin endpoint is disabled on this instance)."""
+    if not rc_id:
+        return ("", "")
+    cached = _RC_TOKEN_CACHE.get(rc_id)
+    if cached:
+        return cached
+    tok = ("", "")
+    try:
+        r = await client.post(f"{_rc_base()}/api/v1/users.createToken",
+                              headers=_rc_headers(), json={"userId": rc_id})
+        if r.status_code == 200:
+            data = (r.json() or {}).get("data") or {}
+            tok = (data.get("authToken") or "", data.get("userId") or rc_id)
+    except Exception:
+        tok = ("", "")
+    if tok[0]:
+        _RC_TOKEN_CACHE[rc_id] = tok
+    return tok
+
+
+def _user_headers(auth_token: str, user_id: str) -> dict:
+    """Per-user Rocket.Chat REST headers (acts AS that user, not the admin)."""
+    return {"X-Auth-Token": auth_token, "X-User-Id": user_id,
+            "Content-Type": "application/json"}
+
+
+async def _user_rooms(client: httpx.AsyncClient, headers: dict) -> list[dict]:
+    """The caller's OWN subscribed rooms via the user-scoped subscriptions.get —
+    channels (t='c'), private groups (t='p') and direct messages (t='d').
+    Each → {id, name, type}; DMs use the counterpart's display name. Empty on
+    any error."""
+    rooms: list[dict] = []
+    try:
+        r = await client.get(f"{_rc_base()}/api/v1/subscriptions.get", headers=headers)
+        if r.status_code != 200:
+            return rooms
+        for s in (r.json().get("update") or []):
+            rid = s.get("rid")
+            t = s.get("t") or "c"
+            if not rid:
+                continue
+            name = s.get("fname") or s.get("name") or ("Direct message" if t == "d" else "")
+            rooms.append({"id": rid, "name": name, "type": t})
+    except Exception:
+        pass
+    return rooms
+
+
 async def _list_rooms(client: httpx.AsyncClient) -> list[dict]:
     """Enumerate public channels + private groups as {id, name, type}."""
     rooms: list[dict] = []
@@ -594,12 +650,19 @@ async def _list_rooms(client: httpx.AsyncClient) -> list[dict]:
 
 @router.get("/dashboard/recent-messages")
 async def dashboard_recent_messages(request: Request, since: str = "", limit: int = 40):
-    """Recent channel/group messages for the new-message notifier. JWT-gated.
+    """Recent messages from the CALLER'S OWN rooms/DMs for the notifier. JWT-gated.
+
+    Personalized: reads only the rooms the signed-in user belongs to — their
+    channels, private groups, and direct messages — by acting AS that user via an
+    admin-minted token. So each user sees their OWN conversations (including
+    replies from others), not the whole team's firehose. The caller's own
+    messages are excluded (it's a new-message notifier). Thread replies carry
+    `tmid` so the frontend can mark them.
 
     Query: `since` (ISO ts; empty = baseline) + `limit`. Returns
-    { messages: [{id, room, roomType, sender, senderId, text, ts, url}], server_time }.
-    The caller's OWN messages are excluded. Degrades to an empty list on any
-    upstream error so the dashboard notifier never breaks.
+    { messages: [{id, room, roomType, sender, senderId, text, tmid, ts, url}],
+    server_time }. Degrades to an empty list on any upstream error so the
+    dashboard notifier never breaks.
     """
     user = await _verify_supabase_user(request)
     if not user:
@@ -617,15 +680,25 @@ async def dashboard_recent_messages(request: Request, since: str = "", limit: in
     out: list[dict] = []
     try:
         async with httpx.AsyncClient(timeout=12) as c:
-            rooms = await _list_rooms(c)
-            for room in rooms:
-                ep = "channels.history" if room["type"] == "c" else "groups.history"
+            auth_token, uid = await _rc_user_token(c, my_rc_id)
+            if not auth_token:
+                # Can't act as the caller (no RC id / users.createToken disabled)
+                # → return nothing rather than leak the whole team's firehose.
+                return {"messages": [], "server_time": _now_iso()}
+            uheaders = _user_headers(auth_token, uid)
+            rooms = await _user_rooms(c, uheaders)
+            for room in rooms[:25]:
+                t = room["type"]
+                ep = ("im.history" if t == "d"
+                      else "groups.history" if t == "p"
+                      else "channels.history")
                 params = {"roomId": room["id"], "count": per_room, "inclusive": "false"}
                 if since:
                     params["oldest"] = since
                 try:
+                    # Read AS the caller so private groups + DMs are visible.
                     r = await c.get(f"{_rc_base()}/api/v1/{ep}",
-                                    headers=_rc_headers(), params=params)
+                                    headers=uheaders, params=params)
                     if r.status_code != 200:
                         continue
                     for m in (r.json().get("messages") or []):
@@ -644,16 +717,23 @@ async def dashboard_recent_messages(request: Request, since: str = "", limit: in
                         if (not my_rc_id) and my_name and sender_name.strip().lower() == my_name:
                             continue
                         mid = m.get("_id") or ""
+                        room_label = room["name"] or ("dm" if t == "d" else "")
+                        if mid and t != "d" and room_label:
+                            url = f"{_rc_public()}/channel/{room_label}?msg={mid}"
+                        elif mid and t == "d":
+                            url = f"{_rc_public()}/direct/{room['id']}?msg={mid}"
+                        else:
+                            url = ""
                         out.append({
                             "id": mid,
-                            "room": room["name"],
-                            "roomType": room["type"],
+                            "room": room_label,
+                            "roomType": t,
                             "sender": sender_name,
                             "senderId": sender_id,
                             "text": text,
+                            "tmid": m.get("tmid") or "",
                             "ts": m.get("ts") or "",
-                            "url": (f"{_rc_public()}/channel/{room['name']}?msg={mid}"
-                                    if mid else ""),
+                            "url": url,
                         })
                 except Exception:
                     continue

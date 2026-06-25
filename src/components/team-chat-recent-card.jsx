@@ -124,6 +124,7 @@ export function TeamChatRecentCard({ onOpenTeam }) {
                 </span>
               )}
               <span style={{ fontSize: 12, color: "var(--fg-dim, #aeb6c6)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {m.tmid && <span title="Reply in a thread" style={{ color: "var(--c-cyan, #36d6e7)", marginRight: 4 }}>↳</span>}
                 {m.text || "(no text)"}
               </span>
               <span style={{ fontSize: 10, color: "var(--fg-mute, #8b93a7)", flexShrink: 0 }}>
