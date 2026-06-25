@@ -49,7 +49,7 @@ import { useAuth } from "../auth.jsx";
    true even while the owner previews a restricted role.
    --------------------------------------------------------------- */
 function isOwnerRole(person) {
-  return person?.role === "owner" || person?.id === "maya";
+  return person?.role === "owner";
 }
 
 /* The review queue belongs to the owner AND reviewers — used so the
@@ -177,8 +177,6 @@ function PermissionsProvider({ children }) {
     // Demo account: fail-CLOSED against an explicit allowlist (cannot be
     // loosened by the stored config). See DEMO_VIEWS in permissions-catalog.
     if (r === "demo") return DEMO_VIEWS.has(viewKey);
-    // Full-access bypass for privileged accounts (real signed-in identity, not preview perspective)
-    if (signedInPerson?.id === "maya" && !roleOverride) return true;
     // Person-level override takes precedence over role-level
     if (effectivePersonId && config[effectivePersonId]?.views?.[viewKey] !== undefined) {
       return !!config[effectivePersonId].views[viewKey];
@@ -194,8 +192,6 @@ function PermissionsProvider({ children }) {
     // never persist (per-session sandbox) but we still hide owner-only/
     // destructive affordances. See DEMO_ACTIONS in permissions-catalog.
     if (r === "demo") return DEMO_ACTIONS.has(actionKey);
-    // Full-access bypass for privileged accounts (real signed-in identity, not preview perspective)
-    if (signedInPerson?.id === "maya" && !roleOverride) return true;
     // Person-level override takes precedence over role-level
     if (effectivePersonId && config[effectivePersonId]?.actions?.[actionKey] !== undefined) {
       return !!config[effectivePersonId].actions[actionKey];

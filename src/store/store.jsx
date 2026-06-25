@@ -28,6 +28,7 @@ import { XP_PER_GRADE, scoreForSkillXp, medalForScores,
          SKILL_KEYS, REWARDS, levelForXp, xpForSkillGrades,
          xpForSkillGradesWithDifficulty, isReelLocked } from "../lib/gamify-data.jsx";
 import { reelDnaToPipelineFields, platformFromUrl } from "../lib/reel-dna.jsx";
+import { canPersonAccessMonitor } from "../lib/permissions-catalog.js";
 
 /* ---------- camelCase ↔ snake_case mappers ---------- */
 function reelFromDb(row) {
@@ -512,6 +513,48 @@ function eventLinkToDb(item) {
   return out;
 }
 
+/* ---------- Composite-key upsert (optimistic ⇄ realtime dedup) ----------
+   An optimistic row carries a SYNTHETIC id (e.g. `footage-<ts>-<rand>` or a
+   client uuid) while its realtime DB echo carries the gen_random_uuid() id,
+   so an id-only upsert lets BOTH coexist and the consumer renders the link
+   twice. `upsertByKey` de-dupes on a stable BUSINESS key instead, mirroring
+   the proven UPSERT_REEL_DNA_ASSET reducer.
+
+   keyFn(row) returns the composite key, or null when the row lacks one — in
+   that case we fall back to id-match (covers nullable-key rows and plain
+   page-in upserts). isDbRow=true means the incoming row carries a real DB id,
+   so on merge we prefer its fields AND id (the optimistic placeholder's
+   synthetic id is replaced); otherwise we keep the existing row's id. */
+function upsertByKey(list, incoming, keyFn, isDbRow = false) {
+  const arr = list || [];
+  const key = keyFn(incoming);
+  let idx = -1;
+  if (key != null) idx = arr.findIndex(row => keyFn(row) === key);
+  if (idx === -1)  idx = arr.findIndex(row => row.id === incoming.id);
+  if (idx === -1)  return [incoming, ...arr];
+  const existing = arr[idx];
+  const merged = isDbRow ? { ...existing, ...incoming } : { ...incoming, id: existing.id };
+  const next = arr.slice();
+  next[idx] = merged;
+  return next;
+}
+
+/* monitor_event_links business key — camelCase (every dispatch into the
+   eventLinks reducer goes through eventLinkFromDb, so rows are camelCase). */
+const eventLinkKey = (l) =>
+  (l && l.eventId != null && l.targetType != null && l.targetId != null)
+    ? `${l.eventId}:${l.targetType}:${String(l.targetId)}`
+    : null;
+
+/* attached_footage_items business key — snake_case (realtime echoes dispatch
+   the raw DB row; there is no attachedFootageFromDb mapper). footage_file_id
+   is NULLABLE: only key when it's present, else fall back to id-match — two
+   distinct null-footage rows on one reel must NOT collapse into each other. */
+const attachedFootageKey = (f) =>
+  (f && f.reel_id != null && f.footage_file_id != null)
+    ? `${f.reel_id}:${String(f.footage_file_id)}`
+    : null;
+
 /* reel_dna_assets — polymorphic join from a reel_dna card (uuid) to any of
    four asset types (footage/location/thumbnail/news). asset_id is TEXT in the
    DB (mixed text/uuid source PKs are coerced to text on write). */
@@ -884,15 +927,14 @@ function workflowReducer(state, action) {
     case "REMOVE_ATTACHED_FOOTAGE":
       return { ...state, attachedFootage: state.attachedFootage.filter(f => f.id !== action.id) };
 
-    case "UPSERT_ATTACHED_FOOTAGE": {
-      const exists = state.attachedFootage.some(f => f.id === action.item.id);
+    case "UPSERT_ATTACHED_FOOTAGE":
+      // Always a realtime DB echo (isDbRow) — collapse it onto any optimistic
+      // ADD_ATTACHED_FOOTAGE placeholder sharing the same (reel_id,
+      // footage_file_id) so one clip attached once renders once, not twice.
       return {
         ...state,
-        attachedFootage: exists
-          ? state.attachedFootage.map(f => f.id === action.item.id ? action.item : f)
-          : [action.item, ...state.attachedFootage],
+        attachedFootage: upsertByKey(state.attachedFootage, action.item, attachedFootageKey, true),
       };
-    }
 
     case "DELETE_ATTACHED_FOOTAGE_BY_ID":
       return { ...state, attachedFootage: state.attachedFootage.filter(f => f.id !== action.id) };
@@ -904,8 +946,14 @@ function workflowReducer(state, action) {
     /* loadMore page-in: append older rows, de-duped by id (a window row may
        overlap the page boundary). */
     case "APPEND_ATTACHED_FOOTAGE": {
-      const have = new Set(state.attachedFootage.map(f => f.id));
-      return { ...state, attachedFootage: [...state.attachedFootage, ...action.items.filter(f => !have.has(f.id))] };
+      const haveIds  = new Set(state.attachedFootage.map(f => f.id));
+      const haveKeys = new Set(state.attachedFootage.map(attachedFootageKey).filter(Boolean));
+      const add = action.items.filter(f => {
+        if (haveIds.has(f.id)) return false;
+        const k = attachedFootageKey(f);
+        return !(k && haveKeys.has(k));
+      });
+      return { ...state, attachedFootage: [...state.attachedFootage, ...add] };
     }
 
     case "SET_FOOTAGE_TAGS": {
@@ -1211,15 +1259,14 @@ function workflowReducer(state, action) {
     case "CREATE_EVENT_LINK":
       return { ...state, eventLinks: [action.item, ...state.eventLinks] };
 
-    case "UPSERT_EVENT_LINK": {
-      const exists = state.eventLinks.some(l => l.id === action.item.id);
+    case "UPSERT_EVENT_LINK":
+      // Always a realtime DB echo (isDbRow) — collapse it onto any optimistic
+      // CREATE_EVENT_LINK row sharing the same (eventId,targetType,targetId)
+      // so a send-to-pipeline raw upsert + a prior client link don't double.
       return {
         ...state,
-        eventLinks: exists
-          ? state.eventLinks.map(l => l.id === action.item.id ? action.item : l)
-          : [action.item, ...state.eventLinks],
+        eventLinks: upsertByKey(state.eventLinks, action.item, eventLinkKey, true),
       };
-    }
 
     case "DELETE_EVENT_LINK_BY_ID":
       return { ...state, eventLinks: state.eventLinks.filter(l => l.id !== action.id) };
@@ -1230,8 +1277,14 @@ function workflowReducer(state, action) {
 
     /* loadMore page-in: append older rows, de-duped by id. */
     case "APPEND_EVENT_LINKS": {
-      const have = new Set(state.eventLinks.map(l => l.id));
-      return { ...state, eventLinks: [...state.eventLinks, ...action.items.filter(l => !have.has(l.id))] };
+      const haveIds  = new Set(state.eventLinks.map(l => l.id));
+      const haveKeys = new Set(state.eventLinks.map(eventLinkKey).filter(Boolean));
+      const add = action.items.filter(l => {
+        if (haveIds.has(l.id)) return false;
+        const k = eventLinkKey(l);
+        return !(k && haveKeys.has(k));
+      });
+      return { ...state, eventLinks: [...state.eventLinks, ...add] };
     }
 
     /* reel_dna_assets (card uuid → footage/location/thumbnail/news link).
@@ -2262,15 +2315,14 @@ function WorkflowProvider({ children }) {
      the optimization (editors skip these queries) kicks in once role resolves
      to a non-owner. Mirrors the auth-person-keyed pattern of CLAUDE.md rule #6. */
   const _ownerKnown = !!_authPerson?.id;
-  /* Match the UI's owner-equivalent treatment (permissions.jsx isOwnerRole /
-     app.jsx useIsOwner): reviewer Leroy Crosby (id 'maya') is UI-permitted to
-     open the Monitor hub, so the store must run the same owner-only secondary
-     fetches + realtime channels for him — otherwise he sees empty data with no
-     live updates once his role resolves to 'reviewer' (fail-closed regression). */
-  const _isOwner =
-    !_ownerKnown ||
-    _authPerson?.role === "owner" ||
-    _authPerson?.id === "maya";
+  /* Gate the owner-only secondary fetches + realtime channels through the
+     SAME role-only predicate the UI's Monitor gate uses (canPersonAccessMonitor,
+     permissions-catalog) so the store and UI can never drift — Monitor is
+     owner-only, so a reviewer/editor skips these queries entirely. Keep the
+     `!_ownerKnown` fail-open clause (role not resolved yet → run them so boot
+     is never bricked) and the local name `_isOwner` (its 4 use-sites below
+     stay untouched). Replaces the old hardcoded `id==='maya'` bypass. */
+  const _isOwner = !_ownerKnown || canPersonAccessMonitor(_authPerson);
 
   /* Owner-only secondary hydration (WS3 C1) — monitor_events, monitor_sources,
      monitor_event_links, ig_sync_runs, ig_ingest_log, thumbnail_dna. Editors
@@ -3352,7 +3404,10 @@ function WorkflowProvider({ children }) {
           persistDeleteReel(id).catch(e => console.error(e));
         } else if (decision === "greenlight") {
           persistUpdateReel(stateRef.current, id, {
-            stage: "selected", state: "ok", blocker: null,
+            // Match the optimistic reducer (TRIAGE_IDEA greenlight writes
+            // "not_started"); persisting legacy "selected" made the DB row
+            // disagree with local state (normalizeStage masked it on read).
+            stage: "not_started", state: "ok", blocker: null,
             age: "queued", stageEnteredAt: stamp,
             next: "Start main edit",
           }).catch(e => console.error(e));

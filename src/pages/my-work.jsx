@@ -19,7 +19,7 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { DPill, Pill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
-import { usePermissions, useIsOwner, isOwnerRole } from "../lib/permissions.jsx";
+import { usePermissions, useIsOwner } from "../lib/permissions.jsx";
 import { useNow, formatDue, formatDuration } from "../lib/time.jsx";
 import { ROLES, STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
@@ -59,17 +59,6 @@ function formatHistoryTs(iso) {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return datePart + " · " + hh + ":" + mm;
-}
-
-/* Action-button gating per step 5:
-   - Owner role = god-mode (always allowed).
-   - Anyone else: only the matching role's actions are exposed. */
-function useCanAct(requiredRole) {
-  const { person } = useAuth();
-  if (!person) return false;
-  if (isOwnerRole(person)) return true;
-  if (Array.isArray(requiredRole)) return requiredRole.includes(person.role);
-  return person.role === requiredRole;
 }
 
 /* Resolve whose reels this dashboard shows.
