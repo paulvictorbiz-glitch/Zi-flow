@@ -4,6 +4,48 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-25 (session u) — Reel DNA "not updating" investigation → IG poller hardening (Hetzner, LIVE)
+
+**What changed:** Owner reported the Reel DNA IG-shorts spreadsheet "not updating even after refresh + sending new assets." Deep live diagnosis proved the pipeline was **healthy** (no bug); separately shipped a **resilience hardening** to the IG poller: each conversation now ALWAYS hydrates its newest ~60 messages via tiny per-message Graph fetches (`messages{id}` projection → individual `/{mid}` hydration) that can't trip the heavy-thread "reduce the amount of data" 500, so a flaky bulk sweep can no longer delay a capture; plus #230 token-permission errors now write a loud "reconnect Instagram" note on the `ig_sync_runs` row instead of a silent `inserted=0`.
+
+**Where:** `backend-handoff/ig_webhook.py` (`_newest_hydrate_count`, `_fetch_newest_message_ids`, `_hydrate_message`, `_is_permission_error`, wired into `_do_sync_inner`; `note` on `_close_sync_run`). Tunable `IG_NEWEST_HYDRATE` (default 60, 0 disables). Deployed to Hetzner `fb-backend` (image rebuild + `--force-recreate`).
+
+**Path we took:** Read-only DB diagnosis via `scripts/ig-sync-diagnose.mjs` + ad-hoc PostgREST queries → found last `ig_dm` capture was 06-23 and `ig_sync_runs` were frozen at `messages_seen=632/shares_seen=399/inserted=0/graph_errors=0`. SSH read-only Graph probes inside `fb-backend` (token store + `httpx`) confirmed: messages edge is **newest-first**, token is **valid with `instagram_manage_messages`** (expires never, data-access to 2026-09-08), and crucially **every conversation's `updated_time` was frozen at 2026-06-23** — i.e. Instagram had no new DMs to give. Owner sent a test reel mid-session → `updated_time` bumped to 15:41, production query read it fine, a manual sync captured it (`DZ-EVNyMYMB` in the sheet by 15:46, ~5 min).
+
+**What we learned:** (1) The "not updating" was **NOT a bug** — there were genuinely no new API-visible DMs between 06-23 and the test send. (2) The IG messaging edge is **genuinely flaky**: the conversations edge 500s above `limit=1` (prod already uses limit=1 + pagination), and a `shares{link}` query on the heavy self-share thread intermittently times out — when that hits a cron run, the bulk sweep returns nothing for that thread until the next clean run. The newest-message hydration closes that gap. (3) `updated_time` on the conversations edge is the decisive "is there anything new?" signal. (4) #230 "(#230) not enough permission to view the object" is per-object and was **transient** here (06-24 16:16–19:16), not a token failure. (5) Verified the live `ig_webhook.py` was **byte-identical to the repo snapshot** before deploying (clean merge surface, no live-ahead risk this time).
+
+**Status:** **Live in production** (Hetzner `fb-backend`, post-deploy sync clean: `graph_errors=0 reconciled=true`). Backup `ig_webhook.py.bak.20260625-160745` on the box for rollback.
+
+---
+
+## 2026-06-25 (session u) — Thumbnail re-capture 409 fix (revive soft-deleted row) — LIVE
+
+**What changed:** Manually re-adding a YouTube thumbnail you'd previously **deleted** now **revives** the tombstoned row (clears `deleted_at`, refreshes metadata, status→captured) instead of inserting a duplicate that the DB's FULL unique index on `video_id` rejected with a 409.
+
+**Where:** `src/store/store.jsx` (`createThumbnailDnaCapture` — early revive branch keyed on `stateRef.current.thumbnailDna` finding a `videoId` match with `deletedAt`). Shipped via full-tree `vercel --prod`.
+
+**Path we took:** Spotted the latent bug while reading `thumbnail-dna.jsx` `onCapture` (its dupe guard excludes `!d.deletedAt`, but the DB index is FULL not partial, so the insert 409'd). Owner asked to fix it. Manual path revives; the `yt-sync` upsert deliberately keeps `ignoreDuplicates` so a deliberately-deleted video isn't auto-resurrected every cron run.
+
+**What we learned:** The UI dupe-check and the DB unique index disagreed on what "duplicate" means (UI ignores tombstones, DB doesn't). Reviving the existing row is the right reconciliation; only the explicit manual action revives.
+
+**Status:** **Live in production** (`ef91b06`, `vercel --prod`).
+
+---
+
+## 2026-06-25 (session u) — YouTube Data API thumbnail ingest (beats the 15-video RSS cap) — LIVE
+
+**What changed:** The Thumbnails-tab playlist poller (`yt-sync`) now pulls the **entire** playlist via the YouTube **Data API v3 `playlistItems`** endpoint (paginated 50/page) instead of the public Atom feed, which is **hard-capped at ~15 videos**. Owner's "Korea" playlist had **32 videos**; the feed exposed 15, so 17 were invisible. First live sync inserted the **9** previously-hidden non-deleted videos.
+
+**Where:** `api/ai/_rss.js` (new `fetchPlaylistViaDataApi` — paginated, page-cap + time-budget bounded, skips Deleted/Private placeholders). `api/ai/suggest.js` (`yt-sync` prefers Data API when `YT_API_KEY` set, **falls back to RSS** on any key/quota failure; response now reports `via`). New env `YT_API_KEY` (Vercel production + `.env.local`).
+
+**Path we took:** Diagnosed by fetching the live feed (exactly 15 `<entry>`) and confirming all 15 were already in `thumbnail_dna` (15/15) → so the sync was healthy and the cap was the cause. Built the Data API path with RSS fallback; owner created keys — first two were HTTP-referrer-locked Maps keys (403 `referer <empty>` server-side), so a **dedicated server key** (Application restrictions = None, API restriction = YouTube Data API v3) was created. Validated server-side (playlist = 32), set in Vercel, deployed, triggered live: `via:data_api items_seen:32 inserted:9`; `thumbnail_dna` 19→29.
+
+**What we learned:** (1) YouTube's playlist **Atom feed caps at ~15** with no param to raise it — the Data API is the only way to get the full playlist. (2) Google API keys have TWO independent restriction axes: **Application restrictions** (Websites/IP/None — referrer-locked keys 403 server-side) vs **API restrictions** (which APIs). Server use needs Application=None (or IP); enabling the API on a referrer-locked key is necessary-but-insufficient. (3) Graceful RSS fallback means a key/quota problem degrades to the old 15-cap behavior instead of breaking the sync.
+
+**Status:** **Live in production** (`ef91b06` + `YT_API_KEY` baked via `vercel --prod`). Key logged in `reference_credential-inventory`.
+
+---
+
 ## 2026-06-25 (session t) — Attach Rocket.Chat screen recordings as a reel's "Current reel state" (Phase 1) — SHIPPED LIVE
 
 **What changed:** Editors post screen recordings of their cuts in Rocket.Chat; this adds a **"↙ Pick from Chat"** button on the reel detail card (available to **everyone**, not owner-gated) that opens a picker → choose a channel → see its recent **video** uploads → "Set as state". The backend downloads the chosen file with admin creds, **transcodes it to H.264+AAC**, re-hosts it into the private `reel-videos` bucket, and points the reel's `media_path`/`media_target` at it (the same contract the Final-video uploader + Planable push already use). The detail card now **embeds the current reel state video inline below the Inspiration reel** (signed URL, native controls) and the legacy "+ Current reel state" URL button was removed.
