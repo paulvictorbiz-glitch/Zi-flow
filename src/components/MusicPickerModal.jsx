@@ -45,6 +45,10 @@ export function MusicPickerModal({ reelDnaId, onClose }) {
   const [attaching, setAttaching] = useState(null);
   // id of the track currently previewing (only one <audio> plays at a time).
   const [previewId, setPreviewId] = useState(null);
+  // Manual-link attach (paste a URL instead of searching the catalog).
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualUrl, setManualUrl] = useState("");
+  const [manualBusy, setManualBusy] = useState(false);
 
   const debounceRef = useRef(null);
   const audioRef = useRef(null);
@@ -141,6 +145,42 @@ export function MusicPickerModal({ reelDnaId, onClose }) {
     }
   }
 
+  // Attach a manually-entered track (just a URL + optional title). Builds a
+  // synthetic track keyed by its URL so it dedupes, caches it via
+  // upsertMusicTrack (optimistic — resolves even without the music_tracks
+  // table), then attaches it the same way a catalog track is attached.
+  async function handleAttachManual() {
+    const url = manualUrl.trim();
+    if (!url || manualBusy) return;
+    setManualBusy(true);
+    setError(null);
+    try {
+      const id = "manual:" + url;
+      const title = manualTitle.trim() || url;
+      const track = {
+        id,
+        title,
+        artist: "Manual link",
+        audio_url: url,
+        preview_url: url,
+        source: "manual",
+      };
+      await actions.upsertMusicTrack(track);
+      await actions.attachAsset(reelDnaId, "music", id, title);
+      setManualTitle("");
+      setManualUrl("");
+      setAttachedThisSession((prev) => {
+        const next = new Set(prev);
+        next.add(id);
+        return next;
+      });
+    } catch (e) {
+      setError("Attach failed: " + (e?.message || String(e)));
+    } finally {
+      setManualBusy(false);
+    }
+  }
+
   function togglePreview(track, url) {
     const id = trackId(track);
     if (!url) return;
@@ -177,6 +217,67 @@ export function MusicPickerModal({ reelDnaId, onClose }) {
         onEnded={() => setPreviewId(null)}
         style={{ display: "none" }}
       />
+
+      {/* Manual link — paste any track URL (works even if the catalog is
+          disconnected). Shows in the reel's Attached Music card. */}
+      <div
+        style={{
+          border: "1px dashed var(--border)",
+          borderRadius: 6,
+          padding: 10,
+          marginBottom: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--fg)" }}>
+          Or attach a manual link
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            type="text"
+            value={manualTitle}
+            onChange={(e) => setManualTitle(e.target.value)}
+            placeholder="Track name (optional)"
+            style={{
+              flex: 1, minWidth: 120, padding: "8px 10px",
+              border: "1px solid var(--border)", borderRadius: 4,
+              background: "var(--bg-input)", color: "var(--fg)", fontSize: 13,
+              fontFamily: "inherit", boxSizing: "border-box",
+            }}
+          />
+          <input
+            type="text"
+            value={manualUrl}
+            onChange={(e) => setManualUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAttachManual(); } }}
+            placeholder="Paste a track URL…"
+            style={{
+              flex: 2, minWidth: 160, padding: "8px 10px",
+              border: "1px solid var(--border)", borderRadius: 4,
+              background: "var(--bg-input)", color: "var(--fg)", fontSize: 13,
+              fontFamily: "var(--f-mono)", boxSizing: "border-box",
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleAttachManual}
+            disabled={!manualUrl.trim() || manualBusy}
+            style={{
+              padding: "8px 14px",
+              background: manualUrl.trim() ? "var(--accent)" : "transparent",
+              color: manualUrl.trim() ? "var(--bg)" : "var(--fg-mute)",
+              border: manualUrl.trim() ? "none" : "1px solid var(--border)",
+              borderRadius: 4, fontSize: 12, fontWeight: 500,
+              cursor: !manualUrl.trim() || manualBusy ? "default" : "pointer",
+              opacity: manualBusy ? 0.6 : 1, whiteSpace: "nowrap",
+            }}
+          >
+            {manualBusy ? "⏳ …" : "+ Attach link"}
+          </button>
+        </div>
+      </div>
 
       {tokenExpired ? (
         <ReconnectBanner />
