@@ -69,6 +69,7 @@ export const ACTION_CAPS = [
   { key: "tagReelSkills",   label: "Tag reels with syllabus skills", hint: "The skill-tag picker on a reel's detail page (links a reel to a Training module)" },
   { key: "gradeRubric",     label: "Grade Gamify rubric",     hint: "Set Junior Editor/Skilled Editor/Professional per skill on a reel — awards XP" },
   { key: "editManual",      label: "Edit the training manual", hint: "Inline-edit the Training course content (playbook prose, checklists, examples, embeds). Off = read-only." },
+  { key: "viewTeamChat",    label: "See Teams messages on My Work", hint: "The recent Teams-chat card at the top of My Work. Off = the card is hidden for that person." },
 ];
 
 /* Roles the owner can configure. `owner` is excluded — always full.

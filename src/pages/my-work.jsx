@@ -222,7 +222,12 @@ const MW_EXTRA_CSS = `
 
 function MyWork({ role, personId, onOpen, onNavigate, onSetPerson }) {
   const { person } = useAuth();
+  const { can } = usePermissions();
   const me = whoseWork(role, person, personId);
+  // Owner-controlled: the Teams-messages card can be hidden per-person/role from
+  // Roles & permissions (action cap `viewTeamChat`). Owner always sees it
+  // (can() is fail-open + owner-always-true); off = hidden for that person.
+  const showTeamChat = can("viewTeamChat");
   const dashboard =
     role === "owner"    ? <OwnerDashboard me={me} onOpen={onOpen} onNavigate={onNavigate} onSetPerson={onSetPerson} />
     : role === "reviewer" ? <ReviewQueueWork me={me} onOpen={onOpen} />
@@ -233,11 +238,14 @@ function MyWork({ role, personId, onOpen, onNavigate, onSetPerson }) {
       <style dangerouslySetInnerHTML={{ __html: MW_EXTRA_CSS }} />
       {/* New Teams-chat messages — recent log + mute/mark-read (all roles).
           Relocated to the TOP of My Work (MYW-rel) so unread team messages are
-          the first thing seen on entry, instead of being buried at page bottom. */}
+          the first thing seen on entry, instead of being buried at page bottom.
+          Owner can hide it per-person via the `viewTeamChat` permission. */}
       <div className="mw-wrap">
-        <div style={{ padding: "16px 22px 0" }}>
-          <TeamChatRecentCard onOpenTeam={() => onNavigate?.("team")} />
-        </div>
+        {showTeamChat && (
+          <div style={{ padding: "16px 22px 0" }}>
+            <TeamChatRecentCard onOpenTeam={() => onNavigate?.("team")} />
+          </div>
+        )}
         {dashboard}
       </div>
     </>
