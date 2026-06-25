@@ -357,6 +357,22 @@ MSGS_PAGE_CAP   = 20      # max message-pages to follow per conversation (safety
 GRAPH_RETRY_ATTEMPTS = 4
 GRAPH_BACKOFF = (0.0, 1.0, 2.5, 5.0)   # seconds slept BEFORE attempt i (i=0 → no wait)
 
+
+def _newest_hydrate_count() -> int:
+    """How many of each conversation's MOST-RECENT messages to ALWAYS pull via a
+    tiny per-message fetch, independent of the bulk paginated sweep. Tune via
+    IG_NEWEST_HYDRATE; 0 disables. This is the fix for "new reels never show up
+    even though the run is clean (graph_errors=0, inserted=0)": the bulk
+    messages.limit() sweep can return a STABLE window (capped at MSGS_PAGE_CAP, or
+    truncated by a heavy-thread #230/500) that never includes the latest DMs — so
+    messages_seen stays frozen and nothing new is captured. A `messages{id}`
+    projection + individual /{mid} hydration is light enough to NEVER trip the
+    'reduce the amount of data' 500, so the newest N reels are always reachable."""
+    try:
+        return max(0, int(os.environ.get("IG_NEWEST_HYDRATE", "60")))
+    except Exception:  # noqa: BLE001
+        return 60
+
 # Single-flight guard: only ONE sweep at a time. The */15 cron + a manual Refresh
 # (or several) can otherwise overlap and hammer the Graph conversations edge into
 # rate-limited 500s ("reduce the amount of data") — and race on the same run rows.
@@ -448,6 +464,8 @@ async def _list_ig_conversations(client, pid: str, tok: str, cap: int = 25,
             if j.get("_err") != 400:
                 if run is not None:
                     run["graph_errors"] += 1
+                    if _is_permission_error(j.get("_err"), str(j.get("body", ""))):
+                        run["token_permission_error"] = True
                 log.warning("ig_webhook sync: conversations error %s: %s",
                             j.get("_err"), str(j.get("body", ""))[:160])
                 await _log_ingest_issue(
@@ -501,6 +519,8 @@ async def _fetch_messages(client, cid: str, tok: str, run: dict, run_id) -> list
             limit = max(MSGS_MIN_LIMIT, limit // 2)
             continue
         run["graph_errors"] += 1
+        if _is_permission_error(md.get("_err"), body):
+            run["token_permission_error"] = True
         await _log_ingest_issue(
             client, run_id, "graph_error",
             detail=f"messages fetch: {md.get('_err')} {body}"[:300],
@@ -514,6 +534,8 @@ async def _fetch_messages(client, cid: str, tok: str, run: dict, run_id) -> list
         j = await _graph_request(client, url=next_url)
         if j.get("_err") is not None:
             run["graph_errors"] += 1
+            if _is_permission_error(j.get("_err"), str(j.get("body", ""))):
+                run["token_permission_error"] = True
             await _log_ingest_issue(
                 client, run_id, "graph_error",
                 detail=f"messages page {pages}: {j.get('_err')} {str(j.get('body',''))[:160]}",
@@ -523,6 +545,54 @@ async def _fetch_messages(client, cid: str, tok: str, run: dict, run_id) -> list
         next_url = (j.get("paging") or {}).get("next")
         pages += 1
     return msgs
+
+
+def _is_permission_error(err, body: str) -> bool:
+    """A Graph (#230) 'not enough permission to view the object' / 403 OAuth error
+    means the Page/IG token has LOST messaging permission (expired, app review
+    lapsed, or the account was disconnected) — NOT a transient/heavy-thread error.
+    Surfaced on the run note so 'inserted=0' isn't silently mistaken for 'all
+    caught up' (the real fix is owner-side: reconnect Instagram/Facebook)."""
+    b = body or ""
+    return ("(#230)" in b or '"code":230' in b
+            or (err == 403 and "permission" in b.lower()))
+
+
+async def _fetch_newest_message_ids(client, cid: str, tok: str) -> list[str]:
+    """Cheapest newest-first message-id list for a conversation. Tries the minimal
+    `messages.limit(N){id,created_time}` projection on the conversation node, then
+    falls back to the /{cid}/messages edge with the same cheap fields. Never carries
+    the heavy shares/attachments payload, so it does NOT trip the heavy-thread 500
+    that the bulk sweep hits. Returns ids newest-first (best-effort; [] on failure)."""
+    n = _newest_hydrate_count()
+    if n <= 0:
+        return []
+    data = None
+    j = await _graph_request(client, path=cid, token=tok,
+                             params={"fields": f"messages.limit({n}){{id,created_time}}"})
+    if j.get("_err") is None:
+        data = ((j.get("messages") or {}).get("data")) or []
+    else:
+        j2 = await _graph_request(client, path=f"{cid}/messages", token=tok,
+                                  params={"fields": "id,created_time", "limit": n})
+        if j2.get("_err") is None:
+            data = j2.get("data") or []
+    if not data:
+        return []
+    # Graph usually returns newest-first, but don't trust it — sort by time DESC.
+    data.sort(key=lambda m: _parse_ts(m.get("created_time", "")), reverse=True)
+    return [m.get("id") for m in data[:n] if m.get("id")]
+
+
+async def _hydrate_message(client, mid: str, tok: str) -> dict | None:
+    """Fetch ONE message with the full capture projection. A single-object request
+    is tiny → it never trips the heavy-payload 500. Returns the node or None."""
+    j = await _graph_request(
+        client, path=mid, token=tok,
+        params={"fields": "id,created_time,from,message,shares{link}"})
+    if j.get("_err") is not None:
+        return None
+    return j
 
 
 async def _existing_ext_refs(client) -> set:
@@ -592,6 +662,11 @@ async def _close_sync_run(client, run_id: str, run: dict,
         "reconciled": reconciled,
         "mismatch_count": mismatch_count,
     }
+    # Loud signal on the run row when the token lost permission (#230) — so a
+    # clean-looking run (inserted=0) isn't mistaken for "all caught up".
+    if run.get("token_permission_error"):
+        patch["note"] = ("TOKEN_PERMISSION (#230): the Page/IG token can't read message "
+                         "objects — reconnect Instagram/Facebook to refresh it.")
     try:
         r = await client.patch(
             f"{url}/rest/v1/ig_sync_runs?id=eq.{run_id}",
@@ -690,6 +765,20 @@ async def _do_sync_inner(trigger: str = "cron") -> dict:
                 # Paginated + adaptively-shrinking fetch so a heavy thread no longer
                 # 500s-and-drops; returns all messages it could retrieve.
                 msgs = await _fetch_messages(client, cid, tok, run, run_id)
+                # Hardening: ALWAYS hydrate the newest N messages individually, so
+                # a bulk sweep that returned a STALE window (heavy-thread truncation
+                # or the MSGS_PAGE_CAP) can't hide the latest DMs. Cheap per-message
+                # fetches can't trip the heavy-payload 500. De-duped against what the
+                # sweep already returned AND against already-captured refs.
+                seen_ids = {m.get("id") for m in msgs if m.get("id")}
+                newest_ids = await _fetch_newest_message_ids(client, cid, tok)
+                for nmid in newest_ids:
+                    if not nmid or nmid in seen_ids or nmid in known:
+                        continue
+                    node = await _hydrate_message(client, nmid, tok)
+                    if node and node.get("id"):
+                        msgs.append(node)
+                        seen_ids.add(node["id"])
                 # index the text notes by sender for nearest-time pairing
                 notes = [(_parse_ts(m.get("created_time", "")),
                           (m.get("from") or {}).get("id"),

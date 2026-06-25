@@ -650,7 +650,7 @@ export function TeamChat({ active }) {
     <div style={{
       display: active ? "flex" : "none",
       flexDirection: "column",
-      position: "absolute", top: 64, left: 0, right: 0, bottom: 0,
+      position: "fixed", top: 64, left: 0, right: 0, bottom: 0,
       background: "var(--bg-0)",
       zIndex: 10,
       minHeight: 0,

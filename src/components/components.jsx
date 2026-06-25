@@ -187,7 +187,15 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
               )}
             </div>
           )}
-          <div className="title">{reel.title}</div>
+          <div className="title">
+            {reel.mediaPath && (
+              <span
+                title="Reel state video attached"
+                style={{ fontSize: 10, marginRight: 4, verticalAlign: "middle", opacity: 0.85 }}
+              >🎥</span>
+            )}
+            {reel.title}
+          </div>
           {!collapsed && !compact && reel.series && (
             <div className="reel-series" title={"Series: " + reel.series}>
               ⛓ {reel.series}

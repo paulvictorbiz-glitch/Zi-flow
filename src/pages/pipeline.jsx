@@ -12,7 +12,7 @@ import { usePermissions, useIsOwner } from "../lib/permissions.jsx";
 
 const SOL_PIPELINE_CSS = `
 [data-theme="solarin"] .pl-wrap {
-  max-width: 1320px; margin: 0 auto; padding: 28px 32px; box-sizing: border-box;
+  padding: 28px 16px; box-sizing: border-box;
 }
 [data-theme="solarin"] .pl-header { margin-bottom: 20px; }
 [data-theme="solarin"] .pl-board {
@@ -74,9 +74,25 @@ function Pipeline({ onOpen }) {
     try { return new Set(JSON.parse(localStorage.getItem("pipeline_hidden_lanes") || "[]")); }
     catch { return new Set(); }
   });
+  /* The finished columns (Completed + Posted) are collapsed BY DEFAULT so the
+     active-work columns get the width and the card text stays readable. New
+     visitors get them hidden; existing users get them hidden once (a one-time
+     v1 seed) — after that, anyone's manual show/hide choice is respected. */
   const [hiddenCols, setHiddenCols] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem("pipeline_hidden_cols") || "[]")); }
-    catch { return new Set(); }
+    const DEFAULT_HIDDEN = ["completed", "posted"];
+    try {
+      const stored = localStorage.getItem("pipeline_hidden_cols");
+      const seeded = localStorage.getItem("pipeline_hidden_cols_seeded_v1") === "1";
+      let set;
+      if (stored == null) {
+        set = new Set(DEFAULT_HIDDEN); // first ever visit on this device
+      } else {
+        set = new Set(JSON.parse(stored));
+        if (!seeded) DEFAULT_HIDDEN.forEach(k => set.add(k)); // apply once to existing users
+      }
+      localStorage.setItem("pipeline_hidden_cols_seeded_v1", "1");
+      return set;
+    } catch { return new Set(DEFAULT_HIDDEN); }
   });
   /* Optional series/playlist grouping — clusters same-series reels within each
      cell and shows a series header. Off by default (= current flat board). */

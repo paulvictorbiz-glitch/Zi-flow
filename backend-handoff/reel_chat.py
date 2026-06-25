@@ -25,9 +25,12 @@ shared secret (REEL_SLASH_TOKEN) so arbitrary callers can't drive this route.
 from __future__ import annotations
 
 import os
+import hashlib
+import hmac
+import time as _time
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 router = APIRouter(prefix="/rocketchat", tags=["rocketchat"])
 
@@ -995,3 +998,347 @@ async def dashboard_attach_recording(request: Request):
             reel_id, f"📎 Attached a screen recording from #{channel}",
             author=user["name"])
     return {"ok": True, "media_path": path}
+
+
+# ── No-copy chat recordings: stream from RC + transcode-cache on local disk ────
+#
+# Phase 2 of "Current reel state": instead of re-hosting the chosen recording
+# into the Supabase reel-videos bucket (a permanent SECOND copy), the reel stores
+# only a POINTER ({channel, fileId, name, private}) and the video is streamed on
+# demand from Rocket.Chat through this backend — so Supabase storage usage for
+# reel states drops to ZERO. HEVC sources (silent in browsers) are transcoded
+# ONCE into a local cache dir; H.264 sources are faststart-remuxed once too.
+#
+# Auth: an HTML <video src> can't carry a Bearer header, so we mirror Supabase's
+# signed-URL model — `recording-url` (JWT-gated) mints a short-lived HMAC-signed
+# URL that `stream-recording` validates (no JWT — the signature IS the
+# capability, exactly like a Supabase createSignedUrl token).
+
+def _recording_secret() -> str:
+    """HMAC secret for signed stream URLs. Falls back to the service-role key so
+    the feature works with no new env; set RECORDING_URL_SECRET for a dedicated
+    rotating secret."""
+    return os.environ.get("RECORDING_URL_SECRET") or _sb_key() or "fb-reel-stream"
+
+
+def _sign_recording(file_id: str, name: str, exp: int) -> str:
+    msg = f"{file_id}\n{name}\n{exp}".encode("utf-8")
+    return hmac.new(_recording_secret().encode("utf-8"), msg,
+                    hashlib.sha256).hexdigest()
+
+
+def _rc_cache_dir() -> str:
+    d = os.environ.get("RC_CACHE_DIR", "/tmp/reel-cache")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+def _safe_cache_key(file_id: str) -> str:
+    """RC file ids are alnum — strip anything else so the path can't escape."""
+    return "".join(ch for ch in (file_id or "") if ch.isalnum())[:64]
+
+
+@router.get("/dashboard/recording-url")
+async def dashboard_recording_url(request: Request, fileId: str = "",
+                                  name: str = "recording.mp4", ttl: int = 3600):
+    """Mint a short-lived signed URL the browser can drop into <video src>.
+
+    JWT-gated. Returns { ok, url, expires_at }. The signed stream URL needs no
+    JWT (the signature is the capability) so a plain <video> tag can load it —
+    the same capability an authed teammate already has via the file picker.
+    """
+    user = await _verify_supabase_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    file_id = (fileId or "").strip()
+    if not file_id:
+        return {"ok": False, "error": "fileId required"}
+    name = (name or "recording.mp4").strip() or "recording.mp4"
+    try:
+        ttl = max(60, min(int(ttl or 3600), 6 * 3600))
+    except Exception:
+        ttl = 3600
+    exp = int(_time.time()) + ttl
+    sig = _sign_recording(file_id, name, exp)
+    from urllib.parse import urlencode
+    qs = urlencode({"fileId": file_id, "name": name, "exp": exp, "sig": sig})
+    return {"ok": True,
+            "url": f"/fb/api/rocketchat/dashboard/stream-recording?{qs}",
+            "expires_at": exp}
+
+
+def _serve_file_range(path: str, range_header: str | None):
+    """Serve a local file with HTTP Range support (206) so <video> can seek."""
+    size = os.path.getsize(path)
+    start, end = 0, size - 1
+    status = 200
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=3600",
+    }
+    if range_header and range_header.startswith("bytes="):
+        rng = range_header[len("bytes="):].split(",")[0].strip()
+        s, _, e = rng.partition("-")
+        try:
+            start = int(s) if s else 0
+            end = int(e) if e else size - 1
+        except Exception:
+            start, end = 0, size - 1
+        if start > end or start >= size:
+            return Response(status_code=416,
+                            headers={"Content-Range": f"bytes */{size}"})
+        end = min(end, size - 1)
+        status = 206
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    length = end - start + 1
+    headers["Content-Length"] = str(length)
+
+    def _iter():
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = length
+            chunk = 256 * 1024
+            while remaining > 0:
+                buf = f.read(min(chunk, remaining))
+                if not buf:
+                    break
+                remaining -= len(buf)
+                yield buf
+
+    return StreamingResponse(_iter(), status_code=status, headers=headers,
+                             media_type="video/mp4")
+
+
+@router.get("/dashboard/stream-recording")
+async def dashboard_stream_recording(request: Request, fileId: str = "",
+                                     name: str = "recording.mp4",
+                                     exp: int = 0, sig: str = ""):
+    """Stream a Rocket.Chat recording to the browser — no Supabase copy. Signed.
+
+    Validates the HMAC signature minted by recording-url (no JWT — a <video> tag
+    can't send one). Serves from a local transcode cache; on a miss it downloads
+    from RC once, normalizes to H.264+AAC, caches, then serves with HTTP Range
+    support so the player can seek.
+    """
+    file_id = (fileId or "").strip()
+    name = (name or "recording.mp4").strip() or "recording.mp4"
+    try:
+        exp_i = int(exp)
+    except Exception:
+        exp_i = 0
+    if not file_id or not sig:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    if exp_i < int(_time.time()):
+        return JSONResponse({"error": "expired"}, status_code=403)
+    if not hmac.compare_digest(_sign_recording(file_id, name, exp_i), sig):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+
+    key = _safe_cache_key(file_id)
+    if not key:
+        return JSONResponse({"error": "bad file id"}, status_code=400)
+    cache_path = os.path.join(_rc_cache_dir(), f"{key}.mp4")
+
+    if not (os.path.exists(cache_path) and os.path.getsize(cache_path) > 0):
+        import asyncio
+        import secrets as _secrets
+        try:
+            async with httpx.AsyncClient(timeout=120) as c:
+                data = await _download_rc_file(c, file_id, name)
+        except Exception:
+            data = None
+        if not data:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        # Normalize ONCE (HEVC→H.264+AAC, or faststart remux) so the cached copy
+        # plays with audio everywhere and supports progressive Range reads.
+        data, _mime = await asyncio.to_thread(_to_web_mp4, data)
+        tmp_path = f"{cache_path}.{_secrets.token_hex(4)}.part"
+        try:
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+            os.replace(tmp_path, cache_path)
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            # Cache write failed — serve straight from memory this once.
+            return Response(content=data, media_type="video/mp4")
+
+    return _serve_file_range(cache_path, request.headers.get("range"))
+
+
+@router.post("/dashboard/attach-recording-ref")
+async def dashboard_attach_recording_ref(request: Request):
+    """Attach a chat recording as the reel state WITHOUT copying it to Supabase.
+
+    Body: { reel_id, file_id, name, channel, private }. Posts a breadcrumb
+    comment and returns the pointer { channel, fileId, name, private }; the
+    DASHBOARD persists that pointer on reels.detail.chatRecording (so optimistic
+    UI + realtime stay the source of truth, exactly as the re-host flow writes
+    detail.mediaPath itself). The video is served on demand via stream-recording
+    — zero Supabase storage. JWT-gated. Returns { ok, chat_recording } / error.
+    """
+    user = await _verify_supabase_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reel_id = (body.get("reel_id") or "").strip()
+    file_id = (body.get("file_id") or "").strip()
+    name = (body.get("name") or "recording.mp4").strip() or "recording.mp4"
+    channel = (body.get("channel") or "").strip()
+    is_private = body.get("private") in (1, "1", True, "true")
+    if not reel_id or not file_id:
+        return {"ok": False, "error": "reel_id and file_id required"}
+    pointer = {"channel": channel, "fileId": file_id, "name": name,
+               "private": bool(is_private)}
+    if channel:
+        await _save_feedback_comment(
+            reel_id,
+            f"📎 Set the current reel state from a recording in #{channel}",
+            author=user["name"])
+    return {"ok": True, "chat_recording": pointer}
+
+
+# ── Storage breakdown (Monitor card) ──────────────────────────────────────────
+# Reports where Rocket.Chat storage goes: total uploads + a video-vs-other split
+# (iterate channels.files/groups.files) + message count/estimate. Short TTL cache
+# because the per-room file iteration is the cost.
+_RC_STATS_CACHE: dict = {"ts": 0, "data": None}
+
+
+async def _all_rooms(c: httpx.AsyncClient) -> list[tuple[str, bool]]:
+    """(name, is_private) for all channels + private groups. Best-effort."""
+    rooms: list[tuple[str, bool]] = []
+    try:
+        r = await c.get(f"{_rc_base()}/api/v1/channels.list",
+                        headers=_rc_headers(), params={"count": 100})
+        if r.status_code == 200:
+            for ch in (r.json().get("channels") or []):
+                if ch.get("name"):
+                    rooms.append((ch["name"], False))
+    except Exception:
+        pass
+    try:
+        r = await c.get(f"{_rc_base()}/api/v1/groups.listAll",
+                        headers=_rc_headers(), params={"count": 100})
+        if r.status_code == 200:
+            for g in (r.json().get("groups") or []):
+                if g.get("name"):
+                    rooms.append((g["name"], True))
+    except Exception:
+        pass
+    return rooms
+
+
+async def _rc_db_total_bytes() -> int | None:
+    """Total Rocket.Chat Mongo data size (the 'container'). RC stores uploads in
+    GridFS, so messages ≈ this total − uploads. Needs MONGO_URL + pymongo in the
+    image; both optional → returns None (per-message fallback) when unavailable."""
+    uri = os.environ.get("MONGO_URL") or os.environ.get("ROCKETCHAT_MONGO_URL")
+    if not uri:
+        return None
+
+    def _stats():
+        try:
+            from pymongo import MongoClient
+            from urllib.parse import urlparse
+            cli = MongoClient(uri, serverSelectionTimeoutMS=3000)
+            try:
+                dbname = (urlparse(uri).path or "/rocketchat").lstrip("/") or "rocketchat"
+                st = cli[dbname].command("dbStats")
+                return int(st.get("dataSize") or st.get("storageSize") or 0)
+            finally:
+                cli.close()
+        except Exception:
+            return None
+
+    import asyncio
+    return await asyncio.to_thread(_stats)
+
+
+async def _rc_storage_stats() -> dict:
+    now = int(_time.time())
+    cached = _RC_STATS_CACHE.get("data")
+    if cached and now - _RC_STATS_CACHE.get("ts", 0) < 300:
+        return cached
+    out = {"uploadsTotalSize": 0, "uploadsTotal": 0, "videoBytes": 0,
+           "videoCount": 0, "otherUploadBytes": 0, "otherUploadCount": 0,
+           "totalMessages": 0, "messageBytesEstimate": 0,
+           "messageBytesSource": "per-msg", "dbTotalBytes": 0, "partial": False}
+    try:
+        async with httpx.AsyncClient(timeout=25) as c:
+            # 1) RC statistics → upload + message totals (one call).
+            try:
+                r = await c.get(f"{_rc_base()}/api/v1/statistics",
+                                headers=_rc_headers(),
+                                params={"refresh": "false"})
+                if r.status_code == 200:
+                    j = r.json()
+                    s = j.get("statistics") if isinstance(j.get("statistics"), dict) else j
+                    out["uploadsTotalSize"] = int(s.get("uploadsTotalSize") or 0)
+                    out["uploadsTotal"] = int(s.get("uploadsTotal") or 0)
+                    out["totalMessages"] = int(s.get("totalMessages")
+                                               or s.get("messages") or 0)
+            except Exception:
+                out["partial"] = True
+            # 2) Per-MIME split — video uploads vs everything else.
+            for (room_name, is_priv) in await _all_rooms(c):
+                ep = "groups.files" if is_priv else "channels.files"
+                try:
+                    rf = await c.get(f"{_rc_base()}/api/v1/{ep}",
+                                     headers=_rc_headers(),
+                                     params={"roomName": room_name, "count": 100,
+                                             "sort": '{"uploadedAt":-1}'})
+                    if rf.status_code != 200:
+                        out["partial"] = True
+                        continue
+                    files = rf.json().get("files") or []
+                    if len(files) >= 100:
+                        out["partial"] = True   # capped → may undercount
+                    for f in files:
+                        sz = int(f.get("size") or 0)
+                        mime = (f.get("type") or "").lower()
+                        if mime.startswith("video/") or _is_video_file(f):
+                            out["videoBytes"] += sz
+                            out["videoCount"] += 1
+                        else:
+                            out["otherUploadBytes"] += sz
+                            out["otherUploadCount"] += 1
+                except Exception:
+                    out["partial"] = True
+    except Exception:
+        out["partial"] = True
+    # Message storage: prefer "container − uploads" (Mongo dbStats total minus all
+    # uploads, since RC keeps uploads in GridFS); fall back to ~1 KB/msg when the
+    # Mongo connection isn't configured.
+    db_total = await _rc_db_total_bytes()
+    if db_total and db_total > 0:
+        out["dbTotalBytes"] = db_total
+        out["messageBytesEstimate"] = max(0, db_total - (out["uploadsTotalSize"] or 0))
+        out["messageBytesSource"] = "db-minus-uploads"
+    else:
+        out["messageBytesEstimate"] = out["totalMessages"] * 1024
+        out["messageBytesSource"] = "per-msg"
+    _RC_STATS_CACHE["ts"] = now
+    _RC_STATS_CACHE["data"] = out
+    return out
+
+
+@router.get("/dashboard/storage-stats")
+async def dashboard_storage_stats(request: Request):
+    """Rocket.Chat storage breakdown for the Monitor card. JWT-gated.
+
+    Returns upload totals, a video-vs-other split, and message count/estimate.
+    Degrades to zeros (with partial:true) on any RC error so the card never
+    breaks. Supabase per-bucket sizes come from /api/monitor/status separately.
+    """
+    user = await _verify_supabase_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await _rc_storage_stats()

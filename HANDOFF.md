@@ -1,38 +1,38 @@
-# Handoff — last updated 2026-06-25 (session s)
+# Handoff — last updated 2026-06-25 (session t)
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Planning-only session for a NEW, separate project — "MapForge".** No FootageBrain code, migrations, deploys, or config changed. The FootageBrain app remains exactly at the session-r state (graph view live, 99 migs applied).
-- **MapForge** = an owner-triggered engine: pick a city → scrape Google Maps businesses → auto-build websites for the no/bad-site ones → host live on branded subdomains → digital-first outreach (preview link + optional QR card) → track interest → convert to paid monthly maintenance; dead leads cold-rotate after 30 days.
-- **4 decisions locked:** digital-first outreach · category templates + AI fill · human approval gates · public previews with their branding (default mitigation: noindex + watermark + takedown).
-- **Deliverables:** plan file `C:\Users\Mi\.claude\plans\this-is-a-pure-frolicking-ripple.md`; new Obsidian area `obsidian-vault/MapForge/` (10 linked nodes, linked from the FootageBrain MOC); memory `project_mapforge-plan.md`.
-- **Key conclusions:** the tech is cheap/high-confidence; the real risks are email deliverability + conversion. Multi-tenant Worker+R2 hosting (no project cap) makes storage trivial. Lean (OSS scraper, no/Haiku AI) cuts variable cost to ~$0.03–0.06/site but the **fixed email infra dominates** the all-in. Batch all-in: 100 ≈ $80–150, 500 ≈ $250–400, 1000 ≈ $400–600.
+- Built **Phase 1** of "attach a Rocket.Chat screen recording as a reel's Current reel state": a **↙ Pick from Chat** picker on the reel detail card (everyone, not owner-gated) → pick channel → pick a recent video → re-hosts it into the private `reel-videos` bucket and sets the reel's `media_path`.
+- Fixed a **no-audio** bug: chat screen recordings are **HEVC/H.265** (browsers play them silent) → backend now **transcodes to H.264+AAC** on attach. Re-host is byte-perfect; the codec was the issue.
+- **Removed** the legacy "+ Current reel state" URL button and **embedded the current-state video inline** below the Inspiration reel (signed URL).
+- Deployed the backend to Hetzner `fb-backend` **twice** (endpoints, then transcode) — discovered the live stack is the `deploy/hetzner/docker-compose.yml` compose, not the stale sibling.
+- Committed the whole working tree (chat-recording feature `cd60392` + in-tree CapCut agent installer `ed9cf49`), pushed `feat/capcut-replica-v2`, and ran a full-tree `vercel --prod` → **live on www.footagebrain.com**.
 
 ## Where we left off
-MapForge is fully blueprinted (plan + vault + memory) but **has no repo and no code**. FootageBrain itself is untouched this session and stays at session-r: Pipeline ◉ Graph live, all migrations applied (99 · 0 pending), full-tree deploy `dpl_…clt1lspj7…` live.
+Phase 1 is **live in production** and verified by the owner on localhost (audio + inline embed working after the transcode fix). The branch `feat/capcut-replica-v2` is committed clean and pushed; prod matches `ed9cf49`.
 
 ## Open blockers
-- **None** for MapForge (planning stage). FootageBrain: none new (Epidemic Music Library remains pre-existing-blocked on owner DevTools calibration).
+- None.
 
 ## Pending (written but not yet live)
-- **MapForge:** nothing built — next step is scaffolding the `mapforge` repo (separate from this one) on owner go-ahead.
-- **Carried over from session r/q (FootageBrain, owner-gated, unchanged):**
-  - **OD-2** — owner must re-save the Reviewer role in Roles & Permissions admin so stored `app_settings.role_permissions` picks up reviewer Analytics+Inbox (until then Leroy lost Monitor but hasn't gained Analytics/Inbox).
-  - Owner visual check of the Pipeline ◉ Graph view.
-  - Batch 3 RLS delete-hardening — write as **`0099_…`** (0098 is now used by reel_dup_group).
-  - Carried: Scout backend redeploy; OpenCut SSO smoke + caddy-bridge persist.
+- **Phase 2** of the chat-recording feature (Rocket.Chat-native trigger): a message-action button "📎 Set as reel state" on file messages (preferred) or a `/reel-state REEL-201` slash command, extending `backend-handoff/reel-rc-app/` + a new shared-secret-gated `POST /rocketchat/app/attach-recording`. NOT built yet.
+- Migration `0100_capcut_install_events.sql` — committed, **not applied** (human-gated). Needed if the Monitor CapCut install-events card writes to that table.
+- (Carried) OD-2: owner must re-save the Reviewer role in admin for the session-q permission grant to take effect.
 
 ## Next session — start here
-1. **If continuing MapForge:** decide repo location + name (`mapforge`), then scaffold Phase 0 (DB schema + multi-tenant Worker + R2 + wildcard DNS proving one site serves). Pick the first test city + category. Register email sending domains early (2–4-week warmup). See `obsidian-vault/MapForge/Roadmap.md`.
-2. **If returning to FootageBrain:** OD-2 admin re-save (Reviewer role) + owner graph visual check.
+1. **Phase 2** — Rocket.Chat-native attach (message-action button / `/reel-state`). Plan section already written in `.claude/plans/when-editors-in-the-quirky-milner.md`.
+2. Decide whether to **apply migration `0100`** (CapCut install-events) — human-gated.
+3. (Optional) Re-attach any pre-fix HEVC recording so it gets the audio-working transcode.
 
 ## Verification commands (to confirm current state on resume)
-```
-# FootageBrain unchanged this session — confirm clean working state:
-cd "c:/Users/Mi/Downloads/ziflow project-final" && git status --short && git log --oneline -3
-# MapForge artifacts exist:
-ls "C:/Users/Mi/.claude/plans/this-is-a-pure-frolicking-ripple.md"
-ls "obsidian-vault/MapForge/"
+```bash
+# New chat-recording routes live (401 = up + JWT-gated; 404 = not deployed)
+curl -s -o /dev/null -w "%{http_code}\n" "https://api.footagebrain.com/api/rocketchat/dashboard/channel-files?channel=pipeline"
+curl -s -o /dev/null -w "%{http_code}\n" -X POST https://api.footagebrain.com/api/rocketchat/dashboard/attach-recording -H "Content-Type: application/json" -d '{}'
+# New code baked into the running backend (expect >=1)
+ssh root@178.105.14.144 'docker exec fb-backend grep -c "_to_web_mp4" /app/app/api/reel_chat.py'
+# Git state (prod == ed9cf49)
+git -C "c:/Users/Mi/Downloads/ziflow project-final" log --oneline -3
 ```

@@ -988,6 +988,71 @@ export async function attachChatRecording({ reelId, fileId, name, channel, priva
   }
 }
 
+/* No-copy variant: attach the chat recording as the reel state WITHOUT
+   re-hosting it into Supabase. The backend only posts a breadcrumb and returns
+   a POINTER { channel, fileId, name, private }; the caller persists that on the
+   reel (detail.chatRecording) and the video streams on demand via the signed
+   stream-recording URL. Saves storage — nothing is copied to the bucket. */
+export async function attachChatRecordingRef({ reelId, fileId, name, channel, private: isPrivate = false }) {
+  if (!reelId || !fileId) return { ok: false, error: "No reel or file selected." };
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return { ok: false, error: "Not signed in." };
+    const res = await fetch("/fb/api/rocketchat/dashboard/attach-recording-ref", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        reel_id: reelId, file_id: fileId, name, channel,
+        private: isPrivate ? 1 : 0,
+      }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) return { ok: false, error: j.error || "Attach failed." };
+    return { ok: true, chatRecording: j.chat_recording };
+  } catch (_) {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+/* Mint a short-lived signed URL for a chat-recording pointer so it can be
+   embedded in a <video src>. Mirrors Supabase's createSignedUrl — the returned
+   URL carries an HMAC capability, so no auth header is needed on playback. */
+export async function getRecordingStreamUrl({ fileId, name = "recording.mp4", ttl = 3600 } = {}) {
+  if (!fileId) return { ok: false, error: "No recording." };
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return { ok: false, error: "Not signed in." };
+    const qs = new URLSearchParams({ fileId, name, ttl: String(ttl) });
+    const res = await fetch(`/fb/api/rocketchat/dashboard/recording-url?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok || !j.url) return { ok: false, error: j.error || "Could not load recording." };
+    return { ok: true, url: j.url, expiresAt: j.expires_at };
+  } catch (_) {
+    return { ok: false, error: "Network error." };
+  }
+}
+
+/* Rocket.Chat storage breakdown for the Monitor card (uploads video-vs-other +
+   message count/estimate). JWT-gated; degrades to zeros when undeployed. */
+export async function fetchStorageStats() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return null;
+    const res = await fetch("/fb/api/rocketchat/dashboard/storage-stats", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    return await res.json().catch(() => null);
+  } catch (_) {
+    return null;
+  }
+}
+
 /* ── util ───────────────────────────────────────────────────────────────── */
 function relTime(mins) {
   if (mins < 1) return "now";

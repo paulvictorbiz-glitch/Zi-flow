@@ -175,6 +175,68 @@ export function parseYouTubePlaylistFeed(xml) {
   return out;
 }
 
+/**
+ * Fetch the FULL contents of a YouTube playlist via the Data API v3 playlistItems
+ * endpoint — paginated at 50/page — so it returns EVERY video, not just the ~15
+ * the public Atom feed exposes. Requires a Data API key (YT_API_KEY). Returns the
+ * SAME row shape as parseYouTubePlaylistFeed: [{ videoId, title, channel,
+ * thumbnailUrl }], in the playlist's own order. Bounded by a page cap AND a
+ * wall-clock budget so it never blows the serverless maxDuration. Skips the
+ * "Deleted video"/"Private video" placeholders the API returns for dead items.
+ * Throws on a hard API error (bad key / quota / private / not found) so the
+ * caller can decide whether to fall back to the Atom feed.
+ */
+export async function fetchPlaylistViaDataApi(playlistId, apiKey, {
+  pageCap = 20, budgetMs = 30000,
+} = {}) {
+  if (!playlistId || !apiKey) throw new Error("playlistId + apiKey required");
+  const out = [];
+  let pageToken = "";
+  const started = Date.now();
+  for (let page = 0; page < pageCap; page++) {
+    if (Date.now() - started > budgetMs) break;
+    const u = new URL("https://www.googleapis.com/youtube/v3/playlistItems");
+    u.searchParams.set("part", "snippet,contentDetails");
+    u.searchParams.set("playlistId", playlistId);
+    u.searchParams.set("maxResults", "50");
+    u.searchParams.set("key", apiKey);
+    if (pageToken) u.searchParams.set("pageToken", pageToken);
+
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    let json;
+    try {
+      const r = await fetch(u, { signal: ctrl.signal });
+      const body = await r.text();
+      if (!r.ok) {
+        let reason = `HTTP ${r.status}`;
+        try { reason = JSON.parse(body)?.error?.message || reason; } catch { /* keep status */ }
+        throw new Error(`YouTube Data API: ${reason}`);
+      }
+      json = JSON.parse(body);
+    } finally {
+      clearTimeout(t);
+    }
+    for (const it of json.items || []) {
+      const sn = it.snippet || {};
+      const videoId = it.contentDetails?.videoId || sn.resourceId?.videoId;
+      if (!videoId || !YT_ID.test(videoId)) continue;
+      const title = sn.title || "(untitled)";
+      // Dead playlist items keep a videoId but the video is gone — skip the noise.
+      if (title === "Deleted video" || title === "Private video") continue;
+      out.push({
+        videoId,
+        title,
+        channel: sn.videoOwnerChannelTitle || sn.channelTitle || "",
+        thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      });
+    }
+    pageToken = json.nextPageToken || "";
+    if (!pageToken) break;
+  }
+  return out;
+}
+
 // ── Feed validation + autodiscovery (powers the "Add source" diagnostics) ───────
 // Many feed problems are URL mistakes: the owner pastes a homepage or a social
 // profile instead of the RSS/Atom URL. validateFeedUrl() fetches the pasted URL,

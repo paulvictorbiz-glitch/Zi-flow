@@ -177,6 +177,36 @@ async function fetchSupabaseStats() {
         }
       }
     } catch { /* optional — skip if unavailable */ }
+
+    // Per-bucket storage breakdown (so the Monitor card shows WHERE storage
+    // goes: reel-videos vs location-photos vs …). Same Management-API SQL path;
+    // exact (no 1000-object list cap). Best-effort — skip on any error.
+    try {
+      const bucketSql =
+        "select bucket_id, coalesce(sum((metadata->>'size')::bigint),0) as bytes, " +
+        "count(*) as n from storage.objects group by bucket_id order by bytes desc";
+      const br = await fetch(
+        `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${mgmtToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ query: bucketSql }),
+        }
+      );
+      if (br.ok) {
+        const rows = await br.json();
+        if (Array.isArray(rows)) {
+          result.storageByBucket = rows.map(r => ({
+            bucket: r.bucket_id || "(unknown)",
+            bytes: Number(r.bytes) || 0,
+            count: Number(r.n) || 0,
+          }));
+        }
+      }
+    } catch { /* optional — skip if unavailable */ }
   }
 
   return result;

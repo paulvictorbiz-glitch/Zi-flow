@@ -31,7 +31,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { adminClient, setCors, isAnthropicEnabled, ANTHROPIC_PAUSED, classifyCaller, verifyOwner } from "../admin/_auth.js";
 import { runInsights } from "./_insights-core.js";
-import { ingestSources, validateFeedUrl, parseYouTubePlaylistFeed } from "./_rss.js";
+import { ingestSources, validateFeedUrl, parseYouTubePlaylistFeed, fetchPlaylistViaDataApi } from "./_rss.js";
 import { ingestWorldEvents } from "./_world-feeds.js";
 import { pushReelToPlanable, planablePostHasMedia, createPlanableCampaign } from "./_planable.js";
 import { searchTracks, getTrack, getDownloadUrl } from "./_epidemic.js";
@@ -378,23 +378,42 @@ export default async function handler(req, res) {
       return;
     }
     try {
-      // Fetch the playlist Atom feed with an 8s abort (stays well under maxDuration:45).
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 8000);
-      let xml;
-      try {
-        const r = await fetch(
-          `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(pid)}`,
-          { signal: ctrl.signal });
-        if (!r.ok) throw new Error(`YouTube feed HTTP ${r.status}`);
-        xml = await r.text();
-      } finally {
-        clearTimeout(t);
+      // Prefer the YouTube Data API (full playlist, paginated) when YT_API_KEY is
+      // set — the public Atom feed below is hard-capped at ~15 videos, so a
+      // playlist with more than that never fully syncs via the feed. Fall back to
+      // the feed on ANY Data API failure (missing/expired key, quota, private
+      // playlist) so a key problem never takes the sync fully offline.
+      let entries = [];
+      let via = "rss";
+      const apiKey = process.env.YT_API_KEY;
+      if (apiKey) {
+        try {
+          entries = await fetchPlaylistViaDataApi(pid, apiKey);
+          via = "data_api";
+        } catch (apiErr) {
+          console.warn("yt-sync data-api failed, falling back to feed:", apiErr.message);
+        }
       }
 
-      const entries = parseYouTubePlaylistFeed(xml);
+      // Atom feed path: no key configured, OR the Data API failed. ~15-video cap.
+      if (via !== "data_api") {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 8000);
+        let xml;
+        try {
+          const r = await fetch(
+            `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(pid)}`,
+            { signal: ctrl.signal });
+          if (!r.ok) throw new Error(`YouTube feed HTTP ${r.status}`);
+          xml = await r.text();
+        } finally {
+          clearTimeout(t);
+        }
+        entries = parseYouTubePlaylistFeed(xml);
+      }
+
       if (!entries.length) {
-        res.status(200).json({ ok: true, items_seen: 0, inserted: 0 });
+        res.status(200).json({ ok: true, via, items_seen: 0, inserted: 0 });
         return;
       }
 
@@ -417,7 +436,7 @@ export default async function handler(req, res) {
         .select("id");
       if (error) throw new Error(error.message);
 
-      res.status(200).json({ ok: true, items_seen: entries.length, inserted: (data || []).length });
+      res.status(200).json({ ok: true, via, items_seen: entries.length, inserted: (data || []).length });
     } catch (e) {
       console.error("yt-sync error:", e.message);
       res.status(500).json({ error: e.message });

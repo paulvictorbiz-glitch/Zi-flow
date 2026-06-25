@@ -4,6 +4,34 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-25 (session t) — Attach Rocket.Chat screen recordings as a reel's "Current reel state" (Phase 1) — SHIPPED LIVE
+
+**What changed:** Editors post screen recordings of their cuts in Rocket.Chat; this adds a **"↙ Pick from Chat"** button on the reel detail card (available to **everyone**, not owner-gated) that opens a picker → choose a channel → see its recent **video** uploads → "Set as state". The backend downloads the chosen file with admin creds, **transcodes it to H.264+AAC**, re-hosts it into the private `reel-videos` bucket, and points the reel's `media_path`/`media_target` at it (the same contract the Final-video uploader + Planable push already use). The detail card now **embeds the current reel state video inline below the Inspiration reel** (signed URL, native controls) and the legacy "+ Current reel state" URL button was removed.
+
+**Where:** `backend-handoff/reel_chat.py` (2 new JWT-gated endpoints `GET /dashboard/channel-files` + `POST /dashboard/attach-recording`, plus `_download_rc_file`/`_upload_to_reel_videos`/`_set_reel_media`/`_to_web_mp4`/`_video_codec` helpers) — deployed to Hetzner `fb-backend`. `src/lib/social-client.js` (`fetchChannelFiles` + `attachChatRecording`). `src/components/ChatRecordingPicker.jsx` (new). `src/pages/detail.jsx` (Pick-from-Chat pill, removed URL button, inline embed + signed-URL effect). Commit `cd60392`; full-tree `vercel --prod` (`dpl_GGeuRf2g…`, READY → www.footagebrain.com). No new migration (reuses the existing `reel-videos` bucket + `media_path`/`media_target` cols).
+
+**Path we took:** Plan-mode (`.claude/plans/when-editors-in-the-quirky-milner.md`) with 2 Explore agents + 3 owner decisions (both triggers / re-host to bucket / everyone). Built Phase 1 inline, build-gated, deployed backend to Hetzner, owner tested on localhost (which proxies `/fb` → live backend). First attach succeeded but **played silent** → ffprobe'd the re-hosted object: video = **HEVC/H.265**, audio = AAC (present). HEVC plays video-only/silent in most browsers → added a best-effort ffmpeg transcode (HEVC→libx264, H.264 sources just faststart-remuxed) and redeployed.
+
+**What we learned:** (1) **The live backend is NOT the obvious compose.** `fb-backend` is managed by `/srv/footagebrain/footage-brain-test/deploy/hetzner/docker-compose.yml` (compose project `footagebrain`, builds from `../../backend`, image `footagebrain-backend`). The sibling `/srv/footagebrain/footage-brain-test/docker-compose.yml` is **STALE** (container_name `footage-brain-api`, missing `.env`) — building there makes an orphaned `footage-brain-test-backend` image that never serves traffic. Always `cd deploy/hetzner` and use **`docker compose up -d --force-recreate backend`** (plain `up -d` won't swap a running container to a freshly-built image). (2) **No-audio ≠ broken download** — the re-host was byte-perfect (17,862,467 B == source); the culprit was the **codec**. Transcode-on-rehost is the durable fix and also makes the inline `<video>` embed reliable. (3) RC `/file-upload/<id>/<name>` accepted the **admin auth headers** directly (the cookie fallback wasn't needed, but is kept). (4) The `/dashboard/*` prefix is reachable at `/fb/api/rocketchat/dashboard/*` with **no edge change** — confirmed by 401 (not 404) on the new routes.
+
+**Status:** **Live in production.** Note: a recording attached *before* the transcode fix stays HEVC/silent — **re-attach it** to get the audio-working version. **Phase 2 (Rocket.Chat-native message-action button / `/reel-state` slash command) is deferred to next session.**
+
+---
+
+## 2026-06-25 (session t) — Committed + shipped the in-tree CapCut agent installer via the full-tree deploy
+
+**What changed:** The working tree already carried an unrelated, previously-built **CapCut desktop-agent installer** feature (downloadable `.ps1` agent + hidden-run `.vbs`, a Monitor install-events card, and supporting UI). At the owner's request the whole tree was committed and shipped so `vercel --prod` (which builds the entire working tree) ships exactly what's intended.
+
+**Where:** `public/capcut-agent/{capcut_agent.ps1,run-hidden.vbs}`, `tools/capcut-agent/{capcut_agent.ps1,README.md}`, `src/lib/capcut-agent-download.js`, `src/lib/use-anchored-position.js`, `src/pages/monitor-hub.jsx`, `src/app.jsx`, `src/components/{components.jsx,asset-attach-picker.jsx,asset-attach-picker.css}`, `src/pages/{activity.jsx,my-work.jsx}`, migration `0100_capcut_install_events.sql`. Commit `ed9cf49`; same `vercel --prod` deploy.
+
+**Path we took:** Pre-deploy `git status --short` tree check (CLAUDE.md rule #1), full-tree `npm run build` gate (green), staged explicitly (not `git add -A` blind) into a `chore(tree)` commit, pushed `feat/capcut-replica-v2`, deployed.
+
+**What we learned:** Migration `0100_capcut_install_events.sql` is **committed but NOT applied** — DB apply is human-gated and was not requested. If the Monitor install-events card writes to that table, it needs `0100` applied to work end-to-end.
+
+**Status:** Frontend **live in production** (`ed9cf49`); migration `0100` **pending apply** (human-gated).
+
+---
+
 ## 2026-06-25 (session s) — MapForge planning session (NEW separate project — no FootageBrain code change)
 
 **What changed:** Pure planning session for a **brand-new, standalone project** ("MapForge") — unrelated to the FootageBrain codebase. Produced a full blueprint: an owner-triggered engine that scrapes businesses off Google Maps, auto-builds websites for the ones with no/bad site, hosts them live on branded subdomains, does digital-first outreach with a preview link (+ optional QR card), tracks interest, and converts to paid monthly maintenance — with dead leads rotating to cold storage after 30 days. **No FootageBrain code, migrations, deploys, or config changed.**

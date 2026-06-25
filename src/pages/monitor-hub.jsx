@@ -20,6 +20,7 @@ import { Pulse } from "./pulse.jsx";
 import { AIBrain } from "./ai-brain.jsx";
 import { Scout } from "./scout.jsx";
 import { supabase } from "../lib/supabase-client.js";
+import { fetchStorageStats } from "../lib/social-client.js";
 import { useIsOwner } from "../lib/permissions.jsx";
 // .mon-spark* / .mon-stat-* live in monitor.css; import it here so the
 // perf card is styled even when the Infra sub-tab (which also imports it)
@@ -702,6 +703,148 @@ function CapCutInstallsCard({ onStats }) {
   );
 }
 
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n <= 0) return "0 B";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
+}
+
+// Storage breakdown — WHERE storage is actually used: each Supabase bucket
+// (reel-videos, location-photos, …) from /api/monitor/status, plus Rocket.Chat
+// video attachments vs other uploads vs messages from the JWT-gated RC route.
+// Both degrade to empty rather than throwing when undeployed.
+function StorageBreakdownCard({ onStats }) {
+  const isOwner = useIsOwner();
+  const [state, setState] = useState({ status: "loading", buckets: [], rc: null });
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!isOwner) return;
+    let cancelled = false;
+    (async () => {
+      let buckets = [];
+      try {
+        const r = await fetch("/api/monitor/status");
+        if (r.ok) {
+          const d = await r.json();
+          buckets = Array.isArray(d?.supabase?.storageByBucket)
+            ? d.supabase.storageByBucket : [];
+        }
+      } catch (_) { /* status endpoint missing → no bucket rows */ }
+      const rc = await fetchStorageStats();   // null when undeployed
+      if (cancelled) return;
+      setState({ status: "ready", buckets, rc });
+    })();
+    return () => { cancelled = true; };
+  }, [isOwner, tick]);
+
+  const stats = useMemo(() => {
+    const rows = [];
+    for (const b of state.buckets) {
+      rows.push({
+        key: `sb:${b.bucket}`, label: `Supabase · ${b.bucket}`,
+        bytes: b.bytes, sub: `${b.count} file${b.count === 1 ? "" : "s"}`, tone: "sb",
+      });
+    }
+    const rc = state.rc;
+    if (rc) {
+      rows.push({ key: "rc:video", label: "Rocket.Chat · video attachments", bytes: rc.videoBytes || 0, sub: `${rc.videoCount || 0} clip${rc.videoCount === 1 ? "" : "s"}`, tone: "rc" });
+      rows.push({ key: "rc:other", label: "Rocket.Chat · other uploads", bytes: rc.otherUploadBytes || 0, sub: `${rc.otherUploadCount || 0} file${rc.otherUploadCount === 1 ? "" : "s"}`, tone: "rc" });
+      const msgFromDb = rc.messageBytesSource === "db-minus-uploads";
+      rows.push({
+        key: "rc:msg",
+        label: `Rocket.Chat · messages ${msgFromDb ? "(db − uploads)" : "(est.)"}`,
+        bytes: rc.messageBytesEstimate || 0,
+        sub: `${rc.totalMessages || 0} msg`, tone: "rc",
+      });
+    }
+    rows.sort((a, b) => (b.bytes || 0) - (a.bytes || 0));
+    const total = rows.reduce((s, r) => s + (r.bytes || 0), 0);
+    return { rows, total, partial: !!rc?.partial, msgExact: rc?.messageBytesSource === "db-minus-uploads" };
+  }, [state.buckets, state.rc]);
+
+  useEffect(() => { if (onStats) onStats(stats); }, [onStats, stats]);
+
+  if (!isOwner) return null;
+  const empty = state.status !== "loading" && stats.total === 0;
+
+  return (
+    <Card
+      title="Storage breakdown"
+      right={
+        <span className="mono dim">
+          <button
+            type="button"
+            className="mon-link-btn"
+            onClick={() => setTick(t => t + 1)}
+            style={{ background: "none", border: 0, color: "inherit", cursor: "pointer", padding: 0, font: "inherit", textDecoration: "underline" }}
+            title="Refresh now"
+          >
+            refresh
+          </button>
+        </span>
+      }
+      footLeft="storage.objects + Rocket.Chat statistics"
+    >
+      <div className="mon-section-body">
+        {state.status === "loading" && (
+          <div className="mono dim" style={{ padding: "4px 0" }}>measuring storage…</div>
+        )}
+
+        {state.status !== "loading" && empty && (
+          <div className="mono dim" style={{ padding: "4px 0" }}>
+            no storage data — the status endpoint or Rocket.Chat stats route is
+            {" "}unavailable (storage-stats may not be deployed yet).
+          </div>
+        )}
+
+        {state.status !== "loading" && !empty && (
+          <>
+            <div className="mon-stat-row" style={{ marginBottom: 8 }}>
+              <span className="mon-stat-k">total tracked</span>
+              <span className="mon-stat-v">{fmtBytes(stats.total)}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {stats.rows.map(r => {
+                const pctv = stats.total ? Math.round((r.bytes / stats.total) * 100) : 0;
+                return (
+                  <div key={r.key}>
+                    <div className="mon-stat-row">
+                      <span className="mon-stat-k">{r.label}</span>
+                      <span className="mon-stat-v mono">
+                        {fmtBytes(r.bytes)}
+                        <span className="dim" style={{ marginLeft: 5 }}>{pctv}%</span>
+                      </span>
+                    </div>
+                    <div style={{ height: 5, borderRadius: 3, background: "rgba(127,127,127,.18)", overflow: "hidden", margin: "2px 0 1px" }}>
+                      <div style={{ width: `${pctv}%`, height: "100%", background: r.tone === "rc" ? "var(--c-amber, #e0a458)" : "var(--c-cyan, #46b9c8)" }} />
+                    </div>
+                    <div className="mono dim" style={{ fontSize: 10.5 }}>{r.sub}</div>
+                  </div>
+                );
+              })}
+            </div>
+            {stats.partial && (
+              <div className="mono dim" style={{ fontSize: 10.5, marginTop: 8 }}>
+                ⚠ partial — some channels capped at 100 files or RC stats were
+                {" "}unavailable; figures may undercount.
+              </div>
+            )}
+            <div className="mono dim" style={{ fontSize: 10.5, marginTop: 6 }}>
+              {stats.msgExact
+                ? "message bytes = RC Mongo total − uploads; bucket + attachment sizes are exact."
+                : "message bytes are a rough estimate (~1 KB/msg); set MONGO_URL for the exact RC total − uploads figure. bucket + attachment sizes are exact."}
+            </div>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // view = the permission-catalog key each sub-view is gated by (preserved
 // verbatim from when these were top-level tabs, so gating never changes).
 const SUBVIEWS = [
@@ -724,6 +867,7 @@ export function MonitorHub({ canView }) {
   const [perfStats, setPerfStats] = useState(null);
   const [usageStats, setUsageStats] = useState(null);
   const [installStats, setInstallStats] = useState(null);
+  const [storageStats, setStorageStats] = useState(null);
   const isOwner = useIsOwner();   // gate the kept owner cards
 
   const [mode, setMode] = useState(() => localStorage.getItem(MONITOR_MODE_KEY) || "infra");
@@ -786,6 +930,14 @@ export function MonitorHub({ canView }) {
             <span className="mon-panel-title">CapCut Tracker Installs</span>
           </div>
           <CapCutInstallsCard onStats={setInstallStats} />
+        </div>
+        {/* panel 6: storage breakdown */}
+        <div className="mon-panel">
+          <div className="mon-panel-head">
+            <span className={`mon-status-dot ${storageStats?.total ? "ok" : "alert"}`} />
+            <span className="mon-panel-title">Storage Breakdown</span>
+          </div>
+          <StorageBreakdownCard onStats={setStorageStats} />
         </div>
       </div>
       )}

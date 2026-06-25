@@ -11,7 +11,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Card, DPill } from "../components/components.jsx";
 import { ReelPlayer } from "../components/reel-player.jsx";
 import { ReelCompareModal } from "../components/ReelCompareModal.jsx";
-import { shareReelToChannel } from "../lib/social-client.js";
+import { shareReelToChannel, getRecordingStreamUrl } from "../lib/social-client.js";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
@@ -847,6 +847,10 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
      reel field name is unambiguous across the two UI files. */
   const mediaPath   = stored?.mediaPath || "";
   const mediaTarget = stored?.mediaTarget || "";
+  // No-copy chat recording: a pointer { channel, fileId, name, private } that
+  // streams on demand from Rocket.Chat (no Supabase copy). Present only when the
+  // recording was attached via "Pick from Chat" in proxy mode.
+  const chatRecording = (mediaTarget === "rc-proxy" && stored?.chatRecording) || null;
   // null | 'uploading' | 'done' | 'error'  (mirrors the locations 'uploading' pattern)
   const [videoUploadState, setVideoUploadState] = useState(null);
   const [videoUploadMsg, setVideoUploadMsg] = useState("");
@@ -931,15 +935,24 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   };
 
   const removeFinalVideo = () => {
+    const old = stored?.mediaPath;
     actions.updateReel(current.id, { mediaPath: "", mediaTarget: "" });
     setVideoUploadState(null);
     setVideoUploadMsg("");
+    if (old) supabase.storage.from("reel-videos").remove([old]).catch(() => {});
   };
 
   /* Open the "Current reel state". A hosted recording (mediaPath in the private
      reel-videos bucket) takes precedence — mint a short-lived signed URL so it
      plays — and we fall back to the manual attachUrl link. */
   const openCurrentReelState = async () => {
+    if (chatRecording?.fileId) {
+      const r = await getRecordingStreamUrl({
+        fileId: chatRecording.fileId,
+        name: chatRecording.name || "recording.mp4",
+      });
+      if (r.ok) { window.open(r.url, "_blank", "noopener,noreferrer"); return; }
+    }
     if (mediaPath) {
       try {
         const { data, error } = await supabase.storage
@@ -954,10 +967,22 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
     if (reelStateUrl) window.open(reelStateUrl, "_blank", "noopener,noreferrer");
   };
 
-  /* Mint a signed URL for the hosted recording so it can be embedded inline.
-     Refreshes whenever the attached recording (mediaPath) changes. */
+  /* Mint a playable URL for the current reel state so it can be embedded inline.
+     Two sources, refreshed whenever either changes:
+       • rc-proxy pointer → a signed stream URL from the backend (no Supabase copy)
+       • legacy mediaPath  → a Supabase signed URL (pre-existing re-hosted copies) */
   useEffect(() => {
     let cancelled = false;
+    if (chatRecording?.fileId) {
+      (async () => {
+        const r = await getRecordingStreamUrl({
+          fileId: chatRecording.fileId,
+          name: chatRecording.name || "recording.mp4",
+        });
+        if (!cancelled && r.ok) setCurrentStateVideoUrl(r.url);
+      })();
+      return () => { cancelled = true; };
+    }
     if (!mediaPath) { setCurrentStateVideoUrl(""); return; }
     (async () => {
       try {
@@ -970,7 +995,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
       } catch (_) { /* leave empty — the ↗ pill still opens it on demand */ }
     })();
     return () => { cancelled = true; };
-  }, [mediaPath]);
+  }, [mediaPath, chatRecording?.fileId, chatRecording?.name]);
 
   /* Reference links (audio + inspiration). Always editable post-create:
      clicking opens the link if set, or prompts to add one when empty.
@@ -1207,9 +1232,15 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
         <ChatRecordingPicker
           reelId={current.id}
           onClose={() => setChatPickerOpen(false)}
-          onAttached={(mp) =>
-            actions.updateReel(current.id, { mediaPath: mp, mediaTarget: "supabase" })
-          }
+          onAttached={(cr) => {
+            // No-copy attach: store the pointer + switch to proxy mode, and free
+            // any old re-hosted Supabase copy this reel was previously using.
+            const old = stored?.mediaPath;
+            actions.updateReel(current.id, {
+              chatRecording: cr, mediaTarget: "rc-proxy", mediaPath: "",
+            });
+            if (old) supabase.storage.from("reel-videos").remove([old]).catch(() => {});
+          }}
         />
       )}
 
@@ -1720,10 +1751,10 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
                         )}
                         <b>{c.role}</b>
                         <span className="ts">{formatCommentTs(c.ts)}</span>
-                        {mine && (
+                        {(mine || isOwner) && (
                           <span
                             onClick={() => deleteComment(c.id)}
-                            title="Delete this comment"
+                            title={mine ? "Delete this comment" : "Delete comment (owner)"}
                             style={{
                               marginLeft: "auto",
                               fontFamily: "var(--f-mono)",
@@ -1822,10 +1853,10 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
               it's easy to watch right under the inspiration reference. A hosted
               recording (mediaPath) plays via a signed URL; a legacy attachUrl
               link falls back to the embed player. */}
-          {(mediaPath || reelStateUrl) && (
+          {(mediaPath || chatRecording || reelStateUrl) && (
             <div className="ref-card">
               <div className="ref-label">Current reel state</div>
-              {mediaPath ? (
+              {(mediaPath || chatRecording) ? (
                 currentStateVideoUrl ? (
                   <video
                     className="ref-embed det-preview"

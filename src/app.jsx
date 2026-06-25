@@ -65,25 +65,70 @@ const LAZY_IMPORTERS = [
   importExportView, importArchivedView, importCalendarView, importListView,
   importTeamChat,
 ];
-const MonitorHub   = React.lazy(() => importMonitorHub().then((m)   => ({ default: m.MonitorHub })));
-const MusicLibrary = React.lazy(() => importMusicLibrary().then((m) => ({ default: m.MusicLibrary })));
-const Analytics    = React.lazy(() => importAnalytics().then((m)    => ({ default: m.Analytics })));
-const Inbox        = React.lazy(() => importInbox().then((m)        => ({ default: m.Inbox })));
-const Training     = React.lazy(() => importTraining().then((m)     => ({ default: m.Training })));
-const VideoEditor  = React.lazy(() => importVideoEditor().then((m)  => ({ default: m.VideoEditor })));
-const EditorProjects = React.lazy(() => importEditorProjects().then((m) => ({ default: m.EditorProjects })));
-const LosslessCut  = React.lazy(() => importLosslessCut().then((m)  => ({ default: m.LosslessCut })));
-const IdeaGenerator= React.lazy(() => importIdeaGenerator().then((m)=> ({ default: m.IdeaGenerator })));
-const Locations    = React.lazy(() => importLocations().then((m)    => ({ default: m.Locations })));
-const Coverage     = React.lazy(() => importCoverage().then((m)     => ({ default: m.Coverage })));
-const Resources    = React.lazy(() => importResources().then((m)    => ({ default: m.Resources })));
-const Activity     = React.lazy(() => importActivity().then((m)     => ({ default: m.Activity })));
-const RolesAdmin   = React.lazy(() => importRolesAdmin().then((m)   => ({ default: m.RolesAdmin })));
-const ExportView   = React.lazy(() => importExportView().then((m)   => ({ default: m.ExportView })));
-const ArchivedView = React.lazy(() => importArchivedView().then((m) => ({ default: m.ArchivedView })));
-const CalendarView = React.lazy(() => importCalendarView().then((m) => ({ default: m.CalendarView })));
-const ListView     = React.lazy(() => importListView().then((m)     => ({ default: m.ListView })));
-const TeamChat     = React.lazy(() => importTeamChat().then((m)     => ({ default: m.TeamChat })));
+/* Code-split chunks are content-hashed (monitor-hub-<hash>.js). After a fresh
+   `vercel --prod` deploy, a still-open browser holds the OLD index.html, so the
+   FIRST time it lazy-loads a tab it requests a now-deleted hash → "Failed to
+   fetch dynamically imported module" (a manual refresh fixes it by pulling the
+   new index.html). This wrapper makes the lazy load self-heal: retry transient
+   blips, then on a real chunk-load error force ONE full reload (guarded by a
+   sessionStorage flag so a genuine, non-stale failure still surfaces the error
+   boundary instead of looping). On success the flag is cleared so a later
+   deploy in the same session can heal again. */
+function importWithRetry(factory, retries = 2, delay = 300) {
+  const RELOAD_KEY = "fb:chunk-stale-reload";
+  const isChunkError = (err) =>
+    /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|dynamically imported module/i
+      .test(err?.message || "");
+  return new Promise((resolve, reject) => {
+    factory()
+      .then((mod) => { try { sessionStorage.removeItem(RELOAD_KEY); } catch {} resolve(mod); })
+      .catch((err) => {
+        if (retries > 0) {
+          setTimeout(
+            () => importWithRetry(factory, retries - 1, delay * 2).then(resolve, reject),
+            delay
+          );
+          return;
+        }
+        // Out of retries: if this is a stale-deploy chunk error and we haven't
+        // already force-reloaded this session, reload once to pick up the new
+        // index.html → current chunk hashes. The page never settles this promise.
+        if (isChunkError(err)) {
+          let reloaded = false;
+          try { reloaded = !!sessionStorage.getItem(RELOAD_KEY); } catch {}
+          if (!reloaded) {
+            try { sessionStorage.setItem(RELOAD_KEY, "1"); } catch {}
+            window.location.reload();
+            return;
+          }
+        }
+        reject(err);
+      });
+  });
+}
+/* Wrap an import() factory + named export into a retrying React.lazy component. */
+const lazyPage = (factory, name) =>
+  React.lazy(() => importWithRetry(factory).then((m) => ({ default: m[name] })));
+
+const MonitorHub   = lazyPage(importMonitorHub,   "MonitorHub");
+const MusicLibrary = lazyPage(importMusicLibrary, "MusicLibrary");
+const Analytics    = lazyPage(importAnalytics,    "Analytics");
+const Inbox        = lazyPage(importInbox,        "Inbox");
+const Training     = lazyPage(importTraining,     "Training");
+const VideoEditor  = lazyPage(importVideoEditor,  "VideoEditor");
+const EditorProjects = lazyPage(importEditorProjects, "EditorProjects");
+const LosslessCut  = lazyPage(importLosslessCut,  "LosslessCut");
+const IdeaGenerator= lazyPage(importIdeaGenerator,"IdeaGenerator");
+const Locations    = lazyPage(importLocations,    "Locations");
+const Coverage     = lazyPage(importCoverage,     "Coverage");
+const Resources    = lazyPage(importResources,    "Resources");
+const Activity     = lazyPage(importActivity,     "Activity");
+const RolesAdmin   = lazyPage(importRolesAdmin,   "RolesAdmin");
+const ExportView   = lazyPage(importExportView,   "ExportView");
+const ArchivedView = lazyPage(importArchivedView, "ArchivedView");
+const CalendarView = lazyPage(importCalendarView, "CalendarView");
+const ListView     = lazyPage(importListView,     "ListView");
+const TeamChat     = lazyPage(importTeamChat,     "TeamChat");
 import { CreateFab } from "./components/fab.jsx";
 import { AuthProvider, AuthGate, IdentityGate, useAuth } from "./auth.jsx";
 import { TimeProvider } from "./lib/time.jsx";
@@ -369,6 +414,7 @@ function AppShell() {
   }, [view, canView]);
 
   const openReel = reel => {
+    setViewStack(prev => [...prev.slice(-19), view]);
     setSelectedReel(reel);
     setView("detail");
   };
@@ -1069,17 +1115,13 @@ class AppErrorBoundary extends React.Component {
 
 /* Public landing page — heavy 3D bundle, so load it lazily and keep it
    entirely outside the AuthGate. */
-const Landing = React.lazy(() =>
-  import("./pages/landing.jsx").then(m => ({ default: m.Landing }))
-);
+const Landing = lazyPage(() => import("./pages/landing.jsx"), "Landing");
 
 /* Owner-only 3D "Space" alternate homepage (/space). Lazy-loaded so the
    three.js/cube bundle never ships with the normal app. Rendered INSIDE
    the authed provider tree below so it has live store + locations; its
    own owner gate bounces non-owners to /app. */
-const Space3D = React.lazy(() =>
-  import("./pages/space3d.jsx").then(m => ({ default: m.Space3D }))
-);
+const Space3D = lazyPage(() => import("./pages/space3d.jsx"), "Space3D");
 
 function App() {
   // Root path "/" is the fully public landing page (no auth). Anything else

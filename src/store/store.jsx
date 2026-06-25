@@ -60,6 +60,8 @@ function reelFromDb(row) {
     // planable-push server reads (suggest.js item.mediaPath).
     mediaPath: rest.detail?.mediaPath ?? undefined,
     mediaTarget: rest.detail?.mediaTarget ?? undefined,
+    // No-copy chat recording pointer (streamed from Rocket.Chat, not re-hosted).
+    chatRecording: rest.detail?.chatRecording ?? undefined,
   };
 }
 function reelToDb(reel) {
@@ -1697,14 +1699,34 @@ async function persistUpdateReel(state, id, patch) {
   // fold it into the existing `detail` jsonb (read-modify-write off the current
   // reel) so it persists across reloads, and strip the top-level keys so
   // PostgREST never sees an unknown column. reelFromDb re-surfaces them on read.
-  if ("mediaPath" in patch || "mediaTarget" in patch) {
+  if ("mediaPath" in patch || "mediaTarget" in patch || "chatRecording" in patch) {
     const cur = (isCard ? state.reviewLaneCards : state.reels).find(r => r.id === id) || {};
     const nextDetail = { ...(cur.detail || {}) };
-    if ("mediaPath" in patch)   nextDetail.mediaPath = patch.mediaPath;
-    if ("mediaTarget" in patch) nextDetail.mediaTarget = patch.mediaTarget;
+    if ("mediaPath" in patch)      nextDetail.mediaPath = patch.mediaPath;
+    if ("mediaTarget" in patch)    nextDetail.mediaTarget = patch.mediaTarget;
+    if ("chatRecording" in patch)  nextDetail.chatRecording = patch.chatRecording;
     dbPatch.detail = nextDetail;
     delete dbPatch.mediaPath;
     delete dbPatch.mediaTarget;
+    delete dbPatch.chatRecording;
+  }
+  // When the detail blob is written directly from the debounce in detail.jsx (e.g.
+  // after a comment or note edit), the component's local detail copy was seeded at
+  // page-load time and doesn't include a video attached during the same session via
+  // the separate updateReel({mediaPath}) call. Fold mediaPath/mediaTarget back in
+  // from the current reel state so the blob write never silently erases an
+  // in-session video attachment.
+  if ("detail" in dbPatch && dbPatch.detail != null) {
+    const reel = (isCard ? state.reviewLaneCards : state.reels).find(r => r.id === id) || {};
+    if (reel.mediaPath && !dbPatch.detail.mediaPath) {
+      dbPatch.detail = { ...dbPatch.detail, mediaPath: reel.mediaPath };
+    }
+    if (reel.mediaTarget && !dbPatch.detail.mediaTarget) {
+      dbPatch.detail = { ...dbPatch.detail, mediaTarget: reel.mediaTarget };
+    }
+    if (reel.chatRecording && !dbPatch.detail.chatRecording) {
+      dbPatch.detail = { ...dbPatch.detail, chatRecording: reel.chatRecording };
+    }
   }
   // Keep `lane` in sync when owner changes — board derives column as lane || owner,
   // so a stale lane from a prior board drag would otherwise override the new owner.
@@ -3729,6 +3751,33 @@ function WorkflowProvider({ children }) {
                                     capturedBy = null, source = "manual",
                                     color = null, typography = null, face = null,
                                     layout = null, mood = null, subject = null }) => {
+        // Revive path (fixes the 409): thumbnail_dna has a FULL unique index on
+        // video_id, so a fresh insert for a video_id that already exists — even a
+        // SOFT-DELETED one — fails at the DB. Re-adding a previously-deleted
+        // thumbnail is a legitimate manual action, so REVIVE the tombstoned row
+        // (clear deleted_at + refresh the metadata the new capture provided)
+        // instead of inserting a duplicate the DB rejects. Only the manual path
+        // revives; the yt-sync upsert keeps ignoreDuplicates so a deliberately
+        // deleted video isn't auto-resurrected every cron run.
+        if (videoId) {
+          const prior = (stateRef.current.thumbnailDna || []).find(
+            d => d.videoId === videoId && d.deletedAt);
+          if (prior) {
+            const patch = { deletedAt: null, status: "captured" };
+            if (videoUrl != null)     patch.videoUrl = videoUrl;
+            if (thumbnailUrl != null) patch.thumbnailUrl = thumbnailUrl;
+            if (title != null)        patch.title = title;
+            if (channel != null)      patch.channel = channel;
+            if (quickNotes != null)   patch.quickNotes = quickNotes;
+            if (capturedBy != null)   patch.capturedBy = capturedBy;
+            if (Array.isArray(genesOfInterest) && genesOfInterest.length)
+              patch.genesOfInterest = genesOfInterest;
+            wrap(
+              { type: "UPDATE_THUMBNAIL_DNA", id: prior.id, patch },
+              () => persistUpdateThumbnailDna(prior.id, patch));
+            return { ...prior, ...patch };
+          }
+        }
         const item = {
           id: crypto.randomUUID(),
           videoUrl,

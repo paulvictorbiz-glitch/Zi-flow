@@ -2,10 +2,10 @@
  * Chat Recording Picker
  *
  * Pick a screen recording an editor posted into a Rocket.Chat channel and set it
- * as the reel's "Current reel state". The backend re-hosts the chosen file into
- * the private reel-videos bucket and points the reel's media_path at it (the same
- * frozen contract the Final-video uploader + Planable push use), so on success
- * we just `updateReel({ mediaPath, mediaTarget: 'supabase' })`.
+ * as the reel's "Current reel state". NO COPY is made — the backend records only
+ * a pointer { channel, fileId, name, private } and posts a breadcrumb; the video
+ * streams on demand from Rocket.Chat (a signed stream URL), so Supabase storage
+ * is untouched. On success we `updateReel({ chatRecording, mediaTarget: 'rc-proxy' })`.
  *
  * Reuses the read-only Modal.jsx shell the same way MusicPickerModal does, and
  * the JWT-gated /dashboard/* Rocket.Chat endpoints via social-client.js.
@@ -15,7 +15,7 @@
 import React, { useEffect, useState } from "react";
 import { Modal } from "./modals/Modal.jsx";
 import { supabase } from "../lib/supabase-client.js";
-import { fetchChannelFiles, attachChatRecording } from "../lib/social-client.js";
+import { fetchChannelFiles, attachChatRecordingRef } from "../lib/social-client.js";
 
 function fmtSize(bytes) {
   const n = Number(bytes) || 0;
@@ -85,7 +85,7 @@ export function ChatRecordingPicker({ reelId, onClose, onAttached }) {
     if (attaching) return;
     setAttaching(f.id);
     setError(null);
-    const res = await attachChatRecording({
+    const res = await attachChatRecordingRef({
       reelId, fileId: f.id, name: f.name, channel, private: isPrivate,
     });
     setAttaching(null);
@@ -93,7 +93,7 @@ export function ChatRecordingPicker({ reelId, onClose, onAttached }) {
       setError(res.error || "Attach failed.");
       return;
     }
-    onAttached?.(res.media_path);
+    onAttached?.(res.chatRecording);
     onClose?.();
   }
 
