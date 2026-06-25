@@ -11,6 +11,29 @@
   padding: 12px 22px 48px;
 }
 
+/* ── Grouping (THM-grp): collapsible sections by channel / subject / status ── */
+.td-group-select {
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--line-hard); border-radius: 6px;
+  font-family: var(--f-mono); font-size: 11.5px; padding: 4px 8px; cursor: pointer;
+}
+.td-groups { display: flex; flex-direction: column; gap: 14px; }
+.td-group { display: flex; flex-direction: column; gap: 10px; }
+.td-group-head {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left; cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 12px;
+  font-family: var(--f-mono); font-size: 12px; color: var(--fg);
+}
+.td-group-head:hover { border-color: var(--line-hard); }
+.td-group-toggle { color: var(--c-cyan); width: 12px; }
+.td-group-name { font-weight: 600; }
+.td-group-count {
+  margin-left: auto; color: var(--fg-dim);
+  border: 1px solid var(--line-hard); border-radius: 999px; padding: 1px 9px; font-size: 11px;
+}
+
 .td-error {
   margin: 0 22px;
   padding: 8px 12px;
@@ -175,6 +198,15 @@
   color: var(--bg-0); background: var(--fg-mute); border-color: var(--fg-mute);
   font-weight: 600;
 }
+
+/* Inline custom-category tag (bound to the Subject gene) for grouping. */
+.td-card-category {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-2); border: 1px dashed var(--line-soft);
+  border-radius: 6px; padding: 2px 6px;
+}
+.td-card-category-label { font-size: 12px; flex-shrink: 0; opacity: 0.8; }
+.td-card-category .td-cell-input { padding: 3px 4px; font-size: 11px; }
 
 .td-card-genes { display: flex; gap: 5px; flex-wrap: wrap; }
 .td-gene-tag {

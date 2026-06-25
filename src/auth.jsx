@@ -27,6 +27,10 @@ function AuthProvider({ children }) {
   const [authLoaded, setAuthLoaded] = React.useState(false);
   const [person, setPerson]       = React.useState(null);
   const [personLoaded, setPersonLoaded] = React.useState(false);
+  // True from the moment sign-out starts until the hard navigation fires, so
+  // the gate shows a "signing out…" splash instead of flashing the SignInScreen
+  // while the session clears (AUTH-007).
+  const [signingOut, setSigningOut] = React.useState(false);
 
   // Initial session + listener for live changes (other tabs etc.)
   React.useEffect(() => {
@@ -78,20 +82,35 @@ function AuthProvider({ children }) {
     authLoaded,
     personLoaded,
     person,
+    signingOut,
     /* Returns { error?: { message } } on failure. */
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
-    /* Send the user to the public landing page (/) FIRST, then clear the
-       session. Navigating before sign-out avoids the flash of the bare
-       SignInScreen: if we awaited signOut() first, clearing the session
-       would re-render AuthGate (session=null → SignInScreen) for the moment
-       between the auth call resolving and the navigation firing. The hard
-       navigation also guarantees the app tree fully resets, and the
-       sign-out request still completes (it's already in flight). */
-    signOut: () => {
-      supabase.auth.signOut().catch(() => {});
+    /* Sign out, THEN hard-navigate to the public landing page (/).
+       AUTH-007: the previous version navigated FIRST and let signOut() run
+       fire-and-forget — the reload often beat Supabase clearing the persisted
+       session from localStorage, so getSession() on reload restored it and the
+       user was silently signed back in. Now we (a) await signOut so the token
+       is revoked + storage cleared, bounded by a 2s race so a slow/offline
+       revoke can't hang the button, (b) belt-and-suspenders strip any lingering
+       `sb-*-auth-token` key so the reload can never re-hydrate the old session,
+       then (c) hard-navigate. `signingOut` keeps the gate on a splash (not the
+       SignInScreen) during the await so there's no flash. */
+    signOut: async () => {
+      setSigningOut(true);
+      try {
+        await Promise.race([
+          supabase.auth.signOut(),
+          new Promise((resolve) => setTimeout(resolve, 2000)),
+        ]);
+      } catch { /* ignore — we clear storage + navigate regardless */ }
+      try {
+        for (const k of Object.keys(window.localStorage)) {
+          if (k.startsWith("sb-") && k.includes("-auth-token")) window.localStorage.removeItem(k);
+        }
+      } catch { /* localStorage may be unavailable — ignore */ }
       window.location.assign("/");
     },
-  }), [session, authLoaded, personLoaded, person]);
+  }), [session, authLoaded, personLoaded, person, signingOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -104,7 +123,8 @@ function useAuth() {
 
 /* ---------- Auth gate: shows sign-in screen until session exists ---------- */
 function AuthGate({ children }) {
-  const { session, authLoaded } = useAuth();
+  const { session, authLoaded, signingOut } = useAuth();
+  if (signingOut) return <Splash label="signing out…" />;
   if (!authLoaded) return <Splash label="signing in…" />;
   if (!session) return <SignInScreen />;
   return children;

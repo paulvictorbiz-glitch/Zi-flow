@@ -8,7 +8,12 @@
 
 .rdv-overlay {
   position: fixed; inset: 0; z-index: 1000;
-  display: flex; align-items: center; justify-content: center;
+  /* align-items:flex-start (not center) so a full-height modal never overflows
+     ABOVE the viewport — centering a flex child taller than its container clips
+     its own top, making the header + close ✕ unreachable (DNA-013). overflow-y
+     is a safety net for zoomed / very short viewports. */
+  display: flex; align-items: flex-start; justify-content: center;
+  overflow-y: auto;
   padding: 24px;
   background: rgba(5, 8, 14, 0.78);
   backdrop-filter: blur(6px);
@@ -19,6 +24,7 @@
 .rdv-modal {
   width: min(1180px, 100%);
   max-height: calc(100vh - 48px);
+  box-sizing: border-box;         /* border must not push the modal past max-height */
   display: flex; flex-direction: column;
   border: 1px solid var(--line-hard);
   border-radius: 16px;

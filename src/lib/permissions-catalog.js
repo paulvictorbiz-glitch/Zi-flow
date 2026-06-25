@@ -20,6 +20,8 @@
    system on changes nothing until the owner edits a toggle.
    ========================================================= */
 
+import { ROLES } from "./shared-data.jsx";
+
 /* Top-level tabs, in the order they appear in the tab strip. `key`
    matches the `view` string in app.jsx. */
 export const VIEW_CAPS = [
@@ -28,6 +30,7 @@ export const VIEW_CAPS = [
   { key: "detail",    label: "Reel detail" },
   { key: "footage",   label: "Footage library" },
   { key: "editor",    label: "Video editor (OpenCut)" },
+  { key: "projects",  label: "Editor projects" },
   { key: "lossless",  label: "Lossless cut (in-browser)" },
   { key: "export",    label: "Export" },
   { key: "analytics", label: "Analytics" },
@@ -68,12 +71,15 @@ export const ACTION_CAPS = [
   { key: "editManual",      label: "Edit the training manual", hint: "Inline-edit the Training course content (playbook prose, checklists, examples, embeds). Off = read-only." },
 ];
 
-/* Roles the owner can configure. `owner` is excluded — always full. */
-export const EDITABLE_ROLES = [
-  { key: "skilled",  label: "Skilled Editor" },
-  { key: "variant",  label: "Variant Editor" },
-  { key: "reviewer", label: "Reviewer" },
-];
+/* Roles the owner can configure. `owner` is excluded — always full.
+   Derived from the canonical ROLES map (shared-data) so the admin matrix
+   and the rest of the app share ONE source of truth for the role set and
+   its labels; `owner` is filtered out (god-mode, never configured here).
+   Object key order in ROLES (owner→skilled→variant→reviewer) preserves the
+   skilled→variant→reviewer order the admin page expects. */
+export const EDITABLE_ROLES = Object.entries(ROLES)
+  .filter(([key]) => key !== "owner")
+  .map(([key, def]) => ({ key, label: def.label || def.short || key }));
 
 /* =========================================================
    DEMO role — the shared testuser@gmail.com feedback account.
@@ -88,7 +94,7 @@ export const EDITABLE_ROLES = [
    the DB), but owner/infra/AI-cost surfaces stay hidden.
    ========================================================= */
 export const DEMO_VIEWS = new Set([
-  "mywork", "pipeline", "detail", "footage", "editor", "lossless",
+  "mywork", "pipeline", "detail", "footage", "editor", "projects", "lossless",
   "export", "analytics", "inbox", "locations", "coverage", "reeldna",
   // hidden on purpose: generate (paid AI), training, activity,
   // resources, monitor, ai, settings
@@ -125,10 +131,22 @@ export function defaultPermsForRole(roleKey) {
      left untouched. The owner can re-enable any of these per-role or
      per-person in the admin — this only moves the DEFAULT. */
   const LEAN_HIDDEN = [
-    "editor", "lossless", "export", "analytics",
+    "editor", "projects", "lossless", "export", "analytics",
     "inbox", "locations", "coverage", "generate", "music",
   ];
   for (const v of LEAN_HIDDEN) views[v] = false;
+
+  /* Reviewer (Leroy) — owner-granted view surface. The Reviewer role keeps
+     read access to Analytics and the Inbox (comments & DMs) on top of the
+     core workflow; everything else owner-only (Monitor/Pulse/AI/Scout,
+     Export, Settings) stays hidden — those flow only through the owner's
+     god-mode, never this role. The connect/disconnect + New-message
+     affordances inside those tabs remain owner-only (gated separately).
+     Owner can still re-tune any of these per-role/per-person in the admin. */
+  if (roleKey === "reviewer") {
+    views.analytics = true;
+    views.inbox     = true;
+  }
 
   const actions = {};
   for (const a of ACTION_CAPS) actions[a.key] = true;
@@ -171,4 +189,22 @@ export function defaultConfig() {
    Used to seed a person-level config entry on first toggle. */
 export function defaultPermsForPerson(roleKey) {
   return defaultPermsForRole(roleKey || "skilled");
+}
+
+/* =========================================================
+   canPersonAccessMonitor — the ONE role-only predicate for "may this
+   person reach the Monitor hub + its owner-only data". Pure & React-free
+   (no useAuth/usePermissions import) so the store can import it without
+   dragging React in, and so the store's owner-only secondary fetches stay
+   in lock-step with the UI's Monitor gate (no more `id==="maya"` hardcode
+   drift between the two).
+
+   Monitor is OWNER-ONLY by product decision (the Reviewer role does NOT
+   get it — see defaultPermsForRole, which leaves reviewer.views.monitor
+   false). Keep this aligned with that default: if the owner ever grants
+   Monitor to another role here, mirror it in the catalog default too, or
+   the store will load data the UI hides (or vice-versa).
+   ========================================================= */
+export function canPersonAccessMonitor(person) {
+  return person?.role === "owner";
 }

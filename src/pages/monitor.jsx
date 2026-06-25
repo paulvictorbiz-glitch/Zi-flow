@@ -1173,27 +1173,8 @@ const DESC_MODE_SUB   = {
 };
 
 function GamifySection() {
-  const { gamifyEnabled, gamifyGradingMode, rubricDescMode, gamifyProgress, actions } = useWorkflow();
+  const { gamifyEnabled, gamifyGradingMode, rubricDescMode, actions } = useWorkflow();
   const { setGamifyEnabled, setGamifyGradingMode, setRubricDescMode } = actions;
-  const { peopleList } = useRoster();
-
-  // People who have any gamify progress, joined with their roster name.
-  const rows = (peopleList || [])
-    .map((p, i) => {
-      const prog = gamifyProgress.find(g => g.personId === p.id);
-      return {
-        id: p.id, name: p.name || p.id,
-        totalXp: prog?.totalXp || 0,
-        medal: prog?.medal || "none",
-        scores: prog?.skillScores || {},
-        color: GF_SERIES_COLORS[i % GF_SERIES_COLORS.length],
-      };
-    })
-    .sort((a, b) => b.totalXp - a.totalXp);
-
-  const series = rows
-    .filter(r => Object.keys(r.scores).length)
-    .map(r => ({ label: r.name, color: r.color, scores: r.scores }));
 
   const editorReviewer = gamifyGradingMode !== "reviewer_only";
 
@@ -1245,45 +1226,8 @@ function GamifySection() {
                   label={DESC_MODE_LABEL[rubricDescMode] || "All"}
                   disabled={!gamifyEnabled} />
       </div>
-
-      {/* Team overlay chart */}
-      <div style={{ marginTop: 16 }}>
-        <div className="gf-sidebar-title" style={{ marginBottom: 8 }}>Team skill overlay</div>
-        {series.length ? (
-          <>
-            <SpiderChart series={series} size={260} labelMode="short" />
-            <div className="gf-legend">
-              {rows.filter(r => Object.keys(r.scores).length).map(r => (
-                <span key={r.id} className="gf-legend-item">
-                  <span className="gf-legend-dot" style={{ background: r.color }} />
-                  {r.name}
-                </span>
-              ))}
-            </div>
-          </>
-        ) : (
-          <div className="mon-hint">No skill data yet — grade a reel's rubric to populate the chart.</div>
-        )}
-      </div>
-
-      {/* Leaderboard */}
-      <div style={{ marginTop: 18 }}>
-        <div className="gf-sidebar-title" style={{ marginBottom: 8 }}>XP leaderboard</div>
-        <div className="gf-leaderboard">
-          {rows.map(r => {
-            const tier = MEDAL_TIERS.find(t => t.id === r.medal);
-            return (
-              <div key={r.id} className="gf-lb-row">
-                <span>{r.name}</span>
-                <span className="gf-lb-xp">{r.totalXp.toLocaleString()} XP</span>
-                <span className="gf-lb-medal" style={{ color: tier?.color || "var(--fg-mute)" }}>
-                  {tier ? tier.id : "—"}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* Team skill-overlay spider chart + XP leaderboard removed by owner — this
+          card now holds only the gamify control toggles. */}
     </div>
   );
 }
@@ -1639,11 +1583,11 @@ export function Monitor() {
           <AiCreditsSection />
         </Card>
 
-        <Card title="News Monitor" footLeft="Pulse feeds · auto-ingest health">
+        <Card title="News Monitor" footLeft="Pulse feeds · auto-ingest health" defaultOpen={false}>
           <NewsMonitorSection />
         </Card>
 
-        <Card title="World Monitor" footLeft="Free APIs · Limits · Usage">
+        <Card title="World Monitor" footLeft="Free APIs · Limits · Usage" defaultOpen={false}>
           {data?.worldMonitor?._stale && <StaleTag />}
           <WorldMonitorSection data={data?.worldMonitor} />
         </Card>

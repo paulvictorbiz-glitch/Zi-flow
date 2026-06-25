@@ -36,7 +36,8 @@ export const RD_COLUMNS = [
   { key: "sfx",      label: "SFX",           hideable: true },
   { key: "story",    label: "Story / Pacing", hideable: true },
   { key: "notes",    label: "Notes",         hideable: true },
-  { key: "status",   label: "Status",        hideable: true },
+  // Status column removed (DNA-007 — "not needed"). Status still lives on the
+  // record and remains filterable in the Comprehensive faceted rail.
   { key: "assets",   label: "Assets",        hideable: true },
   { key: "actions",  label: "",              hideable: false },
 ];

@@ -28,6 +28,100 @@ import "./monitor.css";
 
 const MONITOR_MODE_KEY = "wb_monitor_mode";
 
+const SOL_MONITOR_CSS = `
+[data-theme="solarin"] .mon-wrap {
+  max-width: 1320px; margin: 0 auto; padding: 28px 32px; box-sizing: border-box;
+  font-family: var(--f-ui);
+}
+[data-theme="solarin"] .mon-hud-header {
+  background: var(--hud-panel); border: 1px solid var(--hud-border);
+  padding: 16px 20px; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 16px;
+}
+[data-theme="solarin"] .mon-hud-title {
+  font-family: var(--f-label); font-size: 16px; font-weight: 700;
+  color: var(--orange-bright); letter-spacing: .08em; text-transform: uppercase;
+}
+[data-theme="solarin"] .mon-hud-sub {
+  font-family: var(--f-label); font-size: 10px; color: var(--amber-hud);
+  text-transform: uppercase; letter-spacing: .1em;
+}
+[data-theme="solarin"] .mon-nominal-chip {
+  font-family: var(--f-label); font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+  border: 1px solid var(--hud-ok); color: var(--hud-ok); padding: 3px 10px;
+}
+[data-theme="solarin"] .mon-refresh-btn {
+  font-family: var(--f-label); font-size: 10px; text-transform: uppercase;
+  letter-spacing: .06em; background: none;
+  border: 1px solid var(--orange); color: var(--orange);
+  padding: 4px 12px; cursor: pointer; transition: background .15s;
+}
+[data-theme="solarin"] .mon-refresh-btn:hover { background: rgba(255,138,42,.1); }
+[data-theme="solarin"] .mon-gauge-row {
+  display: grid; grid-template-columns: repeat(5,1fr); gap: 12px; margin-bottom: 16px;
+}
+[data-theme="solarin"] .mon-gauge {
+  background: var(--hud-panel); border: 1px solid var(--hud-border);
+  padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+[data-theme="solarin"] .mon-gauge-ring {
+  width: 78px; height: 78px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; position: relative;
+}
+[data-theme="solarin"] .mon-gauge-inner {
+  width: 58px; height: 58px; border-radius: 50%; background: #0d0a07;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--f-label); font-size: 15px; font-weight: 700; color: var(--orange-bright);
+}
+[data-theme="solarin"] .mon-gauge-label {
+  font-family: var(--f-label); font-size: 10px; color: var(--amber-hud);
+  text-transform: uppercase; letter-spacing: .06em; text-align: center;
+}
+[data-theme="solarin"] .mon-grid {
+  display: grid; grid-template-columns: repeat(3,1fr); gap: 14px;
+}
+[data-theme="solarin"] .mon-panel {
+  background: var(--hud-panel); border: 1px solid var(--hud-border); padding: 14px 16px;
+}
+[data-theme="solarin"] .mon-panel-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--hud-border);
+}
+[data-theme="solarin"] .mon-panel-title {
+  font-family: var(--f-label); font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .1em; color: var(--orange-bright);
+}
+[data-theme="solarin"] .mon-status-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  animation: pulseGlowGreen 2.5s ease-in-out infinite;
+}
+[data-theme="solarin"] .mon-status-dot.ok    { background: var(--hud-ok); }
+[data-theme="solarin"] .mon-status-dot.alert { background: var(--hud-alert); animation: none; }
+[data-theme="solarin"] .mon-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 0; font-size: 12px;
+}
+[data-theme="solarin"] .mon-row-key {
+  font-family: var(--f-label); font-size: 9.5px; color: var(--hud-muted);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+[data-theme="solarin"] .mon-row-val {
+  font-family: var(--f-label); font-size: 11.5px; font-weight: 700; color: var(--orange-bright);
+}
+[data-theme="solarin"] .mon-sparkline {
+  display: flex; align-items: flex-end; gap: 2px; height: 28px; margin: 6px 0;
+}
+[data-theme="solarin"] .mon-spark-bar { flex: 1; background: var(--orange); min-height: 2px; }
+[data-theme="solarin"] .mon-panel-footer {
+  font-family: var(--f-label); font-size: 9.5px; color: var(--amber-hud);
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--hud-border);
+  cursor: pointer;
+}
+[data-theme="solarin"] .mon-panel-footer:hover { color: var(--orange); }
+`;
+
 /* ── D5: Frontend-performance card ───────────────────────────
    Owner-only. Client-queries perf_samples directly (NO new
    api/* route — the 12-fn Vercel cap is full). Surfaces p75
@@ -92,7 +186,7 @@ function PerfSparkline({ values = [], color = PERF_SPARK_COLOR, label }) {
   );
 }
 
-function FrontendPerfCard() {
+function FrontendPerfCard({ onStats }) {
   const isOwner = useIsOwner();
   const [state, setState] = useState({ status: "loading", rows: [] });
 
@@ -143,6 +237,10 @@ function FrontendPerfCard() {
 
     return { count: rows.length, p75Load, p75Inp, dailyMedians };
   }, [state.rows]);
+
+  // Bubble derived stats up so the HUD gauge row can bind real values.
+  // Pure notification — does not alter queries/effects/state ownership.
+  useEffect(() => { if (onStats) onStats(stats); }, [onStats, stats]);
 
   if (!isOwner) return null;
 
@@ -210,6 +308,244 @@ function FrontendPerfCard() {
   );
 }
 
+/* ── Editor usage tracker + history ──────────────────────────
+   Owner-only. Surfaces who is using the embedded OpenCut editor —
+   LIVE now (fresh oc_locks write-holders + open editor_usage_sessions)
+   and OVER TIME (per-person totals + a daily-sessions sparkline).
+   Client-queries both tables directly (NO new api/* route — the
+   12-fn Vercel cap is full), exactly like FrontendPerfCard. Degrades
+   to a "no usage yet" empty state when editor_usage_sessions is empty
+   or absent (migration 0097 may not be applied during this run), and
+   tolerates oc_locks being absent independently. */
+
+const USAGE_WINDOW_DAYS = 14;
+// A session row with ended_at NULL is only counted "open" while its
+// last_active_at is fresh — 3× the 60s heartbeat — so a missed end stamp
+// (hard tab-close) never shows a ghost session as live.
+const USAGE_OPEN_WINDOW_MS = 3 * 60_000;
+const USAGE_SPARK_COLOR = "var(--c-violet, var(--c-cyan))";
+
+function fmtDur(ms) {
+  if (!ms || ms < 0) return "0m";
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function fmtAgo(iso) {
+  if (!iso) return "—";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return "just now";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function EditorUsageCard({ onStats }) {
+  const isOwner = useIsOwner();
+  const [state, setState] = useState({ status: "loading", sessions: [], locks: [] });
+  const [tick, setTick] = useState(0); // manual / interval refresh
+
+  useEffect(() => {
+    if (!isOwner) return;
+    let cancelled = false;
+    (async () => {
+      const since = new Date(Date.now() - USAGE_WINDOW_DAYS * 86400000).toISOString();
+      // History log + live fork write-locks, in parallel. Each degrades
+      // INDEPENDENTLY — a missing oc_locks must not blank the history, and a
+      // missing usage table must not throw.
+      const [sessRes, lockRes] = await Promise.all([
+        supabase
+          .from("editor_usage_sessions")
+          .select("id, project_id, reel_id, person_id, person_name, preset, source, started_at, last_active_at, ended_at")
+          .gte("started_at", since)
+          .order("started_at", { ascending: true })
+          .limit(5000),
+        supabase
+          .from("oc_locks")
+          .select("project_id, locked_by, locked_by_name, locked_at, expires_at")
+          .limit(200),
+      ]);
+      if (cancelled) return;
+      // Missing usage table / RLS denial → empty state (never a thrown boot error).
+      if (sessRes.error) { setState({ status: "empty", sessions: [], locks: [] }); return; }
+      setState({
+        status: "ready",
+        sessions: sessRes.data || [],
+        locks: lockRes.error ? [] : (lockRes.data || []),
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [isOwner, tick]);
+
+  // Light auto-refresh so "live now" stays current without a manual click.
+  useEffect(() => {
+    if (!isOwner) return;
+    const h = setInterval(() => setTick(t => t + 1), 30_000);
+    return () => clearInterval(h);
+  }, [isOwner]);
+
+  const stats = useMemo(() => {
+    const now = Date.now();
+    const sessions = state.sessions;
+
+    // Live now: fork write-lock holders (fresh expires_at) ∪ open usage sessions
+    // (ended_at NULL and last_active_at within the open window).
+    const liveLocks = (state.locks || []).filter(l =>
+      l.expires_at && new Date(l.expires_at).getTime() > now
+    );
+    const openSessions = sessions.filter(s =>
+      !s.ended_at && s.last_active_at && (now - new Date(s.last_active_at).getTime()) < USAGE_OPEN_WINDOW_MS
+    );
+    const liveNames = new Set();
+    liveLocks.forEach(l => liveNames.add(l.locked_by_name || l.locked_by || "editor"));
+    openSessions.forEach(s => liveNames.add(s.person_name || s.person_id || "editor"));
+
+    // Per-person history: sessions, total active time, last seen.
+    const byPerson = new Map();
+    for (const s of sessions) {
+      const key = s.person_id || s.person_name || "unknown";
+      const end = s.ended_at ? new Date(s.ended_at).getTime() : Math.min(now, new Date(s.last_active_at || s.started_at).getTime());
+      const dur = Math.max(0, end - new Date(s.started_at).getTime());
+      const cur = byPerson.get(key) || { name: s.person_name || s.person_id || "unknown", count: 0, ms: 0, last: 0 };
+      cur.count += 1;
+      cur.ms += dur;
+      cur.last = Math.max(cur.last, new Date(s.last_active_at || s.started_at).getTime());
+      if (s.person_name) cur.name = s.person_name;
+      byPerson.set(key, cur);
+    }
+    const people = [...byPerson.values()].sort((a, b) => b.last - a.last);
+
+    // Daily session counts over the window (oldest→newest) for the sparkline.
+    const byDay = new Map();
+    for (const s of sessions) {
+      if (!s.started_at) continue;
+      const day = String(s.started_at).slice(0, 10);
+      byDay.set(day, (byDay.get(day) || 0) + 1);
+    }
+    const dailyCounts = [...byDay.keys()].sort().map(d => byDay.get(d));
+
+    const totalMs = sessions.reduce((acc, s) => {
+      const end = s.ended_at ? new Date(s.ended_at).getTime() : Math.min(now, new Date(s.last_active_at || s.started_at).getTime());
+      return acc + Math.max(0, end - new Date(s.started_at).getTime());
+    }, 0);
+
+    return {
+      count: sessions.length,
+      liveCount: liveNames.size,
+      liveNames: [...liveNames],
+      people,
+      dailyCounts,
+      totalMs,
+    };
+  }, [state.sessions, state.locks]);
+
+  // Bubble derived stats up so the HUD gauge row can bind real values.
+  useEffect(() => { if (onStats) onStats(stats); }, [onStats, stats]);
+
+  if (!isOwner) return null;
+
+  const empty = state.status === "empty" || (state.status === "ready" && stats.count === 0);
+
+  return (
+    <Card
+      title="Editor usage"
+      right={
+        <span className="mono dim">
+          last {USAGE_WINDOW_DAYS}d ·{" "}
+          <button
+            type="button"
+            className="mon-link-btn"
+            onClick={() => setTick(t => t + 1)}
+            style={{ background: "none", border: 0, color: "inherit", cursor: "pointer", padding: 0, font: "inherit", textDecoration: "underline" }}
+            title="Refresh now"
+          >
+            refresh
+          </button>
+        </span>
+      }
+      footLeft="editor_usage_sessions + oc_locks (client query)"
+    >
+      <div className="mon-section-body">
+        {/* Live-now banner — always shown (even with no history) so the owner
+            can see who is in the editor right this moment. */}
+        <div className="mon-stat-row" style={{ marginBottom: 8 }}>
+          <span className="mon-stat-k">editing now</span>
+          <span className={`mon-stat-v${stats.liveCount ? " mon-stat-v--ok" : ""}`}>
+            {stats.liveCount > 0
+              ? `${stats.liveCount} · ${stats.liveNames.join(", ")}`
+              : "nobody"}
+          </span>
+        </div>
+
+        {state.status === "loading" && (
+          <div className="mono dim" style={{ padding: "4px 0" }}>loading usage…</div>
+        )}
+
+        {state.status !== "loading" && empty && (
+          <div className="mono dim" style={{ padding: "4px 0" }}>
+            no editor usage recorded yet — open a project in the editor to start
+            logging{" "}(migration 0097 / editor_usage_sessions may not be live).
+          </div>
+        )}
+
+        {state.status !== "loading" && !empty && (
+          <>
+            <div className="mon-stats-grid">
+              <div className="mon-stat-row">
+                <span className="mon-stat-k">sessions</span>
+                <span className="mon-stat-v">{stats.count}</span>
+              </div>
+              <div className="mon-stat-row">
+                <span className="mon-stat-k">total edit time</span>
+                <span className="mon-stat-v">{fmtDur(stats.totalMs)}</span>
+              </div>
+              <div className="mon-stat-row">
+                <span className="mon-stat-k">people</span>
+                <span className="mon-stat-v">{stats.people.length}</span>
+              </div>
+            </div>
+
+            {stats.dailyCounts.length >= 2 ? (
+              <PerfSparkline
+                values={stats.dailyCounts}
+                color={USAGE_SPARK_COLOR}
+                label="sessions / day"
+              />
+            ) : (
+              <div className="mono dim" style={{ paddingTop: 6 }}>
+                not enough days for a trend yet
+              </div>
+            )}
+
+            {/* Per-person breakdown — who edits, how much, last seen. */}
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+              {stats.people.slice(0, 8).map((p, i) => {
+                const live = stats.liveNames.includes(p.name);
+                return (
+                  <div key={i} className="mon-stat-row">
+                    <span className="mon-stat-k">
+                      {live ? "🟢 " : ""}{p.name}
+                    </span>
+                    <span className="mon-stat-v mono dim" style={{ fontSize: 11 }}>
+                      {p.count} session{p.count === 1 ? "" : "s"} · {fmtDur(p.ms)} · {fmtAgo(new Date(p.last).toISOString())}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // view = the permission-catalog key each sub-view is gated by (preserved
 // verbatim from when these were top-level tabs, so gating never changes).
 const SUBVIEWS = [
@@ -219,8 +555,19 @@ const SUBVIEWS = [
   { key: "scout",  label: "Scout",    view: "scout",   Comp: Scout },
 ];
 
+// Clamp any numeric to a 0..100 conic-gradient percentage.
+function gaugePct(v) {
+  if (v == null || !isFinite(v)) return 0;
+  return Math.max(0, Math.min(100, Math.round(v)));
+}
+
 export function MonitorHub({ canView }) {
   const allowed = useMemo(() => SUBVIEWS.filter(s => canView(s.view)), [canView]);
+
+  // Real derived stats lifted from the two owner data cards (no new queries).
+  const [perfStats, setPerfStats] = useState(null);
+  const [usageStats, setUsageStats] = useState(null);
+  const isOwner = useIsOwner();   // gate the two kept owner cards
 
   const [mode, setMode] = useState(() => localStorage.getItem(MONITOR_MODE_KEY) || "infra");
 
@@ -235,8 +582,10 @@ export function MonitorHub({ canView }) {
 
   const Active = (allowed.find(s => s.key === activeKey) || allowed[0]).Comp;
 
+  const liveEditing = (usageStats?.liveCount || 0) > 0;
+
   return (
-    <div>
+    <div className="mon-wrap">
       {allowed.length > 1 && (
         <div className="submode-bar">
           <span className="mono dim" style={{ alignSelf: "center" }}>monitor</span>
@@ -249,12 +598,40 @@ export function MonitorHub({ canView }) {
           <span className="mono dim" style={{ alignSelf: "center" }}>owner intelligence</span>
         </div>
       )}
-      {/* D5: owner-only frontend-performance card — self-gates via useIsOwner
-          and renders above the active sub-view. */}
-      <div style={{ padding: "12px 22px 0" }}>
-        <FrontendPerfCard />
+
+      {/* Infrastructure-only owner cards. The two KEPT telemetry cards
+          (frontend-performance graph + editor usage) render ONLY on the Infra
+          sub-tab and self-gate to the owner — so Pulse / AI Brain / Scout show
+          just their own function. The other HUD cards (header, gauge row, Live
+          Now, Perf Vitals, Subsystems, Active View) were removed as redundant. */}
+      {activeKey === "infra" && isOwner && (
+      <div className="mon-grid" style={{ padding: "12px 22px 0", display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+        {/* panel 3: frontend perf */}
+        <div className="mon-panel">
+          <div className="mon-panel-head">
+            <span className={`mon-status-dot ${perfStats?.count ? "ok" : "alert"}`} />
+            <span className="mon-panel-title">Frontend Performance</span>
+          </div>
+          <FrontendPerfCard onStats={setPerfStats} />
+        </div>
+        {/* panel 4: editor usage */}
+        <div className="mon-panel">
+          <div className="mon-panel-head">
+            <span className={`mon-status-dot ${liveEditing ? "ok" : "alert"}`} />
+            <span className="mon-panel-title">Editor Usage</span>
+          </div>
+          <EditorUsageCard onStats={setUsageStats} />
+        </div>
       </div>
-      <Active />
+      )}
+
+      {/* The mounted sub-view (infra Monitor / Pulse / AI Brain / Scout) —
+          its own content only, exactly as each function rendered before. */}
+      <div style={{ marginTop: 14 }}>
+        <Active />
+      </div>
+
+      <style>{SOL_MONITOR_CSS}</style>
     </div>
   );
 }

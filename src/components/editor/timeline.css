@@ -179,6 +179,163 @@
   text-align: center;
 }
 
+/* =========================================================
+   Multi-track (v2) stacked layout
+   ========================================================= */
+.tl--multi .tl-scroll { overflow-x: auto; }
+
+.tl-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* one track row = label gutter + lane */
+.tl-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: stretch;
+  border: 1px solid var(--line, var(--border));
+  border-radius: 7px;
+  background: var(--bg, #0b0e14);
+  overflow: visible;
+}
+.tl-row--video  { border-color: rgba(34, 211, 238, 0.45); }
+.tl-row--audio  { border-color: rgba(52, 211, 153, 0.45); }
+.tl-row--text   { border-color: rgba(167, 139, 250, 0.45); }
+
+.tl-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  justify-content: center;
+  padding: 6px 8px;
+  border-right: 1px solid var(--line, var(--border));
+  position: sticky;
+  left: 0;
+  background: var(--bg, #0b0e14);
+  z-index: 3;
+}
+.tl-row-tag {
+  align-self: flex-start;
+  font-family: var(--f-mono, monospace);
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.tl-row-tag--video { background: rgba(34, 211, 238, 0.15);  color: var(--c-cyan, #22d3ee); }
+.tl-row-tag--audio { background: rgba(52, 211, 153, 0.15);  color: var(--c-green, #34d399); }
+.tl-row-tag--text  { background: rgba(167, 139, 250, 0.15); color: var(--c-purple, #a78bfa); }
+.tl-row-name {
+  font-size: 10.5px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-row-lane {
+  position: relative;
+  min-height: 56px;
+  padding: 6px 0;
+}
+.tl-row-lane--video { padding: 6px 8px; }
+
+/* video lane hosts the original VideoTrack markup (embedded) */
+.tl-track-host { min-width: 100%; }
+.tl-track-host .tl-track { height: 56px; }
+
+/* ---------- audio clip (absolute startAt) ---------- */
+.tl-aclip {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--c-green, #34d399);
+  border-radius: 6px;
+  background: rgba(52, 211, 153, 0.12);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.tl-aclip:active { cursor: grabbing; }
+.tl-aclip-body {
+  padding: 4px 7px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+}
+.tl-aclip-vol {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.tl-vol-ico { font-size: 10px; }
+.tl-vol-range {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--c-green, #34d399);
+  height: 12px;
+  cursor: pointer;
+}
+.tl-vol-val {
+  font-family: var(--f-mono, monospace);
+  font-size: 8.5px;
+  color: var(--fg-mute);
+  min-width: 30px;
+  text-align: right;
+}
+
+/* ---------- text / caption clip (absolute startAt → endAt) ---------- */
+.tl-tclip {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--c-purple, #a78bfa);
+  border-radius: 6px;
+  background: rgba(167, 139, 250, 0.12);
+  overflow: hidden;
+  display: flex;
+  align-items: stretch;
+  user-select: none;
+}
+.tl-tclip .tl-handle { background: var(--c-purple, #a78bfa); }
+.tl-tclip-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+}
+.tl-tclip-grip {
+  flex: 0 0 auto;
+  cursor: grab;
+  color: var(--fg-mute);
+  font-size: 9px;
+  line-height: 1;
+  touch-action: none;
+  letter-spacing: -2px;
+}
+.tl-tclip-grip:active { cursor: grabbing; }
+.tl-tclip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  font-size: 11px;
+  padding: 2px 0;
+}
+.tl-tclip-text:focus { outline: none; }
+.tl-tclip-text::placeholder { color: var(--fg-mute); }
+
 /* ---------- render progress (lives in editor.css scope but defined here) ---------- */
 .tl-render-bar {
   height: 8px;

@@ -16,7 +16,7 @@ import "./gamify.css";
 /* Distinct overlay colors (same palette as the Monitor card). */
 const SERIES_COLORS = ["#6fd6ff", "#a99bff", "#5ad17a", "#f0c060", "#ff6f91", "#ff9f5a"];
 
-export default function OwnerSkillOverlay() {
+export default function OwnerSkillOverlay({ bare = false }) {
   const { gamifyEnabled, gamifyProgress } = useWorkflow();
   const { peopleList } = useRoster();
 
@@ -54,17 +54,10 @@ export default function OwnerSkillOverlay() {
     .filter(t => isShown(t.id))
     .map(t => ({ label: t.name, color: t.color, scores: t.scores }));
 
-  return (
-    <div className="ow-team-section">
-      <div className="ow-section-head">
-        <span className="ow-section-title">Team Skill Overlay</span>
-        <span style={{ fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--fg-dim)" }}>
-          {series.length} of {team.length} shown
-        </span>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 320px) 1fr",
-                    gap: 24, alignItems: "center", padding: "12px 0" }}>
+  const grid = (
+      <div style={{ display: "grid",
+                    gridTemplateColumns: bare ? "1fr" : "minmax(240px, 320px) 1fr",
+                    gap: bare ? 14 : 24, alignItems: "center", padding: "12px 0" }}>
         {/* Overlay chart */}
         <div>
           {series.length ? (
@@ -112,6 +105,19 @@ export default function OwnerSkillOverlay() {
           )}
         </div>
       </div>
+  );
+
+  if (bare) return grid;
+
+  return (
+    <div className="ow-team-section">
+      <div className="ow-section-head">
+        <span className="ow-section-title">Team Skill Overlay</span>
+        <span style={{ fontSize: 10.5, fontFamily: "var(--f-mono)", color: "var(--fg-dim)" }}>
+          {series.length} of {team.length} shown
+        </span>
+      </div>
+      {grid}
     </div>
   );
 }

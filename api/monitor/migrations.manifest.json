@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-23T14:21:55.853Z",
+  "generated": "2026-06-25T09:13:29.345Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -372,6 +372,22 @@
     {
       "version": "0093_music_library.sql",
       "checksum": "dce409cc1aefe07c0f077c57a1f0aa853d1f24b0afc2d7a913978ed46562dca1"
+    },
+    {
+      "version": "0094_edit_collab_v2.sql",
+      "checksum": "eab5b638f878f7ab21162c34de27849474ee5b7369d965f6c769181796dea840"
+    },
+    {
+      "version": "0095_oc_projects.sql",
+      "checksum": "95102547a73788aebd79c522b7c715c8fba14fd1932b7d98b1ab4d418b8d55ae"
+    },
+    {
+      "version": "0096_oc_locks.sql",
+      "checksum": "0d5b717cc76ffe2d55a54505e5e451e056ce446e50e539e6b142075bd22e24ea"
+    },
+    {
+      "version": "0097_editor_usage.sql",
+      "checksum": "59e66a3fb2522b30bfb2cb8e41886da649277ce522078e46167a6c1ac80516d6"
     }
   ]
 }

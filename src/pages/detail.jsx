@@ -25,8 +25,127 @@ import { MusicPickerModal } from "../components/MusicPickerModal.jsx";
 import { resolveReelDnaAssets } from "../store/store.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
 import { PipelineDnaAssets } from "../components/pipeline-dna-assets.jsx";
+import { AssetAttachPicker } from "../components/asset-attach-picker.jsx";
+import { ThumbPreview } from "./thumbnail-dna.jsx";
+import { extractYouTubeId, thumbnailUrlFromId } from "../lib/thumbnail-dna.jsx";
 import { SKILLS } from "../lib/training-curriculum.jsx";
 import GamifyRubricSheet from "../components/GamifyRubricSheet.jsx";
+
+const SOL_DETAIL_CSS = `
+[data-theme="solarin"] .det-wrap {
+  max-width: 1280px; margin: 0 auto; padding: 28px 32px; box-sizing: border-box;
+}
+[data-theme="solarin"] .det-back {
+  font-family: var(--f-label); font-size: 11px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--s-fg-muted);
+  background: none; border: none; cursor: pointer; padding: 0 0 8px;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+[data-theme="solarin"] .det-back:hover { color: var(--mint); }
+[data-theme="solarin"] .det-crumb {
+  font-family: var(--f-label); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--peach); margin-bottom: 6px;
+}
+[data-theme="solarin"] .det-title {
+  font-family: var(--f-ui); font-size: 28px; font-weight: 700;
+  color: var(--s-fg); text-shadow: 0 2px 16px rgba(0,0,0,.85); margin-bottom: 8px;
+}
+[data-theme="solarin"] .det-body {
+  display: grid; grid-template-columns: 300px 1fr 320px; gap: 20px; margin-top: 20px;
+}
+[data-theme="solarin"] .det-preview {
+  aspect-ratio: 9/16;
+  background: linear-gradient(160deg, #1a2a26, #0e1211);
+  border: 1px solid var(--s-border);
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+[data-theme="solarin"] .det-content-panel {
+  background: var(--s-panel); border: 1px solid var(--s-border);
+  backdrop-filter: blur(4px); padding: 16px 20px; margin-bottom: 12px;
+}
+[data-theme="solarin"] .det-panel-head {
+  font-family: var(--f-label); font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .12em; color: var(--peach);
+  margin-bottom: 12px;
+}
+[data-theme="solarin"] .det-content-row {
+  display: flex; gap: 16px; padding: 8px 0;
+  border-bottom: 1px solid var(--s-divider-soft); font-size: 13px;
+}
+[data-theme="solarin"] .det-content-key {
+  font-family: var(--f-label); font-size: 10.5px; color: var(--peach);
+  text-transform: uppercase; letter-spacing: .08em; min-width: 90px; flex-shrink: 0;
+}
+[data-theme="solarin"] .det-content-val {
+  font-family: var(--f-ui); color: var(--s-fg-body);
+}
+[data-theme="solarin"] .det-check-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 0; font-family: var(--f-ui); font-size: 13px;
+}
+[data-theme="solarin"] .det-check-done { color: var(--s-fg-muted); text-decoration: line-through; }
+[data-theme="solarin"] .det-check-active { color: var(--peach); }
+[data-theme="solarin"] .det-cb-done {
+  width: 16px; height: 16px; border-radius: 50%; background: var(--teal);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 9px; flex-shrink: 0;
+}
+[data-theme="solarin"] .det-cb-active {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1.5px solid var(--peach); flex-shrink: 0;
+}
+
+/* ── Generic (theme-agnostic) reel-card fixes ──────────────────────────────
+   (B) Keep the inspiration / compare / keep-in-mind column pinned to the
+   top-right instead of collapsing to a full-width row beneath the columns.
+   The higher-specificity .det-body.detail-grid selector beats the stock
+   max-width:1280px rule in styles.css. */
+@media (max-width: 1280px) {
+  .det-body.detail-grid { grid-template-columns: 300px 1fr 320px; }
+  .det-body .detail-col--ref {
+    grid-column: auto;
+    border-top: 0;
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
+}
+/* (A) Let the Reel Blueprint textarea fill the available space like the
+   comment box — full width (the redundant label column is dropped in JSX)
+   and a generous height so long scripts aren't cut off. */
+.blueprint-body.bp-fill { grid-template-columns: 1fr; display: block; }
+.blueprint-body.bp-fill textarea { min-height: 300px; }
+
+/* (E) Self-contained styles for the restored Thumbnails / News attach cards —
+   reel-dna.css (where these classes also live) is not imported on this page,
+   so scope a copy under .det-wrap to guarantee correct rendering here. */
+.det-wrap .rd-asset-thumb-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.det-wrap .rd-asset-thumb-wrap { position: relative; display: inline-flex; align-items: flex-start; gap: 2px; }
+.det-wrap .rd-asset-thumb {
+  display: block; width: 64px; height: 36px;
+  border: 1px solid var(--line); border-radius: 4px;
+  overflow: hidden; background: var(--bg-3);
+}
+.det-wrap .rd-asset-thumb img,
+.det-wrap .rd-asset-thumb .td-thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.det-wrap .rd-asset-thumb-stub {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  font-family: var(--f-mono); font-size: 9px; color: var(--fg-dim);
+}
+.det-wrap .rd-asset-news-list { display: flex; flex-direction: column; gap: 6px; }
+.det-wrap .rd-asset-news {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  font-family: var(--f-sans); font-size: 12px; line-height: 1.35;
+}
+.det-wrap .rd-asset-news a { color: var(--c-cyan); text-decoration: none; min-width: 0; word-break: break-word; }
+.det-wrap .rd-asset-news a:hover { text-decoration: underline; }
+.det-wrap .rd-asset-detach {
+  appearance: none; cursor: pointer; background: transparent; border: 0;
+  color: var(--fg-dim); font-size: 11px; line-height: 1; padding: 0 2px; margin-left: 4px;
+}
+.det-wrap .rd-asset-detach:hover { color: var(--c-red); }
+`;
 
 /* Blueprint fields start empty for every reel — operators fill them in. */
 const DEFAULT_LOGLINE = "";
@@ -211,7 +330,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   /* Hook into the canonical store. `stored` is the DB-backed
      record for the currently displayed reel — what we read seed
      values from and what we write Blueprint edits back into. */
-  const { reels, actions, reelDnaAssets, musicTracks } = useWorkflow();
+  const { reels, actions, reelDnaAssets, musicTracks, thumbnailDna, monitorEvents } = useWorkflow();
   const { can } = usePermissions();
   const isOwner = useIsOwner();
   const { peopleList } = useRoster();
@@ -437,6 +556,88 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
     if (track?.id == null) return;
     actions.detachAsset(reelDnaId, "music", track.id);
   };
+
+  /* ── Attached thumbnails + news (from Pulse), resolved from the same
+       polymorphic reel_dna_assets join the music card uses. These attach
+       controls went missing in the new card design — restored here so a
+       reel can pull thumbnails (Thumbnails tab) and news (Pulse) again. */
+  const attachedThumbnails = useMemo(
+    () =>
+      resolveReelDnaAssets(reelDnaId, {
+        reelDnaAssets: reelDnaAssets || [],
+        thumbnailDna: thumbnailDna || [],
+      }).thumbnails,
+    [reelDnaId, reelDnaAssets, thumbnailDna]
+  );
+  const attachedNews = useMemo(
+    () =>
+      resolveReelDnaAssets(reelDnaId, {
+        reelDnaAssets: reelDnaAssets || [],
+        monitorEvents: monitorEvents || [],
+      }).news,
+    [reelDnaId, reelDnaAssets, monitorEvents]
+  );
+  const thumbnailOpts = useMemo(
+    () => (thumbnailDna || []).map(t => ({
+      id: t.id, label: t.title || t.videoUrl || "Thumbnail", sublabel: t.videoId || undefined,
+    })),
+    [thumbnailDna]
+  );
+  const newsOpts = useMemo(
+    () => (monitorEvents || []).map(n => ({
+      id: n.id, label: n.title || "Untitled", sublabel: n.sourceName || n.sourceUrl || undefined,
+    })),
+    [monitorEvents]
+  );
+  const thumbAttachedIds = useMemo(
+    () => new Set(attachedThumbnails.map(t => String(t.id))),
+    [attachedThumbnails]
+  );
+  const newsAttachedIds = useMemo(
+    () => new Set(attachedNews.map(n => String(n.id))),
+    [attachedNews]
+  );
+  const [thumbInput, setThumbInput] = useState("");
+  const [newsTitle, setNewsTitle] = useState("");
+  const [newsUrl, setNewsUrl] = useState("");
+  const [newsBusy, setNewsBusy] = useState(false);
+  const handleAttachThumbnails = (picks) => {
+    for (const p of picks) actions.attachAsset(reelDnaId, "thumbnail", p.id, p.label);
+  };
+  const handleAttachNews = (picks) => {
+    for (const p of picks) actions.attachAsset(reelDnaId, "news", p.id, p.label);
+  };
+  const handleAddThumbnail = () => {
+    const vid = extractYouTubeId(thumbInput);
+    if (!vid) return;
+    const created = actions.createThumbnailDnaCapture({
+      videoUrl: thumbInput.trim(),
+      videoId: vid,
+      thumbnailUrl: thumbnailUrlFromId(vid),
+    });
+    if (created?.id) actions.attachAsset(reelDnaId, "thumbnail", created.id, created.title || created.videoUrl);
+    setThumbInput("");
+  };
+  const handleAddNews = async () => {
+    if (!newsTitle.trim() || newsBusy) return;
+    setNewsBusy(true);
+    try {
+      const ev = await actions.createMonitorEvent({
+        title: newsTitle.trim(),
+        sourceUrl: newsUrl.trim() || undefined,
+        sourceType: "manual",
+        publishedAt: new Date().toISOString(),
+      });
+      if (ev?.id) actions.attachAsset(reelDnaId, "news", ev.id, ev.title);
+      setNewsTitle(""); setNewsUrl("");
+    } catch {
+      /* createMonitorEvent surfaces its own error to the store */
+    } finally {
+      setNewsBusy(false);
+    }
+  };
+  const handleDetachThumbnail = (id) => actions.detachAsset(reelDnaId, "thumbnail", id);
+  const handleDetachNews = (id) => actions.detachAsset(reelDnaId, "news", id);
 
   /* Get attached footage for this reel from store */
   const { attachedFootage } = useWorkflow();
@@ -769,10 +970,31 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   };
 
   return (
-    <div>
+    <div className="det-wrap">
+      <style>{SOL_DETAIL_CSS}</style>
+      {onBack && (
+        <button
+          type="button"
+          className="det-back"
+          onClick={onBack}
+          aria-label="Back to pipeline"
+        >
+          ‹ Back
+        </button>
+      )}
       <div className="page-head">
         <div className="titles">
           <h1 style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+            <span
+              className="det-crumb"
+              style={{
+                fontFamily: "var(--f-mono)",
+                fontSize: 13,
+                fontWeight: 400,
+                color: "var(--fg-mute)",
+                letterSpacing: "0.04em",
+              }}
+            >{current.id}</span>
             {editingTitle ? (
               <input
                 autoFocus
@@ -796,6 +1018,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
               />
             ) : (
               <span
+                className="det-title"
                 onClick={() => { setTitleVal(stored?.title ?? current.title ?? ""); setEditingTitle(true); }}
                 title="Click to edit title"
                 style={{ cursor: "text" }}
@@ -803,38 +1026,8 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
                 {(stored?.title ?? current.title) || "Untitled reel"}
               </span>
             )}
-            <span style={{
-              fontFamily: "var(--f-mono)",
-              fontSize: 13,
-              fontWeight: 400,
-              color: "var(--fg-mute)",
-              letterSpacing: "0.04em",
-            }}>{current.id}</span>
           </h1>
           <div className="sub reflinks" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <span
-                onClick={(e) => handleRefClick(e, "audio", audioUrl, "Music")}
-                title={audioUrl ? `${audioUrl}\n(click to open)` : "Click to add a music link"}
-                style={{
-                  cursor: "pointer",
-                  userSelect: "none",
-                  color: audioUrl ? "var(--c-amber)" : "var(--fg-mute)",
-                  textDecoration: "none",
-                }}>
-                {audioUrl ? "♪ Music ↗" : "+ Music"}
-              </span>
-              {audioUrl && (
-                <button
-                  className="reflink-edit"
-                  onClick={() => editRefLink("audio", audioUrl, "Music")}
-                  title="Change this music link"
-                  aria-label="Change music link"
-                  style={{ cursor: "pointer", color: "var(--fg-mute)", fontSize: 12, lineHeight: 1, padding: "2px 4px" }}>
-                  ✎
-                </button>
-              )}
-            </span>
             <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
               <span
                 onClick={(e) => handleRefClick(e, "inspo", inspoUrl, "Inspiration")}
@@ -857,20 +1050,6 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
                   ✎
                 </button>
               )}
-            </span>
-            {/* Series tag — groups this reel with others on the pipeline board */}
-            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <span
-                onClick={() => editRefLink("series", seriesVal, "Series")}
-                title={seriesVal ? `Series: ${seriesVal}\n(click to change)` : "Click to tag this reel's series"}
-                style={{
-                  cursor: "pointer",
-                  userSelect: "none",
-                  color: seriesVal ? "var(--c-violet)" : "var(--fg-mute)",
-                  textDecoration: "none",
-                }}>
-                {seriesVal ? `⛓ ${seriesVal}` : "+ Series"}
-              </span>
             </span>
             {/* Assign to editor — owner/privileged only; lands reel in that person's Not Started */}
             {false /* DISABLED — awaiting owner activation */ && isOwner && peopleList.length > 0 && (
@@ -925,48 +1104,8 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
               })}
             </span>
             )}
-            {/* Skill tags — which Training-syllabus skills this reel practices.
-                Editable only when the owner grants tagReelSkills; otherwise a
-                read-only list so editors see what a project teaches. */}
-            {(canTagSkills || skillTags.length > 0) && (
-            <span className="reflink" style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              <span className="mono dim" style={{ fontSize: 10, userSelect: "none" }}>skills</span>
-              {canTagSkills
-                ? SKILLS.map(s => {
-                    const active = skillTags.includes(s.key);
-                    return (
-                      <span
-                        key={s.key}
-                        onClick={() => toggleSkillTag(s.key)}
-                        title={`W${s.week} · ${s.moduleTitle}`}
-                        style={{
-                          fontFamily: "var(--f-mono)", fontSize: 10.5,
-                          padding: "2px 7px", borderRadius: 11, cursor: "pointer",
-                          border: "1px solid " + (active ? "var(--c-violet)" : "var(--line-hard)"),
-                          color: active ? "var(--c-violet)" : "var(--fg-dim)",
-                          background: active ? "rgba(169,155,255,0.10)" : "transparent",
-                          userSelect: "none",
-                        }}
-                      >
-                        {active ? "✓ " : ""}{s.label}
-                      </span>
-                    );
-                  })
-                : skillTags.map(key => {
-                    const s = SKILLS.find(x => x.key === key);
-                    return (
-                      <span key={key} style={{
-                        fontFamily: "var(--f-mono)", fontSize: 10.5,
-                        padding: "2px 7px", borderRadius: 11,
-                        border: "1px solid var(--c-violet)", color: "var(--c-violet)",
-                        background: "rgba(169,155,255,0.10)",
-                      }}>
-                        {s?.label || key}
-                      </span>
-                    );
-                  })}
-            </span>
-            )}
+            {/* Skill tags removed from the top of the card — they are redundant
+                with the editable skill tagging inside GamifyRubricSheet below. */}
           </div>
         </div>
         <div className="actions" style={{ alignItems: "center", gap: 8 }}>
@@ -1043,7 +1182,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
         />
       )}
 
-      <div className="detail-grid">
+      <div className="detail-grid det-body">
         {/* ===== LEFT — attached footage ===== */}
         <div className="detail-col">
           <Card
@@ -1275,6 +1414,148 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
             />
           )}
 
+          {/* ===== Attached Thumbnails — restored attach control ===== */}
+          <Card
+            title="Attached Thumbnails"
+            right={<span className="count-tag">{attachedThumbnails.length}</span>}
+            footLeft="Reference thumbnails from the Thumbnails tab"
+          >
+            {attachedThumbnails.length === 0 && (
+              <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "4px 0 8px" }}>
+                No thumbnails attached yet.
+              </div>
+            )}
+            {attachedThumbnails.length > 0 && (
+              <div className="rd-asset-thumb-grid">
+                {attachedThumbnails.map(t => (
+                  <div className="rd-asset-thumb-wrap" key={t.id}>
+                    <a
+                      className="rd-asset-thumb"
+                      href={t.videoUrl || "#"}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={t.title || t.videoUrl || "Thumbnail"}
+                    >
+                      {t.videoId ? (
+                        <ThumbPreview videoId={t.videoId} alt={t.title || t.videoUrl} />
+                      ) : t.thumbnailUrl ? (
+                        <img className="td-thumb-img" src={t.thumbnailUrl}
+                             alt={t.title || t.videoUrl || "Thumbnail"} loading="lazy" />
+                      ) : (
+                        <span className="rd-asset-thumb-stub">no preview</span>
+                      )}
+                    </a>
+                    {canAttach && (
+                      <button
+                        type="button"
+                        className="rd-asset-detach"
+                        onClick={() => handleDetachThumbnail(t.id)}
+                        title="Remove this thumbnail from the reel"
+                      >✕</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {canAttach && (
+              <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <AssetAttachPicker
+                  wide
+                  buttonLabel="+ Thumbnail"
+                  title="Attach thumbnail"
+                  options={thumbnailOpts}
+                  attachedIds={thumbAttachedIds}
+                  onAttach={handleAttachThumbnails}
+                />
+                <input
+                  value={thumbInput}
+                  onChange={e => setThumbInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddThumbnail(); } }}
+                  placeholder="…or paste a YouTube link"
+                  style={{
+                    flex: 1, minWidth: 140,
+                    background: "var(--bg-2)", border: "1px dashed var(--line-hard)",
+                    borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)",
+                    fontSize: 11.5, padding: "6px 9px", outline: "none",
+                  }}
+                />
+                <DPill onClick={handleAddThumbnail}>Add</DPill>
+              </div>
+            )}
+          </Card>
+
+          {/* ===== Attached News (from Pulse) — restored attach control ===== */}
+          <Card
+            title="Attached News"
+            right={<span className="count-tag">{attachedNews.length}</span>}
+            footLeft="News articles from Pulse linked to this reel"
+          >
+            {attachedNews.length === 0 && (
+              <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "4px 0 8px" }}>
+                No news attached yet.
+              </div>
+            )}
+            {attachedNews.length > 0 && (
+              <div className="rd-asset-news-list">
+                {attachedNews.map(n => (
+                  <div className="rd-asset-news" key={n.id}>
+                    {n.sourceUrl ? (
+                      <a href={n.sourceUrl} target="_blank" rel="noreferrer">{n.title || "Untitled"}</a>
+                    ) : (
+                      <span>{n.title || "Untitled"}</span>
+                    )}
+                    {canAttach && (
+                      <button
+                        type="button"
+                        className="rd-asset-detach"
+                        onClick={() => handleDetachNews(n.id)}
+                        title="Remove this article from the reel"
+                      >✕</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {canAttach && (
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                <AssetAttachPicker
+                  wide
+                  buttonLabel="+ News"
+                  title="Attach news from Pulse"
+                  options={newsOpts}
+                  attachedIds={newsAttachedIds}
+                  onAttach={handleAttachNews}
+                />
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    value={newsTitle}
+                    onChange={e => setNewsTitle(e.target.value)}
+                    placeholder="…or add a headline"
+                    style={{
+                      flex: 1, minWidth: 120,
+                      background: "var(--bg-2)", border: "1px dashed var(--line-hard)",
+                      borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-sans)",
+                      fontSize: 11.5, padding: "6px 9px", outline: "none",
+                    }}
+                  />
+                  <input
+                    value={newsUrl}
+                    onChange={e => setNewsUrl(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddNews(); } }}
+                    placeholder="Source URL (optional)"
+                    style={{
+                      flex: 1, minWidth: 120,
+                      background: "var(--bg-2)", border: "1px dashed var(--line-hard)",
+                      borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)",
+                      fontSize: 11.5, padding: "6px 9px", outline: "none",
+                    }}
+                  />
+                  <DPill onClick={handleAddNews}>{newsBusy ? "…" : "Add"}</DPill>
+                </div>
+              </div>
+            )}
+          </Card>
+
           <LocationPicker reelId={current.id} />
           {(stored?.detail?.fromReelDna || current.detail?.fromReelDna) && (
             <PipelineDnaAssets
@@ -1286,9 +1567,9 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
         {/* ===== CENTER — blueprint + feedback ===== */}
         <div className="detail-col center">
           {/* 1) Reel Blueprint */}
-          <div className="blueprint">
+          <div className="blueprint det-content-panel">
             <div className="blueprint-head">
-              <div className="h">Reel Blueprint</div>
+              <div className="h det-panel-head">Reel Blueprint</div>
               <div className="meta">Logline · script · voiceover — your working notes</div>
             </div>
             <div className="blueprint-tabs">
@@ -1299,11 +1580,8 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
               <div className={"blueprint-tab " + (blueprintTab === "vo" ? "active" : "")}
                    onClick={() => setBlueprintTab("vo")}>Voiceover</div>
             </div>
-            <div className="blueprint-body">
-              <div className="col-label">
-                {blueprintTab === "logline" ? "Logline" : blueprintTab === "vo" ? "VO read" : "Beat plan"}
-              </div>
-              <div>
+            <div className="blueprint-body bp-fill det-content-row">
+              <div className="det-content-val">
                 {blueprintTab === "logline" && (
                   canEditLogline ? (
                     <textarea
@@ -1374,8 +1652,8 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
                      transition). Renders as a single dim line so
                      it doesn't visually compete with human chat. */
                   return (
-                    <div key={c.id} className="comment-system">
-                      <span className="dot">●</span>
+                    <div key={c.id} className="comment-system det-check-row det-check-done">
+                      <span className="dot det-cb-done">●</span>
                       <span className="txt">{c.txt}</span>
                       <span className="ts">{formatCommentTs(c.ts)}</span>
                     </div>
@@ -1386,10 +1664,10 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
                 _hi += 1;
                 const zebra = _hi % 2 === 1 ? "rgba(255,255,255,0.035)" : "transparent";
                 return (
-                  <div className="comment" key={c.id}
+                  <div className="comment det-check-row det-check-active" key={c.id}
                        style={{ position: "relative", background: zebra,
                                 borderRadius: 6, padding: "6px 8px", margin: "0 -8px" }}>
-                    <div className={"avatar " + String(c.who || "").toLowerCase()}>{c.who}</div>
+                    <div className={"avatar det-cb-active " + String(c.who || "").toLowerCase()}>{c.who}</div>
                     <div>
                       <div className="who">
                         {String(c.id || "").startsWith("c-rc-") && (
@@ -1477,12 +1755,12 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           <div className="ref-card">
             <div className="ref-label">Inspiration reel</div>
             {inspoUrl ? (
-              <div className="ref-embed">
+              <div className="ref-embed det-preview">
                 <ReelPlayer sampleReel={{ sourceUrl: inspoUrl }} preferEmbed={true} />
               </div>
             ) : (
               <div
-                className="ref-embed-empty"
+                className="ref-embed-empty det-preview"
                 onClick={() => editRefLink("inspo", inspoUrl, "Inspiration")}
                 title="Add an inspiration link to preview it here"
               >
@@ -1532,7 +1810,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
                   title={canEditScript ? "Click to edit" : undefined}
                   style={{ cursor: canEditScript ? "text" : "default" }}>
                 {editNotes.split("\n").map(l => l.trim()).filter(Boolean).map((line, i) => (
-                  <li key={i}>{line.replace(/^[-•*]\s*/, "")}</li>
+                  <li key={i} className="det-check-row det-check-active">{line.replace(/^[-•*]\s*/, "")}</li>
                 ))}
               </ul>
             )}

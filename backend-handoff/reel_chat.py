@@ -445,7 +445,7 @@ async def _verify_supabase_user(request: Request) -> dict | None:
             meta = u.get("user_metadata") or {}
             name = (meta.get("name") or meta.get("full_name")
                     or (u.get("email") or "").split("@")[0] or "teammate")
-            return {"id": u.get("id"), "name": name}
+            return {"id": u.get("id"), "name": name, "email": u.get("email") or ""}
     except Exception:
         return None
 
@@ -530,3 +530,224 @@ async def dashboard_reel_feedback(request: Request):
                       created_by=user.get("id") or author)
     return {"ok": True, "reel_id": reel_id, "saved_comment": saved,
             "message_url": msg_url}
+
+
+# ── New-message notifier feed ─────────────────────────────────────────────────
+# Powers the dashboard's Teams-chat notifier (audible ping + floating toast +
+# My Work "Teams messages" card + Team-tab unread badge). The dashboard polls
+# this with the previous poll's `server_time` as `since`; we return channel +
+# private-group messages newer than that, EXCLUDING the caller's own messages.
+# Reuses the admin Rocket.Chat token already in the backend env — no new env,
+# and the same /dashboard/* prefix so no edge/proxy change is needed.
+
+# Cache the caller-email → Rocket.Chat user-id mapping (tiny team; resolved via
+# the admin users.list endpoint) so we can drop the caller's own messages.
+_RC_ID_CACHE: dict[str, str] = {}
+
+
+async def _rc_user_id_for_email(email: str) -> str:
+    """Best-effort Rocket.Chat user id for a Supabase email. '' if unknown."""
+    email = (email or "").strip().lower()
+    if not email:
+        return ""
+    if email in _RC_ID_CACHE:
+        return _RC_ID_CACHE[email]
+    rc_id = ""
+    try:
+        import json as _json
+        query = _json.dumps({"emails.address": email})
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(f"{_rc_base()}/api/v1/users.list",
+                            headers=_rc_headers(),
+                            params={"query": query, "count": 1})
+            if r.status_code == 200:
+                users = r.json().get("users") or []
+                if users:
+                    rc_id = users[0].get("_id") or ""
+    except Exception:
+        rc_id = ""
+    _RC_ID_CACHE[email] = rc_id
+    return rc_id
+
+
+# Cache admin-minted per-user auth tokens so the dashboard notifier can read each
+# caller's OWN rooms/DMs AS that user (personalized), not the whole team firehose.
+_RC_TOKEN_CACHE: dict[str, tuple[str, str]] = {}
+
+
+async def _rc_user_token(client: httpx.AsyncClient, rc_id: str) -> tuple[str, str]:
+    """Admin-mint (and cache) an auth token for a Rocket.Chat user id.
+    Returns (authToken, userId), or ('', '') if unavailable (e.g. the
+    users.createToken admin endpoint is disabled on this instance)."""
+    if not rc_id:
+        return ("", "")
+    cached = _RC_TOKEN_CACHE.get(rc_id)
+    if cached:
+        return cached
+    tok = ("", "")
+    try:
+        r = await client.post(f"{_rc_base()}/api/v1/users.createToken",
+                              headers=_rc_headers(), json={"userId": rc_id})
+        if r.status_code == 200:
+            data = (r.json() or {}).get("data") or {}
+            tok = (data.get("authToken") or "", data.get("userId") or rc_id)
+    except Exception:
+        tok = ("", "")
+    if tok[0]:
+        _RC_TOKEN_CACHE[rc_id] = tok
+    return tok
+
+
+def _user_headers(auth_token: str, user_id: str) -> dict:
+    """Per-user Rocket.Chat REST headers (acts AS that user, not the admin)."""
+    return {"X-Auth-Token": auth_token, "X-User-Id": user_id,
+            "Content-Type": "application/json"}
+
+
+async def _user_rooms(client: httpx.AsyncClient, headers: dict) -> list[dict]:
+    """The caller's OWN subscribed rooms via the user-scoped subscriptions.get —
+    channels (t='c'), private groups (t='p') and direct messages (t='d').
+    Each → {id, name, type}; DMs use the counterpart's display name. Empty on
+    any error."""
+    rooms: list[dict] = []
+    try:
+        r = await client.get(f"{_rc_base()}/api/v1/subscriptions.get", headers=headers)
+        if r.status_code != 200:
+            return rooms
+        for s in (r.json().get("update") or []):
+            rid = s.get("rid")
+            t = s.get("t") or "c"
+            if not rid:
+                continue
+            name = s.get("fname") or s.get("name") or ("Direct message" if t == "d" else "")
+            rooms.append({"id": rid, "name": name, "type": t})
+    except Exception:
+        pass
+    return rooms
+
+
+async def _list_rooms(client: httpx.AsyncClient) -> list[dict]:
+    """Enumerate public channels + private groups as {id, name, type}."""
+    rooms: list[dict] = []
+    try:
+        pub = await client.get(f"{_rc_base()}/api/v1/channels.list",
+                               headers=_rc_headers(), params={"count": 50})
+        for ch in (pub.json().get("channels") or []):
+            if ch.get("_id") and ch.get("name"):
+                rooms.append({"id": ch["_id"], "name": ch["name"], "type": "c"})
+    except Exception:
+        pass
+    try:
+        grp = await client.get(f"{_rc_base()}/api/v1/groups.listAll",
+                               headers=_rc_headers(), params={"count": 50})
+        for g in (grp.json().get("groups") or []):
+            if g.get("_id") and g.get("name"):
+                rooms.append({"id": g["_id"], "name": g["name"], "type": "p"})
+    except Exception:
+        pass
+    return rooms
+
+
+@router.get("/dashboard/recent-messages")
+async def dashboard_recent_messages(request: Request, since: str = "", limit: int = 40):
+    """Recent messages from the CALLER'S OWN rooms/DMs for the notifier. JWT-gated.
+
+    Personalized: reads only the rooms the signed-in user belongs to — their
+    channels, private groups, and direct messages — by acting AS that user via an
+    admin-minted token. So each user sees their OWN conversations (including
+    replies from others), not the whole team's firehose. The caller's own
+    messages are excluded (it's a new-message notifier). Thread replies carry
+    `tmid` so the frontend can mark them.
+
+    Query: `since` (ISO ts; empty = baseline) + `limit`. Returns
+    { messages: [{id, room, roomType, sender, senderId, text, tmid, ts, url}],
+    server_time }. Degrades to an empty list on any upstream error so the
+    dashboard notifier never breaks.
+    """
+    user = await _verify_supabase_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    my_rc_id = await _rc_user_id_for_email(user.get("email", ""))
+    my_name = (user.get("name") or "").strip().lower()
+    since = (since or "").strip()
+    try:
+        per_room = 8 if not since else 25
+        limit = max(1, min(int(limit or 40), 100))
+    except Exception:
+        per_room, limit = 8, 40
+
+    out: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=12) as c:
+            auth_token, uid = await _rc_user_token(c, my_rc_id)
+            if not auth_token:
+                # Can't act as the caller (no RC id / users.createToken disabled)
+                # → return nothing rather than leak the whole team's firehose.
+                return {"messages": [], "server_time": _now_iso()}
+            uheaders = _user_headers(auth_token, uid)
+            rooms = await _user_rooms(c, uheaders)
+            for room in rooms[:25]:
+                t = room["type"]
+                ep = ("im.history" if t == "d"
+                      else "groups.history" if t == "p"
+                      else "channels.history")
+                params = {"roomId": room["id"], "count": per_room, "inclusive": "false"}
+                if since:
+                    params["oldest"] = since
+                try:
+                    # Read AS the caller so private groups + DMs are visible.
+                    r = await c.get(f"{_rc_base()}/api/v1/{ep}",
+                                    headers=uheaders, params=params)
+                    if r.status_code != 200:
+                        continue
+                    for m in (r.json().get("messages") or []):
+                        # Skip system messages (room renames, joins, etc.) + empties.
+                        if m.get("t"):
+                            continue
+                        text = (m.get("msg") or "").strip()
+                        if not text:
+                            continue
+                        u = m.get("u") or {}
+                        sender_id = u.get("_id") or ""
+                        sender_name = u.get("name") or u.get("username") or "Someone"
+                        # Exclude the caller's own messages (by RC id, name fallback).
+                        if my_rc_id and sender_id == my_rc_id:
+                            continue
+                        if (not my_rc_id) and my_name and sender_name.strip().lower() == my_name:
+                            continue
+                        mid = m.get("_id") or ""
+                        room_label = room["name"] or ("dm" if t == "d" else "")
+                        if mid and t != "d" and room_label:
+                            url = f"{_rc_public()}/channel/{room_label}?msg={mid}"
+                        elif mid and t == "d":
+                            url = f"{_rc_public()}/direct/{room['id']}?msg={mid}"
+                        else:
+                            url = ""
+                        out.append({
+                            "id": mid,
+                            "room": room_label,
+                            "roomType": t,
+                            "sender": sender_name,
+                            "senderId": sender_id,
+                            "text": text,
+                            "tmid": m.get("tmid") or "",
+                            "ts": m.get("ts") or "",
+                            "url": url,
+                        })
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # Newest first, de-dupe by id, cap.
+    out.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    seen, messages = set(), []
+    for m in out:
+        if m["id"] in seen:
+            continue
+        seen.add(m["id"])
+        messages.append(m)
+        if len(messages) >= limit:
+            break
+    return {"messages": messages, "server_time": _now_iso()}

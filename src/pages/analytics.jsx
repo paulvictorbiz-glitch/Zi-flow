@@ -7,6 +7,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import "./analytics.css";
+import reachAsteroidBg from "../assets/bg/bg-worldmonitor-asteroid.jpeg";
 import { DPill, Card } from "../components/components.jsx";
 import { useIsOwner } from "../lib/permissions.jsx";
 import { supabase } from "../lib/supabase-client.js";
@@ -24,6 +25,113 @@ import {
   fetchInstagramMediaDetail,
   fetchLiveTikTokAnalytics,
 } from "../lib/social-client.js";
+
+/* ── Solarin HUD skin (additive; only applies under [data-theme="solarin"]) ─ */
+const SOL_ANALYTICS_CSS = `
+[data-theme="solarin"] .an-wrap {
+  max-width: 1320px; margin: 0 auto; padding: 28px 32px; box-sizing: border-box;
+  font-family: var(--f-ui);
+}
+[data-theme="solarin"] .an-hud-panel {
+  background: var(--hud-panel); border: 1px solid var(--hud-border);
+}
+[data-theme="solarin"] .an-hud-title {
+  font-family: var(--f-label); font-size: 18px; font-weight: 700;
+  color: var(--orange-bright); letter-spacing: .06em; text-transform: uppercase;
+}
+[data-theme="solarin"] .an-hud-sub {
+  font-family: var(--f-label); font-size: 10px; color: var(--amber-hud);
+  text-transform: uppercase; letter-spacing: .1em; margin-top: 2px;
+}
+[data-theme="solarin"] .an-status-chip {
+  font-family: var(--f-label); font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+  border: 1px solid var(--hud-ok); color: var(--hud-ok);
+  padding: 3px 10px; display: inline-block;
+}
+[data-theme="solarin"] .an-bar-chart {
+  display: flex; align-items: flex-end; gap: 3px; height: 80px; padding: 0 16px 12px;
+}
+[data-theme="solarin"] .an-bar {
+  flex: 1; background: #C9742A; min-height: 4px; transition: height .2s;
+}
+[data-theme="solarin"] .an-bar.peak { background: var(--orange); }
+[data-theme="solarin"] .an-gauge-row {
+  display: grid; grid-template-columns: repeat(4,1fr); gap: 12px;
+  padding: 16px;
+}
+[data-theme="solarin"] .an-gauge {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  background: var(--hud-panel); border: 1px solid var(--hud-border); padding: 14px;
+}
+[data-theme="solarin"] .an-gauge-ring {
+  width: 78px; height: 78px; border-radius: 50%; position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+[data-theme="solarin"] .an-gauge-inner {
+  width: 58px; height: 58px; border-radius: 50%;
+  background: #0d0a07;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--f-label); font-size: 14px; font-weight: 700; color: var(--orange-bright);
+}
+[data-theme="solarin"] .an-gauge-label {
+  font-family: var(--f-label); font-size: 10px; color: var(--amber-hud);
+  text-transform: uppercase; letter-spacing: .08em; text-align: center;
+}
+[data-theme="solarin"] .an-main-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 14px;
+}
+[data-theme="solarin"] .an-dms-feed { display: flex; flex-direction: column; gap: 8px; }
+[data-theme="solarin"] .an-dm-row {
+  display: flex; gap: 10px; align-items: flex-start; padding: 8px 0;
+  border-bottom: 1px solid var(--hud-border);
+}
+[data-theme="solarin"] .an-dm-tag {
+  font-family: var(--f-label); font-size: 9px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em; padding: 2px 6px; flex-shrink: 0;
+}
+[data-theme="solarin"] .an-dm-tag.unread  { border: 1px solid var(--orange); color: var(--orange); }
+[data-theme="solarin"] .an-dm-tag.mention { border: 1px solid var(--data-blue); color: var(--data-blue); }
+[data-theme="solarin"] .an-dm-tag.replied { border: 1px solid var(--hud-ok); color: var(--hud-ok); }
+[data-theme="solarin"] .an-reach-panel {
+  position: relative; overflow: hidden;
+  background: #0d0a07; border: 1px solid var(--hud-border);
+  min-height: 240px;
+}
+[data-theme="solarin"] .an-reach-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; opacity: .45;
+}
+[data-theme="solarin"] .an-pulse-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--orange); position: absolute;
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+[data-theme="solarin"] .an-platform-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 0;
+  border-bottom: 1px solid var(--hud-border); font-size: 13px;
+}
+[data-theme="solarin"] .an-platform-name { font-family: var(--f-ui); color: var(--s-fg-body); flex: 1; }
+[data-theme="solarin"] .an-platform-reach { font-family: var(--f-label); font-size: 13px; font-weight: 700; color: var(--orange-bright); }
+[data-theme="solarin"] .an-platform-bar-wrap {
+  width: 80px; height: 3px; background: var(--gauge-track); position: relative;
+}
+[data-theme="solarin"] .an-platform-bar { height: 100%; background: var(--orange); }
+[data-theme="solarin"] .an-readout-strip {
+  display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-top: 14px;
+}
+[data-theme="solarin"] .an-readout {
+  background: var(--hud-panel); border: 1px solid var(--hud-border);
+  padding: 12px 16px; text-align: center;
+}
+[data-theme="solarin"] .an-readout-num {
+  font-family: var(--f-label); font-size: 20px; font-weight: 700; color: var(--orange-bright);
+}
+[data-theme="solarin"] .an-readout-label {
+  font-family: var(--f-label); font-size: 9.5px; color: var(--amber-hud);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+`;
 
 /* ── number formatting ──────────────────────────────────── */
 function fmt(n) {
@@ -378,12 +486,41 @@ function Analytics() {
     { lbl: "Videos", val: fmt(totals.posts), sub: "published" },
   ];
 
+  // Real percentage values already in component state — engagement rates per
+  // platform, used directly for the conic-gradient gauge fill (no new fetch).
+  const gaugePlatforms = PLATFORMS.map((p) => {
+    const m = perPlatform[p.key];
+    return {
+      key: p.key,
+      label: p.label,
+      color: p.color,
+      // engagementRate is a real % already computed in buildRealAnalytics()
+      pct: Math.max(0, Math.min(100, Number(m?.engagementRate) || 0)),
+    };
+  });
+
+  // Bar-chart bound to the EXISTING timeseries; height = views relative to peak.
+  const barSeries = timeseries.map((t) => Number(t?.[activeMetric] ?? t?.views ?? 0));
+  const barPeak = Math.max(1, ...barSeries);
+
+  // Platform reach rows bound to EXISTING connections/perPlatform views.
+  const reachRows = PLATFORMS.map((p) => ({
+    key: p.key,
+    label: p.label,
+    color: p.color,
+    reach: Number(perPlatform[p.key]?.views) || 0,
+    connected: !!perPlatform[p.key]?.connected,
+  }));
+  const reachPeak = Math.max(1, ...reachRows.map((r) => r.reach));
+
   return (
-    <div className="analytics">
+    <div className="analytics an-wrap" data-an-hud>
+      <style>{SOL_ANALYTICS_CSS}</style>
       {/* ── Header ──────────────────────────────────────── */}
-      <div className="page-head">
+      <div className="page-head an-hud-panel">
         <div className="titles">
-          <h1>Analytics — cross-platform performance</h1>
+          <h1 className="an-hud-title">Analytics — cross-platform performance</h1>
+          <div className="an-hud-sub">Cross-platform performance · {range} window</div>
           <div className="sub">
             Real numbers from your connected accounts only. Connect Facebook,
             Instagram, YouTube or TikTok to see its live metrics here.
@@ -481,6 +618,125 @@ function Analytics() {
                 <span style={{ color: "var(--fg-dim)" }}>{k.sub}</span>
               )}
             </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Solarin HUD overlay (additive; styled only under data-theme=solarin).
+           Every value below is bound to EXISTING component state — no new
+           queries. Under other themes these blocks inherit no skin and sit
+           alongside the classic cards. ─────────────────────────────────── */}
+
+      {/* Engagement-rate gauges — real per-platform engagementRate % */}
+      <div className="an-gauge-row">
+        {gaugePlatforms.map((g) => (
+          <div className="an-gauge" key={g.key}>
+            <div
+              className="an-gauge-ring"
+              style={{ background: `conic-gradient(var(--orange) 0% ${g.pct}%, var(--gauge-track) ${g.pct}% 100%)` }}
+            >
+              <div className="an-gauge-inner">{fmtPct(g.pct)}</div>
+            </div>
+            <div className="an-gauge-label">{g.label} eng.</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Activity bar-chart — bound to existing timeseries / activeMetric */}
+      <div className="an-hud-panel" style={{ marginTop: 14 }}>
+        <div style={{ padding: "12px 16px 4px" }}>
+          <span className="an-hud-title" style={{ fontSize: 13 }}>
+            Daily {METRICS.find((m) => m.key === activeMetric)?.label || "Views"}
+          </span>
+          <span className="an-status-chip" style={{ marginLeft: 10 }}>
+            {anyConnected ? "LIVE" : "STANDBY"}
+          </span>
+        </div>
+        <div className="an-bar-chart">
+          {barSeries.length ? (
+            barSeries.map((v, i) => (
+              <div
+                key={i}
+                className={"an-bar" + (v >= barPeak ? " peak" : "")}
+                style={{ height: `${Math.max(5, (v / barPeak) * 100)}%` }}
+                title={`${(timeseries[i]?.date || "").slice(5)}: ${fmt(v)}`}
+              />
+            ))
+          ) : (
+            // No timeseries yet — static placeholder bars (no fabricated data)
+            <div className="an-hud-sub" style={{ padding: 8 }}>No daily data yet</div>
+          )}
+        </div>
+      </div>
+
+      {/* Three-column HUD grid: feed · audience reach map · platform reach */}
+      <div className="an-main-grid">
+        {/* Recent IG feed rows — reuse existing igMedia (no DM endpoint exists,
+            so tags are derived from real like/comment counts). */}
+        <div className="an-hud-panel" style={{ padding: 14 }}>
+          <div className="an-hud-title" style={{ fontSize: 13 }}>Recent activity</div>
+          <div className="an-hud-sub" style={{ marginBottom: 10 }}>
+            {Array.isArray(igMedia) ? `${igMedia.length} reels` : "loading"}
+          </div>
+          <div className="an-dms-feed">
+            {(Array.isArray(igMedia) ? igMedia.slice(0, 6) : []).map((m) => {
+              // tag derived from REAL engagement on the reel — no new data
+              const tag = (m.comments_count || 0) > 0 ? "replied"
+                        : (m.like_count || 0) > 0 ? "mention" : "unread";
+              return (
+                <div className="an-dm-row" key={m.id}>
+                  <span className={"an-dm-tag " + tag}>{tag}</span>
+                  <span style={{ flex: 1, fontSize: 12, color: "var(--s-fg-body)",
+                                 overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+                    {(m.caption || "(no caption)").slice(0, 60)}
+                  </span>
+                </div>
+              );
+            })}
+            {!(Array.isArray(igMedia) && igMedia.length) && (
+              <div className="an-hud-sub">No recent activity</div>
+            )}
+          </div>
+        </div>
+
+        {/* Audience reach map — asteroid backdrop + pulsing reach beacons */}
+        <div className="an-reach-panel">
+          <img className="an-reach-img" src={reachAsteroidBg} alt="" />
+          {/* hardcoded pulsing beacons at approximate screen positions */}
+          <span className="an-pulse-dot" style={{ top: "28%", left: "22%" }} />
+          <span className="an-pulse-dot" style={{ top: "40%", left: "55%" }} />
+          <span className="an-pulse-dot" style={{ top: "62%", left: "34%" }} />
+          <span className="an-pulse-dot" style={{ top: "50%", left: "74%" }} />
+          <span className="an-pulse-dot" style={{ top: "74%", left: "60%" }} />
+          <div style={{ position: "absolute", left: 14, top: 12, zIndex: 1 }}>
+            <div className="an-hud-title" style={{ fontSize: 13 }}>Audience reach</div>
+            <div className="an-hud-sub">{fmt(totals.views)} total · {range}</div>
+          </div>
+        </div>
+
+        {/* Platform reach bars — bound to perPlatform views */}
+        <div className="an-hud-panel" style={{ padding: 14 }}>
+          <div className="an-hud-title" style={{ fontSize: 13 }}>Platform reach</div>
+          <div className="an-hud-sub" style={{ marginBottom: 10 }}>views · {range}</div>
+          {reachRows.map((r) => (
+            <div className="an-platform-row" key={r.key}>
+              <span className="an-platform-name">{r.label}</span>
+              <span className="an-platform-reach">{r.connected ? fmt(r.reach) : "—"}</span>
+              <span className="an-platform-bar-wrap">
+                <span className="an-platform-bar"
+                      style={{ width: `${(r.reach / reachPeak) * 100}%`, background: r.color }} />
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Readout strip — same real totals as the KPI row, HUD-styled */}
+      <div className="an-readout-strip">
+        {kpis.map((k) => (
+          <div className="an-readout" key={k.lbl}>
+            <div className="an-readout-num">{k.val}</div>
+            <div className="an-readout-label">{k.lbl}</div>
           </div>
         ))}
       </div>

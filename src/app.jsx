@@ -4,6 +4,27 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { DPill } from "./components/components.jsx";
 import { ROLES } from "./lib/shared-data.jsx";
 import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
+
+/* ── OpenCut-AI embedded editor (Phase 1) ────────────────────────────
+   Additive feature flag for the iframe-backed editor mode. DEFAULT OFF →
+   the native in-app multi-track editor renders exactly as today. When ON,
+   the editor area embeds the self-hosted OpenCut editor at EDITOR_ORIGIN
+   and authenticates it via postMessage SSO (no JWT in the URL). Flip to
+   true only after editor.footagebrain.com is stood up and framed-allowed. */
+/* LOCALHOST DEMO (Phase 2 collab): on localhost ONLY, auto-embed the locally-running
+   OpenCut fork dev server (:3000). Production hostnames stay OFF and point at the real
+   editor origin — so this is SAFE to leave in / commit (prod is inert until the real
+   Phase-1 cutover). For the prod cutover, set EDITOR_EMBED_ENABLED = true unconditionally
+   per docs/opencut-phase1-deploy.md step 7 once editor.footagebrain.com is live. */
+const __isLocalhost =
+  typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+/* PROD CUTOVER (2026-06-24): editor.footagebrain.com is stood up on Hetzner
+   (SSO config baked into the bundle, LE cert live, frame-ancestors allows the
+   dashboard), so the embed is now ON everywhere. Localhost still points at the
+   local fork dev server (:3000); prod points at the live editor origin. Roll
+   back by setting this back to `__isLocalhost` and redeploying. */
+const EDITOR_EMBED_ENABLED = true;
+const EDITOR_ORIGIN = __isLocalhost ? "http://localhost:3000" : "https://editor.footagebrain.com";
 /* ---- EAGER core pages (primary flow — never code-split so it never
    flashes a Suspense fallback). ---- */
 import { MyWork } from "./pages/my-work.jsx";
@@ -23,6 +44,7 @@ const importAnalytics    = () => import("./pages/analytics.jsx");
 const importInbox        = () => import("./pages/inbox.jsx");
 const importTraining     = () => import("./pages/training.jsx");
 const importVideoEditor  = () => import("./pages/editor.jsx");
+const importEditorProjects = () => import("./pages/editor-projects.jsx");
 const importLosslessCut  = () => import("./pages/lossless.jsx");
 const importIdeaGenerator= () => import("./pages/idea-generator.jsx");
 const importLocations    = () => import("./pages/locations.jsx");
@@ -38,7 +60,7 @@ const importTeamChat     = () => import("./pages/team-chat.jsx");
 // Used by B3 prefetch: warm every heavy chunk on idle. Same factories as below.
 const LAZY_IMPORTERS = [
   importMonitorHub, importMusicLibrary, importAnalytics, importInbox, importTraining,
-  importVideoEditor, importLosslessCut, importIdeaGenerator, importLocations,
+  importVideoEditor, importEditorProjects, importLosslessCut, importIdeaGenerator, importLocations,
   importCoverage, importResources, importActivity, importRolesAdmin,
   importExportView, importArchivedView, importCalendarView, importListView,
   importTeamChat,
@@ -49,6 +71,7 @@ const Analytics    = React.lazy(() => importAnalytics().then((m)    => ({ defaul
 const Inbox        = React.lazy(() => importInbox().then((m)        => ({ default: m.Inbox })));
 const Training     = React.lazy(() => importTraining().then((m)     => ({ default: m.Training })));
 const VideoEditor  = React.lazy(() => importVideoEditor().then((m)  => ({ default: m.VideoEditor })));
+const EditorProjects = React.lazy(() => importEditorProjects().then((m) => ({ default: m.EditorProjects })));
 const LosslessCut  = React.lazy(() => importLosslessCut().then((m)  => ({ default: m.LosslessCut })));
 const IdeaGenerator= React.lazy(() => importIdeaGenerator().then((m)=> ({ default: m.IdeaGenerator })));
 const Locations    = React.lazy(() => importLocations().then((m)    => ({ default: m.Locations })));
@@ -67,6 +90,8 @@ import { TimeProvider } from "./lib/time.jsx";
 import { MODULE_BY_SKILL } from "./lib/training-curriculum.jsx";
 import { LocationsProvider } from "./lib/locations-data.jsx";
 import { NotificationsProvider } from "./components/notifications.jsx";
+import { TeamChatAlertsProvider, useTeamChatAlerts } from "./lib/team-chat-alerts.jsx";
+import { TeamChatToast } from "./components/team-chat-toast.jsx";
 import { PermissionsProvider, usePermissions, useIsOwner, ownsReviewQueue } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
 import GamifyWelcomePopup from "./components/GamifyWelcomePopup.jsx";
@@ -79,9 +104,22 @@ import { getInboxSummary } from "./lib/social-client.js";
    the app's existing "loading…" idiom (mono dim text) — intentionally minimal so
    it never blocks paint and matches the store's "loading workflow…" treatment. */
 function ViewFallback() {
+  /* A clearly-visible centered loader (NAV-003). The old faint "loading…" text
+     read as a blank flash during chunk loads; a centered spinner makes the
+     lazy-load state obvious. Keyframe is inlined so it doesn't touch styles.css. */
   return (
-    <div className="mono dim" style={{ padding: "48px 24px", opacity: 0.7 }}>
-      loading…
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", gap: 14, padding: "72px 24px", minHeight: 240,
+    }}>
+      <style>{"@keyframes vf-spin{to{transform:rotate(360deg)}}"}</style>
+      <div style={{
+        width: 30, height: 30, borderRadius: "50%",
+        border: "3px solid var(--line-hard, #333)",
+        borderTopColor: "var(--c-cyan, #6bd6e0)",
+        animation: "vf-spin 0.8s linear infinite",
+      }} />
+      <div className="mono dim" style={{ fontSize: 12, letterSpacing: "0.08em" }}>Loading…</div>
     </div>
   );
 }
@@ -97,7 +135,7 @@ const FEEDBACK_FORM_URL =
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
 // "monitor" is the consolidated owner hub (Infra/Pulse/AI Brain sub-tabs); the
 // former standalone "pulse"/"ai" views now live inside it (see monitor-hub.jsx).
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "projects", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -115,6 +153,7 @@ const TABS = [
   { key: "coverage",  label: "Coverage" },
   { key: "locations", label: "Locations" },
   { key: "editor",    label: "Editor" },
+  { key: "projects",  label: "Projects" },
   { key: "lossless",  label: "Lossless" },
   { key: "export",    label: "Export" },
   { key: "training",  label: "Training" },
@@ -148,6 +187,8 @@ function AppShell() {
   // Real-role owner flag (NOT the previewed perspective) — drives owner-only
   // affordances: the perspective switcher, settings, and the Monitor hub.
   const isOwner = useIsOwner();
+  // Unread Teams-chat messages → Team-tab badge (new-message notifier).
+  const { unseenCount: teamUnseen } = useTeamChatAlerts();
   /* The "monitor" view is the consolidated owner hub — it's reachable if ANY of
      its three sub-views (infra/pulse/ai) is granted. Every other view gates on
      its own catalog key. Used by the nav drawer, the bounce safety-net, and
@@ -165,11 +206,17 @@ function AppShell() {
   const [viewStack, setViewStack]       = useState([]);
   const [pipelineMode, setPipelineMode] = useState(() => localStorage.getItem("wb_pipeline_mode") || "board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
+  const [editingProjectId, setEditingProjectId] = useState(null);   // which Editor project the OpenCut editor opened from the Projects browser
   const [focusModule, setFocusModule]   = useState(null);   // training skillKey to auto-expand/scroll
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
   const [roleMenu, setRoleMenu]         = useState(false);
   const [prefsOpen, setPrefsOpen]       = useState(false);   // Display & accessibility modal
+  const [solarinMode, setSolarinMode] = useState(
+    () => localStorage.getItem('fb_solarin_mode') === 'true'
+  );
+  const [openCat, setOpenCat] = useState(null);
   const roleSwitchRef                   = useRef(null);
+  const solRoleRef                      = useRef(null);   // Solarin-nav avatar (mirrors role menu)
   const [navOpen, setNavOpen]           = useState(false);   // left slide-in drawer
   const [globalSearch, setGlobalSearch] = useState("");
   const [capturePrefill, setCapturePrefill] = useState(null);   // Reel DNA share-target/bookmarklet
@@ -213,7 +260,9 @@ function AppShell() {
   useEffect(() => {
     if (!roleMenu) return;
     const handler = (e) => {
-      if (roleSwitchRef.current && !roleSwitchRef.current.contains(e.target)) setRoleMenu(false);
+      const inClassic = roleSwitchRef.current && roleSwitchRef.current.contains(e.target);
+      const inSolarin = solRoleRef.current && solRoleRef.current.contains(e.target);
+      if (!inClassic && !inSolarin) setRoleMenu(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -342,8 +391,24 @@ function AppShell() {
 
   /* Navigate from the drawer: push current view onto stack, switch, close drawer. */
   const goView = (key) => {
+    // Landing on the Editor tab from the nav always shows the Projects picker
+    // (clear any project carried over from a previous open) — the embedded
+    // CapCut editor is only entered by PICKING a project. openEditorProject()
+    // sets editingProjectId itself (it deliberately bypasses goView).
+    if (key === "editor") setEditingProjectId(null);
     setViewStack(prev => [...prev.slice(-19), view]);
     setView(key);
+    setNavOpen(false);
+  };
+
+  /* Open a saved Editor project from the Projects browser: stash its id so the
+     OpenCut <VideoEditor> mount can load it, then navigate to the editor view.
+     Bypasses goView so the editingProjectId we just set isn't cleared by the
+     "editor"-tab reset above. onBackToProjects returns to the picker. */
+  const openEditorProject = (id) => {
+    setViewStack(prev => [...prev.slice(-19), view]);
+    setEditingProjectId(id);
+    setView("editor");
     setNavOpen(false);
   };
 
@@ -423,6 +488,25 @@ function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /* Solarin redesign theme toggle — mirror solarinMode onto #root's data-theme
+     so styles-solarin.css (gated on [data-theme="solarin"]) activates/reverts. */
+  useEffect(() => {
+    const root = document.getElementById('root');
+    if (!root) return;
+    if (solarinMode) root.setAttribute('data-theme', 'solarin');
+    else root.removeAttribute('data-theme');
+  }, [solarinMode]);
+
+  /* Default the Solarin theme ON for the owner. Only fires when the owner has
+     never made an explicit choice (localStorage unset) — once they toggle it
+     off, 'false' is persisted and respected. Non-owners are untouched (they
+     stay classic until/unless an owner ships it as the default for everyone). */
+  useEffect(() => {
+    if (isOwner && localStorage.getItem('fb_solarin_mode') === null) {
+      setSolarinMode(true);
+    }
+  }, [isOwner]);
+
   /* Only the owner may switch perspectives. The avatar in the topbar shows
      the perspective the owner is currently viewing; everyone else sees just
      their own icon. */
@@ -430,8 +514,226 @@ function AppShell() {
   // Role key the rest of the app (MyWork, permissions) needs.
   const viewingRoleKey = shownPerson?.role || "skilled";
 
+  /* The avatar dropdown (perspective switch · Roles & permissions · Pimped-Out
+     toggle · accessibility · sign out). Extracted so it renders in BOTH the
+     classic topbar AND the Solarin top nav — otherwise, with the topbar hidden
+     in Solarin mode, the toggle to revert would be unreachable. */
+  const roleMenuPanel = () => (
+    <div className="role-menu" onClick={e => e.stopPropagation()}>
+      {isOwner && (
+        <React.Fragment>
+          <div className="rm-h">Switch perspective</div>
+          {peopleList.map(p => (
+            <div key={p.id}
+                 className={"rm-opt " + (p.id === role ? "active" : "")}
+                 onClick={() => { setRole(p.id); setRoleMenu(false); }}>
+              <span className={"avatar-chip " + (p.role || "")}>{p.avatar}</span>
+              <div>
+                <div className="rm-name">{p.name}</div>
+                <div className="rm-role">{ROLES[p.role]?.label || p.role}</div>
+              </div>
+              {p.id === role && <span className="mono cyan">●</span>}
+            </div>
+          ))}
+        </React.Fragment>
+      )}
+      {isOwner && (
+        <div className="rm-opt"
+             style={{ borderTop: "1px dashed var(--line-hard)", marginTop: 6, paddingTop: 10 }}
+             onClick={() => { setView("settings"); setRoleMenu(false); }}>
+          <span className="avatar-chip" style={{ fontSize: 13 }}>⚙</span>
+          <div>
+            <div className="rm-name">Roles &amp; permissions</div>
+            <div className="rm-role">Edit what each role can see &amp; do</div>
+          </div>
+        </div>
+      )}
+      {isOwner && (
+        <div
+          className="rm-opt"
+          style={{ borderTop: "1px dashed var(--line-hard)", marginTop: 6, paddingTop: 10 }}
+          onClick={() => {
+            const next = !solarinMode;
+            setSolarinMode(next);
+            localStorage.setItem('fb_solarin_mode', String(next));
+            setRoleMenu(false);
+          }}
+        >
+          <span className="avatar-chip" style={{ fontSize: 13 }}>
+            {solarinMode ? '✦' : '◇'}
+          </span>
+          <div>
+            <div className="rm-name">{solarinMode ? 'Exit Pimped Out' : 'Pimped Out Mode'}</div>
+            <div className="rm-role">Toggle Solarin redesign</div>
+          </div>
+        </div>
+      )}
+      {isOwner && (
+        <div className="rm-opt"
+             onClick={() => { setPrefsOpen(true); setRoleMenu(false); }}>
+          <span className="avatar-chip" style={{ fontSize: 13 }}>🅰</span>
+          <div>
+            <div className="rm-name">Display &amp; accessibility</div>
+            <div className="rm-role">Comfortable mode · text size · font (test)</div>
+          </div>
+        </div>
+      )}
+      <div className="rm-footer" style={{
+        borderTop: isOwner ? "1px dashed var(--line-hard)" : "none",
+        marginTop: isOwner ? 6 : 0,
+        fontFamily: "var(--f-mono)", fontSize: 10.5,
+        color: "var(--fg-mute)", display: "flex",
+        justifyContent: "space-between", alignItems: "center",
+        gap: 14, padding: "8px 12px",
+      }}>
+        <span>signed in · <b style={{ color: "var(--fg)" }}>{me?.short || me?.name}</b></span>
+        <a href="#" style={{ color: "var(--c-cyan)" }}
+           onClick={e => { e.preventDefault(); signOut(); }}>sign out</a>
+      </div>
+    </div>
+  );
+
   return (
     <div className="app">
+      {/* Solarin redesign shell — fixed per-tab background + centered category nav.
+          Renders ONLY when solarinMode is on (owner toggle). The classic .topbar /
+          .nav-drawer below are PRESERVED in the JSX; styles-solarin.css hides them
+          via display:none when [data-theme="solarin"] is active. */}
+      {solarinMode && (() => {
+        /* Fixed per-tab background. Files live in public/assets/bg/ (served at
+           /assets/bg/...). Every view gets an image (reused where it fits the
+           theme); DIM = [top,bottom] overlay opacity so headings stay legible. */
+        const BG = {
+          mywork:    '/assets/bg/bg-mywork-globe.png',
+          pipeline:  '/assets/bg/bg-pipeline-city.jpeg',
+          generate:  '/assets/bg/dna-cyber-blue.jpeg',
+          reeldna:   '/assets/bg/bg-reeldna-virus.jpeg',
+          music:     '/assets/bg/dark-luxury-hud.jpeg',
+          footage:   '/assets/bg/destroyed-city.jpeg',
+          coverage:  '/assets/bg/world-monitor.jpeg',
+          locations: '/assets/bg/world-monitor-2.jpeg',
+          editor:    '/assets/bg/dark-luxury-hud.jpeg',
+          projects:  '/assets/bg/dna-3.jpeg',
+          lossless:  '/assets/bg/bg-dna-blue.jpeg',
+          export:    '/assets/bg/aethelian-spine.jpeg',
+          training:  '/assets/bg/bg-training-samurai.jpeg',
+          resources: '/assets/bg/dna-2.jpeg',
+          inbox:     '/assets/bg/world-monitor.jpeg',
+          team:      '/assets/bg/aethelian-spine.jpeg',
+          analytics: '/assets/bg/bg-monitor-hud.jpg',
+          monitor:   '/assets/bg/dark-luxury-hud.jpeg',
+          activity:  '/assets/bg/destroyed-city.jpeg',
+          settings:  '/assets/bg/dark-luxury-hud.jpeg',
+          detail:    '/assets/bg/bg-detail-dna.jpeg',
+        };
+        const DIM = {
+          mywork:[.44,.62], pipeline:[.68,.86], generate:[.66,.84], reeldna:[.60,.78],
+          music:[.74,.92], footage:[.70,.88], coverage:[.72,.90], locations:[.72,.90],
+          editor:[.78,.94], projects:[.66,.84], lossless:[.66,.84], export:[.70,.88],
+          training:[.72,.90], resources:[.66,.84], inbox:[.74,.92], team:[.70,.88],
+          analytics:[.74,.92], monitor:[.80,.96], activity:[.72,.90], settings:[.78,.94],
+          detail:[.64,.82],
+        };
+        const bg = BG[view];
+        const [d1, d2] = DIM[view] || [.72, .90];
+        const isHud = view === 'analytics' || view === 'monitor';
+        const CATS = [
+          { key:'produce_group',  label:'Produce',    tone:'#F5A623', tabs:['pipeline','generate'] },
+          { key:'library_group',  label:'Library',    tone:'#B58BE0', tabs:['reeldna','music','footage','coverage','locations'] },
+          { key:'edit_group',     label:'Edit & Ship',tone:'#5FB89A', tabs:['editor','lossless','export'] },
+          { key:'learn_group',    label:'Learn',      tone:'#E58BA0', tabs:['training','resources'] },
+          { key:'engage_group',   label:'Engage',     tone:'#E8884A', tabs:['inbox','team','analytics'] },
+          { key:'monitor_group',  label:'Monitor',    tone:'#5FA8D6', tabs:['monitor','activity'] },
+        ];
+        const LEFT_CATS  = CATS.slice(0, 3);
+        const RIGHT_CATS = CATS.slice(3);
+        return (
+          <React.Fragment>
+            {bg && (
+              <div className="sol-bg" style={{ backgroundImage: 'url("' + bg + '")' }}>
+                <div className="sol-bg-overlay"
+                  style={{ background: 'linear-gradient(rgba(12,15,14,' + d1 + '),rgba(12,15,14,' + d2 + '))' }} />
+              </div>
+            )}
+            <nav className={"sol-nav" + (isHud ? ' hud' : '')}>
+              <div className="sol-logo">
+                <div className="sol-logo-w">W</div>
+                WORKFLOW
+              </div>
+              <div className="sol-center">
+                {LEFT_CATS.map(cat => {
+                  const active = cat.tabs.includes(view);
+                  return (
+                    <div key={cat.key} className="sol-dropdown-wrap">
+                      <button
+                        className={"sol-cat" + (active ? ' active' : '')}
+                        onClick={() => setOpenCat(openCat === cat.key ? null : cat.key)}
+                      >{cat.label} ▾</button>
+                      {openCat === cat.key && (
+                        <div className="sol-dropdown" style={{ borderTop: '2px solid ' + cat.tone }}>
+                          {cat.tabs.filter(t => canViewView(t)).map(k => {
+                            const t = TABS.find(x => x.key === k);
+                            return (
+                              <div key={k} className="sol-dropdown-item"
+                                onClick={() => { goView(k); setOpenCat(null); }}>
+                                <span className="sol-dot" style={{ background: cat.tone }} />
+                                {t ? t.label : k}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <button
+                  className={"sol-mywork" + (view === 'mywork' ? ' active' : '')}
+                  onClick={() => goView('mywork')}
+                >My Work</button>
+                {RIGHT_CATS.map(cat => {
+                  const active = cat.tabs.includes(view);
+                  return (
+                    <div key={cat.key} className="sol-dropdown-wrap">
+                      <button
+                        className={"sol-cat" + (active ? ' active' : '')}
+                        onClick={() => setOpenCat(openCat === cat.key ? null : cat.key)}
+                      >{cat.label} ▾</button>
+                      {openCat === cat.key && (
+                        <div className="sol-dropdown" style={{ borderTop: '2px solid ' + cat.tone }}>
+                          {cat.tabs.filter(t => canViewView(t)).map(k => {
+                            const t = TABS.find(x => x.key === k);
+                            return (
+                              <div key={k} className="sol-dropdown-item"
+                                onClick={() => { goView(k); setOpenCat(null); }}>
+                                <span className="sol-dot" style={{ background: cat.tone }} />
+                                {t ? t.label : k}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="sol-nav-right">
+                <input className="sol-search" placeholder="Search reels…"
+                  value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} />
+                <div ref={solRoleRef} className="role-switch sol-role-switch"
+                  style={{ position: 'relative' }}
+                  onClick={e => { e.stopPropagation(); setRoleMenu(o => !o); }}
+                  title={shownPerson?.name || ''}>
+                  <span className={"avatar-chip " + (shownPerson?.role || '')}
+                    style={{ cursor: 'pointer' }}>{shownPerson?.avatar}</span>
+                  {isOwner && <span className="rs-caret">▾</span>}
+                  {roleMenu && me && roleMenuPanel()}
+                </div>
+              </div>
+              {openCat && <div className="sol-bd" onClick={() => setOpenCat(null)} />}
+            </nav>
+          </React.Fragment>
+        );
+      })()}
       {/* Top bar */}
       <div className="topbar">
         {/* Menu trigger — opens the left slide-in nav drawer. */}
@@ -496,60 +798,7 @@ function AppShell() {
              title={shownPerson?.name || me?.name || ""}>
           <span className={"avatar-chip " + (shownPerson?.role || "")}>{shownPerson?.avatar}</span>
           {isOwner && <span className="rs-caret">▾</span>}
-          {roleMenu && me && (
-            <div className="role-menu" onClick={e => e.stopPropagation()}>
-              {isOwner && (
-                <React.Fragment>
-                  <div className="rm-h">Switch perspective</div>
-                  {peopleList.map(p => (
-                    <div key={p.id}
-                         className={"rm-opt " + (p.id === role ? "active" : "")}
-                         onClick={() => { setRole(p.id); setRoleMenu(false); }}>
-                      <span className={"avatar-chip " + (p.role || "")}>{p.avatar}</span>
-                      <div>
-                        <div className="rm-name">{p.name}</div>
-                        <div className="rm-role">{ROLES[p.role]?.label || p.role}</div>
-                      </div>
-                      {p.id === role && <span className="mono cyan">●</span>}
-                    </div>
-                  ))}
-                </React.Fragment>
-              )}
-              {isOwner && (
-                <div className="rm-opt"
-                     style={{ borderTop: "1px dashed var(--line-hard)", marginTop: 6, paddingTop: 10 }}
-                     onClick={() => { setView("settings"); setRoleMenu(false); }}>
-                  <span className="avatar-chip" style={{ fontSize: 13 }}>⚙</span>
-                  <div>
-                    <div className="rm-name">Roles &amp; permissions</div>
-                    <div className="rm-role">Edit what each role can see &amp; do</div>
-                  </div>
-                </div>
-              )}
-              {isOwner && (
-                <div className="rm-opt"
-                     onClick={() => { setPrefsOpen(true); setRoleMenu(false); }}>
-                  <span className="avatar-chip" style={{ fontSize: 13 }}>🅰</span>
-                  <div>
-                    <div className="rm-name">Display &amp; accessibility</div>
-                    <div className="rm-role">Comfortable mode · text size · font (test)</div>
-                  </div>
-                </div>
-              )}
-              <div className="rm-footer" style={{
-                borderTop: isOwner ? "1px dashed var(--line-hard)" : "none",
-                marginTop: isOwner ? 6 : 0,
-                fontFamily: "var(--f-mono)", fontSize: 10.5,
-                color: "var(--fg-mute)", display: "flex",
-                justifyContent: "space-between", alignItems: "center",
-                gap: 14, padding: "8px 12px",
-              }}>
-                <span>signed in · <b style={{ color: "var(--fg)" }}>{me.short || me.name}</b></span>
-                <a href="#" style={{ color: "var(--c-cyan)" }}
-                   onClick={e => { e.preventDefault(); signOut(); }}>sign out</a>
-              </div>
-            </div>
-          )}
+          {roleMenu && me && roleMenuPanel()}
         </div>
 
         <div className="topbar-actions">
@@ -582,8 +831,8 @@ function AppShell() {
                 margin: 0,
                 padding: "4px 0",
                 listStyle: "none",
-                background: "#1a2335",
-                border: "1px solid #2a3754",
+                background: "var(--bg-elev)",
+                border: "1px solid var(--line-hard)",
                 borderRadius: 4,
                 zIndex: 9999,
                 boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
@@ -596,13 +845,13 @@ function AppShell() {
                         cursor: "pointer",
                         fontSize: 12,
                         fontFamily: "var(--f-mono)",
-                        color: "#d8e2ee",
-                        borderBottom: "1px solid #1f2a3d",
+                        color: "var(--fg)",
+                        borderBottom: "1px solid var(--line)",
                         display: "flex",
                         gap: 8,
                         alignItems: "baseline",
                       }}
-                      onMouseEnter={e => e.currentTarget.style.background = "#243048"}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--bg-3)"}
                       onMouseLeave={e => e.currentTarget.style.background = ""}>
                     <span style={{ color: "var(--fg-dim)", flexShrink: 0 }}>
                       {reel.display_number ? "#" + reel.display_number : reel.id}
@@ -705,6 +954,9 @@ function AppShell() {
                     {t.key === "inbox" && inboxUnread > 0 && (
                       <span className="needs-badge">{inboxUnread}</span>
                     )}
+                    {t.key === "team" && teamUnseen > 0 && (
+                      <span className="needs-badge">{teamUnseen}</span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -762,7 +1014,10 @@ function AppShell() {
         {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
         {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} openCompare={autoCompare} onCompareMounted={() => setAutoCompare(false)} />}
         {view === "footage"   && <FootageLibrary onOpen={openReel} />}
-        {view === "editor"    && <VideoEditor reel={selectedReel} onOpen={openReel} />}
+        {view === "editor"    && (editingProjectId
+          ? <VideoEditor reel={selectedReel} onOpen={openReel} reelDnaId={selectedReel?.reelDnaId} editingProjectId={editingProjectId} onBackToProjects={() => setEditingProjectId(null)} embedEnabled={EDITOR_EMBED_ENABLED} editorOrigin={EDITOR_ORIGIN} />
+          : <EditorProjects openEditorProject={openEditorProject} />)}
+        {view === "projects"  && <EditorProjects openEditorProject={openEditorProject} />}
         {view === "lossless"  && <LosslessCut reel={selectedReel} onOpen={openReel} />}
         {view === "export"    && <ExportView onOpen={openReel} />}
         {view === "analytics" && <Analytics />}
@@ -776,7 +1031,7 @@ function AppShell() {
         {view === "training"  && <Training onOpen={openReel} personId={shownPerson?.id} focusModule={focusModule} onFocusConsumed={() => setFocusModule(null)} />}
         {view === "activity"  && <Activity />}
         {view === "resources" && <Resources />}
-        {view === "monitor"   && isOwner && <MonitorHub canView={canView} />}
+        {view === "monitor"   && canViewView("monitor") && <MonitorHub canView={canView} />}
         {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
 
         {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}
@@ -785,6 +1040,9 @@ function AppShell() {
 
       {/* Global create FAB */}
       <CreateFab />
+
+      {/* Global new-Teams-message toast (bottom-left). */}
+      <TeamChatToast onOpenTeam={() => goView("team")} />
 
       {/* Display & accessibility preferences (owner-only entry) */}
       {prefsOpen && <PreferencesModal onClose={() => setPrefsOpen(false)} />}
@@ -858,6 +1116,7 @@ function App() {
                 <WorkflowProvider>
                   <LocationsProvider>
                     <NotificationsProvider>
+                      <TeamChatAlertsProvider>
                       <PermissionsProvider>
                         {isSpace ? (
                           <React.Suspense
@@ -872,6 +1131,7 @@ function App() {
                           </ThemeProvider>
                         )}
                       </PermissionsProvider>
+                      </TeamChatAlertsProvider>
                     </NotificationsProvider>
                   </LocationsProvider>
                 </WorkflowProvider>

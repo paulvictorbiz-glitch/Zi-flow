@@ -238,6 +238,19 @@ function DnaCard({ item, now, actions, onDelete }) {
           </div>
         </div>
 
+        {/* Inline custom-category tag → stored in the Subject gene. Lets you
+            label a thumbnail with your OWN category (e.g. "Travel", "Tech")
+            and then group the catalog by it via the "Group → Subject" control,
+            without opening "Edit genes". */}
+        <div className="td-card-category">
+          <span className="td-card-category-label" title="Your custom category — used by Group → Subject">🏷</span>
+          <EditableCell
+            value={item.subject}
+            placeholder="Add a category to group by…"
+            onSave={(val) => saveGene("subject", val)}
+          />
+        </div>
+
         {genes.length > 0 && (
           <div className="td-card-genes">
             {genes.map(g => <span key={g} className="td-gene-tag">{geneLabel(g)}</span>)}
@@ -336,6 +349,16 @@ export function ThumbnailDna() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
   const [viewMode, setViewMode] = useState("cards"); // cards | table
+  // Optional grouping (THM-grp). Group the catalog into collapsible sections by
+  // an existing dimension — Channel, Status, or the Subject gene (≈ topic).
+  // (No topic/country DB column exists; those would need a migration.)
+  const [groupBy, setGroupBy] = useState("none"); // none | channel | status | subject
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const toggleGroup = (name) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
 
   // Refresh: force the YouTube-playlist poller to run now, then reload from
   // Supabase. Freshly-polled rows also arrive via the existing realtime sub,
@@ -423,6 +446,41 @@ export function ThumbnailDna() {
       .filter(d => statusFilter === "all" || d.status === statusFilter);
   }, [thumbnailDna, statusFilter, showArchived]);
 
+  // Partition the visible captures into named groups for the chosen dimension,
+  // preserving the existing (recency) order within each group (THM-grp).
+  const groups = useMemo(() => {
+    if (groupBy === "none") return null;
+    const keyOf = (d) => {
+      if (groupBy === "status") return statusLabel(d.status) || "—";
+      if (groupBy === "channel") return (d.channel || "").trim() || "No channel";
+      if (groupBy === "subject") return (d.subject || "").trim() || "Untagged";
+      return "—";
+    };
+    const out = [];
+    const idx = new Map();
+    for (const d of visible) {
+      const name = keyOf(d);
+      let g = idx.get(name);
+      if (!g) { g = { name, items: [] }; idx.set(name, g); out.push(g); }
+      g.items.push(d);
+    }
+    // Alphabetical group order keeps the collapsible list stable across reloads.
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }, [visible, groupBy]);
+
+  // Shared body renderer so grouped + ungrouped views stay identical.
+  const renderItems = (items) =>
+    viewMode === "table" ? (
+      <DnaTable items={items} now={now} actions={actions} onDelete={handleDelete} />
+    ) : (
+      <div className="td-grid">
+        {items.map(item => (
+          <DnaCard key={item.id} item={item} now={now} actions={actions} onDelete={handleDelete} />
+        ))}
+      </div>
+    );
+
   const counts = useMemo(() => {
     const live = (thumbnailDna || []).filter(d => !d.archivedAt);
     return {
@@ -470,6 +528,13 @@ export function ThumbnailDna() {
             </DPill>
           ))}
           <span style={{ flex: 1 }} />
+          <span className="mono dim">group</span>
+          <select className="td-group-select" value={groupBy} onChange={e => setGroupBy(e.target.value)}>
+            <option value="none">None</option>
+            <option value="subject">Category</option>
+            <option value="channel">Channel</option>
+            <option value="status">Status</option>
+          </select>
           <span className="mono dim">view</span>
           <DPill active={viewMode === "cards"} onClick={() => setViewMode("cards")}>Cards</DPill>
           <DPill active={viewMode === "table"} onClick={() => setViewMode("table")}>Spreadsheet</DPill>
@@ -485,14 +550,24 @@ export function ThumbnailDna() {
               ? "No archived thumbnails."
               : "No thumbnails captured yet — paste a YouTube link above to start your thumbnail library."}
           </div>
-        ) : viewMode === "table" ? (
-          <DnaTable items={visible} now={now} actions={actions} onDelete={handleDelete} />
-        ) : (
-          <div className="td-grid">
-            {visible.map(item => (
-              <DnaCard key={item.id} item={item} now={now} actions={actions} onDelete={handleDelete} />
-            ))}
+        ) : groups ? (
+          <div className="td-groups">
+            {groups.map(g => {
+              const isCollapsed = collapsed.has(g.name);
+              return (
+                <div key={g.name} className="td-group">
+                  <button type="button" className="td-group-head" onClick={() => toggleGroup(g.name)}>
+                    <span className="td-group-toggle">{isCollapsed ? "▸" : "▾"}</span>
+                    <span className="td-group-name">{g.name}</span>
+                    <span className="td-group-count">{g.items.length}</span>
+                  </button>
+                  {!isCollapsed && renderItems(g.items)}
+                </div>
+              );
+            })}
           </div>
+        ) : (
+          renderItems(visible)
         )}
       </div>
     </div>

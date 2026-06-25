@@ -20,6 +20,8 @@
      · Medals unlock off the spider chart filling (see MEDAL_TIERS).
    ========================================================= */
 
+import { STAGES, normalizeStage } from "./shared-data.jsx";
+
 /* The 9 canonical skills, in chart-axis order (top, clockwise).
    First 6 are Core Pillars; last 3 are Bonus Craft Pillars. */
 export const GAMIFY_SKILLS = [
@@ -557,11 +559,13 @@ export function xpForSkillGradesWithDifficulty(gradesMap, difficulty) {
    completed, posted) OR any gamify XP has been graded on it, it LOCKS to
    its current owner so XP attribution stays clean. The owner can still
    override with confirmation; editors are hard-blocked. */
-const UNLOCKED_STAGES = new Set(["idea", "selected", "not_started"]);
+const UNLOCKED_STAGES = new Set([STAGES[0]]); // "not_started" — the sole planning stage
 
 export function isReelLocked(reel, rubricRows = []) {
   if (!reel) return false;
-  const stageLocked = !UNLOCKED_STAGES.has(reel.stage);
+  // normalizeStage collapses legacy values (idea/selected → not_started) so a
+  // pre-migration DB row stays unlocked exactly as the old explicit set did.
+  const stageLocked = !UNLOCKED_STAGES.has(normalizeStage(reel.stage));
   const graded = rubricRows.some(r =>
     r.reelId === reel.id && Object.keys(r.reviewerGrades || {}).length > 0);
   return stageLocked || graded;

@@ -9,6 +9,47 @@ import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { usePermissions, useIsOwner } from "../lib/permissions.jsx";
 
+const SOL_PIPELINE_CSS = `
+[data-theme="solarin"] .pl-wrap {
+  max-width: 1320px; margin: 0 auto; padding: 28px 32px; box-sizing: border-box;
+}
+[data-theme="solarin"] .pl-header { margin-bottom: 20px; }
+[data-theme="solarin"] .pl-board {
+  background: var(--s-panel); border: 1px solid var(--s-border);
+  backdrop-filter: blur(4px);
+}
+[data-theme="solarin"] .pl-col-header-row {
+  display: grid; grid-template-columns: 170px repeat(5,1fr);
+  background: var(--s-inner-dark); padding: 0;
+}
+[data-theme="solarin"] .pl-col-head {
+  font-family: var(--f-label); font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .1em; color: var(--peach);
+  padding: 10px 14px;
+  border-right: 1px solid var(--s-divider-soft);
+}
+[data-theme="solarin"] .pl-owner-row {
+  display: grid; grid-template-columns: 170px repeat(5,1fr);
+  border-top: 1px solid var(--s-divider-soft);
+}
+[data-theme="solarin"] .pl-owner-cell {
+  padding: 12px 14px; border-right: 1px solid var(--s-divider-soft);
+  display: flex; align-items: center; gap: 10px;
+}
+[data-theme="solarin"] .pl-owner-name {
+  font-family: var(--f-ui); font-size: 13px; font-weight: 600;
+  color: var(--s-fg-soft);
+}
+[data-theme="solarin"] .pl-owner-role {
+  font-family: var(--f-label); font-size: 10px; color: var(--s-fg-muted);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+[data-theme="solarin"] .pl-stage-cell {
+  padding: 10px 10px; border-right: 1px solid var(--s-divider-soft);
+  display: flex; flex-direction: column; gap: 6px;
+}
+`;
+
 /* Board columns derived from the canonical STAGES list. Labels are
    upper-cased here because the board column heads use that style;
    list-view / archived-view consume STAGE_LABEL as-is (title case). */
@@ -24,7 +65,6 @@ function Pipeline({ onOpen }) {
   const { peopleList } = useRoster();
   const { can } = usePermissions();
   const isOwner = useIsOwner();
-  const [filter, setFilter] = useState("all");
   const [scheduleModal, setScheduleModal] = useState(null);
   const [scheduleDate, setScheduleDate] = useState("");
 
@@ -114,9 +154,19 @@ function Pipeline({ onOpen }) {
   /* Board rows, built live from the team roster: one lane per
      non-reviewer member (so a newly-added editor gets their own row),
      plus the shared "review" lane named after the reviewer. */
+  /* Reviewers don't get a personal lane — their work lives in the single
+     shared "review" lane below. Without this filter a reviewer showed up
+     TWICE (their own person row + the review row, which is named after the
+     reviewer): the "two Leroy Crosby lanes" bug. Keyed on role, so it holds
+     for any current/future reviewer, and for more than one of them. */
+  const reviewerIds = useMemo(
+    () => new Set(peopleList.filter(p => p.role === "reviewer").map(p => p.id)),
+    [peopleList]
+  );
+
   const lanes = useMemo(() => {
     const personLanes = peopleList
-      .slice()
+      .filter(p => p.role !== "reviewer")
       .sort((a, b) =>
         (a.role === "owner" ? 0 : 1) - (b.role === "owner" ? 0 : 1) ||
         (LANE_ROLE_ORDER[a.role] ?? 9) - (LANE_ROLE_ORDER[b.role] ?? 9))
@@ -142,15 +192,20 @@ function Pipeline({ onOpen }) {
   const items = useMemo(() =>
     [...reels, ...reviewLaneCards]
       .filter(r => !r.archivedAt)
-      .map(r => ({ ...r, lane: r.lane || r.owner })),
-    [reels, reviewLaneCards]
+      .map(r => {
+        const lane = r.lane || r.owner;
+        // A reel owned by / pinned to a reviewer has no personal lane to land
+        // in anymore — fold it into the shared "review" lane so it's never
+        // dropped from the board (and never resurrects a duplicate reviewer row).
+        return { ...r, lane: reviewerIds.has(lane) ? "review" : lane };
+      }),
+    [reels, reviewLaneCards, reviewerIds]
   );
 
   /* Build cell index → reels (filtered) */
   const cells = useMemo(() => {
     const m = {};
     items.forEach(r => {
-      if (filter === "blocked" && !(r.state === "block" || r.state === "warn")) return;
       const k = r.lane + "::" + r.stage;
       (m[k] = m[k] || []).push(r);
     });
@@ -164,7 +219,7 @@ function Pipeline({ onOpen }) {
         (groupBySeries ? seriesKey(a).localeCompare(seriesKey(b)) : 0) ||
         (a.board_order ?? Infinity) - (b.board_order ?? Infinity)));
     return m;
-  }, [items, filter, groupBySeries]);
+  }, [items, groupBySeries]);
 
   /* Flash the Completed column header red for 700 ms to signal a blocked drop. */
   const flashBlocked = useCallback((stage) => {
@@ -279,8 +334,9 @@ function Pipeline({ onOpen }) {
   const visibleStages = PIPELINE_STAGES.filter(s => !hiddenCols.has(s.key));
 
   return (
-    <div>
-      <div className="page-head">
+    <div className="pl-wrap">
+      <style>{SOL_PIPELINE_CSS}</style>
+      <div className="page-head pl-header">
         <div className="titles">
           <h1>Pipeline</h1>
           <div className="sub">
@@ -288,8 +344,6 @@ function Pipeline({ onOpen }) {
           </div>
         </div>
         <div className="actions">
-          <DPill active={filter === "all"} onClick={() => setFilter("all")}>All reels</DPill>
-          <DPill active={filter === "blocked"} onClick={() => setFilter("blocked")} tone="red">Blocked / warn</DPill>
           <DPill active={groupBySeries} onClick={() => setGroupBySeries(v => !v)}>Group by series</DPill>
           {/* Column visibility menu */}
           <div ref={colMenuRef} style={{ position: "relative" }}>
@@ -383,11 +437,11 @@ function Pipeline({ onOpen }) {
       </div>
 
       {/* Board grid */}
-      <div className="board" style={{
+      <div className="board pl-board" style={{
         gridTemplateColumns: `200px repeat(${visibleStages.length}, minmax(0, 1fr))`,
       }}>
         {/* Column heads (offset by lane gutter) */}
-        <div className="col-head" style={{ background: "var(--bg-0)" }}>
+        <div className="col-head pl-col-head" style={{ background: "var(--bg-0)" }}>
           <div className="lbl">OWNER / ROLE</div>
           <div className="meta">Rows = who has what.</div>
           <div className="meta">Columns = where it is.</div>
@@ -397,7 +451,7 @@ function Pipeline({ onOpen }) {
           const isBlocked = blockedStage === s.key;
           return (
             <div
-              className="col-head"
+              className="col-head pl-col-head"
               key={s.key}
               style={isBlocked ? {
                 outline: "2px solid var(--c-red)",
@@ -420,7 +474,7 @@ function Pipeline({ onOpen }) {
           return (
           <React.Fragment key={lane.id}>
             <div
-              className="lane-head"
+              className="lane-head pl-owner-cell"
               onContextMenu={e => { e.preventDefault(); if (isOwner) setLaneCtxMenu({ laneId: lane.id, x: e.clientX, y: e.clientY }); }}
             >
               <div className="name">{lane.name}</div>
@@ -433,7 +487,7 @@ function Pipeline({ onOpen }) {
               return (
                 <div
                   className={
-                    "cell" +
+                    "cell pl-stage-cell" +
                     (reels.length === 0 ? " empty" : "") +
                     (isTarget ? " drop-target" : "") +
                     (cardView !== "list" ? " cell--" + cardView : "")
@@ -461,13 +515,16 @@ function Pipeline({ onOpen }) {
                     const groupActive = isSelected && selectedIds.size > 1;
                     const isThisDrag = dragging && dragging.id === r.id;
                     const isInGroupDrag = dragging && selectedIds.has(dragging.id) && selectedIds.size > 1 && isSelected;
-                    /* When grouping, drop a thin series label at each group boundary. */
-                    const showSeriesHeader = groupBySeries && cardView === "list" &&
+                    /* When grouping, drop a thin series label at each group boundary.
+                       In card (grid) views the label spans the full row so the
+                       grouping reads correctly across the 2×2 / 3×3 tiles. */
+                    const showSeriesHeader = groupBySeries &&
                       (idx === 0 || (reels[idx - 1].series || "") !== (r.series || ""));
                     return (
                       <React.Fragment key={r.id}>
                       {showSeriesHeader && (
-                        <div className="pipe-series-header">
+                        <div className="pipe-series-header"
+                             style={cardView !== "list" ? { gridColumn: "1 / -1" } : undefined}>
                           {r.series ? `⛓ ${r.series}` : "· no series"}
                         </div>
                       )}
@@ -496,7 +553,7 @@ function Pipeline({ onOpen }) {
                           e.preventDefault(); e.stopPropagation();
                           handleCardDrop(r, dropOnCard?.id === r.id ? dropOnCard.before : true);
                         }}
-                        className={isThisDrag ? "is-drag-wrap" : ""}
+                        className={"sol-card stage-" + (r.stage || "not-started") + (isThisDrag ? " is-drag-wrap" : "")}
                         style={{
                           opacity: isThisDrag || isInGroupDrag ? 0.4 : 1,
                           borderTop: dropOnCard?.id === r.id && dropOnCard.before ? "2px solid var(--c-cyan)" : "2px solid transparent",

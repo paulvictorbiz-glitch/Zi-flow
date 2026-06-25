@@ -1,0 +1,419 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+[data-theme="solarin"] {
+  /* fonts */
+  --f-ui:           'IBM Plex Sans', system-ui, sans-serif;
+  --f-label:        'Space Mono', ui-monospace, monospace;
+  /* surfaces */
+  --bg-base:        #0e1211;
+  --s-panel:        rgba(28,35,32,.82);
+  --s-panel-strong: rgba(24,30,28,.86);
+  --s-card:         rgba(18,24,22,.85);
+  --s-inner-dark:   rgba(16,21,19,.70);
+  --s-border:       rgba(130,150,143,.22);
+  --s-divider:      #2f3a37;
+  --s-divider-soft: #232c29;
+  /* palette */
+  --teal:           #116466;
+  --teal-hover:     #15777a;
+  --mint:           #9FEDD7;
+  --peach:          #FFCB9A;
+  /* text */
+  --s-fg:           #ffffff;
+  --s-fg-soft:      #EDF3F0;
+  --s-fg-body:      #D1E8E2;
+  --s-fg-body-2:    #c4d6d0;
+  --s-fg-secondary: #9bb5ad;
+  --s-fg-muted:     #7f978f;
+  --s-fg-muted-2:   #6f8880;
+  --s-fg-dash:      #4a4550;
+  /* stage colors */
+  --stage-not-started: #7d938b;
+  --stage-in-progress: #FFCB9A;
+  --stage-review:      #9FEDD7;
+  --stage-completed:   #3E9D8F;
+  --stage-posted:      #5FB89A;
+  /* category tones */
+  --tone-produce:  #F5A623;
+  --tone-library:  #B58BE0;
+  --tone-edit:     #5FB89A;
+  --tone-learn:    #E58BA0;
+  --tone-engage:   #E8884A;
+  --tone-monitor:  #5FA8D6;
+  /* HUD palette */
+  --hud-panel:      rgba(14,11,8,.78);
+  --hud-border:     rgba(232,114,28,.30);
+  --hud-nav-border: #E8721C;
+  --orange:         #FF8A2A;
+  --orange-bright:  #FFB870;
+  --amber-hud:      #C98A4A;
+  --hud-muted:      #8a7560;
+  --hud-muted-2:    #9a8a76;
+  --hud-ok:         #5FCF8a;
+  --hud-alert:      #FF6A4A;
+  --data-blue:      #5FA8D6;
+  --gauge-track:    rgba(255,138,42,.12);
+
+  /* ═══════════════════════════════════════════════════════════════
+     LEGACY TOKEN REMAP — the core of the full reskin.
+     The whole app is wired to the ORIGINAL :root variable names
+     (--c-cyan, --bg-2, --fg, --f-sans …). Redefining their VALUES
+     here, scoped to the #root [data-theme="solarin"] element, makes
+     every existing `var(--x)` consumer render Solarin colors/fonts —
+     cards, pills, the blue circular buttons, inputs, page bodies —
+     without touching styles.css (edit-locked) or any component.
+     Removing the data-theme attribute reverts everything 1:1.
+     ═══════════════════════════════════════════════════════════════ */
+  /* surfaces — panels go translucent so the fixed bg reads through */
+  --bg-0:        #0c100f;
+  --bg-1:        #0e1211;
+  --bg-2:        rgba(28,35,32,.82);
+  --bg-3:        rgba(24,30,28,.86);
+  --bg-elev:     rgba(30,38,35,.97);   /* menus/dropdowns: near-opaque for legibility */
+  /* lines */
+  --line:        rgba(130,150,143,.22);
+  --line-soft:   rgba(130,150,143,.14);
+  --line-hard:   rgba(130,150,143,.34);
+  --dash:        rgba(130,150,143,.30);
+  /* text */
+  --fg:          #EDF3F0;
+  --fg-mute:     #9bb5ad;
+  --fg-dim:      #7f978f;
+  --fg-faint:    #4a4550;
+  /* accents — cyan→mint (accent text/icons), cyan-soft→teal (borders/fills) */
+  --c-cyan:      #9FEDD7;
+  --c-cyan-soft: #116466;
+  --c-amber:     #FFCB9A;
+  --c-amber-soft:#7d6a4a;
+  --c-red:       #FF6A4A;
+  --c-red-soft:  #8a4a3a;
+  --c-green:     #5FB89A;
+  --c-green-soft:#3E9D8F;
+  --c-blue:      #5FA8D6;
+  --c-blue-soft: #2f5a6a;
+  --c-violet:    #B58BE0;
+  --c-grey:      #7f978f;
+  --c-orange:    #FF8A2A;
+  --c-pink:      #E58BA0;
+  /* fonts — IBM Plex Sans UI, Space Mono labels; kill old serif/script */
+  --f-sans:      'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --f-mono:      'Space Mono', ui-monospace, Menlo, monospace;
+  --f-serif:     'IBM Plex Sans', system-ui, sans-serif;
+  --f-script:    'IBM Plex Sans', system-ui, sans-serif;
+  /* component shorthand — override the alias so filled CTAs read teal */
+  --accent:      #116466;
+}
+
+/* ── Nav layout classes (consumed by app.jsx via className) ── */
+[data-theme="solarin"] .sol-nav {
+  height: 62px; min-height: 62px;
+  background: rgba(13,17,16,.88);
+  backdrop-filter: blur(10px);
+  border-bottom: 2px solid var(--teal);
+  display: flex; align-items: center;
+  padding: 0 24px; gap: 0;
+  position: sticky; top: 0; z-index: 100;
+  width: 100%; box-sizing: border-box;
+}
+[data-theme="solarin"] .sol-nav.hud { border-bottom-color: var(--hud-nav-border); }
+[data-theme="solarin"] .sol-logo {
+  font-family: var(--f-label); font-size: 12px; font-weight: 700;
+  color: var(--s-fg-soft); letter-spacing: .1em;
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0; min-width: 110px; text-decoration: none;
+}
+[data-theme="solarin"] .sol-logo-w {
+  width: 26px; height: 26px; background: var(--teal); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; color: #fff; flex-shrink: 0;
+}
+[data-theme="solarin"] .sol-center {
+  flex: 1; display: flex; align-items: center;
+  justify-content: center; gap: 2px; position: relative;
+}
+[data-theme="solarin"] .sol-cat {
+  font-family: var(--f-ui); font-size: 13px; font-weight: 500;
+  color: var(--s-fg-secondary); background: none; border: none;
+  padding: 6px 11px; border-radius: 4px; cursor: pointer;
+  transition: color .15s, background .15s; letter-spacing: .01em;
+  position: relative;
+}
+[data-theme="solarin"] .sol-cat:hover,
+[data-theme="solarin"] .sol-cat.active { color: var(--s-fg-soft); background: rgba(255,255,255,.05); }
+[data-theme="solarin"] .sol-mywork {
+  font-family: var(--f-ui); font-size: 14px; font-weight: 700;
+  color: var(--mint); background: rgba(17,100,102,.12);
+  border: 1px solid #2f5f5c; border-radius: 20px;
+  padding: 6px 20px; margin: 0 6px; cursor: pointer;
+  transition: all .15s; letter-spacing: .01em;
+}
+[data-theme="solarin"] .sol-mywork:hover,
+[data-theme="solarin"] .sol-mywork.active {
+  background: var(--teal); border-color: var(--teal); color: #fff;
+  box-shadow: 0 0 18px rgba(17,100,102,.5);
+}
+[data-theme="solarin"] .sol-nav-right {
+  display: flex; align-items: center; gap: 12px;
+  flex-shrink: 0; min-width: 110px; justify-content: flex-end;
+}
+[data-theme="solarin"] .sol-search {
+  background: rgba(28,35,32,.7); border: 1px solid var(--s-border);
+  border-radius: 4px; padding: 5px 10px;
+  font-family: var(--f-ui); font-size: 12px; color: var(--s-fg-body);
+  width: 130px; outline: none;
+}
+[data-theme="solarin"] .sol-search::placeholder { color: var(--s-fg-muted); }
+[data-theme="solarin"] .sol-dropdown-wrap { position: relative; }
+[data-theme="solarin"] .sol-dropdown {
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  min-width: 190px; background: rgba(20,26,24,.97);
+  border: 1px solid var(--s-border); z-index: 201; padding: 6px 0;
+}
+[data-theme="solarin"] .sol-dropdown-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px; font-family: var(--f-ui); font-size: 13px;
+  color: var(--s-fg-body); cursor: pointer; transition: background .1s;
+  white-space: nowrap;
+}
+[data-theme="solarin"] .sol-dropdown-item:hover { background: rgba(17,100,102,.18); }
+[data-theme="solarin"] .sol-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+}
+[data-theme="solarin"] .sol-bd {
+  position: fixed; inset: 0; z-index: 200; cursor: default;
+}
+[data-theme="solarin"] .sol-bg {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-size: cover; background-position: center;
+}
+[data-theme="solarin"] .sol-bg-overlay {
+  position: absolute; inset: 0;
+}
+
+/* ── Global Solarin resets when theme is active ── */
+/* The dark base goes on the <html> CANVAS (always painted behind a negative
+   z-index fixed layer). #root itself must stay TRANSPARENT, otherwise its
+   opaque background (z-index:0) paints over the z-index:-1 `.sol-bg` and the
+   per-tab image never shows. */
+html:has([data-theme="solarin"]) { background: var(--bg-base); }
+[data-theme="solarin"] { background: transparent; font-family: var(--f-ui); }
+[data-theme="solarin"] .app { background: transparent; }
+[data-theme="solarin"] .topbar { display: none !important; }
+[data-theme="solarin"] .nav-drawer,
+[data-theme="solarin"] .nav-backdrop { display: none !important; }
+
+/* Kill the old serif-italic on screen titles & accents — the redesign wants
+   IBM Plex Sans upright. The `--f-serif` remap changed the FACE; these clear
+   the leftover `font-style: italic` so titles read clean. */
+[data-theme="solarin"] .page-head h1,
+[data-theme="solarin"] .m-title,
+[data-theme="solarin"] .serif-i,
+[data-theme="solarin"] .gen-draft-title,
+[data-theme="solarin"] .rfr-l,
+[data-theme="solarin"] .cal-day-head .cal-n,
+[data-theme="solarin"] .cal-item .ci-title,
+[data-theme="solarin"] .vslot-slots .slot .lt,
+[data-theme="solarin"] .dropdown .opt .ttl,
+[data-theme="solarin"] .hook .name {
+  font-family: var(--f-ui);
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+
+/* ── Shared reel card (My Work + Pipeline) ── */
+[data-theme="solarin"] .sol-card {
+  background: var(--s-card); border: 1px solid var(--s-border);
+  backdrop-filter: blur(3px); padding: 10px 12px;
+  cursor: pointer; transition: border-color .15s;
+  border-left: 3px solid var(--stage-not-started);
+  position: relative; display: flex; flex-direction: column; gap: 4px;
+}
+[data-theme="solarin"] .sol-card:hover { border-color: var(--teal); }
+[data-theme="solarin"] .sol-card.stage-in-progress { border-left-color: var(--stage-in-progress); }
+[data-theme="solarin"] .sol-card.stage-review      { border-left-color: var(--stage-review); }
+[data-theme="solarin"] .sol-card.stage-completed   { border-left-color: var(--stage-completed); }
+[data-theme="solarin"] .sol-card.stage-posted      { border-left-color: var(--stage-posted); }
+[data-theme="solarin"] .sol-card-title {
+  font-family: var(--f-ui); font-size: 13px; font-weight: 600;
+  color: var(--s-fg-soft); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+[data-theme="solarin"] .sol-card-meta {
+  font-family: var(--f-label); font-size: 10.5px; color: var(--s-fg-muted);
+  display: flex; gap: 8px; align-items: center;
+}
+[data-theme="solarin"] .sol-due-chip {
+  font-family: var(--f-label); font-size: 9.5px; letter-spacing: .05em;
+  text-transform: uppercase; padding: 2px 6px;
+  border: 1px solid var(--stage-in-progress);
+  color: var(--stage-in-progress); display: inline-block;
+}
+
+/* ── Eyebrow (shared across pages) ── */
+[data-theme="solarin"] .sol-eyebrow {
+  font-family: var(--f-label); font-size: 10.5px; font-weight: 700;
+  letter-spacing: .13em; text-transform: uppercase; color: var(--peach);
+}
+[data-theme="solarin"] .sol-page-title {
+  font-family: var(--f-ui); font-size: 30px; font-weight: 700;
+  color: var(--s-fg); letter-spacing: -.01em;
+  text-shadow: 0 2px 16px rgba(0,0,0,.85);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   STEP 6 — Card & input "surface system".
+   Apply the clean reel-card language to every card and input so surfaces
+   are translucent (the fixed bg reads through), evenly spaced, IBM Plex /
+   Space Mono, with a teal focus ring. Scoped to [data-theme="solarin"].
+   ═══════════════════════════════════════════════════════════════════ */
+/* Cards / panels — translucent over the fixed background, square Solarin edge */
+[data-theme="solarin"] .card,
+[data-theme="solarin"] .reel,
+[data-theme="solarin"] .panel {
+  background: var(--s-card);
+  border-color: var(--s-border);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+[data-theme="solarin"] .reel { transition: border-color .15s; }
+[data-theme="solarin"] .reel:hover { border-color: var(--teal); }
+[data-theme="solarin"] .card-head,
+[data-theme="solarin"] .card-foot {
+  font-family: var(--f-label);
+  letter-spacing: .04em;
+  background: rgba(16,21,19,.55);
+}
+
+/* Inputs / textareas / selects — uniform Solarin field + teal focus ring */
+[data-theme="solarin"] input,
+[data-theme="solarin"] textarea,
+[data-theme="solarin"] select {
+  font-family: var(--f-ui);
+  background: var(--s-inner-dark);
+  border-color: var(--s-border);
+  color: var(--s-fg-body);
+}
+[data-theme="solarin"] input::placeholder,
+[data-theme="solarin"] textarea::placeholder { color: var(--s-fg-muted); }
+[data-theme="solarin"] input:focus,
+[data-theme="solarin"] textarea:focus,
+[data-theme="solarin"] select:focus {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgba(17,100,102,.35);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   STEP 5 — Popups / modals get the fixed background (blurred) behind them.
+   Full-screen backdrops blur the page; modal panels use the Solarin panel.
+   ═══════════════════════════════════════════════════════════════════ */
+/* Gamify daily popup */
+[data-theme="solarin"] .gf-overlay {
+  background: rgba(8,11,10,.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+[data-theme="solarin"] .gf-card {
+  background: var(--s-panel-strong);
+  border: 1px solid var(--s-border);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+[data-theme="solarin"] .gf-cta {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+[data-theme="solarin"] .gf-cta:hover { background: var(--teal-hover); }
+
+/* FAB chat / menu sheets */
+[data-theme="solarin"] .fab-menu,
+[data-theme="solarin"] .fab-bot-chat {
+  background: var(--s-panel-strong);
+  border: 1px solid var(--s-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Avatar dropdown over the background — keep readable */
+[data-theme="solarin"] .role-menu {
+  background: var(--bg-elev);
+  border: 1px solid var(--s-border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Preferences / generic modal panels that key off the design tokens already
+   pick up the translucent --bg-2/--bg-3 from the remap; this just blurs the
+   page behind common backdrops. */
+[data-theme="solarin"] .modal-backdrop,
+[data-theme="solarin"] .pm-overlay,
+[data-theme="solarin"] [class*="overlay"] {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Monitor — infra card consistency.
+   Make the infra Monitor cards (the DIRECT .card children of .mon-grid in
+   monitor.jsx) match the two kept HUD cards: orange square panel, orange
+   uppercase title, green flowing status dot. The `>` child combinator
+   EXCLUDES the top-2 cards' inner .card (which sits inside .mon-panel, so
+   it's a grandchild of .mon-grid, not a direct child).
+   ═══════════════════════════════════════════════════════════════════ */
+[data-theme="solarin"] .mon-grid > .card {
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-border);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+[data-theme="solarin"] .mon-grid > .card .card-head {
+  border-bottom: 1px solid var(--hud-border);
+  background: rgba(14,11,8,.55);
+}
+[data-theme="solarin"] .mon-grid > .card .card-head .h {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--f-label);
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+  color: var(--orange-bright);
+}
+[data-theme="solarin"] .mon-grid > .card .card-head .h::before {
+  content: "";
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--hud-ok);
+  flex-shrink: 0;
+  box-shadow: 0 0 6px 1px rgba(95,207,138,.6);
+  animation: pulseGlowGreen 2.5s ease-in-out infinite;
+}
+[data-theme="solarin"] .mon-grid > .card .card-foot {
+  border-top: 1px solid var(--hud-border);
+  font-family: var(--f-label);
+  color: var(--amber-hud);
+}
+[data-theme="solarin"] .mon-grid > .card .card-foot .collapse { color: var(--orange); }
+
+/* UsageBar / meter — keep fills in the HUD orange/green family so a high
+   bar reads as orange HUD, never the old pale-peach or fallback yellow. */
+[data-theme="solarin"] .mon-bar-fill--ok    { background: var(--hud-ok); }
+[data-theme="solarin"] .mon-bar-pct--ok     { color: var(--hud-ok); }
+[data-theme="solarin"] .mon-bar-fill--amber { background: var(--orange); }
+[data-theme="solarin"] .mon-bar-pct--amber  { color: var(--orange-bright); }
+[data-theme="solarin"] .mon-bar-fill--red   { background: var(--hud-alert); }
+[data-theme="solarin"] .mon-bar-pct--red    { color: var(--hud-alert); }
+
+/* Themed text selection — replaces the jarring bright-yellow default
+   highlight (seen over the AI Credits / Scout bars) with an on-brand tint. */
+[data-theme="solarin"] ::selection      { background: rgba(255,138,42,.38); color: #fff; }
+[data-theme="solarin"] ::-moz-selection { background: rgba(255,138,42,.38); color: #fff; }
+
+/* ── Keyframes ── */
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 4px 2px rgba(255,138,42,.6); }
+  50%       { box-shadow: 0 0 14px 5px rgba(255,138,42,1); }
+}
+@keyframes pulseGlowGreen {
+  0%, 100% { box-shadow: 0 0 4px 2px rgba(95,207,138,.5); }
+  50%       { box-shadow: 0 0 10px 4px rgba(95,207,138,.9); }
+}

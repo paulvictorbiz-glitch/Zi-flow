@@ -39,6 +39,65 @@ import { ModuleChapters } from "../components/training/ModuleChapters.jsx";
 import "./training.css";
 import "../components/training/training-blocks.css";
 
+const SOL_TRAINING_CSS = `
+[data-theme="solarin"] .tr-wrap {
+  max-width: 1280px; margin: 0 auto; padding: 28px 32px; box-sizing: border-box;
+}
+[data-theme="solarin"] .tr-level-banner {
+  background: var(--s-panel); border: 1px solid var(--s-border);
+  backdrop-filter: blur(4px); padding: 18px 24px; margin-bottom: 20px;
+}
+[data-theme="solarin"] .tr-level-name {
+  font-family: var(--f-ui); font-size: 20px; font-weight: 700; color: var(--s-fg-soft);
+}
+[data-theme="solarin"] .tr-level-sub {
+  font-family: var(--f-label); font-size: 11px; color: var(--s-fg-secondary);
+  margin-top: 2px; letter-spacing: .04em;
+}
+[data-theme="solarin"] .tr-progress-bar-wrap {
+  margin: 10px 0 6px; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,.1); overflow: hidden;
+}
+[data-theme="solarin"] .tr-progress-fill {
+  height: 100%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--teal), var(--mint));
+}
+[data-theme="solarin"] .tr-progress-hint {
+  font-family: var(--f-label); font-size: 10px; color: var(--s-fg-secondary);
+  letter-spacing: .04em;
+}
+[data-theme="solarin"] .tr-section-divider {
+  font-family: var(--f-label); font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .12em; color: var(--mint);
+  padding: 4px 0 10px; border-bottom: 1px solid var(--s-divider);
+  margin-bottom: 12px;
+}
+[data-theme="solarin"] .tr-pillar-row {
+  background: var(--s-card); border: 1px solid var(--s-border);
+  border-left: 3px solid var(--s-fg-muted);
+  backdrop-filter: blur(3px); padding: 14px 16px;
+  display: flex; align-items: center; gap: 14px;
+  margin-bottom: 6px; cursor: pointer; transition: border-color .15s;
+}
+[data-theme="solarin"] .tr-pillar-row:hover { border-left-color: var(--teal); }
+[data-theme="solarin"] .tr-pillar-row.done  { border-left-color: var(--stage-completed); }
+[data-theme="solarin"] .tr-pillar-row.active{ border-left-color: var(--peach); }
+[data-theme="solarin"] .tr-pillar-icon {
+  width: 36px; height: 36px; background: var(--teal); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 16px; flex-shrink: 0;
+}
+[data-theme="solarin"] .tr-pillar-name {
+  font-family: var(--f-ui); font-size: 14px; font-weight: 600; color: var(--s-fg-soft);
+}
+[data-theme="solarin"] .tr-pillar-sub {
+  font-family: var(--f-ui); font-size: 12px; color: var(--s-fg-secondary); margin-top: 2px;
+}
+[data-theme="solarin"] .tr-pillar-status-done     { font-family: var(--f-label); font-size: 11px; color: var(--mint); }
+[data-theme="solarin"] .tr-pillar-status-active   { font-family: var(--f-label); font-size: 11px; color: var(--peach); }
+[data-theme="solarin"] .tr-pillar-status-notstart { font-family: var(--f-label); font-size: 11px; color: var(--s-fg-muted); }
+`;
+
 /* Standalone "Additional Modules" live in the SAME training_module_content
    JSON channel as the per-pillar overrides, under one synthetic module id +
    key. They don't tie into progress, EXP, the pillar rail or anything else —
@@ -289,6 +348,7 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
 
   return (
     <div className="tr-wrap">
+      <style>{SOL_TRAINING_CSS}</style>
       <div className="page-head">
         <div className="titles">
           <h1>Training</h1>
@@ -307,20 +367,20 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
 
       {/* Sticky EXP / level header */}
       <div className="tr-exp">
-        <div className="tr-exp-card">
+        <div className="tr-exp-card tr-level-banner">
           <div className="tr-exp-top">
             <div>
-              <div className="tr-level">{level.label}</div>
-              <div className="tr-level-blurb">{level.blurb}</div>
+              <div className="tr-level tr-level-name">{level.label}</div>
+              <div className="tr-level-blurb tr-level-sub">{level.blurb}</div>
             </div>
             <div className="tr-count">
               <b>{completedCount}</b> / {TOTAL_MODULES} pillars complete
             </div>
           </div>
-          <div className="tr-bar">
-            <div className="tr-bar-fill" style={{ width: expPct.toFixed(1) + "%" }} />
+          <div className="tr-bar tr-progress-bar-wrap">
+            <div className="tr-bar-fill tr-progress-fill" style={{ width: expPct.toFixed(1) + "%" }} />
           </div>
-          <div className="tr-next">
+          <div className="tr-next tr-progress-hint">
             {nextLevel
               ? `${(nextLevel.min - completedCount)} more pillar${nextLevel.min - completedCount === 1 ? "" : "s"} → ${nextLevel.label}`
               : "Max level reached — you're Reel Pro 🎬"}
@@ -346,7 +406,7 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
 
       {/* Core pillars */}
       <section className="tr-month" id="tr-section-core">
-        <div className="tr-month-head">
+        <div className="tr-month-head tr-section-divider">
           <span className="tr-month-title">Core Pillars</span>
           <span className="tr-month-hint">The six skills every reel is graded on</span>
         </div>
@@ -449,7 +509,7 @@ function CustomSections({ sections, canEdit, onSave }) {
 
   return (
     <section className="tr-month" id="tr-section-custom">
-      <div className="tr-month-head">
+      <div className="tr-month-head tr-section-divider">
         <span className="tr-month-title">Additional Modules</span>
         <span className="tr-month-hint">Standalone training sections — not tied to the six pillars</span>
       </div>
@@ -926,9 +986,12 @@ function ModuleCard({
       className={"tr-mod" + (progress.done ? " is-done" : "")}
       id={"tr-mod-" + mod.skillKey}
     >
-      <div className="tr-mod-head" onClick={onToggleExpand}>
+      <div
+        className={"tr-mod-head tr-pillar-row" + (progress.done ? " done" : expanded ? " active" : "")}
+        onClick={onToggleExpand}
+      >
         <span className="tr-mod-title">
-          <span className="tr-mod-icon">{mod.icon}</span>
+          <span className="tr-mod-icon tr-pillar-icon">{mod.icon}</span>
           {mod.title}
         </span>
         <span className="tr-mod-deliv">{mod.deliverables}</span>

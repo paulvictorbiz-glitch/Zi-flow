@@ -190,6 +190,165 @@
   text-align: center;
 }
 
+/* ---- Filters: select + checkboxes (table view) ---- */
+.scout-select {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 5px;
+  background: var(--color-surface, #1a1a1a);
+  color: inherit;
+}
+.scout-check {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--color-muted, #888);
+  cursor: pointer;
+}
+
+/* ---- Multi-select category-group filter (SCT-002) ---- */
+.scout-groupsel-btn { cursor: pointer; }
+.scout-groupsel-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 6px;
+  background: var(--color-surface, #1a1a1a);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+.scout-groupsel-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 5px 8px;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.scout-groupsel-opt:hover { background: rgba(255, 255, 255, 0.05); }
+.scout-groupsel-empty {
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  color: var(--color-muted, #888);
+}
+.scout-groupsel-clear {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  font-size: 0.76rem;
+  text-align: left;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--color-border, #333);
+  color: var(--color-accent, #6bd6e0);
+  cursor: pointer;
+}
+
+/* ---- Table view ---- */
+.scout-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+}
+.scout-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.scout-table thead th {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted, #888);
+  border-bottom: 1px solid var(--color-border, #333);
+  white-space: nowrap;
+  background: var(--color-surface, #1a1a1a);
+  position: sticky;
+  top: 0;
+}
+.scout-table thead th.sortable { cursor: pointer; }
+.scout-table thead th.sortable:hover { color: inherit; }
+.scout-table thead th .sc-arrow { color: var(--color-accent, #6aa0ff); margin-left: 3px; }
+.scout-table td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--color-border, #2a2a2a);
+  vertical-align: middle;
+}
+.scout-table tbody tr.scout-tr { cursor: pointer; }
+.scout-table tbody tr.scout-tr:hover { background: rgba(255, 255, 255, 0.03); }
+.scout-table tbody tr.scout-tr.expanded { background: rgba(255, 255, 255, 0.04); }
+.scout-table tbody tr.scout-tr.archived { opacity: 0.45; }
+.scout-table tbody tr.scout-tr.archived:hover { opacity: 0.7; }
+
+.sc-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sc-c-star, .sc-c-src, .sc-c-act { text-align: center; white-space: nowrap; width: 1%; }
+
+.sc-name { font-weight: 600; }
+.sc-name-text { margin-right: 0.4rem; }
+
+.sc-group-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(106, 160, 255, 0.4);
+  background: rgba(106, 160, 255, 0.1);
+  color: var(--color-accent, #6aa0ff);
+  white-space: nowrap;
+}
+
+.sc-star {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: var(--color-muted, #888);
+  padding: 0;
+}
+.sc-star.on { color: #ffcb45; }
+
+.sc-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--color-muted, #888);
+  padding: 0 0.2rem;
+}
+.sc-icon:hover { color: inherit; }
+.sc-icon.on { color: var(--color-accent, #6aa0ff); }
+.sc-del:hover { color: #f44; }
+
+/* Collapsible category group header row */
+.scout-group-header { cursor: pointer; }
+.scout-group-header td {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 700;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+.sc-grp-toggle { color: var(--color-accent, #6aa0ff); }
+.sc-grp-count { color: var(--color-muted, #888); font-weight: 500; }
+
+/* Expanded detail row reuses the card-detail styles */
+.scout-detail-tr td { padding: 0; }
+.scout-detail-tr .scout-card-detail {
+  margin: 0;
+  border-top: none;
+  padding: 0.75rem 1rem 1rem;
+}
+
 .scout-toast {
   position: fixed;
   bottom: 1.5rem;

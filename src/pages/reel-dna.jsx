@@ -1,6 +1,48 @@
 /* =========================================================
    Reel DNA — Phase 1 capture library.
+   Solarin theme hooks injected below (SOL_DNA_CSS). */
 
+const SOL_DNA_CSS = `
+[data-theme="solarin"] .dna-wrap {
+  max-width: none; margin: 0; padding: 20px 16px; box-sizing: border-box;
+}
+[data-theme="solarin"] .dna-capture-panel {
+  background: var(--s-panel); border: 1px solid var(--s-border);
+  backdrop-filter: blur(4px); padding: 18px 20px; margin-bottom: 16px;
+}
+[data-theme="solarin"] .dna-table-panel {
+  background: var(--s-panel); border: 1px solid var(--s-border);
+  backdrop-filter: blur(4px);
+}
+[data-theme="solarin"] .dna-table-head-row {
+  background: var(--s-inner-dark);
+  border-bottom: 1px solid var(--s-divider);
+}
+[data-theme="solarin"] .dna-th {
+  font-family: var(--f-label); font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .1em; color: var(--peach);
+  padding: 10px 12px;
+}
+[data-theme="solarin"] .dna-row {
+  border-bottom: 1px solid var(--s-divider-soft);
+}
+[data-theme="solarin"] .dna-row:nth-child(even) { background: rgba(40,30,42,.4); }
+[data-theme="solarin"] .dna-cell {
+  font-family: var(--f-ui); font-size: 12.5px; color: var(--s-fg-body);
+  padding: 10px 12px;
+}
+[data-theme="solarin"] .dna-empty { color: var(--s-fg-dash); }
+[data-theme="solarin"] .dna-source-chip {
+  font-family: var(--f-label); font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+  background: rgba(159,237,215,.12); color: var(--mint);
+  border: 1px solid rgba(159,237,215,.3); padding: 2px 8px;
+}
+[data-theme="solarin"] .dna-status-captured { color: var(--mint); font-family: var(--f-label); font-size: 11px; }
+[data-theme="solarin"] .dna-status-progress  { color: var(--peach); font-family: var(--f-label); font-size: 11px; }
+`;
+
+/* =========================================================
    Capture a reel you like, tag which "genes" you care about
    (music / font / hook / sfx / story), then fill in each gene's
    components over time. Replaces the spreadsheet "reel genome".
@@ -61,6 +103,21 @@ export function relTime(iso, now) {
     return formatDuration((now?.getTime?.() ?? Date.now()) - ts) + " ago";
   } catch { return ""; }
 }
+
+/* Plain-language meaning + transient/actionable class for each poller issue
+   type (DNA-018 — "logs show errors, fix these"). `transient:true` = expected /
+   self-healing (Instagram API limits, non-reel messages) that the next sync
+   retries — NOT something the owner must act on; `transient:false` = a real
+   failure worth a closer look. Unknown types fall back to actionable so a new
+   error kind is never silently dismissed. */
+const IG_ISSUE_INFO = {
+  graph_error:  { label: "IG API error",  transient: true,  hint: "Instagram's API rate-limited or 500'd this thread — transient; the next sync retries it. Not a data-loss bug on our side." },
+  message_skip: { label: "skipped",       transient: true,  hint: "A message carried no shareable reel link (text / sticker / non-reel) — nothing to capture." },
+  unfulfilled:  { label: "unresolved",    transient: true,  hint: "A share couldn't be resolved to a reel URL this run — usually fills in on a later sync." },
+  insert_error: { label: "save failed",   transient: false, hint: "A row failed to write to the database — this one is worth a closer look (re-run Refresh; if it persists, flag it)." },
+  stale_cookie: { label: "login expired", transient: false, hint: "Instagram's session cookie expired — reconnect Instagram so the poller can read DMs again." },
+};
+const igIssueInfo = (type) => IG_ISSUE_INFO[type] || { label: type || "unknown", transient: false, hint: "Unrecognized issue type — review the detail below." };
 
 /* ---------- IG Sync Health strip ----------
    A quiet presentational summary of the latest IG poller run. Reconciliation:
@@ -139,16 +196,40 @@ function IgSyncHealth({ runs, log, igDmCount, open, onToggle }) {
             <b>Errors / issues this run ({runLog.length})</b>
             {runLog.length === 0 ? (
               <div className="rd-igsync-muted">No errors logged for the latest run. 🎉</div>
-            ) : (
-              runLog.map(l => (
-                <div key={l.id} className="rd-igsync-issue">
-                  <span className={"rd-tag sm rd-issue rd-issue-" + (l.issueType || "unknown")}>
-                    {l.issueType || "unknown"}
-                  </span>
-                  <span className="rd-igsync-issue-detail">{l.detail || "—"}</span>
-                </div>
-              ))
-            )}
+            ) : (() => {
+              const actionable = runLog.filter(l => !igIssueInfo(l.issueType).transient).length;
+              const transient = runLog.length - actionable;
+              return (
+                <>
+                  <div className="rd-igsync-muted" style={{ marginBottom: 6 }}>
+                    {actionable === 0
+                      ? `All ${transient} expected / self-healing (Instagram API limits or non-reel messages) — they retry on the next sync, nothing to fix.`
+                      : `${actionable} need attention · ${transient} expected / auto-retried.`}
+                  </div>
+                  {runLog.map(l => {
+                    const info = igIssueInfo(l.issueType);
+                    return (
+                      <div key={l.id} className="rd-igsync-issue">
+                        <span className={"rd-tag sm rd-issue rd-issue-" + (l.issueType || "unknown")} title={info.hint}>
+                          {info.label}
+                        </span>
+                        <span
+                          className="rd-tag sm"
+                          title={info.hint}
+                          style={{
+                            color: info.transient ? "var(--fg-dim)" : "var(--c-red)",
+                            borderColor: info.transient ? "var(--line-hard)" : "var(--c-red-soft)",
+                          }}
+                        >
+                          {info.transient ? "auto-retried" : "needs attention"}
+                        </span>
+                        <span className="rd-igsync-issue-detail">{l.detail || "—"}</span>
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -420,7 +501,6 @@ function ColumnFilterRow({ colFilters, onColFilter, onClear, visible = () => tru
       {visible("sfx")      && T("sfx")}
       {visible("story")    && T("story")}
       {visible("notes")    && T("notes")}
-      {visible("status")   && S("status")}
       {visible("assets")   && <td className="rd-colfilter-td" />}
       {visible("actions")  && (
         <td className="rd-colfilter-td rd-colfilter-clear-td">
@@ -704,8 +784,8 @@ function ReelCellLink({ item, now, onOpenPreview, onLinkClick, isVisited, isLast
         {item.reelUrl}
       </a>
       <div className="rd-cell-sub">
-        <span className="rd-tag sm">{platformLabel(item.platform)}</span>
-        <span className="rd-tag sm dim">{relTime(item.createdAt, now)}</span>
+        <span className="rd-tag sm dna-source-chip">{platformLabel(item.platform)}</span>
+        <span className={"rd-tag sm dim" + (item.status === "captured" ? " dna-status-captured" : item.status === "progress" ? " dna-status-progress" : "")}>{relTime(item.createdAt, now)}</span>
         <a className="rd-cell-newtab" href={item.reelUrl} target="_blank" rel="noreferrer"
            title="Open in a new tab" onClick={() => onLinkClick?.(item)}>↗</a>
       </div>
@@ -767,28 +847,27 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
   });
 
   return (
-    <div className="rd-table-wrap">
+    <div className="rd-table-wrap dna-table-panel">
       <table className="rd-table">
         <thead>
-          <tr ref={headRowRef}>
+          <tr ref={headRowRef} className="dna-table-head-row">
             {visible("mark") && (
-              <th className="rd-th-mark" title="Filter by starred / color">
+              <th className="rd-th-mark dna-th" title="Filter by starred / color">
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                   {onFavFilter && <StarFilterButton active={!!favOnly} onToggle={onFavFilter} />}
                   {onColorFilter && <ColorFilterDot value={colorFilter} onPick={onColorFilter} />}
                 </span>
               </th>
             )}
-            {visible("reel")     && <th className="rd-th-reel">Reel</th>}
-            {visible("location") && <th>Location</th>}
-            {visible("music")    && <th>Music</th>}
-            {visible("font")     && <th>Font</th>}
-            {visible("sfx")      && <th>SFX</th>}
-            {visible("story")    && <th>Story / Pacing</th>}
-            {visible("notes")    && <th>Notes</th>}
-            {visible("status")   && <th>Status</th>}
-            {visible("assets")   && <th className="rd-th-assets">Assets</th>}
-            {visible("actions")  && <th className="rd-th-act"></th>}
+            {visible("reel")     && <th className="rd-th-reel dna-th">Reel</th>}
+            {visible("location") && <th className="dna-th">Location</th>}
+            {visible("music")    && <th className="dna-th">Music</th>}
+            {visible("font")     && <th className="dna-th">Font</th>}
+            {visible("sfx")      && <th className="dna-th">SFX</th>}
+            {visible("story")    && <th className="dna-th">Story / Pacing</th>}
+            {visible("notes")    && <th className="dna-th">Notes</th>}
+            {visible("assets")   && <th className="rd-th-assets dna-th">Assets</th>}
+            {visible("actions")  && <th className="rd-th-act dna-th"></th>}
           </tr>
           {showFilters && (
             <ColumnFilterRow colFilters={colFilters} onColFilter={onColFilter}
@@ -798,47 +877,33 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
         <tbody>
           {items.length === 0 && (
             <tr className="rd-tr rd-tr--empty">
-              <td className="rd-td-empty" colSpan={visibleCount}>No reels match these filters.</td>
+              <td className="rd-td-empty dna-empty" colSpan={visibleCount}>No reels match these filters.</td>
             </tr>
           )}
           {items.map(item => {
             const tags = resolveTags(item);
-            const hasTimeline = item.timeline && item.timeline.length > 0;
             const isVisited = Array.isArray(visitedReelDnaIds) && visitedReelDnaIds.includes(item.id);
             const isLast = lastVisitedReelDnaId === item.id;
             return (
-              <tr key={item.id} className={"rd-tr rd-status--" + item.status}
+              <tr key={item.id} className={"rd-tr dna-row rd-status--" + item.status}
                   style={item.rowColor ? { background: rdRowTint(item.rowColor) } : undefined}>
                 {visible("mark") && <RowMarkCell item={item} actions={actions} />}
                 {visible("reel") && (
                   <ReelCellLink item={item} now={now} onOpenPreview={onOpenPreview}
                                 onLinkClick={onLinkClick} isVisited={isVisited} isLast={isLast} />
                 )}
-                {visible("location") && <td><EditableCell value={tags.location} placeholder="—" onSave={v => saveLocation(item, v)} /></td>}
-                {visible("music") && <td><EditableCell value={tags.music} placeholder="—" onSave={v => saveGeneField(item, "music", "track", v)} /></td>}
-                {visible("font") && <td><EditableCell value={tags.font} placeholder="—" onSave={v => saveGeneField(item, "font", "names", v)} /></td>}
-                {visible("sfx") && <td><EditableCell value={tags.sfx} placeholder="—" onSave={v => saveGeneField(item, "sfx", "notes", v)} /></td>}
-                {visible("story") && <td><EditableCell value={tags.story} placeholder="—" onSave={v => saveGeneField(item, "story", "styleNotes", v)} /></td>}
-                {visible("notes") && <td><EditableCell value={item.quickNotes} placeholder="—" onSave={v => actions.updateReelDna(item.id, { quickNotes: v || null })} /></td>}
-                {visible("status") && (
-                  <td>
-                    <select className="rd-cell-status" value={item.status}
-                            onChange={e => actions.updateReelDna(item.id, { status: e.target.value })}>
-                      {STATUSES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-                    </select>
-                  </td>
-                )}
+                {visible("location") && <td className="dna-cell"><EditableCell value={tags.location} placeholder="—" onSave={v => saveLocation(item, v)} /></td>}
+                {visible("music") && <td className="dna-cell"><EditableCell value={tags.music} placeholder="—" onSave={v => saveGeneField(item, "music", "track", v)} /></td>}
+                {visible("font") && <td className="dna-cell"><EditableCell value={tags.font} placeholder="—" onSave={v => saveGeneField(item, "font", "names", v)} /></td>}
+                {visible("sfx") && <td className="dna-cell"><EditableCell value={tags.sfx} placeholder="—" onSave={v => saveGeneField(item, "sfx", "notes", v)} /></td>}
+                {visible("story") && <td className="dna-cell"><EditableCell value={tags.story} placeholder="—" onSave={v => saveGeneField(item, "story", "styleNotes", v)} /></td>}
+                {visible("notes") && <td className="dna-cell"><EditableCell value={item.quickNotes} placeholder="—" onSave={v => actions.updateReelDna(item.id, { quickNotes: v || null })} /></td>}
                 {visible("assets") && <AssetCountCell item={item} onOpen={onOpenAssets} />}
                 {visible("actions") && (
                   <td className="rd-td-act">
                     {onOpenCard && (
                       <button className="rd-row-btn rd-row-btn--open" title="Open the full card to add assets" onClick={() => onOpenCard(item)}>⤢ Card</button>
                     )}
-                    <button className="rd-row-btn rd-row-btn--compare" title="Side-by-side compare with current edit" onClick={() => setCompareItem(item)}>⇔</button>
-                    <button className="rd-row-btn" title="Open the visual DNA breakdown" onClick={() => onView(item)}>DNA</button>
-                    <button className="rd-row-btn" title={hasTimeline ? "Edit timeline" : "Build timeline"} onClick={() => onDeconstruct(item)}>
-                      {hasTimeline ? `▦ ${item.timeline.length}` : "▦"}
-                    </button>
                     {item.reelId ? (
                       <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
                         <span className="rd-row-btn rd-row-btn--linked" title={"In pipeline · " + item.reelId}>▸ {item.reelId}</span>
@@ -1101,7 +1166,7 @@ export function ReelDna({ prefill }) {
   // Full-screen Assets takeover — replaces the page body while open.
   if (assetsItem) {
     return (
-      <div className="reel-dna">
+      <div className="reel-dna dna-wrap">
         <AssetsPageContainer
           item={assetsItem}
           onBack={() => setAssetsId(null)}
@@ -1113,7 +1178,8 @@ export function ReelDna({ prefill }) {
   }
 
   return (
-    <div className="reel-dna">
+    <div className="reel-dna dna-wrap">
+      <style>{SOL_DNA_CSS}</style>
       <div className="page-head">
         <div className="titles">
           <h1>Reel DNA</h1>
@@ -1156,10 +1222,12 @@ export function ReelDna({ prefill }) {
                     open={igReportOpen} onToggle={() => setIgReportOpen(o => !o)} />
 
       <div className="rd-body">
+        <div className="dna-capture-panel">
         <Card title="Capture a reel" defaultOpen={true}
               footLeft="Paste a link, pick the genes you care about, add a note.">
           <CaptureForm prefill={prefill} onCapture={onCapture} />
         </Card>
+        </div>
 
         <div className="rd-filterbar">
           <span style={{ flex: 1 }} />

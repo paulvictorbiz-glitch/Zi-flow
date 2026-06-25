@@ -51,58 +51,9 @@ export function PipelineDnaAssets({ cardId }) {
 
   return (
     <>
-      <Card title="From Reel DNA — Thumbnails" defaultOpen={thumbnails.length > 0}>
-        {thumbnails.length === 0 ? (
-          <div className="rd-asset-empty">No thumbnails captured</div>
-        ) : (
-          <div className="rd-asset-thumb-grid">
-            {thumbnails.map(t => (
-              <a
-                key={t.id}
-                className="rd-asset-thumb"
-                href={t.videoUrl || "#"}
-                target="_blank"
-                rel="noreferrer"
-                title={t.title || t.videoUrl || "Thumbnail"}
-              >
-                {t.videoId ? (
-                  <ThumbPreview videoId={t.videoId} alt={t.title || t.videoUrl} />
-                ) : t.thumbnailUrl ? (
-                  <img
-                    className="td-thumb-img"
-                    src={t.thumbnailUrl}
-                    alt={t.title || t.videoUrl || "Thumbnail"}
-                    loading="lazy"
-                  />
-                ) : (
-                  <span className="rd-asset-thumb-stub">no preview</span>
-                )}
-              </a>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card title="From Reel DNA — News" defaultOpen={news.length > 0}>
-        {news.length === 0 ? (
-          <div className="rd-asset-empty">No news captured</div>
-        ) : (
-          <div className="rd-asset-news-list">
-            {news.map(n => (
-              <div className="rd-asset-news" key={n.id}>
-                {n.sourceUrl ? (
-                  <a href={n.sourceUrl} target="_blank" rel="noreferrer">
-                    {n.title || "Untitled"}
-                  </a>
-                ) : (
-                  <span>{n.title || "Untitled"}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
+      {/* Thumbnails + News are now shown (and editable) in the dedicated
+          "Attached Thumbnails" / "Attached News" cards on the Reel Detail left
+          column, so they're no longer duplicated read-only here. */}
       <Card title="From Reel DNA — Notes & Tags" defaultOpen={hasNotes}>
         {!hasNotes ? (
           <div className="rd-asset-empty">No captured notes</div>
