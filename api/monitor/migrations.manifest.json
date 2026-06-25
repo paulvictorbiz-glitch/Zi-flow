@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-25T09:35:40.899Z",
+  "generated": "2026-06-25T13:32:00.099Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -392,6 +392,10 @@
     {
       "version": "0098_reel_dup_group.sql",
       "checksum": "5f0ac30568007ccbcb50ebd3845085e84eb8733c8a9d8f3bca9d70f50c41299d"
+    },
+    {
+      "version": "0100_capcut_install_events.sql",
+      "checksum": "07315bbe3be5698cb1f8d98625022d245bf8bd160c3357acd6b8026d7f50630a"
     }
   ]
 }

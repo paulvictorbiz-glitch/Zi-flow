@@ -3,7 +3,9 @@
    =========================================================== */
 
 import React, { useState, useMemo, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useNow, formatAge } from "../lib/time.jsx";
+import { useAnchoredPosition } from "../lib/use-anchored-position.js";
 import { useWorkflow } from "../store/store.jsx";
 import { useNotifications } from "./notifications.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
@@ -120,9 +122,17 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
   const [showDupePicker, setShowDupePicker] = useState(false);
   const { peopleList } = useRoster();
   const menuRef = useRef(null);
+  const menuBtnRef = useRef(null);
+  // The menu is portaled to <body> so it escapes the grid card's overflow
+  // clamp + sibling-card stacking (memory: portal-escape-overflow-clip).
+  const menuPos = useAnchoredPosition(menuOpen, menuBtnRef, { width: 180, align: "right", gap: 4 });
   useEffect(() => {
     if (!menuOpen) return;
-    const close = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    const close = (e) => {
+      const inMenu = menuRef.current && menuRef.current.contains(e.target);
+      const inBtn = menuBtnRef.current && menuBtnRef.current.contains(e.target);
+      if (!inMenu && !inBtn) setMenuOpen(false);
+    };
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, [menuOpen]);
@@ -193,6 +203,7 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
         {!collapsed && !compact && pillText && <Pill tone={pillTone}>{pillText}</Pill>}
         {!collapsed && showMenu && (
           <button
+            ref={menuBtnRef}
             className="reel-menu-btn"
             onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
             aria-label="Card actions"
@@ -201,8 +212,27 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
             style={compact ? { opacity: 1 } : undefined}
           >⋯</button>
         )}
-        {!collapsed && showMenu && menuOpen && (
-          <div ref={menuRef} className="reel-menu" onClick={e => e.stopPropagation()}>
+        {!collapsed && showMenu && menuOpen && menuPos && createPortal(
+          <div
+            ref={menuRef}
+            className="reel-menu"
+            onClick={e => e.stopPropagation()}
+            /* Portaled to <body>; fixed coords from the kebab rect so it
+               can't be clipped by the card or painted under sibling cards.
+               z-index 85 keeps it above every card (≤80) but below the
+               modal backdrop (90) — so the Rocket.Chat recording-picker
+               modal still covers it cleanly. */
+            style={{
+              position: "fixed",
+              left: menuPos.left,
+              ...(menuPos.top != null ? { top: menuPos.top } : { bottom: menuPos.bottom }),
+              right: "auto",
+              marginTop: 0,
+              maxHeight: menuPos.maxHeight,
+              overflowY: "auto",
+              zIndex: 85,
+            }}
+          >
             {showDupePicker ? (<>
               <div style={{ padding:"5px 10px 3px", fontFamily:"var(--f-mono)", fontSize:10, color:"var(--fg-dim,#888)", textTransform:"uppercase", letterSpacing:".06em" }}>Duplicate for:</div>
               {(peopleList || []).filter(p => !p.archivedAt).map(p => (
@@ -216,7 +246,8 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
               {canDelete && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
               {canCreate && <div className="reel-menu-opt" onClick={() => setShowDupePicker(true)}>Duplicate →</div>}
             </>)}
-          </div>
+          </div>,
+          document.body
         )}
       </div>
       {!collapsed && !compact && reel.note && <div className="note">{reel.note}</div>}

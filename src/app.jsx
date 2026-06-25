@@ -497,15 +497,14 @@ function AppShell() {
     else root.removeAttribute('data-theme');
   }, [solarinMode]);
 
-  /* Default the Solarin theme ON for the owner. Only fires when the owner has
-     never made an explicit choice (localStorage unset) — once they toggle it
-     off, 'false' is persisted and respected. Non-owners are untouched (they
-     stay classic until/unless an owner ships it as the default for everyone). */
+  /* Default the Solarin theme ON for everyone on first visit. Only fires when
+     localStorage is unset — once a user toggles it off, 'false' is persisted
+     and respected on all future loads. */
   useEffect(() => {
-    if (isOwner && localStorage.getItem('fb_solarin_mode') === null) {
+    if (localStorage.getItem('fb_solarin_mode') === null) {
       setSolarinMode(true);
     }
-  }, [isOwner]);
+  }, []);
 
   /* Only the owner may switch perspectives. The avatar in the topbar shows
      the perspective the owner is currently viewing; everyone else sees just
@@ -548,26 +547,24 @@ function AppShell() {
           </div>
         </div>
       )}
-      {isOwner && (
-        <div
-          className="rm-opt"
-          style={{ borderTop: "1px dashed var(--line-hard)", marginTop: 6, paddingTop: 10 }}
-          onClick={() => {
-            const next = !solarinMode;
-            setSolarinMode(next);
-            localStorage.setItem('fb_solarin_mode', String(next));
-            setRoleMenu(false);
-          }}
-        >
-          <span className="avatar-chip" style={{ fontSize: 13 }}>
-            {solarinMode ? '✦' : '◇'}
-          </span>
-          <div>
-            <div className="rm-name">{solarinMode ? 'Exit Pimped Out' : 'Pimped Out Mode'}</div>
-            <div className="rm-role">Toggle Solarin redesign</div>
-          </div>
+      <div
+        className="rm-opt"
+        style={{ borderTop: "1px dashed var(--line-hard)", marginTop: 6, paddingTop: 10 }}
+        onClick={() => {
+          const next = !solarinMode;
+          setSolarinMode(next);
+          localStorage.setItem('fb_solarin_mode', String(next));
+          setRoleMenu(false);
+        }}
+      >
+        <span className="avatar-chip" style={{ fontSize: 13 }}>
+          {solarinMode ? '✦' : '◇'}
+        </span>
+        <div>
+          <div className="rm-name">{solarinMode ? 'Exit Pimped Out' : 'Pimped Out Mode'}</div>
+          <div className="rm-role">Toggle Solarin redesign</div>
         </div>
-      )}
+      </div>
       {isOwner && (
         <div className="rm-opt"
              onClick={() => { setPrefsOpen(true); setRoleMenu(false); }}>

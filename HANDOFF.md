@@ -1,36 +1,38 @@
-# Handoff — last updated 2026-06-25
+# Handoff — last updated 2026-06-25 (session s)
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
-## TL;DR of this session (session q)
-- Implemented the QA-verified **permissions/views remediation Batch 1 + Batch 2** and committed the 5 fully-owned files as `fd88caa` on `feat/capcut-replica-v2`.
-- Resolved the plan's blocking owner decisions: **Reviewer (Leroy) gains Analytics + Inbox only**; Monitor stays owner-only; all other owner-only powers correctly lost; OD-2 reconciliation = owner re-saves Reviewer role in admin post-deploy.
-- **DEPLOYED the full tree to production** (`vercel --prod`, owner-greenlit) → shipped the permissions work AND the long-pending **Solarin redesign** (was "BUILT not deployed"). Now LIVE at www.footagebrain.com.
-- Two of the plan's "pending" items were already done (pipeline lane fix in-tree from session p; My-Work count fix already committed `62050d2`).
+## TL;DR of this session
+- **Planning-only session for a NEW, separate project — "MapForge".** No FootageBrain code, migrations, deploys, or config changed. The FootageBrain app remains exactly at the session-r state (graph view live, 99 migs applied).
+- **MapForge** = an owner-triggered engine: pick a city → scrape Google Maps businesses → auto-build websites for the no/bad-site ones → host live on branded subdomains → digital-first outreach (preview link + optional QR card) → track interest → convert to paid monthly maintenance; dead leads cold-rotate after 30 days.
+- **4 decisions locked:** digital-first outreach · category templates + AI fill · human approval gates · public previews with their branding (default mitigation: noindex + watermark + takedown).
+- **Deliverables:** plan file `C:\Users\Mi\.claude\plans\this-is-a-pure-frolicking-ripple.md`; new Obsidian area `obsidian-vault/MapForge/` (10 linked nodes, linked from the FootageBrain MOC); memory `project_mapforge-plan.md`.
+- **Key conclusions:** the tech is cheap/high-confidence; the real risks are email deliverability + conversion. Multi-tenant Worker+R2 hosting (no project cap) makes storage trivial. Lean (OSS scraper, no/Haiku AI) cuts variable cost to ~$0.03–0.06/site but the **fixed email infra dominates** the all-in. Batch all-in: 100 ≈ $80–150, 500 ≈ $250–400, 1000 ≈ $400–600.
 
 ## Where we left off
-Production is live with permissions Batch 1+2 + the Solarin redesign. The app builds green. The permissions catalog change is in effect, but the Reviewer's Analytics+Inbox grant is **not yet active in the UI** because the stored `app_settings.role_permissions` row still overrides the new defaults (OD-2 step pending).
+MapForge is fully blueprinted (plan + vault + memory) but **has no repo and no code**. FootageBrain itself is untouched this session and stays at session-r: Pipeline ◉ Graph live, all migrations applied (99 · 0 pending), full-tree deploy `dpl_…clt1lspj7…` live.
 
 ## Open blockers
-- None (no errors). One behavioural nuance live: until the owner re-saves the Reviewer role, Leroy has LOST Monitor (maya-bypass removed) but not yet GAINED Analytics/Inbox.
+- **None** for MapForge (planning stage). FootageBrain: none new (Epidemic Music Library remains pre-existing-blocked on owner DevTools calibration).
 
-## Pending (written but not yet live / not yet done)
-- **OD-2 admin re-save** — owner opens Roles & Permissions, re-saves the **Reviewer** role so reviewer.views.analytics/inbox=true flush over stored config. (Owner-gated UI action.)
-- **Reachability verification** under real logins (owner / skilled / variant / Leroy).
-- **Batch 2 spot-checks** in prod (attach clip twice→one row; greenlight→not_started; event-link send-to-pipeline twice→one link).
-- **Batch 3 (RLS delete-hardening, migration 0098)** — NOT written; depends on the owner running the live-DB audit first. Human-gated.
-- The `app.jsx:1024` monitor-gate line + the Solarin diff remain **uncommitted** in the working tree (shipped via the whole-tree build). ⚠️ a `git checkout -- src/app.jsx` would revert the monitor-gate line.
+## Pending (written but not yet live)
+- **MapForge:** nothing built — next step is scaffolding the `mapforge` repo (separate from this one) on owner go-ahead.
+- **Carried over from session r/q (FootageBrain, owner-gated, unchanged):**
+  - **OD-2** — owner must re-save the Reviewer role in Roles & Permissions admin so stored `app_settings.role_permissions` picks up reviewer Analytics+Inbox (until then Leroy lost Monitor but hasn't gained Analytics/Inbox).
+  - Owner visual check of the Pipeline ◉ Graph view.
+  - Batch 3 RLS delete-hardening — write as **`0099_…`** (0098 is now used by reel_dup_group).
+  - Carried: Scout backend redeploy; OpenCut SSO smoke + caddy-bridge persist.
 
 ## Next session — start here
-1. Confirm OD-2 done (Reviewer role re-saved) + run the real-login reachability matrix.
-2. Run the Batch 2 dedup spot-checks in prod.
-3. When ready, do the Batch 3 RLS audit → write `0098_rls_delete_hardening.sql` + scoped applier (human-gated apply).
+1. **If continuing MapForge:** decide repo location + name (`mapforge`), then scaffold Phase 0 (DB schema + multi-tenant Worker + R2 + wildcard DNS proving one site serves). Pick the first test city + category. Register email sending domains early (2–4-week warmup). See `obsidian-vault/MapForge/Roadmap.md`.
+2. **If returning to FootageBrain:** OD-2 admin re-save (Reviewer role) + owner graph visual check.
 
 ## Verification commands (to confirm current state on resume)
 ```
-git log --oneline -3                      # expect fd88caa at/near top
-git status --short                        # Solarin WIP + app.jsx still dirty (expected)
-# Prod: open https://www.footagebrain.com — owner sees Solarin theme; sign in as Leroy and
-# confirm Analytics + Inbox tabs (only AFTER the OD-2 Reviewer-role re-save), no Monitor/Settings.
+# FootageBrain unchanged this session — confirm clean working state:
+cd "c:/Users/Mi/Downloads/ziflow project-final" && git status --short && git log --oneline -3
+# MapForge artifacts exist:
+ls "C:/Users/Mi/.claude/plans/this-is-a-pure-frolicking-ripple.md"
+ls "obsidian-vault/MapForge/"
 ```

@@ -4,6 +4,44 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-25 (session s) — MapForge planning session (NEW separate project — no FootageBrain code change)
+
+**What changed:** Pure planning session for a **brand-new, standalone project** ("MapForge") — unrelated to the FootageBrain codebase. Produced a full blueprint: an owner-triggered engine that scrapes businesses off Google Maps, auto-builds websites for the ones with no/bad site, hosts them live on branded subdomains, does digital-first outreach with a preview link (+ optional QR card), tracks interest, and converts to paid monthly maintenance — with dead leads rotating to cold storage after 30 days. **No FootageBrain code, migrations, deploys, or config changed.**
+
+**Where:** Plan file `C:\Users\Mi\.claude\plans\this-is-a-pure-frolicking-ripple.md`. New Obsidian area `obsidian-vault/MapForge/` (10 nodes: MOC + Pipeline, Architecture, Open Source Bricks, Cost Model, Difficulty and Confidence, Dashboard, Risk and Legal, Build Time and Benchmark, Roadmap), linked from `00 - Index/FootageBrain MOC.md`. Memory `project_mapforge-plan.md`.
+
+**Path we took:** Plan mode + 6 targeted WebSearches to ground 2026 costs (Outscraper/Apify Maps scraping, Cloudflare Pages/Workers/R2, Claude token pricing, EDDM/first-class mail, cold-email conversion benchmarks). Locked 4 decisions via AskUserQuestion (digital-first outreach · category-template+AI-fill builds · human approval gates · public previews with their branding). Two follow-up rounds added: OSS-assembly answer + no-AI/lean cost lane; a premium one-page-animated design tier (forked `mapforge-premium` repo) tagged at the vetting gate; a full observability dashboard; and a build-time estimate benchmarked against this repo's measured throughput.
+
+**What we learned:** (1) **The tech is the cheap, high-confidence part** (80–95%); the real bottlenecks are **email deliverability (~55%)** and **conversion/onboarding (~50%)** — optimize those, not pennies of AI. (2) **Hosting architecture is the key scaling lever:** one multi-tenant Worker + R2 (host-header → slug → static files) has no per-site deploy and no project cap, so storage is a rounding error and "cold rotation" is hygiene, not necessity — vs Cloudflare Pages' ~100-project cap which would force rotation. (3) **Dropping Claude does NOT halve cost** — AI is only ~$0.12 of ~$0.20/site variable and the **fixed email infra ($50–180/mo) is the floor**; the OSS scraper saves more. (4) Measured **FootageBrain = ~6 weeks / ~74k LOC / 154 files / 98 migrations** as the throughput benchmark → MapForge MVP ~2–3 wks, full vision ~6–9 wks, gated by 2–4-week email warmup.
+
+**Status:** Planning complete (blueprint + vault + memory). No code. Awaiting owner go-ahead to scaffold the `mapforge` repo (separate from FootageBrain).
+
+---
+
+## 2026-06-25 (session r) — Pipeline Obsidian graph view (editors ↔ reels ↔ shared content) — SHIPPED LIVE
+
+**What changed:** Added an owner-only **"◉ Graph"** view as a 4th toggle next to List / 2×2 / 3×3 on the Pipeline. It renders a hand-rolled force-directed (Obsidian-style) graph: **editor nodes** (people who own reels, colored per person), **reel nodes** linked to their editor and colored by stage (with a legend), and **content-hub nodes** that cluster ≥2 copies of the same content — so a hub fanning out to N editors reads as "N people on the same piece." Hover-highlights neighbors, drag/pin nodes, scroll-zoom, drag-pan, click a reel → opens its detail.
+
+**Where:** New `src/pages/pipeline-graph.jsx` + `src/pages/pipeline-graph.css`; `src/pages/pipeline.jsx` (import + owner-only toggle + render branch reusing `handleCardClick`); `src/store/store.jsx` (`reelFromDb`/`reelToDb`/`persistUpdateReel` map a new `dup_group_id`; `duplicateReel` back-stamps the source + clone, `createReelForEditors` shares one group id across the fan-out batch). Migration `0098_reel_dup_group.sql` (additive `reels.dup_group_id` TEXT + index). Commit `8298e82` on `feat/capcut-replica-v2`. Deploy `dpl_…clt1lspj7…` (READY, production).
+
+**Path we took:** Plan-mode first (`.claude/plans/obsidian-graph-next-to-starry-knuth.md`) with 3 Explore agents + owner decisions (4th toggle / infer-now-AND-stamp-going-forward / owner-only). Built inline (modest complexity, hand-rolled SVG matches the SpiderChart/TrendChart idiom — no new dep). Reels have **no stored duplicate link** (only a ` (FirstName)` title suffix), so the graph clusters by `dup_group_id` when present, else by the title base (strip trailing `(…)`), and `≥2` members get a hub. `npm run build` gate (green), commit, push, applied 0098 via a **scoped one-off** (not bulk), then full-tree `vercel --prod`.
+
+**What we learned:** (1) `reelToDb` always emits the new column, so `persistCreateReel` would 400 on prod (`column dup_group_id does not exist`) for EVERY reel insert without the migration — the frontend is **coupled** to 0098, so migration-before-deploy was mandatory (my first take that "nothing breaks pre-apply" was wrong). (2) **0098 number collision:** session-q's plan had reserved `0098` for `0098_rls_delete_hardening.sql` (Batch 3 RLS, never written) — that migration must now be **0099**. The migrate tool tracks by full filename (like the existing 0015/0036 dupes) so there's no technical break, just a renumber. (3) Working tree was clean at deploy (only the committed graph feature) — unlike session q which carried the Solarin WIP — so the full-tree deploy shipped exactly the intended diff on top of the already-live session-q state.
+
+**Status:** **Live in production.** Owner can verify: Pipeline → ◉ Graph (owner-only); duplicate a reel to 2+ editors → a content hub links them across editor nodes.
+
+## 2026-06-25 (session r) — Applied the held-back Epidemic Music Library migrations (0092 + 0093)
+
+**What changed:** Applied the two pending music migrations to the shared prod Supabase DB at the owner's explicit request — `0092_music_tracks` (Epidemic track metadata cache + widens the `reel_dna_assets` `asset_type` CHECK to allow `'music'`) and `0093_music_library` (per-user `music_favorites` / `music_playlists` / `music_playlist_tracks`). Migration status is now **99 applied · 0 pending**.
+
+**Where:** Live Supabase DB. Applied via a scoped one-off (`exec_sql` RPC + `schema_migrations` upsert, in filename order), NOT `migrate:apply` — so only these two fired, nothing else swept in.
+
+**Path we took:** Read both files first to confirm they're additive + idempotent (CREATE TABLE IF NOT EXISTS, guarded realtime adds, DROP-then-CREATE policies, cross-table RLS with no self-reference recursion). Since 0098 was already applied, pending was exactly {0092, 0093}; still applied them explicitly via the scoped script rather than relying on `--apply` semantics.
+
+**What we learned:** Applying the migrations creates the **schema only** — the Music Library tab stays gated (LEAN_HIDDEN) and the feature is still **blocked on the Epidemic API calibration** (the private Keycloak token endpoint doesn't resolve). So this unblocked the DB side without activating anything user-facing. The "BLOCKED on calibration" note in memory was about the feature working, not the migrations being unsafe.
+
+**Status:** **Migrations live in prod.** Music Library feature still gated + calibration-blocked (unchanged).
+
 ## 2026-06-25 (session q) — Full-tree production deploy: permissions remediation + Solarin redesign go LIVE
 
 **What changed:** Ran `vercel --prod` shipping the entire working tree to production (www.footagebrain.com). This put the Batch 1+2 permissions/views remediation live AND the long-pending **Solarin redesign** (previously "BUILT not deployed, default-ON for owner") — both now live in prod.

@@ -546,6 +546,162 @@ function EditorUsageCard({ onStats }) {
   );
 }
 
+/* ── CapCut tracker installs (download / run audit) ──────────
+   Owner-only. Surfaces who DOWNLOADED the CapCut tracker and the
+   result of RUNNING it (install.bat self-test + the agent starting),
+   from capcut_install_events (migration 0100). Client-queries the
+   table directly (no new api/* route — the 12-fn Vercel cap is full),
+   like the cards above. Degrades to a "no install activity yet" empty
+   state when the table is absent/empty (0100 may not be applied yet). */
+
+const INSTALLS_WINDOW_DAYS = 14;
+
+function CapCutInstallsCard({ onStats }) {
+  const isOwner = useIsOwner();
+  const [state, setState] = useState({ status: "loading", events: [] });
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!isOwner) return;
+    let cancelled = false;
+    (async () => {
+      const since = new Date(Date.now() - INSTALLS_WINDOW_DAYS * 86400000).toISOString();
+      const { data, error } = await supabase
+        .from("capcut_install_events")
+        .select("id, ts, worker, install_id, event, ok, detail, machine, os, client")
+        .gte("ts", since)
+        .order("ts", { ascending: false })
+        .limit(2000);
+      if (cancelled) return;
+      // Missing table / RLS denial → empty state (never a thrown boot error).
+      if (error) { setState({ status: "empty", events: [] }); return; }
+      setState({ status: "ready", events: data || [] });
+    })();
+    return () => { cancelled = true; };
+  }, [isOwner, tick]);
+
+  useEffect(() => {
+    if (!isOwner) return;
+    const h = setInterval(() => setTick(t => t + 1), 30_000);
+    return () => clearInterval(h);
+  }, [isOwner]);
+
+  const stats = useMemo(() => {
+    const events = state.events;
+    const now = Date.now();
+    const byWorker = new Map();
+    for (const e of events) {
+      const key = e.worker || "unknown";
+      const cur = byWorker.get(key) || {
+        worker: key, downloads: 0, selftestPass: 0, selftestFail: 0,
+        agentStarts: 0, last: 0, machines: new Set(), lastSelftest: null,
+      };
+      if (e.event === "download") cur.downloads += 1;
+      else if (e.event === "selftest") {
+        if (e.ok) cur.selftestPass += 1; else cur.selftestFail += 1;
+        if (!cur.lastSelftest) cur.lastSelftest = e;   // events are ts-desc → first = latest
+      } else if (e.event === "agent_start") cur.agentStarts += 1;
+      if (e.machine) cur.machines.add(e.machine);
+      cur.last = Math.max(cur.last, new Date(e.ts).getTime());
+      byWorker.set(key, cur);
+    }
+    const workers = [...byWorker.values()].sort((a, b) => b.last - a.last);
+    const recentCount = events.filter(e => now - new Date(e.ts).getTime() < 86400000).length;
+    return { workers, recentCount, total: events.length, recent: events.slice(0, 12) };
+  }, [state.events]);
+
+  useEffect(() => { if (onStats) onStats(stats); }, [onStats, stats]);
+
+  if (!isOwner) return null;
+
+  const empty = state.status === "empty" || (state.status === "ready" && stats.total === 0);
+  const evtLabel = { download: "⬇ download", selftest: "▶ self-test", agent_start: "● agent start" };
+
+  return (
+    <Card
+      title="CapCut tracker installs"
+      right={
+        <span className="mono dim">
+          last {INSTALLS_WINDOW_DAYS}d ·{" "}
+          <button
+            type="button"
+            className="mon-link-btn"
+            onClick={() => setTick(t => t + 1)}
+            style={{ background: "none", border: 0, color: "inherit", cursor: "pointer", padding: 0, font: "inherit", textDecoration: "underline" }}
+            title="Refresh now"
+          >
+            refresh
+          </button>
+        </span>
+      }
+      footLeft="capcut_install_events (client query)"
+    >
+      <div className="mon-section-body">
+        <div className="mon-stat-row" style={{ marginBottom: 8 }}>
+          <span className="mon-stat-k">activity (24h)</span>
+          <span className={`mon-stat-v${stats.recentCount ? " mon-stat-v--ok" : ""}`}>
+            {stats.recentCount > 0 ? `${stats.recentCount} event${stats.recentCount === 1 ? "" : "s"}` : "none"}
+          </span>
+        </div>
+
+        {state.status === "loading" && (
+          <div className="mono dim" style={{ padding: "4px 0" }}>loading installs…</div>
+        )}
+
+        {state.status !== "loading" && empty && (
+          <div className="mono dim" style={{ padding: "4px 0" }}>
+            no install activity yet — someone must download &amp; run the tracker
+            {" "}(migration 0100 / capcut_install_events may not be live).
+          </div>
+        )}
+
+        {state.status !== "loading" && !empty && (
+          <>
+            {/* Per-person rollup: downloads vs. successful runs. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {stats.workers.slice(0, 8).map((w, i) => {
+                const ran = w.selftestPass > 0 || w.agentStarts > 0;
+                const lastSelfOk = w.lastSelftest ? w.lastSelftest.ok : null;
+                return (
+                  <div key={i} className="mon-stat-row">
+                    <span className="mon-stat-k">
+                      {ran ? "🟢 " : "⚪ "}{w.worker}
+                    </span>
+                    <span className="mon-stat-v mono dim" style={{ fontSize: 11 }}>
+                      ⬇{w.downloads} · self-test {w.selftestPass}✓{w.selftestFail ? `/${w.selftestFail}✗` : ""}
+                      {" "}· starts {w.agentStarts}
+                      {lastSelfOk === false ? " · ⚠ last run FAILED" : ""}
+                      {" "}· {fmtAgo(new Date(w.last).toISOString())}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Raw recent-events log so the owner can watch attempts come in. */}
+            <div style={{ marginTop: 10 }}>
+              <div className="mono dim" style={{ marginBottom: 4 }}>recent events</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {stats.recent.map((e) => (
+                  <div key={e.id} className="mono dim" style={{ fontSize: 10.5, display: "flex", gap: 8 }}>
+                    <span style={{ minWidth: 64 }}>{fmtAgo(e.ts)}</span>
+                    <span style={{ minWidth: 70 }}>{e.worker}</span>
+                    <span style={{ minWidth: 96 }}>{evtLabel[e.event] || e.event}</span>
+                    <span style={{ opacity: 0.8 }}>
+                      {e.event === "selftest" ? (e.ok ? "PASS" : "FAIL") : ""}
+                      {e.machine ? ` ${e.machine}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // view = the permission-catalog key each sub-view is gated by (preserved
 // verbatim from when these were top-level tabs, so gating never changes).
 const SUBVIEWS = [
@@ -567,7 +723,8 @@ export function MonitorHub({ canView }) {
   // Real derived stats lifted from the two owner data cards (no new queries).
   const [perfStats, setPerfStats] = useState(null);
   const [usageStats, setUsageStats] = useState(null);
-  const isOwner = useIsOwner();   // gate the two kept owner cards
+  const [installStats, setInstallStats] = useState(null);
+  const isOwner = useIsOwner();   // gate the kept owner cards
 
   const [mode, setMode] = useState(() => localStorage.getItem(MONITOR_MODE_KEY) || "infra");
 
@@ -621,6 +778,14 @@ export function MonitorHub({ canView }) {
             <span className="mon-panel-title">Editor Usage</span>
           </div>
           <EditorUsageCard onStats={setUsageStats} />
+        </div>
+        {/* panel 5: capcut tracker installs */}
+        <div className="mon-panel">
+          <div className="mon-panel-head">
+            <span className={`mon-status-dot ${installStats?.recentCount ? "ok" : "alert"}`} />
+            <span className="mon-panel-title">CapCut Tracker Installs</span>
+          </div>
+          <CapCutInstallsCard onStats={setInstallStats} />
         </div>
       </div>
       )}

@@ -27,7 +27,7 @@ import { supabase } from "../lib/supabase-client.js";
 import { TeamChatRecentCard } from "../components/team-chat-recent-card.jsx";
 import { startOfDayLocal, analyzeDay, fmtDuration, ONLINE_WINDOW_MS, loadDayRows } from "../lib/capcut-utils.js";
 import { getConnections, PLATFORMS } from "../lib/social-client.js";
-import JSZip from "jszip";
+import { downloadCapcutTracker } from "../lib/capcut-agent-download.js";
 import { TrainingProgressWidget } from "../components/TrainingProgressWidget.jsx";
 import "./training.css";
 import GamifyPanel from "../components/GamifyPanel.jsx";
@@ -70,52 +70,6 @@ function whoseWork(role, person, personId) {
   return ROLES[role]?.person || null;
 }
 
-async function downloadAgentFiles(personId) {
-  const zip = new JSZip();
-
-  // Per-user config — bakes the worker id in
-  zip.file("capcut_config.json", JSON.stringify({ WORKER: personId, POLL_SECONDS: 15 }, null, 2));
-
-  // Install script — registers a logon scheduled task and starts the agent
-  const bat = [
-    "@echo off",
-    "REM CapCut activity tracker — one-time install. Run from the folder you unzipped into.",
-    "setlocal",
-    "set TASK=CapCutActivityAgent",
-    "set EXE=%~dp0capcut_agent.exe",
-    "",
-    "if not exist \"%EXE%\" (",
-    "  echo ERROR: capcut_agent.exe not found in this folder.",
-    "  pause & exit /b 1",
-    ")",
-    "",
-    "schtasks /Create /TN \"%TASK%\" /TR \"\\\"%EXE%\\\"\" /SC ONLOGON /RL LIMITED /F",
-    "if errorlevel 1 ( echo Failed to create scheduled task. & pause & exit /b 1 )",
-    "",
-    "echo Installed. Starting agent now...",
-    "schtasks /Run /TN \"%TASK%\"",
-    "echo Done. The agent is running and will auto-start at every logon.",
-    "pause",
-  ].join("\r\n");
-  zip.file("install.bat", bat);
-
-  // Fetch the shared agent binary from the public folder
-  try {
-    const resp = await fetch("/capcut-agent/capcut_agent.exe");
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const exeBytes = await resp.arrayBuffer();
-    zip.file("capcut_agent.exe", exeBytes);
-  } catch (e) {
-    alert("Could not fetch capcut_agent.exe — check that it's deployed under /capcut-agent/.\n\n" + e.message);
-    return;
-  }
-
-  const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = `CapCutTracker-${personId}.zip`; a.click();
-  URL.revokeObjectURL(url);
-}
 
 /* Solarin-theme styling for My Work. All rules are scoped to the
    [data-theme="solarin"] ancestor so they are inert when the theme is off —
@@ -818,7 +772,7 @@ function SkilledWork({ me, onOpen, role }) {
               🎮 {gamifyOpen ? "Hide" : "Show"} progress
             </DPill>
           )}
-          <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
+          <DPill onClick={() => downloadCapcutTracker(me)} title="Download CapCut tracker zip — unzip and run install.bat">
             ↓ CapCut tracker setup
           </DPill>
         </div>
@@ -907,7 +861,7 @@ function VariantWork({ me, onOpen }) {
           <div className="sub">Reels assigned to you.</div>
         </div>
         <div className="actions">
-          <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
+          <DPill onClick={() => downloadCapcutTracker(me)} title="Download CapCut tracker zip — unzip and run install.bat">
             ↓ CapCut tracker setup
           </DPill>
         </div>
@@ -1680,7 +1634,7 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
             ▦ 3D Space
           </DPill>
           {me && (
-            <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
+            <DPill onClick={() => downloadCapcutTracker(me)} title="Download CapCut tracker zip — unzip and run install.bat">
               ↓ CapCut tracker setup
             </DPill>
           )}
@@ -1799,7 +1753,7 @@ function ReviewQueueWork({ me, onOpen }) {
         </div>
         <div className="actions">
           {me && (
-            <DPill onClick={() => downloadAgentFiles(me)} title="Download CapCut tracker zip — unzip and run install.bat">
+            <DPill onClick={() => downloadCapcutTracker(me)} title="Download CapCut tracker zip — unzip and run install.bat">
               ↓ CapCut tracker setup
             </DPill>
           )}

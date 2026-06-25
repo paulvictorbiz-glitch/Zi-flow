@@ -25,18 +25,23 @@
   font-size: 10.5px; letter-spacing: .04em;
 }
 
-/* ── Popover ── */
+/* ── Popover ──
+   Rendered through a portal to <body> with position:fixed + inline coords
+   (see AssetAttachPicker / useAnchoredPosition). The absolute fallback
+   below only applies if rendered un-portaled. z-index 85 sits above every
+   pipeline/detail card (≤80) but below the modal backdrop (90) so the
+   Rocket.Chat recording-picker modal still covers it. */
 .aap-pop {
-  position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 85;
   width: 280px; max-width: 78vw;
   display: flex; flex-direction: column; gap: 8px;
+  overflow: hidden;
   padding: 10px;
   background: var(--bg-1, #0e131c);
   border: 1px solid var(--line-hard);
   border-radius: 8px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
 }
-@media (max-width: 480px) { .aap-pop { left: auto; right: 0; } }
 
 .aap-pop-head {
   font-family: var(--f-mono); font-size: 10px; font-weight: 700;
@@ -55,7 +60,7 @@
 
 .aap-list {
   display: flex; flex-direction: column;
-  max-height: 240px; overflow-y: auto;
+  max-height: 240px; min-height: 0; overflow-y: auto;
   border: 1px solid var(--line-soft); border-radius: 6px;
 }
 

@@ -9,11 +9,15 @@
    shown checked + disabled so they can't be double-picked (attach is
    upsert-deduped anyway, so this is purely a UX nicety).
 
-   Self-contained trigger + popover (no portal) — positioned absolutely
-   inside a position:relative wrapper. Closes on outside-click and Esc.
+   The popover is PORTALED to <body> with viewport-fixed coords so it
+   escapes the detail column's scroll/overflow clipping and can't be
+   painted under the cards stacked below it (memory:
+   portal-escape-overflow-clip). Closes on outside-click and Esc.
    ========================================================= */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useAnchoredPosition } from "../lib/use-anchored-position.js";
 import "./asset-attach-picker.css";
 
 export function AssetAttachPicker({
@@ -29,14 +33,23 @@ export function AssetAttachPicker({
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(() => new Set());
   const rootRef = useRef(null);
+  const popRef = useRef(null);
+
+  // Portaled popover position, anchored to the trigger and clamped to the
+  // viewport (flips above when there's no room below).
+  const pos = useAnchoredPosition(open, rootRef, { width: 280 });
 
   const attached = attachedIds instanceof Set ? attachedIds : new Set();
 
-  // Outside-click + Esc close — only while open.
+  // Outside-click + Esc close — only while open. The popover lives in a
+  // portal (outside rootRef in the DOM) so a click inside it must be
+  // recognised via popRef, not treated as an outside click.
   useEffect(() => {
     if (!open) return;
     const onDown = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) close();
+      const inRoot = rootRef.current && rootRef.current.contains(e.target);
+      const inPop = popRef.current && popRef.current.contains(e.target);
+      if (!inRoot && !inPop) close();
     };
     const onKey = (e) => { if (e.key === "Escape") close(); };
     document.addEventListener("mousedown", onDown);
@@ -94,8 +107,19 @@ export function AssetAttachPicker({
         {buttonLabel}
       </button>
 
-      {open && (
-        <div className="aap-pop" role="dialog">
+      {open && pos && createPortal(
+        <div
+          className="aap-pop"
+          role="dialog"
+          ref={popRef}
+          style={{
+            position: "fixed",
+            left: pos.left,
+            ...(pos.top != null ? { top: pos.top } : { bottom: pos.bottom }),
+            width: pos.width,
+            maxHeight: pos.maxHeight,
+          }}
+        >
           <div className="aap-pop-head">{title || "Attach"}</div>
 
           <input
@@ -150,7 +174,8 @@ export function AssetAttachPicker({
               Attach {selected.size > 0 ? selected.size : ""} selected
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </span>
   );
