@@ -36,11 +36,12 @@ function reelFromDb(row) {
   const { blocker_role, prev_owner, variant_progress, fb_query,
           attach_url, due_at, stage_entered_at, archived_at,
           display_number, status_color, scheduled_post_date,
-          gamify_difficulty,
+          gamify_difficulty, dup_group_id,
           created_at, updated_at, stage, ...rest } = row;
   return {
     ...rest,
     stage: normalizeStage(stage),
+    dupGroupId: dup_group_id ?? undefined,
     blockerRole: blocker_role ?? undefined,
     prevOwner: prev_owner ?? undefined,
     variantProgress: variant_progress ?? undefined,
@@ -66,7 +67,7 @@ function reelToDb(reel) {
   // foreign (e.g. ephemeral _idx) is dropped.
   const { blockerRole, prevOwner, variantProgress, fbQuery, attachUrl,
           dueAt, stageEnteredAt, displayNumber, statusColor, scheduledPostDate,
-          gamifyDifficulty,
+          gamifyDifficulty, dupGroupId,
           lane, owner, stage, state, age, due, fb, refs,
           blocker, next, downstream, grouping, note, foot,
           tone, links, status, logline, script, vo, audio, inspo, plan,
@@ -74,6 +75,7 @@ function reelToDb(reel) {
   const out = { id, title, stage, owner, lane, state, age, due,
     fb, refs, blocker, next, downstream, grouping, note, foot,
     tone, links, status, logline, script, vo, audio, inspo, plan, detail,
+    dup_group_id: dupGroupId ?? null,
     series: series ?? null,
     skill_tags: skill_tags ?? [],
     gamify_difficulty: gamifyDifficulty ?? {},
@@ -1689,6 +1691,7 @@ async function persistUpdateReel(state, id, patch) {
   if ("stageEnteredAt" in patch) { dbPatch.stage_entered_at = patch.stageEnteredAt; delete dbPatch.stageEnteredAt; }
   if ("archivedAt" in patch)  { dbPatch.archived_at = patch.archivedAt; delete dbPatch.archivedAt; }
   if ("parentId" in patch)    { dbPatch.parent_id = patch.parentId; delete dbPatch.parentId; }
+  if ("dupGroupId" in patch)  { dbPatch.dup_group_id = patch.dupGroupId; delete dbPatch.dupGroupId; }
   if ("gamifyDifficulty" in patch) { dbPatch.gamify_difficulty = patch.gamifyDifficulty; delete dbPatch.gamifyDifficulty; }
   // Planable final-video reference (mediaPath/mediaTarget) has no reels column —
   // fold it into the existing `detail` jsonb (read-modify-write off the current
@@ -3086,6 +3089,11 @@ function WorkflowProvider({ children }) {
           ? { ...JSON.parse(JSON.stringify(src.detail)), comments: [] }
           : src.detail;
         const nameSuffix = targetFirstName ? ` (${targetFirstName})` : " (copy)";
+        // Link original + copies under one content group so the Pipeline graph
+        // clusters them exactly (no title-inference needed). Reuse the source's
+        // group if it already belongs to one; otherwise mint one and back-stamp
+        // the source so the original joins its own hub.
+        const groupId = src.dupGroupId || crypto.randomUUID();
         const clone = {
           ...src,
           id: newId,
@@ -3093,11 +3101,16 @@ function WorkflowProvider({ children }) {
           lane:  targetPersonId || src.lane,
           stage: targetPersonId ? "not_started" : src.stage,
           detail: clonedDetail,
+          dupGroupId: groupId,
           board_order: undefined,
           displayNumber: undefined,
           archivedAt: null,
           stageEnteredAt: new Date().toISOString(),
         };
+        if (!src.dupGroupId) {
+          wrap({ type: "UPDATE_REEL", id: src.id, patch: { dupGroupId: groupId } },
+            (s) => persistUpdateReel(s, src.id, { dupGroupId: groupId }));
+        }
         const footageClones = current.attachedFootage
           .filter(f => f.reel_id === id)
           .map(f => ({
@@ -3294,6 +3307,9 @@ function WorkflowProvider({ children }) {
         const baseNum = nums.length ? Math.max(...nums) + 1 : 0;
 
         const now = new Date().toISOString();
+        // One content group id for the whole fan-out batch so the Pipeline graph
+        // clusters every editor's copy under a single shared-content hub.
+        const groupId = crypto.randomUUID();
         const groups = editors.map((editor, i) => {
           const newId = "REEL-" + String(baseNum + i).padStart(3, "0");
           const firstName = editor.firstName || editor.id;
@@ -3304,6 +3320,7 @@ function WorkflowProvider({ children }) {
             owner: editor.id,
             lane: editor.id,
             stage: "not_started",
+            dupGroupId: groupId,
             board_order: undefined,
             displayNumber: undefined,
             stageEnteredAt: now,

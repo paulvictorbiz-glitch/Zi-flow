@@ -4,6 +4,7 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { DPill, ReelCard } from "../components/components.jsx";
+import PipelineGraph from "./pipeline-graph.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
@@ -433,10 +434,19 @@ function Pipeline({ onOpen }) {
               {v === "list" ? "≡ List" : v === "2x2" ? "⊞ 2×2" : "⊟ 3×3"}
             </button>
           ))}
+          {/* Owner-only Obsidian-style graph of editors ↔ reels ↔ shared content. */}
+          {isOwner && (
+            <button className={cardView === "graph" ? "is-active" : ""} onClick={() => setCardView("graph")}>
+              ◉ Graph
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Board grid */}
+      {isOwner && cardView === "graph" ? (
+        <PipelineGraph reels={items} peopleList={peopleList} onOpenReel={(r) => handleCardClick(r, {})} />
+      ) : (
+      /* Board grid */
       <div className="board pl-board" style={{
         gridTemplateColumns: `200px repeat(${visibleStages.length}, minmax(0, 1fr))`,
       }}>
@@ -579,6 +589,7 @@ function Pipeline({ onOpen }) {
           );
         })}
       </div>
+      )}
 
       {/* Lane right-click context menu */}
       {laneCtxMenu && (
