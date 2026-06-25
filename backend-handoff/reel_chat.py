@@ -751,3 +751,247 @@ async def dashboard_recent_messages(request: Request, since: str = "", limit: in
         if len(messages) >= limit:
             break
     return {"messages": messages, "server_time": _now_iso()}
+
+
+# ── Attach a Rocket.Chat screen recording to a reel's "Current reel state" ─────
+# Editors post screen recordings of their cuts into channels. These two routes
+# let the dashboard (1) list a channel's recent VIDEO uploads and (2) re-host a
+# chosen one into the private Supabase "reel-videos" bucket, then point the
+# reel's media_path/media_target at it — the SAME contract the Final-video
+# uploader and the Planable push already use. JWT-gated, same /dashboard/*
+# prefix → reachable at /fb/api/rocketchat/dashboard/* with no edge change.
+
+_VIDEO_EXTS = {"mp4", "mov", "webm", "m4v", "mkv"}
+
+
+def _is_video_file(f: dict) -> bool:
+    mime = (f.get("type") or "").lower()
+    if mime.startswith("video/"):
+        return True
+    name = (f.get("name") or "").lower()
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    return ext in _VIDEO_EXTS
+
+
+@router.get("/dashboard/channel-files")
+async def dashboard_channel_files(request: Request, channel: str = "",
+                                  private: int = 0, limit: int = 20):
+    """Recent VIDEO uploads in a channel, for the "Pick from Chat" picker. JWT-gated.
+
+    Query: `channel` (name), `private` (0|1 → channels.files vs groups.files),
+    `limit`. Returns { files: [{id, name, mime, size_bytes, ts, uploader}] },
+    newest-first. Degrades to { files: [] } on any error so the picker never
+    breaks. Uses the admin token (already in env) — no new env, no migration.
+    """
+    user = await _verify_supabase_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    channel = (channel or "").strip()
+    if not channel:
+        return {"files": []}
+    try:
+        limit = max(1, min(int(limit or 20), 50))
+    except Exception:
+        limit = 20
+    ep = "groups.files" if private else "channels.files"
+    out: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_rc_base()}/api/v1/{ep}",
+                headers=_rc_headers(),
+                # RC files endpoints accept roomName; sort newest-first.
+                params={"roomName": channel, "count": 100,
+                        "sort": '{"uploadedAt":-1}'},
+            )
+            if r.status_code != 200:
+                return {"files": []}
+            for f in (r.json().get("files") or []):
+                if not _is_video_file(f):
+                    continue
+                u = f.get("user") or {}
+                out.append({
+                    "id": f.get("_id") or "",
+                    "name": f.get("name") or "recording",
+                    "mime": f.get("type") or "",
+                    "size_bytes": f.get("size") or 0,
+                    "ts": f.get("uploadedAt") or f.get("_updatedAt") or "",
+                    "uploader": u.get("name") or u.get("username") or "",
+                })
+                if len(out) >= limit:
+                    break
+    except Exception:
+        return {"files": []}
+    return {"files": out}
+
+
+async def _download_rc_file(client: httpx.AsyncClient, file_id: str,
+                            name: str) -> bytes | None:
+    """Download a Rocket.Chat upload via the admin creds.
+
+    The /file-upload/ route historically wants the rc_token/rc_uid COOKIES
+    rather than the X-Auth-Token/X-User-Id headers — try headers first, then
+    fall back to cookies built from the same admin creds. Returns bytes or None.
+    """
+    url = f"{_rc_base()}/file-upload/{file_id}/{name}"
+    tok = os.environ.get("ROCKETCHAT_ADMIN_TOKEN", "")
+    uid = os.environ.get("ROCKETCHAT_ADMIN_USER_ID", "")
+    # Attempt 1: auth headers.
+    try:
+        r = await client.get(url, headers={"X-Auth-Token": tok, "X-User-Id": uid},
+                             follow_redirects=True)
+        if r.status_code == 200 and r.content:
+            return r.content
+    except Exception:
+        pass
+    # Attempt 2: session cookies (older RC file-serving middleware).
+    try:
+        r = await client.get(url, cookies={"rc_token": tok, "rc_uid": uid},
+                             follow_redirects=True)
+        if r.status_code == 200 and r.content:
+            return r.content
+    except Exception:
+        pass
+    return None
+
+
+async def _upload_to_reel_videos(client: httpx.AsyncClient, path: str,
+                                 data: bytes, mime: str) -> bool:
+    """Upload bytes to the private reel-videos bucket via the service role."""
+    base = _sb_base()
+    if not base or not _sb_key():
+        return False
+    try:
+        r = await client.post(
+            f"{base}/storage/v1/object/reel-videos/{path}",
+            headers={
+                "apikey": _sb_key(),
+                "Authorization": f"Bearer {_sb_key()}",
+                "Content-Type": mime or "application/octet-stream",
+                "x-upsert": "false",
+            },
+            content=data,
+        )
+        return r.status_code in (200, 201)
+    except Exception:
+        return False
+
+
+async def _set_reel_media(reel_id: str, media_path: str) -> bool:
+    """PATCH reels.media_path/media_target for `reel_id`. Best-effort."""
+    base = _sb_base()
+    if not base or not _sb_key():
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            w = await c.patch(
+                f"{base}/rest/v1/reels",
+                headers={**_sb_headers(), "Prefer": "return=minimal"},
+                params={"id": f"eq.{reel_id}"},
+                json={"media_path": media_path, "media_target": "supabase"},
+            )
+            return w.status_code in (200, 204)
+    except Exception:
+        return False
+
+
+def _video_codec(path: str) -> str:
+    """Probe the first video stream's codec (lowercase), or '' on failure."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", path],
+            capture_output=True, text=True, timeout=30)
+        return (r.stdout or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _to_web_mp4(data: bytes) -> tuple[bytes, str]:
+    """Return (bytes, mime) any browser can play WITH audio.
+
+    Chat screen recordings are often HEVC/H.265 (iPhone/Mac default), which most
+    browsers play video-only / silent. Transcode those to H.264+AAC; H.264
+    sources are just faststart-remuxed (audio normalized to AAC). Falls back to
+    the original bytes if ffmpeg is missing or fails, so attach never hard-fails.
+    """
+    import os as _os
+    import shutil
+    import subprocess
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="rc-rehost-")
+    src = _os.path.join(tmp, "in")
+    dst = _os.path.join(tmp, "out.mp4")
+    try:
+        with open(src, "wb") as f:
+            f.write(data)
+        codec = _video_codec(src)
+        if codec == "h264":
+            cmd = ["ffmpeg", "-y", "-i", src, "-c:v", "copy",
+                   "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", dst]
+        else:
+            cmd = ["ffmpeg", "-y", "-i", src, "-c:v", "libx264",
+                   "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", dst]
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
+        if r.returncode == 0 and _os.path.exists(dst) and _os.path.getsize(dst) > 0:
+            with open(dst, "rb") as f:
+                return f.read(), "video/mp4"
+    except Exception:
+        pass
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return data, "video/mp4"
+
+
+@router.post("/dashboard/attach-recording")
+async def dashboard_attach_recording(request: Request):
+    """Re-host a Rocket.Chat video into reel-videos + point a reel at it. JWT-gated.
+
+    Body: { reel_id, file_id, name, channel, private }. Downloads the RC upload
+    with admin creds, uploads it to the private reel-videos bucket, then sets the
+    reel's media_path/media_target (the frozen contract the Planable push reads).
+    Returns { ok, media_path } or { ok:false, error } — never throws past here.
+    """
+    user = await _verify_supabase_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reel_id = (body.get("reel_id") or "").strip()
+    file_id = (body.get("file_id") or "").strip()
+    name = (body.get("name") or "recording.mp4").strip() or "recording.mp4"
+    channel = (body.get("channel") or "").strip()
+    if not reel_id or not file_id:
+        return {"ok": False, "error": "reel_id and file_id required"}
+
+    import time
+    import secrets
+    import asyncio
+    # Always re-host as a web-playable .mp4 (we transcode below).
+    path = f"{reel_id}/{int(time.time() * 1000)}-chat-{secrets.token_hex(4)}.mp4"
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            data = await _download_rc_file(c, file_id, name)
+            if not data:
+                return {"ok": False, "error": "Could not download the file from chat."}
+            # Normalize to H.264+AAC so every browser plays it WITH audio (HEVC
+            # screen recordings otherwise play silent). Runs off the event loop.
+            data, mime = await asyncio.to_thread(_to_web_mp4, data)
+            ok = await _upload_to_reel_videos(c, path, data, mime)
+            if not ok:
+                return {"ok": False, "error": "Re-host to storage failed."}
+    except Exception as e:
+        return {"ok": False, "error": f"Attach failed: {e}"}
+
+    await _set_reel_media(reel_id, path)
+    # Best-effort breadcrumb on the reel's comment feed.
+    if channel:
+        await _save_feedback_comment(
+            reel_id, f"📎 Attached a screen recording from #{channel}",
+            author=user["name"])
+    return {"ok": True, "media_path": path}

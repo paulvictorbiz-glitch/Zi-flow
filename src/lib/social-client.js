@@ -939,6 +939,55 @@ export async function fetchRecentTeamMessages({ since = "", limit = 40 } = {}) {
   }
 }
 
+/* ── Chat screen recordings → "Current reel state" ──────────────────────────
+   List a channel's recent VIDEO uploads, and re-host a chosen one into the
+   private reel-videos bucket (the backend points the reel's media_path at it).
+   Auth is the caller's Supabase JWT; both degrade gracefully (empty list /
+   { ok:false }) when the endpoints aren't deployed yet. */
+export async function fetchChannelFiles({ channel, private: isPrivate = false, limit = 20 } = {}) {
+  if (!channel) return { files: [] };
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return { files: [] };
+    const qs = new URLSearchParams({
+      channel,
+      private: isPrivate ? "1" : "0",
+      limit: String(limit),
+    });
+    const res = await fetch(`/fb/api/rocketchat/dashboard/channel-files?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { files: [] };
+    const j = await res.json().catch(() => ({}));
+    return { files: Array.isArray(j.files) ? j.files : [] };
+  } catch (_) {
+    return { files: [] };
+  }
+}
+
+export async function attachChatRecording({ reelId, fileId, name, channel, private: isPrivate = false }) {
+  if (!reelId || !fileId) return { ok: false, error: "No reel or file selected." };
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return { ok: false, error: "Not signed in." };
+    const res = await fetch("/fb/api/rocketchat/dashboard/attach-recording", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        reel_id: reelId, file_id: fileId, name, channel,
+        private: isPrivate ? 1 : 0,
+      }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) return { ok: false, error: j.error || "Attach failed." };
+    return { ok: true, media_path: j.media_path };
+  } catch (_) {
+    return { ok: false, error: "Network error." };
+  }
+}
+
 /* ── util ───────────────────────────────────────────────────────────────── */
 function relTime(mins) {
   if (mins < 1) return "now";

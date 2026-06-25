@@ -22,6 +22,7 @@ import { FootageBrainSearch } from "../components/FootageBrainSearch.jsx";
 import { getFootageFileMetadata, driveDownloadUrl } from "../lib/footage-brain-client.js";
 import { AttachedFootageList } from "../components/AttachedFootageList.jsx";
 import { MusicPickerModal } from "../components/MusicPickerModal.jsx";
+import { ChatRecordingPicker } from "../components/ChatRecordingPicker.jsx";
 import { resolveReelDnaAssets } from "../store/store.jsx";
 import { useLocations } from "../lib/locations-data.jsx";
 import { PipelineDnaAssets } from "../components/pipeline-dna-assets.jsx";
@@ -830,17 +831,6 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
      draft. Stored on reel.attachUrl (the existing column). Prompt to set,
      click to open if already set. */
   const reelStateUrl = stored?.attachUrl || "";
-  const editReelStateUrl = () => {
-    const next = window.prompt(
-      "Paste the URL to this reel's current state (Frame.io draft, Drive folder, etc.)",
-      reelStateUrl
-    );
-    if (next === null) return;
-    const trimmed = next.trim();
-    if (stored && stored.attachUrl !== trimmed) {
-      actions.updateReel(current.id, { attachUrl: trimmed });
-    }
-  };
 
   /* ── OWNER-ONLY "Final video" MP4 upload ─────────────────────────────────
      ADDITIVE to the attachUrl text field above. On file pick we ask the
@@ -860,6 +850,11 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   // null | 'uploading' | 'done' | 'error'  (mirrors the locations 'uploading' pattern)
   const [videoUploadState, setVideoUploadState] = useState(null);
   const [videoUploadMsg, setVideoUploadMsg] = useState("");
+  // "Pick from Chat" — attach an editor's screen recording from Rocket.Chat.
+  const [chatPickerOpen, setChatPickerOpen] = useState(false);
+  // Signed URL for the hosted "Current reel state" recording, for the inline
+  // embed below the inspiration reel (reel-videos is private → must be signed).
+  const [currentStateVideoUrl, setCurrentStateVideoUrl] = useState("");
 
   const handleFinalVideoUpload = async (e) => {
     const file = (e.target.files || [])[0];
@@ -940,6 +935,42 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
     setVideoUploadState(null);
     setVideoUploadMsg("");
   };
+
+  /* Open the "Current reel state". A hosted recording (mediaPath in the private
+     reel-videos bucket) takes precedence — mint a short-lived signed URL so it
+     plays — and we fall back to the manual attachUrl link. */
+  const openCurrentReelState = async () => {
+    if (mediaPath) {
+      try {
+        const { data, error } = await supabase.storage
+          .from("reel-videos")
+          .createSignedUrl(mediaPath, 3600);
+        if (!error && data?.signedUrl) {
+          window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+          return;
+        }
+      } catch (_) { /* fall through to the manual link */ }
+    }
+    if (reelStateUrl) window.open(reelStateUrl, "_blank", "noopener,noreferrer");
+  };
+
+  /* Mint a signed URL for the hosted recording so it can be embedded inline.
+     Refreshes whenever the attached recording (mediaPath) changes. */
+  useEffect(() => {
+    let cancelled = false;
+    if (!mediaPath) { setCurrentStateVideoUrl(""); return; }
+    (async () => {
+      try {
+        const { data, error } = await supabase.storage
+          .from("reel-videos")
+          .createSignedUrl(mediaPath, 3600);
+        if (!cancelled && !error && data?.signedUrl) {
+          setCurrentStateVideoUrl(data.signedUrl);
+        }
+      } catch (_) { /* leave empty — the ↗ pill still opens it on demand */ }
+    })();
+    return () => { cancelled = true; };
+  }, [mediaPath]);
 
   /* Reference links (audio + inspiration). Always editable post-create:
      clicking opens the link if set, or prompts to add one when empty.
@@ -1109,14 +1140,16 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           </div>
         </div>
         <div className="actions" style={{ alignItems: "center", gap: 8 }}>
-          {reelStateUrl ? (
-            <DPill onClick={() => window.open(reelStateUrl, "_blank")}
-                   title={reelStateUrl}>
-              ↗ Current reel state
+          {(reelStateUrl || mediaPath) ? (
+            <DPill onClick={openCurrentReelState}
+                   title={mediaPath ? "Play the attached recording" : reelStateUrl}>
+              ↗ Current reel state{mediaPath ? " (video)" : ""}
             </DPill>
           ) : null}
-          <DPill onClick={editReelStateUrl}>
-            {reelStateUrl ? "Edit link" : "+ Current reel state"}
+          {/* Attach a screen recording an editor posted in Rocket.Chat —
+              available to everyone (NOT behind the owner-only upload gate). */}
+          <DPill onClick={() => setChatPickerOpen(true)} title="Attach a screen recording from a chat channel">
+            ↙ Pick from Chat
           </DPill>
           {/* OWNER-ONLY final-video MP4 upload — ADDITIVE; consumes the frozen
               ?action=planable-upload-target contract + the "reel-videos" bucket. */}
@@ -1168,6 +1201,17 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           )}
         </div>
       </div>
+
+      {/* Attach a screen recording from a Rocket.Chat channel as the reel state */}
+      {chatPickerOpen && (
+        <ChatRecordingPicker
+          reelId={current.id}
+          onClose={() => setChatPickerOpen(false)}
+          onAttached={(mp) =>
+            actions.updateReel(current.id, { mediaPath: mp, mediaTarget: "supabase" })
+          }
+        />
+      )}
 
       {/* Footage Brain Search Modal */}
       {searchModalOpen && (
@@ -1773,6 +1817,36 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
               </button>
             )}
           </div>
+
+          {/* Current reel state — the editor's latest cut, embedded inline so
+              it's easy to watch right under the inspiration reference. A hosted
+              recording (mediaPath) plays via a signed URL; a legacy attachUrl
+              link falls back to the embed player. */}
+          {(mediaPath || reelStateUrl) && (
+            <div className="ref-card">
+              <div className="ref-label">Current reel state</div>
+              {mediaPath ? (
+                currentStateVideoUrl ? (
+                  <video
+                    className="ref-embed det-preview"
+                    src={currentStateVideoUrl}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    style={{ width: "100%", borderRadius: 6, background: "#000" }}
+                  />
+                ) : (
+                  <div className="ref-embed-empty det-preview">
+                    Loading current reel state…
+                  </div>
+                )
+              ) : (
+                <div className="ref-embed det-preview">
+                  <ReelPlayer sampleReel={{ sourceUrl: reelStateUrl }} preferEmbed={true} />
+                </div>
+              )}
+            </div>
+          )}
           {showCompare && (
             <ReelCompareModal
               leftLabel="Inspiration"
