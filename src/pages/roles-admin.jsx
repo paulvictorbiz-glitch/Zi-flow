@@ -129,11 +129,18 @@ function CapRow({ cap, kind }) {
 /* Keys of actions considered "destructive" — a separator is rendered after the last one. */
 const DESTRUCTIVE_ACTION_KEYS = new Set(["deleteReel", "archiveReel"]);
 
-function Section({ title, caps, kind }) {
+function Section({ title, caps, kind, solarinMode }) {
   return (
     <div style={{ marginTop: 18 }}>
       <div className="mono" style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
-                                     color: "var(--fg-mute)", marginBottom: 8 }}>
+                                     color: "var(--fg-mute)", marginBottom: 8,
+                                     ...(solarinMode ? {
+                                       fontFamily: "'Space Mono', monospace",
+                                       color: '#FFCB9A',
+                                       textTransform: 'uppercase',
+                                       letterSpacing: '.1em',
+                                       fontSize: 10.5,
+                                     } : {}) }}>
         {title}
       </div>
       <div style={{ border: "1px dashed var(--line-hard)", borderRadius: 8, padding: "4px 12px",
@@ -1013,6 +1020,9 @@ function DiscordConfigPanel() {
 function RolesAdmin({ onBack }) {
   const { save, dirty, savedAt, resetAll } = usePermissions();
   const [flash, setFlash]           = React.useState(false);
+  const [solarinMode, setSolarinMode] = React.useState(
+    () => localStorage.getItem('fb_solarin_roles_preview') === 'true'
+  );
   const [showTeam, setShowTeam]     = React.useState(false);
   const [showSocial, setShowSocial] = React.useState(false);
   const [showDiscord, setShowDiscord] = React.useState(false);
@@ -1024,7 +1034,42 @@ function RolesAdmin({ onBack }) {
   };
 
   return (
-    <div>
+    <div style={{
+      ...(solarinMode ? { background: '#0e1211', minHeight: '100vh' } : {}),
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
+        padding: '10px 20px 8px',
+        borderBottom: '1px solid ' + (solarinMode ? 'rgba(130,150,143,.22)' : 'var(--line-hard)'),
+        background: solarinMode ? 'rgba(17,100,102,.06)' : 'transparent',
+        gap: 10, flexShrink: 0,
+      }}>
+        <span style={{
+          fontSize: 11, color: solarinMode ? '#FFCB9A' : 'var(--fg-dim)',
+          fontFamily: "'Space Mono', monospace", letterSpacing: '.08em',
+          textTransform: 'uppercase',
+        }}>
+          {solarinMode ? 'Pimped Out ✦' : 'Current Layout'}
+        </span>
+        <button
+          onClick={() => {
+            const next = !solarinMode;
+            setSolarinMode(next);
+            localStorage.setItem('fb_solarin_roles_preview', String(next));
+          }}
+          style={{
+            padding: '4px 14px', borderRadius: 12, cursor: 'pointer',
+            fontFamily: "'Space Mono', monospace", fontSize: 11,
+            letterSpacing: '.06em', textTransform: 'uppercase',
+            transition: 'all .15s',
+            background: solarinMode ? '#116466' : 'var(--bg-2)',
+            border: '1px solid ' + (solarinMode ? '#116466' : 'var(--line-hard)'),
+            color: solarinMode ? '#fff' : 'var(--fg-dim)',
+          }}
+        >
+          {solarinMode ? 'Revert ↩' : 'Pimped Out →'}
+        </button>
+      </div>
       <div className="page-head">
         <div className="titles">
           <h1>Roles &amp; permissions</h1>
@@ -1067,7 +1112,14 @@ function RolesAdmin({ onBack }) {
       )}
 
       {/* Permissions matrix — full width now that the sidebar is gone */}
-      <div style={{ padding: "0 22px 40px" }}>
+      <div style={{
+        padding: "0 22px 40px",
+        ...(solarinMode ? {
+          background: 'rgba(28,35,32,.82)',
+          backdropFilter: 'blur(4px)',
+          border: '1px solid rgba(130,150,143,.22)',
+        } : {}),
+      }}>
         <FeatureFlagsPanel />
         {/* UI-gating disclosure */}
         <div style={{
@@ -1085,8 +1137,8 @@ function RolesAdmin({ onBack }) {
         </div>
 
         <RoleColumnHead />
-        <Section title="Views — tabs this role can open" caps={VIEW_CAPS} kind="views" />
-        <Section title="Actions — what this role can do" caps={ACTION_CAPS} kind="actions" />
+        <Section title="Views — tabs this role can open" caps={VIEW_CAPS} kind="views" solarinMode={solarinMode} />
+        <Section title="Actions — what this role can do" caps={ACTION_CAPS} kind="actions" solarinMode={solarinMode} />
 
         {/* Save bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 22 }}>

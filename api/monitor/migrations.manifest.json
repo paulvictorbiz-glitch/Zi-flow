@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-24T07:56:16.718Z",
+  "generated": "2026-06-25T09:13:29.345Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -384,6 +384,10 @@
     {
       "version": "0096_oc_locks.sql",
       "checksum": "0d5b717cc76ffe2d55a54505e5e451e056ce446e50e539e6b142075bd22e24ea"
+    },
+    {
+      "version": "0097_editor_usage.sql",
+      "checksum": "59e66a3fb2522b30bfb2cb8e41886da649277ce522078e46167a6c1ac80516d6"
     }
   ]
 }

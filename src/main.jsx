@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./theme-accessible.css";
+import "./styles-solarin.css";
 import { App } from "./app.jsx";
 import { initPerfTracker } from "./lib/perf-tracker.js";
 
