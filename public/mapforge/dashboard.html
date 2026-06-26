@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MapForge — Owner Dashboard</title>
+<style>
+  :root { --bg:#0f1115; --card:#1a1d24; --line:#262a33; --fg:#e7eaf0; --muted:#9aa3b2;
+    --accent:#5b8cff; --good:#3ddc97; --warn:#ffd27a; --bad:#ff9b9b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { max-width:1200px; margin:0 auto; padding:28px 24px 8px; }
+  h1 { margin:0 0 4px; font-size:24px; }
+  .src { color:var(--muted); }
+  main { max-width:1200px; margin:0 auto; padding:8px 24px 56px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px; margin:16px 0 28px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .cval { font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .clabel { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .job { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:24px; }
+  .jobhead { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; }
+  h2 { margin:0; font-size:18px; } .cat { color:var(--muted); font-weight:400; }
+  .jobmeta { display:flex; gap:6px; flex-wrap:wrap; }
+  .chip { background:#23283280; border:1px solid var(--line); color:var(--muted); border-radius:999px; padding:3px 10px; font-size:12px; }
+  .funnel { display:flex; gap:10px; align-items:flex-end; margin:18px 0 6px; height:120px; }
+  .fcell { flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; height:100%; justify-content:flex-end; }
+  .fbar { width:100%; max-width:46px; height:70px; background:#20242d; border-radius:6px 6px 0 0; display:flex; align-items:flex-end; overflow:hidden; }
+  .fbar span { display:block; width:100%; background:linear-gradient(180deg,var(--accent),#3a5bbf); }
+  .fcount { font-weight:700; font-variant-numeric:tabular-nums; }
+  .flabel { color:var(--muted); font-size:11px; text-align:center; }
+  .fdead { color:var(--bad); font-size:12px; margin-top:4px; }
+  table.grid { width:100%; border-collapse:collapse; margin-top:14px; }
+  .grid th, .grid td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .grid th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  .grid tr:last-child td { border-bottom:none; }
+  .score { font-weight:700; color:var(--good); font-variant-numeric:tabular-nums; }
+  .name { font-weight:600; } .sub { color:var(--muted); font-weight:400; font-size:12px; }
+  .muted { color:var(--muted); }
+  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; background:#2a2f3a; color:var(--muted); }
+  .st-built,.st-approved { background:#23314f; color:#bcd0ff; }
+  .st-sent,.st-viewed { background:#2a3a2f; color:#9be3b7; }
+  .st-replied,.st-won { background:#1f3a2a; color:var(--good); }
+  .st-dead { background:#3a2a2a; color:var(--bad); }
+  .tier { font-size:11px; padding:1px 7px; border-radius:999px; }
+  .tier-standard { background:#23314f; color:#bcd0ff; } .tier-premium { background:#3a2a4f; color:#e3c0ff; }
+  .sstate { font-size:11px; padding:1px 7px; border-radius:999px; }
+  .ss-hot { background:#3a352a; color:var(--warn); } .ss-cold { background:#23283280; color:var(--muted); }
+  .ev { display:inline-block; background:#23283280; border:1px solid var(--line); border-radius:6px; padding:1px 6px; font-size:11px; margin:1px 0; }
+  a { color:var(--accent); } a.btn.view { text-decoration:none; font-weight:600; }
+  .empty { color:var(--muted); padding:40px 0; text-align:center; }
+</style>
+</head><body>
+<header>
+  <h1>MapForge — Owner Dashboard</h1>
+  <div class="src"><span class="chip">source: static snapshot (demo fixture)</span> <span class="chip">as of demo build</span></div>
+</header>
+<div style="max-width:1200px;margin:0 auto;padding:14px 24px 0;font:14px -apple-system,Segoe UI,sans-serif">
+    <a href="./index.html" style="color:#5b8cff;text-decoration:none">← Preview Gallery</a>
+  </div>
+<main>
+  <div class="cards"><div class="card"><div class="cval">1</div><div class="clabel">Jobs</div></div><div class="card"><div class="cval">12</div><div class="clabel">Leads</div></div><div class="card"><div class="cval">6</div><div class="clabel">Sites built</div></div><div class="card"><div class="cval">5</div><div class="clabel">Hot</div></div><div class="card"><div class="cval">5</div><div class="clabel">Outreach sent</div></div><div class="card"><div class="cval">10</div><div class="clabel">Events</div></div><div class="card"><div class="cval">1</div><div class="clabel">Won</div></div></div>
+  <section class="job">
+    <div class="jobhead">
+      <h2>Salt Lake City, UT <span class="cat">· restaurant</span></h2>
+      <div class="jobmeta">
+        <span class="chip">status: done</span>
+        <span class="chip">scraper: gosom</span>
+        <span class="chip">12 leads</span>
+        <span class="chip">6 built · 5 hot</span>
+        <span class="chip">10 events</span>
+      </div>
+    </div>
+    <div class="funnel"><div class="fcell">
+        <div class="fbar"><span style="height:33%"></span></div>
+        <div class="fcount">1</div>
+        <div class="flabel">Scraped</div>
+      </div><div class="fcell">
+        <div class="fbar"><span style="height:100%"></span></div>
+        <div class="fcount">3</div>
+        <div class="flabel">Qualified</div>
+      </div><div class="fcell">
+        <div class="fbar"><span style="height:33%"></span></div>
+        <div class="fcount">1</div>
+        <div class="flabel">Approved</div>
+      </div><div class="fcell">
+        <div class="fbar"><span style="height:67%"></span></div>
+        <div class="fcount">2</div>
+        <div class="flabel">Built</div>
+      </div><div class="fcell">
+        <div class="fbar"><span style="height:33%"></span></div>
+        <div class="fcount">1</div>
+        <div class="flabel">Sent</div>
+      </div><div class="fcell">
+        <div class="fbar"><span style="height:33%"></span></div>
+        <div class="fcount">1</div>
+        <div class="flabel">Viewed</div>
+      </div><div class="fcell">
+        <div class="fbar"><span style="height:33%"></span></div>
+        <div class="fcount">1</div>
+        <div class="flabel">Replied</div>
+      </div><div class="fcell">
+        <div class="fbar"><span style="height:33%"></span></div>
+        <div class="fcount">1</div>
+        <div class="flabel">Won</div>
+      </div></div><div class="fdead">1 dead</div>
+    <table class="grid">
+      <thead><tr>
+        <th>Score</th><th>Status</th><th>Business</th><th>Current site</th>
+        <th>Preview</th><th>Outreach</th><th>Engagement</th>
+      </tr></thead>
+      <tbody><tr>
+    <td class="score">99</td>
+    <td><span class="badge st-won">Won</span></td>
+    <td class="name">Wasatch Wood-Fired Pizza<div class="sub">Salt Lake City, UT · (801) 555-0101</div></td>
+    <td><span class="muted">none</span></td>
+    <td><a class="btn view" target="_blank" rel="noopener" href="./sites-premium/wasatch-wood-fired-pizza-salt-lake-city-ut/">View ↗</a> <span class="tier tier-premium">premium</span> <span class="sstate ss-hot">hot</span></td>
+    <td><span class="ev">email t1 · delivered</span> <span class="ev">email t2 · delivered</span></td>
+    <td><span class="ev">open 1</span> <span class="ev">visit 1</span> <span class="ev">click 1</span> <span class="ev">reply 1</span></td>
+  </tr><tr>
+    <td class="score">98</td>
+    <td><span class="badge st-replied">Replied</span></td>
+    <td class="name">Sugar House Smokehouse<div class="sub">Salt Lake City, UT · (801) 555-0102</div></td>
+    <td><span class="muted">none</span></td>
+    <td><a class="btn view" target="_blank" rel="noopener" href="./sites-premium/sugar-house-smokehouse-salt-lake-city-ut/">View ↗</a> <span class="tier tier-premium">premium</span> <span class="sstate ss-hot">hot</span></td>
+    <td><span class="ev">email t1 · delivered</span></td>
+    <td><span class="ev">open 1</span> <span class="ev">visit 1</span> <span class="ev">reply 1</span></td>
+  </tr><tr>
+    <td class="score">88</td>
+    <td><span class="badge st-viewed">Viewed</span></td>
+    <td class="name">Beehive Brunch House<div class="sub">Salt Lake City, UT · (801) 555-0103</div></td>
+    <td><a href="http://beehivebrunch.example" target="_blank" rel="noopener">existing site</a></td>
+    <td><a class="btn view" target="_blank" rel="noopener" href="./sites-standard/beehive-brunch-house-salt-lake-city-ut/">View ↗</a> <span class="tier tier-standard">standard</span> <span class="sstate ss-hot">hot</span></td>
+    <td><span class="ev">email t1 · delivered</span></td>
+    <td><span class="ev">open 1</span> <span class="ev">visit 1</span></td>
+  </tr><tr>
+    <td class="score">88</td>
+    <td><span class="badge st-sent">Sent</span></td>
+    <td class="name">Red Rock Taqueria<div class="sub">Salt Lake City, UT · (801) 555-0104</div></td>
+    <td><a href="https://facebook.com/redrocktaqueria" target="_blank" rel="noopener">existing site</a></td>
+    <td><a class="btn view" target="_blank" rel="noopener" href="./sites-premium/red-rock-taqueria-salt-lake-city-ut/">View ↗</a> <span class="tier tier-premium">premium</span> <span class="sstate ss-hot">hot</span></td>
+    <td><span class="ev">email t1 · sent</span></td>
+    <td><span class="ev">open 1</span></td>
+  </tr><tr>
+    <td class="score">86</td>
+    <td><span class="badge st-built">Built</span></td>
+    <td class="name">Foothill Pho &amp; Grill<div class="sub">Salt Lake City, UT · (801) 555-0105</div></td>
+    <td><span class="muted">none</span></td>
+    <td><a class="btn view" target="_blank" rel="noopener" href="./sites-standard/foothill-pho-grill-salt-lake-city-ut/">View ↗</a> <span class="tier tier-standard">standard</span> <span class="sstate ss-hot">hot</span></td>
+    <td><span class="muted">—</span></td>
+    <td><span class="muted">—</span></td>
+  </tr><tr>
+    <td class="score">79</td>
+    <td><span class="badge st-built">Built</span></td>
+    <td class="name">Liberty Park Noodle Bar<div class="sub">Salt Lake City, UT · (801) 555-0106</div></td>
+    <td><span class="muted">none</span></td>
+    <td><a class="btn view" target="_blank" rel="noopener" href="./sites-standard/liberty-park-noodle-bar-salt-lake-city-ut/">View ↗</a> <span class="tier tier-standard">standard</span> <span class="sstate ss-cold">cold</span></td>
+    <td><span class="muted">—</span></td>
+    <td><span class="muted">—</span></td>
+  </tr><tr>
+    <td class="score">72</td>
+    <td><span class="badge st-approved">Approved</span></td>
+    <td class="name">Trax Line Deli &amp; Catering<div class="sub">Salt Lake City, UT · (801) 555-0107</div></td>
+    <td><span class="muted">none</span></td>
+    <td><span class="muted">not built</span></td>
+    <td><span class="muted">—</span></td>
+    <td><span class="muted">—</span></td>
+  </tr><tr>
+    <td class="score">69</td>
+    <td><span class="badge st-qualified">Qualified</span></td>
+    <td class="name">Cottonwood Catering Co.<div class="sub">Salt Lake City, UT · (801) 555-0108</div></td>
+    <td><span class="muted">none</span></td>
+    <td><span class="muted">not built</span></td>
+    <td><span class="muted">—</span></td>
+    <td><span class="muted">—</span></td>
+  </tr><tr>
+    <td class="score">52</td>
+    <td><span class="badge st-dead">Dead</span></td>
+    <td class="name">Avenues Falafel Cart<div class="sub">Salt Lake City, UT · (801) 555-0109</div></td>
+    <td><a href="https://instagram.com/avenuesfalafel" target="_blank" rel="noopener">existing site</a></td>
+    <td><span class="muted">not built</span></td>
+    <td><span class="muted">—</span></td>
+    <td><span class="muted">—</span></td>
+  </tr><tr>
+    <td class="score">40</td>
+    <td><span class="badge st-qualified">Qualified</span></td>
+    <td class="name">Downtown Donut Co.<div class="sub">Salt Lake City, UT</div></td>
+    <td><a href="https://downtowndonut.example" target="_blank" rel="noopener">existing site</a></td>
+    <td><span class="muted">not built</span></td>
+    <td><span class="muted">—</span></td>
+    <td><span class="muted">—</span></td>
+  </tr><tr>
+    <td class="score">38</td>
+    <td><span class="badge st-qualified">Qualified</span></td>
+    <td class="name">Canyon Coffee Roasters<div class="sub">Salt Lake City, UT</div></td>
+    <td><a href="https://canyoncoffee.example" target="_blank" rel="noopener">existing site</a></td>
+    <td><span class="muted">not built</span></td>
+    <td><span class="muted">—</span></td>
+    <td><span class="muted">—</span></td>
+  </tr><tr>
+    <td class="score">—</td>
+    <td><span class="badge st-scraped">Scraped</span></td>
+    <td class="name">Temple Square Bistro<div class="sub">Salt Lake City, UT</div></td>
+    <td><a href="https://templesquarebistro.example" target="_blank" rel="noopener">existing site</a></td>
+    <td><span class="muted">not built</span></td>
+    <td><span class="muted">—</span></td>
+    <td><span class="muted">—</span></td>
+  </tr></tbody>
+    </table>
+  </section>
+</main>
+</body></html>
