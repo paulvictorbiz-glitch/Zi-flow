@@ -19,6 +19,7 @@
    ========================================================= */
 
 import React from "react";
+import { LoadingScreen } from "../components/loading-screen.jsx";
 import { ROLES, normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "../lib/shared-data.jsx";
 import { isKnownPerson, personName } from "../lib/roster.jsx";
 import { supabase } from "../lib/supabase-client.js";
@@ -5464,13 +5465,7 @@ function WorkflowProvider({ children }) {
     <WorkflowContext.Provider value={value}>
       {state.loaded
         ? children
-        : <div style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            height: "100vh", color: "var(--fg-mute)", fontFamily: "var(--f-mono)",
-            fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase",
-          }}>
-            {state.error ? "error · " + state.error : "loading workflow…"}
-          </div>}
+        : <LoadingScreen error={state.error} />}
     </WorkflowContext.Provider>
   );
 }

@@ -1,6 +1,7 @@
 /* Main shell with tabs, role-aware perspective, and global Create FAB. */
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { ViewFallback } from "./components/loading-screen.jsx";
 import { DPill } from "./components/components.jsx";
 import { ROLES } from "./lib/shared-data.jsx";
 import { WorkflowProvider, useWorkflow } from "./store/store.jsx";
@@ -145,29 +146,8 @@ import { PreferencesModal } from "./components/PreferencesModal.jsx";
 import { extractUrl } from "./lib/reel-dna.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
 
-/* Lightweight fallback shown while a code-split (lazy) page chunk loads. Mirrors
-   the app's existing "loading…" idiom (mono dim text) — intentionally minimal so
-   it never blocks paint and matches the store's "loading workflow…" treatment. */
-function ViewFallback() {
-  /* A clearly-visible centered loader (NAV-003). The old faint "loading…" text
-     read as a blank flash during chunk loads; a centered spinner makes the
-     lazy-load state obvious. Keyframe is inlined so it doesn't touch styles.css. */
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center",
-      justifyContent: "center", gap: 14, padding: "72px 24px", minHeight: 240,
-    }}>
-      <style>{"@keyframes vf-spin{to{transform:rotate(360deg)}}"}</style>
-      <div style={{
-        width: 30, height: 30, borderRadius: "50%",
-        border: "3px solid var(--line-hard, #333)",
-        borderTopColor: "var(--c-cyan, #6bd6e0)",
-        animation: "vf-spin 0.8s linear infinite",
-      }} />
-      <div className="mono dim" style={{ fontSize: 12, letterSpacing: "0.08em" }}>Loading…</div>
-    </div>
-  );
-}
+/* ViewFallback is imported from loading-screen.jsx — photo cycling slideshow
+   shown while lazy page chunks load. */
 
 /* External feedback form for demo testers. Create a Google Form / Tally form
    and paste its URL here (or set VITE_FEEDBACK_FORM_URL in the env). When empty,
@@ -245,7 +225,7 @@ function AppShell() {
   const [view, setView]                 = useState(() => {
     // "pulse"/"ai" are no longer standalone views — they're sub-tabs of the
     // Monitor hub. Alias any persisted value so an old wb_view doesn't dead-end.
-    const v = localStorage.getItem("wb_view") || "pipeline";
+    const v = localStorage.getItem("wb_view") || "mywork";
     return (v === "pulse" || v === "ai") ? "monitor" : v;
   });
   const [viewStack, setViewStack]       = useState([]);
