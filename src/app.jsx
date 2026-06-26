@@ -50,6 +50,7 @@ const importLosslessCut  = () => import("./pages/lossless.jsx");
 const importIdeaGenerator= () => import("./pages/idea-generator.jsx");
 const importLocations    = () => import("./pages/locations.jsx");
 const importCoverage     = () => import("./pages/coverage.jsx");
+const importContentForge = () => import("./pages/content-forge.jsx");
 const importResources    = () => import("./pages/resources.jsx");
 const importActivity     = () => import("./pages/activity.jsx");
 const importRolesAdmin   = () => import("./pages/roles-admin.jsx");
@@ -62,7 +63,7 @@ const importTeamChat     = () => import("./pages/team-chat.jsx");
 const LAZY_IMPORTERS = [
   importMonitorHub, importMusicLibrary, importAnalytics, importInbox, importTraining,
   importVideoEditor, importEditorProjects, importLosslessCut, importIdeaGenerator, importLocations,
-  importCoverage, importResources, importActivity, importRolesAdmin,
+  importCoverage, importContentForge, importResources, importActivity, importRolesAdmin,
   importExportView, importArchivedView, importCalendarView, importListView,
   importTeamChat,
 ];
@@ -122,6 +123,7 @@ const LosslessCut  = lazyPage(importLosslessCut,  "LosslessCut");
 const IdeaGenerator= lazyPage(importIdeaGenerator,"IdeaGenerator");
 const Locations    = lazyPage(importLocations,    "Locations");
 const Coverage     = lazyPage(importCoverage,     "Coverage");
+const ContentForge = lazyPage(importContentForge, "ContentForge");
 const Resources    = lazyPage(importResources,    "Resources");
 const Activity     = lazyPage(importActivity,     "Activity");
 const RolesAdmin   = lazyPage(importRolesAdmin,   "RolesAdmin");
@@ -160,7 +162,7 @@ const FEEDBACK_FORM_URL =
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
 // "monitor" is the consolidated owner hub (Infra/Pulse/AI Brain sub-tabs); the
 // former standalone "pulse"/"ai" views now live inside it (see monitor-hub.jsx).
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "projects", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "projects", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor", "content-forge"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -187,6 +189,7 @@ const TABS = [
   { key: "team",      label: "Team" },
   { key: "analytics", label: "Analytics" },
   { key: "monitor",   label: "Monitor" },   // consolidated hub: Infra / Pulse / AI Brain sub-tabs
+  { key: "content-forge", label: "Content Forge" },   // owner-only — gated in canViewView
   { key: "activity",  label: "Activity" },
 ];
 
@@ -201,7 +204,7 @@ const DEFAULT_TAB_GROUPS = [
   { key: "edit_group",    label: "Edit & Ship", tone: "green",  tabs: ["editor", "lossless", "export"] },
   { key: "learn_group",   label: "Learn",       tone: "pink",   tabs: ["training", "resources"] },
   { key: "engage_group",  label: "Engage",      tone: "orange", tabs: ["inbox", "team", "analytics"] },
-  { key: "monitor_group", label: "Monitor",     tone: "blue",   tabs: ["monitor", "activity"] },
+  { key: "monitor_group", label: "Monitor",     tone: "blue",   tabs: ["monitor", "content-forge", "activity"] },
 ];
 
 function AppShell() {
@@ -221,6 +224,10 @@ function AppShell() {
   const canViewView = (v) =>
     v === "monitor"
       ? (canView("monitor") || canView("pulse") || canView("ai"))
+      // Content Forge is an owner-only tool — gated on the REAL owner role
+      // (not the catalog), so non-owners never see the tab or reach the route.
+      : v === "content-forge"
+      ? isOwner
       : canView(v);
   const [view, setView]                 = useState(() => {
     // "pulse"/"ai" are no longer standalone views — they're sub-tabs of the
@@ -666,7 +673,7 @@ function AppShell() {
           { key:'edit_group',     label:'Edit & Ship',tone:'#5FB89A', tabs:['editor','lossless','export'] },
           { key:'learn_group',    label:'Learn',      tone:'#E58BA0', tabs:['training','resources'] },
           { key:'engage_group',   label:'Engage',     tone:'#E8884A', tabs:['inbox','team','analytics'] },
-          { key:'monitor_group',  label:'Monitor',    tone:'#5FA8D6', tabs:['monitor','activity'] },
+          { key:'monitor_group',  label:'Monitor',    tone:'#5FA8D6', tabs:['monitor','content-forge','activity'] },
         ];
         const LEFT_CATS  = CATS.slice(0, 3);
         const RIGHT_CATS = CATS.slice(3);
@@ -802,6 +809,7 @@ function AppShell() {
              view === "coverage"  ? "Coverage" :
              view === "locations" ? "Locations" :
              view === "export"    ? "Export prep" :
+             view === "content-forge" ? "Content Forge" :
              view === "monitor"   ? "Monitor" : "Analytics"}
           </span>
           <span className="sep">/</span>
@@ -1055,6 +1063,7 @@ function AppShell() {
         {view === "activity"  && <Activity />}
         {view === "resources" && <Resources />}
         {view === "monitor"   && canViewView("monitor") && <MonitorHub canView={canView} />}
+        {view === "content-forge" && canViewView("content-forge") && <ContentForge />}
         {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
 
         {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}

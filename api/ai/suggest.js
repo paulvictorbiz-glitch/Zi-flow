@@ -1262,6 +1262,127 @@ export default async function handler(req, res) {
     return;
   }
 
+  // ── Content Forge — proxies to the Hetzner content-forge worker ────────────
+  // All three share CONTENT_FORGE_SECRET (server-side only — never shipped to the
+  // browser), mirroring the IG_SYNC_SECRET handling above (:84-85). The `tier`
+  // param ("free" → OpenRouter/Gemini default; "pro" → Claude Haiku/Sonnet) is
+  // accepted from req.query or req.body and passed through to the backend.
+  // Folded into this route (no new api/* file) to stay under the 12-function cap.
+  if (action === "forge-ingest" || action === "forge-discover" || action === "forge-expand") {
+    const forgeSecret = process.env.CONTENT_FORGE_SECRET;
+    if (!forgeSecret) { res.status(500).json({ error: "CONTENT_FORGE_SECRET not configured" }); return; }
+    // Tolerant body parse (mirrors the other proxy branches, e.g. :1228-1230).
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+    const tier = req.query?.tier || body.tier || "free";
+
+    // ── Fire-and-forget: kick the Hetzner transcript-ingest worker now ───────
+    // Reads attached_footage_items.full_transcript from Supabase and/or parses
+    // disk transcript files, upserting transcript_clips. Like ig-sync, we abort
+    // our wait after 8s so a slow Hetzner run can never push us past the Vercel
+    // function timeout — it finishes server-side and rows arrive via realtime.
+    if (action === "forge-ingest") {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const r = await fetch(
+          `https://api.footagebrain.com/api/content-forge/ingest-transcript?secret=${encodeURIComponent(forgeSecret)}` +
+            (tier ? `&tier=${encodeURIComponent(tier)}` : ""),
+          {
+            method: "POST",
+            signal: ctrl.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...body, tier }),
+          });
+        const out = await r.json().catch(() => ({}));
+        if (!r.ok) { res.status(502).json({ error: `Hetzner ingest HTTP ${r.status}`, ...out }); return; }
+        res.status(200).json({ ok: true, started: true, ...out });
+      } catch (e) {
+        if (e.name === "AbortError") {
+          // Ingest is taking >8s but is running — report success, not failure.
+          res.status(202).json({ ok: true, started: true, pending: true });
+          return;
+        }
+        console.error("forge-ingest error:", e.message);
+        res.status(502).json({ error: `Couldn't reach the content-forge ingest worker: ${e.message}` });
+      } finally {
+        clearTimeout(t);
+      }
+      return;
+    }
+
+    // ── Fire-and-forget: kick a Hetzner discovery run, return its batch_id ────
+    // Discovery (Haiku in pro tier, Gemini free) runs in the background and
+    // writes content_opportunities; the UI polls discover-status via
+    // api/monitor/status.js?action=forge-status&batch_id=...
+    if (action === "forge-discover") {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const r = await fetch(
+          `https://api.footagebrain.com/api/content-forge/discover?secret=${encodeURIComponent(forgeSecret)}` +
+            (tier ? `&tier=${encodeURIComponent(tier)}` : ""),
+          {
+            method: "POST",
+            signal: ctrl.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ country: body.country, tier }),
+          });
+        const out = await r.json().catch(() => ({}));
+        if (!r.ok) { res.status(502).json({ error: `Hetzner discover HTTP ${r.status}`, ...out }); return; }
+        // Return the backend's body (carries batch_id) so the UI can poll.
+        res.status(200).json({ ok: true, started: true, ...out });
+      } catch (e) {
+        if (e.name === "AbortError") {
+          // Discovery is taking >8s but is running — report success, not failure.
+          res.status(202).json({ ok: true, started: true, pending: true });
+          return;
+        }
+        console.error("forge-discover error:", e.message);
+        res.status(502).json({ error: `Couldn't reach the content-forge discover worker: ${e.message}` });
+      } finally {
+        clearTimeout(t);
+      }
+      return;
+    }
+
+    // ── Synchronous proxy: expand one opportunity into 3 hook versions ────────
+    // Expansion (Sonnet pro / Gemini free) is typically <8s, so we wait and
+    // return the hooks JSON inline. Abort at ~9s (Vercel Hobby ceiling ~10s) and
+    // surface a retriable timeout rather than a non-JSON 500.
+    if (action === "forge-expand") {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 9000);
+      try {
+        const r = await fetch(
+          `https://api.footagebrain.com/api/content-forge/expand?secret=${encodeURIComponent(forgeSecret)}` +
+            (tier ? `&tier=${encodeURIComponent(tier)}` : ""),
+          {
+            method: "POST",
+            signal: ctrl.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ opportunity_id: body.opportunity_id, tier }),
+          });
+        const out = await r.json().catch(() => ({}));
+        if (!r.ok) { res.status(502).json({ error: `Hetzner expand HTTP ${r.status}`, ...out }); return; }
+        res.status(200).json(out);
+      } catch (e) {
+        if (e.name === "AbortError") {
+          // Expansion blew the budget — tell the UI to retry (not a hard error).
+          res.status(504).json({ error: "expansion timed out, retry" });
+          return;
+        }
+        console.error("forge-expand error:", e.message);
+        res.status(502).json({ error: `Couldn't reach the content-forge expand worker: ${e.message}` });
+      } finally {
+        clearTimeout(t);
+      }
+      return;
+    }
+    return;
+  }
+
   // ── Guard: an unrecognized action must NOT fall through to the daily Claude
   // suggestions run below. That run makes a slow LLM call and on Vercel Hobby
   // (~10s ceiling) it times out into a non-JSON 500 — which is exactly how a

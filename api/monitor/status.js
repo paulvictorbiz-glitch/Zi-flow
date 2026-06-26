@@ -22,6 +22,14 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Content Forge — poll a discovery batch's opportunities from the Hetzner
+  // content-forge worker. Folded in here (not a new api/* route) to stay under
+  // the Vercel Hobby 12-function cap. The CONTENT_FORGE_SECRET stays server-side.
+  if (req.query?.action === "forge-status") {
+    res.status(200).json(await fetchForgeStatus(req));
+    return;
+  }
+
   const [sbResult, hzResult, gcpResult, osResult, wmResult] = await Promise.allSettled([
     fetchSupabaseStats(),
     fetchHetznerStats(),
@@ -98,6 +106,41 @@ async function checkMigrations() {
     missing, changed, orphaned,
     manifestGenerated: manifest.generated || null,
   };
+}
+
+// ── Content Forge discovery-status proxy ───────────────────────────────────────
+// GET /api/monitor/status?action=forge-status&batch_id=<uuid>
+// Proxies the Hetzner content-forge worker's discover-status endpoint so the
+// Content Forge page can poll a discovery batch's opportunities. The
+// CONTENT_FORGE_SECRET is read here (server-side) and never reaches the browser.
+
+async function fetchForgeStatus(req) {
+  const forgeSecret = process.env.CONTENT_FORGE_SECRET;
+  if (!forgeSecret) {
+    return { ok: false, error: "CONTENT_FORGE_SECRET not configured" };
+  }
+  const url = req.url && new URL(req.url, "https://footagebrain.com");
+  const batchId = req.query?.batch_id || url?.searchParams.get("batch_id");
+  if (!batchId) {
+    return { ok: false, error: "batch_id required" };
+  }
+
+  const base = process.env.FB_PROXY_TARGET || "https://api.footagebrain.com";
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 12000);
+  try {
+    const r = await fetch(
+      `${base}/api/content-forge/discover-status/${encodeURIComponent(batchId)}?secret=${encodeURIComponent(forgeSecret)}`,
+      { signal: controller.signal }
+    );
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: `Hetzner forge-status HTTP ${r.status}`, ...body };
+    return body;
+  } catch (e) {
+    return { ok: false, error: `Couldn't reach the content-forge worker: ${e.message}` };
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // ── Supabase ──────────────────────────────────────────────────────────────────

@@ -42,3 +42,7 @@ scenedetect[opencv]>=0.6.4
 # Render worker — Google Drive source downloads
 google-api-python-client==2.137.0
 google-auth==2.29.0
+
+# Content Forge — "pro" tier LLM (Claude Haiku discovery / Sonnet expansion).
+# The "free" tier reuses the existing OpenRouter/Gemini path over httpx (no new dep).
+anthropic>=0.30.0

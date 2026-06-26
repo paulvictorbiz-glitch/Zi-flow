@@ -1227,6 +1227,56 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
         </div>
       </div>
 
+      {/* Content Forge — the hook this reel was forged from (reels.creative_brief).
+          Renders only when an opportunity hook has been sent to this reel. Inline
+          styles so it works without importing content-forge.css into this hot,
+          eagerly-loaded component; classes mirror that file's .cf- namespace. */}
+      {stored?.creative_brief?.selected_hook_version && (
+        <div
+          className="cf-hook-tracking"
+          style={{
+            border: "1px solid var(--line-hard)",
+            borderLeft: "3px solid var(--c-cyan)",
+            borderRadius: 8,
+            padding: "10px 14px",
+            margin: "12px 0 16px",
+            background: "var(--c-cyan-soft, rgba(107,214,224,0.06))",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span
+              className="cf-hook-badge"
+              style={{
+                display: "inline-block",
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+                padding: "2px 8px",
+                borderRadius: 999,
+                border: "1px solid var(--c-cyan)",
+                color: "var(--c-cyan)",
+              }}
+            >
+              {{
+                curiosity: "Curiosity Gap",
+                controversy: "Controversy",
+                personal_stakes: "Personal Stakes",
+              }[stored.creative_brief.hook_style] || stored.creative_brief.hook_style || "Hook"}
+            </span>
+            <span className="mono dim" style={{ fontSize: 10 }}>forged hook · Content Forge</span>
+          </div>
+          {stored.creative_brief.hook_text && (
+            <p
+              className="cf-hook-text"
+              style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.45, color: "var(--fg)" }}
+            >
+              {stored.creative_brief.hook_text}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Attach a screen recording from a Rocket.Chat channel as the reel state */}
       {chatPickerOpen && (
         <ChatRecordingPicker
