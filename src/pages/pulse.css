@@ -1181,6 +1181,27 @@
   background: var(--c-cyan);
 }
 
+/* ── Date-basis bar (Published ⇄ Pulled) ─────────────────────
+   Lets the owner flip the feed between the article's publish date
+   and the date Pulse pulled it in — so newly-ingested items group
+   together no matter how old the source article is. */
+.pc-basisbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.pc-basisbar-hint {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+/* "Pulled"-date emphasis — ties to the cyan active-toggle colour so the
+   pull date reads as distinct from the (muted) publish date. */
+.pc-pulled { color: var(--c-cyan); }
+.pc-td-date.pc-pulled { opacity: 0.9; }
+
 /* ── Star flag (collapsed rows/cards) ────────────────────── */
 .pc-star-flag { color: var(--c-amber); font-size: 12px; flex-shrink: 0; }
 .pc-chevron { color: var(--fg-dim); font-size: 11px; margin-left: auto; flex-shrink: 0; }

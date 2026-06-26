@@ -797,6 +797,38 @@ function ReelCellLink({ item, now, onOpenPreview, onLinkClick, isVisited, isLast
    PURE renderer: hide/visited state + callbacks arrive as props from
    ReelDnaComprehensive (it owns the store reads). hiddenCols defaults to [] so
    undefined => all columns visible (NEVER all hidden). */
+/* Sort value for a Classic-spreadsheet column — mirrors what each cell shows
+   (resolveTags for the gene/location cells, raw fields for reel/notes) so the
+   alphabetical order matches what the eye reads down the column. */
+function dnaSortValue(it, key) {
+  if (key === "reel")  return it.reelUrl || "";
+  if (key === "notes") return it.quickNotes || "";
+  const t = resolveTags(it);
+  return t[key] || "";
+}
+
+/* Clickable, sortable column header. Clicking cycles the column through
+   ascending → descending → off (natural order). An arrow shows the state:
+   ⇅ sortable-but-inactive · ▲ ascending · ▼ descending. */
+function SortTh({ col, label, sort, onSort, className = "" }) {
+  const active = sort.key === col;
+  const dir = active ? sort.dir : null;
+  return (
+    <th
+      className={("dna-th rd-th-sort " + className).trim() + (active ? " is-sorted" : "")}
+      onClick={() => onSort(col)}
+      role="columnheader"
+      aria-sort={dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none"}
+      title="Click to sort A→Z; click again for Z→A; once more to clear"
+    >
+      <span className="rd-th-sort-inner">
+        <span className="rd-th-sort-label">{label}</span>
+        <span className="rd-th-sort-arrow">{dir === "asc" ? "▲" : dir === "desc" ? "▼" : "⇅"}</span>
+      </span>
+    </th>
+  );
+}
+
 export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, onBack, onDelete,
                           onOpenAssets, onOpenCard, colFilters, onColFilter, onClearColFilters,
                           favOnly, onFavFilter, colorFilter, onColorFilter,
@@ -804,6 +836,33 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                           visitedReelDnaIds = [], lastVisitedReelDnaId = null }) {
   const { reels } = useWorkflow();
   const [compareItem, setCompareItem] = useState(null);
+
+  // Classic-spreadsheet column sort (alphabetical). null key = natural order.
+  // Cycle: click a column → A→Z, click again → Z→A, third click → off.
+  const [sort, setSort] = useState({ key: null, dir: "asc" });
+  const cycleSort = React.useCallback((key) => {
+    setSort((s) =>
+      s.key !== key       ? { key, dir: "asc" }
+      : s.dir === "asc"   ? { key, dir: "desc" }
+      :                     { key: null, dir: "asc" });
+  }, []);
+  const sortedItems = useMemo(() => {
+    if (!sort.key) return items;
+    // Decorate once (resolveTags parses notes) → sort → undecorate. Blanks
+    // ("—" cells) always sink to the bottom so an A→Z view leads with content.
+    const decorated = items.map((it, i) => ({
+      it, i, v: String(dnaSortValue(it, sort.key) || "").trim().toLowerCase(),
+    }));
+    decorated.sort((a, b) => {
+      if (!a.v && b.v) return 1;
+      if (a.v && !b.v) return -1;
+      if (!a.v && !b.v) return a.i - b.i;
+      const cmp = a.v.localeCompare(b.v, undefined, { numeric: true, sensitivity: "base" });
+      if (cmp !== 0) return sort.dir === "asc" ? cmp : -cmp;
+      return a.i - b.i; // stable within ties
+    });
+    return decorated.map((d) => d.it);
+  }, [items, sort]);
 
   // Promote a parsed-on-read tag value to a real structured field on edit, so a
   // note-derived column becomes a first-class field once the user touches it.
@@ -859,13 +918,13 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                 </span>
               </th>
             )}
-            {visible("reel")     && <th className="rd-th-reel dna-th">Reel</th>}
-            {visible("location") && <th className="dna-th">Location</th>}
-            {visible("music")    && <th className="dna-th">Music</th>}
-            {visible("font")     && <th className="dna-th">Font</th>}
-            {visible("sfx")      && <th className="dna-th">SFX</th>}
-            {visible("story")    && <th className="dna-th">Story / Pacing</th>}
-            {visible("notes")    && <th className="dna-th">Notes</th>}
+            {visible("reel")     && <SortTh col="reel"     label="Reel"           className="rd-th-reel" sort={sort} onSort={cycleSort} />}
+            {visible("location") && <SortTh col="location" label="Location"       sort={sort} onSort={cycleSort} />}
+            {visible("music")    && <SortTh col="music"    label="Music"          sort={sort} onSort={cycleSort} />}
+            {visible("font")     && <SortTh col="font"     label="Font"           sort={sort} onSort={cycleSort} />}
+            {visible("sfx")      && <SortTh col="sfx"      label="SFX"            sort={sort} onSort={cycleSort} />}
+            {visible("story")    && <SortTh col="story"    label="Story / Pacing" sort={sort} onSort={cycleSort} />}
+            {visible("notes")    && <SortTh col="notes"    label="Notes"          sort={sort} onSort={cycleSort} />}
             {visible("assets")   && <th className="rd-th-assets dna-th">Assets</th>}
             {visible("actions")  && <th className="rd-th-act dna-th"></th>}
           </tr>
@@ -880,7 +939,7 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
               <td className="rd-td-empty dna-empty" colSpan={visibleCount}>No reels match these filters.</td>
             </tr>
           )}
-          {items.map(item => {
+          {sortedItems.map(item => {
             const tags = resolveTags(item);
             const isVisited = Array.isArray(visitedReelDnaIds) && visitedReelDnaIds.includes(item.id);
             const isLast = lastVisitedReelDnaId === item.id;

@@ -35,6 +35,13 @@
   transition: opacity 0.15s;
 }
 .scout-refresh-btn:disabled { opacity: 0.45; cursor: default; }
+/* Active grouping mode (category / date pulled). */
+.scout-refresh-btn.on {
+  border-color: var(--color-accent, #6aa0ff);
+  color: var(--color-accent, #6aa0ff);
+}
+/* "Pulled" date column — subtly distinct from the (origin) "Created" column. */
+.sc-pulled { color: var(--color-accent, #6aa0ff); }
 
 .scout-filters {
   display: flex;

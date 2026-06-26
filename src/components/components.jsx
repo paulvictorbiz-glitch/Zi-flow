@@ -209,18 +209,18 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
           )}
         </div>
         {!collapsed && !compact && pillText && <Pill tone={pillTone}>{pillText}</Pill>}
-        {!collapsed && showMenu && (
+        {showMenu && (
           <button
             ref={menuBtnRef}
             className="reel-menu-btn"
             onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
             aria-label="Card actions"
-            /* Hover-reveal is unreliable on dense grid tiles — keep the kebab
-               visible in compact view so card-view actions are discoverable. */
-            style={compact ? { opacity: 1 } : undefined}
+            /* Hover-reveal is unreliable on dense grid tiles or collapsed cards
+               (tiny target) — keep the kebab always visible in those cases. */
+            style={(compact || collapsed) ? { opacity: 1 } : undefined}
           >⋯</button>
         )}
-        {!collapsed && showMenu && menuOpen && menuPos && createPortal(
+        {showMenu && menuOpen && menuPos && createPortal(
           <div
             ref={menuRef}
             className="reel-menu"

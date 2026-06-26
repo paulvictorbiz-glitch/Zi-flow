@@ -7,9 +7,14 @@
    The owner's FB session JWT authenticates the Vercel call; the Scout backend
    never sees the browser directly.
 
-   Table view: column sort (name/score/created/traction), a Group-by-category
-   toggle, category-group + favorites/archived filters, and per-row star /
-   archive / delete (anon writes to the Scout DB; see scout-supabase.js). */
+   Table view: column sort (name/score/created/pulled/traction), a Group-by
+   toggle (by category OR by date pulled), category-group + favorites/archived
+   filters, and per-row star / archive / delete (anon writes to the Scout DB;
+   see scout-supabase.js).
+
+   "Created" = the product's own origin date on PH/HN/GitHub (source_created_at).
+   "Pulled"  = when Scout's scraper first pulled it in (first_seen) — use this to
+   track what's new since you last looked. */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase-client.js";
@@ -58,6 +63,12 @@ function fmtDate(iso) {
   if (!Number.isFinite(Date.parse(iso))) return "—";
   return iso.slice(0, 10);
 }
+// Friendly day-group header (e.g. "Tue, Jun 24, 2026") from a YYYY-MM-DD key.
+function fmtGroupDate(key) {
+  const d = new Date(key + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return key;
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
 
 const COLUMNS = [
   { key: null, label: "", cls: "sc-c-star" },
@@ -65,7 +76,8 @@ const COLUMNS = [
   { key: null, label: "Source", cls: "sc-c-src" },
   { key: null, label: "Group" },
   { key: "score", label: "Score", cls: "sc-num" },
-  { key: "created", label: "Created", cls: "sc-num" },
+  { key: "created", label: "Created", cls: "sc-num", title: "The product's own origin date on its source (PH/HN/GitHub)" },
+  { key: "pulled", label: "Pulled", cls: "sc-num", title: "When Scout first pulled this in (first seen)" },
   { key: "popularity", label: "Traction", cls: "sc-num" },
   { key: null, label: "", cls: "sc-c-act" },
 ];
@@ -142,7 +154,8 @@ export function Scout() {
   const [showArchived, setShowArchived] = useState(false);
 
   const [sort, setSort] = useState(DEFAULT_SORT);
-  const [groupBy, setGroupBy] = useState(false);
+  // Grouping mode: "none" | "category" | "pulled" (by date Scout first saw it).
+  const [groupBy, setGroupBy] = useState("none");
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [expandedId, setExpandedId] = useState(null);
 
@@ -266,6 +279,10 @@ export function Scout() {
           av = a.source_created_at ? Date.parse(a.source_created_at) : 0;
           bv = b.source_created_at ? Date.parse(b.source_created_at) : 0;
           break;
+        case "pulled":
+          av = a.first_seen ? Date.parse(a.first_seen) : 0;
+          bv = b.first_seen ? Date.parse(b.first_seen) : 0;
+          break;
         default: av = scoreOf(a) ?? -1; bv = scoreOf(b) ?? -1;
       }
       if (av === bv) return 0;
@@ -274,17 +291,28 @@ export function Scout() {
     return rows;
   }, [filtered, sort]);
 
-  // Group the sorted rows by category_group, preserving first-seen order.
+  // Group the sorted rows — by category_group (first-seen order) or by the
+  // day Scout pulled each one in (newest day first). `name` is the stable
+  // collapse/identity key; `label` is what the header shows.
   const groups = useMemo(() => {
-    if (!groupBy) return null;
+    if (groupBy === "none") return null;
     const out = [];
     const idx = new Map();
     for (const p of sorted) {
-      const name = p.category_group || "Uncategorized";
+      let name, label;
+      if (groupBy === "pulled") {
+        name = p.first_seen ? String(p.first_seen).slice(0, 10) : "0000-00-00";
+        label = name === "0000-00-00" ? "Unknown pull date" : fmtGroupDate(name);
+      } else {
+        name = p.category_group || "Uncategorized";
+        label = name;
+      }
       let g = idx.get(name);
-      if (!g) { g = { name, items: [] }; idx.set(name, g); out.push(g); }
+      if (!g) { g = { name, label, items: [] }; idx.set(name, g); out.push(g); }
       g.items.push(p);
     }
+    // Pulled groups read newest → oldest; category groups keep first-seen order.
+    if (groupBy === "pulled") out.sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
     return out;
   }, [sorted, groupBy]);
 
@@ -421,6 +449,7 @@ export function Scout() {
             <span className={`scout-score ${scoreClass(score)}`}>{score != null ? score : "—"}</span>
           </td>
           <td className="sc-num" title={p.source_created_at || ""}>{fmtDate(p.source_created_at)}</td>
+          <td className="sc-num sc-pulled" title={p.first_seen || ""}>{fmtDate(p.first_seen)}</td>
           <td className="sc-num" title={kind ? `${pop} ${kind}` : ""}>
             {pop == null ? "—" : `${pop.toLocaleString()}${kind ? " " + kind : ""}`}
           </td>
@@ -462,12 +491,20 @@ export function Scout() {
           <span className="scout-count">{sorted.length} / {products.length} products</span>
         )}
         <button
-          className="scout-refresh-btn"
-          onClick={() => setGroupBy((v) => !v)}
+          className={"scout-refresh-btn" + (groupBy === "category" ? " on" : "")}
+          onClick={() => setGroupBy((m) => (m === "category" ? "none" : "category"))}
           title="Group products by high-level category"
           style={{ marginLeft: "auto" }}
         >
-          {groupBy ? "Grouped: on" : "Group by category"}
+          {groupBy === "category" ? "Grouped: category" : "Group by category"}
+        </button>
+        <button
+          className={"scout-refresh-btn" + (groupBy === "pulled" ? " on" : "")}
+          onClick={() => setGroupBy((m) => (m === "pulled" ? "none" : "pulled"))}
+          title="Group products by the day Scout pulled them in (first seen)"
+          style={{ marginLeft: 0 }}
+        >
+          {groupBy === "pulled" ? "Grouped: date pulled" : "Group by date pulled"}
         </button>
         <button
           className="scout-refresh-btn"
@@ -572,6 +609,7 @@ export function Scout() {
                   <th
                     key={c.label + i}
                     className={[c.key ? "sortable" : "", c.cls || ""].filter(Boolean).join(" ")}
+                    title={c.title || undefined}
                     onClick={c.key ? () => onSort(c.key) : undefined}
                   >
                     {c.label}{arrow(c.key)}
@@ -580,15 +618,15 @@ export function Scout() {
               </tr>
             </thead>
             <tbody>
-              {!groupBy && sorted.map((p) => renderRow(p))}
-              {groupBy && groups.map((g) => {
+              {groupBy === "none" && sorted.map((p) => renderRow(p))}
+              {groupBy !== "none" && groups.map((g) => {
                 const isCollapsed = collapsed.has(g.name);
                 return (
                   <React.Fragment key={"grp-" + g.name}>
                     <tr className="scout-group-header" onClick={() => toggleGroup(g.name)}>
                       <td colSpan={COLUMNS.length}>
                         <span className="sc-grp-toggle">{isCollapsed ? "▸" : "▾"}</span>{" "}
-                        {g.name} <span className="sc-grp-count">({g.items.length})</span>
+                        {g.label || g.name} <span className="sc-grp-count">({g.items.length})</span>
                       </td>
                     </tr>
                     {!isCollapsed && g.items.map((p) => renderRow(p))}

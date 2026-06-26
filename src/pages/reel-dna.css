@@ -416,6 +416,15 @@
 .rd-table .rd-th-reel { min-width: 240px; }
 .rd-table .rd-th-act  { width: 1%; }
 
+/* Sortable column headers (Classic spreadsheet). Click to sort A→Z / Z→A. */
+.rd-table thead th.rd-th-sort { cursor: pointer; user-select: none; }
+.rd-table thead th.rd-th-sort:hover { color: var(--fg); }
+.rd-th-sort-inner { display: inline-flex; align-items: center; gap: 5px; }
+.rd-th-sort-arrow { font-size: 9px; opacity: 0.4; transition: opacity .12s ease; }
+.rd-table thead th.rd-th-sort:hover .rd-th-sort-arrow { opacity: 0.7; }
+.rd-table thead th.rd-th-sort.is-sorted { color: var(--c-cyan); }
+.rd-table thead th.rd-th-sort.is-sorted .rd-th-sort-arrow { opacity: 1; color: var(--c-cyan); }
+
 .rd-tr { border-bottom: 1px solid var(--line-soft); border-left: 3px solid transparent; }
 .rd-tr:hover { background: color-mix(in srgb, var(--c-cyan) 5%, transparent); }
 .rd-tr.rd-status--captured    { border-left-color: var(--c-blue); }

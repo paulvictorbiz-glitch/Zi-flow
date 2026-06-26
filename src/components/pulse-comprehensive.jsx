@@ -54,6 +54,22 @@ function sevRank(s) {
   return i === -1 ? SEVERITY_ORDER.length : i;
 }
 
+/* ── Date basis: which timestamp the feed shows + groups by ──
+   "published" = the article's own publish date (publishedAt)
+   "pulled"    = when Pulse pulled the item into our DB (createdAt)
+   Lets the owner track "what's new since I last looked" by grouping on
+   the pull date instead of the (often older) source publish date.
+   Persisted so the choice survives reloads. */
+const PULSE_BASIS_KEY = "pulse_date_basis";
+const BASIS_LABEL = { published: "Published", pulled: "Pulled" };
+function loadBasis() {
+  try { return localStorage.getItem(PULSE_BASIS_KEY) === "pulled" ? "pulled" : "published"; }
+  catch { return "published"; }
+}
+function basisDate(item, basis) {
+  return basis === "pulled" ? item?.createdAt : item?.publishedAt;
+}
+
 function SeverityBadge({ severity }) {
   const sev = severity && SEVERITY_LABEL[severity] ? severity : "info";
   return <span className={`pulse-sev pulse-sev--${sev}`} title={SEVERITY_LABEL[sev]}>{SEVERITY_LABEL[sev]}</span>;
@@ -147,7 +163,16 @@ function PulseDetail({ item, isOwner, onSave, onMarkRead, onToggleStar, onArchiv
             </a>
           ) : item.sourceName ? <span className="pulse-source">{item.sourceName}</span> : null}
           {item.region && <span className="pulse-region">{item.region}</span>}
-          {item.publishedAt && <span className="pulse-region">{fmtShortDate(item.publishedAt)}</span>}
+          {item.publishedAt && (
+            <span className="pulse-region" title={`Published ${item.publishedAt}`}>
+              Pub {fmtShortDate(item.publishedAt)}
+            </span>
+          )}
+          {item.createdAt && (
+            <span className="pulse-region pc-pulled" title={`Pulled into Pulse ${item.createdAt}`}>
+              Pulled {fmtShortDate(item.createdAt)}
+            </span>
+          )}
         </div>
         <div className="pc-detail-acts">
           <button type="button" className={"pulse-act pulse-act--star" + (item.starred ? " is-on" : "")}
@@ -183,18 +208,18 @@ function TagPreview({ tags }) {
 }
 
 /* ════════════════════ TIMELINE ════════════════════════════ */
-function TimelineLayout({ items, expandedId, toggle, detailProps }) {
+function TimelineLayout({ items, basis, expandedId, toggle, detailProps }) {
   const grouped = useMemo(() => {
     const buckets = new Map();
     for (const it of items) {
-      const k = dayKey(it.publishedAt);
+      const k = dayKey(basisDate(it, basis));
       if (!buckets.has(k)) buckets.set(k, []);
       buckets.get(k).push(it);
     }
     for (const arr of buckets.values())
-      arr.sort((a, b) => (Date.parse(b.publishedAt || 0) || 0) - (Date.parse(a.publishedAt || 0) || 0));
+      arr.sort((a, b) => (Date.parse(basisDate(b, basis) || 0) || 0) - (Date.parse(basisDate(a, basis) || 0) || 0));
     return Array.from(buckets.keys()).sort((a, b) => (a < b ? 1 : -1)).map((k) => ({ key: k, rows: buckets.get(k) }));
-  }, [items]);
+  }, [items, basis]);
 
   return (
     <div className="pc-timeline">
@@ -226,7 +251,7 @@ function TimelineLayout({ items, expandedId, toggle, detailProps }) {
 }
 
 /* ════════════════════ MAGAZINE ════════════════════════════ */
-function MagazineLayout({ items, expandedId, toggle, detailProps }) {
+function MagazineLayout({ items, basis, expandedId, toggle, detailProps }) {
   return (
     <div className="pc-mag-grid">
       {items.map((item) => {
@@ -239,7 +264,10 @@ function MagazineLayout({ items, expandedId, toggle, detailProps }) {
               <div className="pc-mag-head">
                 <SeverityBadge severity={item.severity} />
                 <PlatformGlyph platform={item.platform} />
-                <span className="pc-mag-date">{fmtShortDate(item.publishedAt)}</span>
+                <span className={"pc-mag-date" + (basis === "pulled" ? " pc-pulled" : "")}
+                  title={`${BASIS_LABEL[basis]} ${basisDate(item, basis) || "—"}`}>
+                  {basis === "pulled" ? "↓ " : ""}{fmtShortDate(basisDate(item, basis))}
+                </span>
                 {item.starred && <span className="pc-star-flag">★</span>}
               </div>
               <div className="pc-mag-title">{item.title || "(untitled)"}</div>
@@ -259,7 +287,8 @@ function MagazineLayout({ items, expandedId, toggle, detailProps }) {
 
 /* ════════════════════ TABLE ═══════════════════════════════ */
 const TABLE_COLS = [
-  { k: "publishedAt", l: "Date", get: (i) => Date.parse(i.publishedAt || 0) || 0 },
+  { k: "publishedAt", l: "Published", get: (i) => Date.parse(i.publishedAt || 0) || 0 },
+  { k: "createdAt", l: "Pulled", get: (i) => Date.parse(i.createdAt || 0) || 0 },
   { k: "severity", l: "Sev", get: (i) => sevRank(i.severity) },
   { k: "platform", l: "Plat", get: (i) => i.platform || "" },
   { k: "title", l: "Title", get: (i) => (i.title || "").toLowerCase() },
@@ -302,6 +331,7 @@ function TableLayout({ items, expandedId, toggle, detailProps }) {
                 <tr className={"pc-tr" + (open ? " is-open" : "")} data-severity={item.severity}
                   onClick={() => toggle(item.id)}>
                   <td className="pc-td-date">{fmtShortDate(item.publishedAt)}</td>
+                  <td className="pc-td-date pc-pulled" title={item.createdAt || ""}>{fmtShortDate(item.createdAt)}</td>
                   <td><SeverityBadge severity={item.severity} /></td>
                   <td>{item.platform ? <PlatformGlyph platform={item.platform} /> : <span className="pc-dash">—</span>}</td>
                   <td className="pc-td-title">
@@ -329,14 +359,14 @@ function TableLayout({ items, expandedId, toggle, detailProps }) {
 }
 
 /* ════════════════════ KANBAN ══════════════════════════════ */
-function KanbanLayout({ items, expandedId, toggle, detailProps }) {
+function KanbanLayout({ items, basis, expandedId, toggle, detailProps }) {
   const cols = useMemo(() => {
     const m = { high: [], watch: [], info: [] };
     for (const it of items) (m[it.severity] || m.info).push(it);
     for (const arr of Object.values(m))
-      arr.sort((a, b) => (Date.parse(b.publishedAt || 0) || 0) - (Date.parse(a.publishedAt || 0) || 0));
+      arr.sort((a, b) => (Date.parse(basisDate(b, basis) || 0) || 0) - (Date.parse(basisDate(a, basis) || 0) || 0));
     return m;
-  }, [items]);
+  }, [items, basis]);
 
   return (
     <div className="pc-kanban">
@@ -357,7 +387,10 @@ function KanbanLayout({ items, expandedId, toggle, detailProps }) {
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(item.id); } }}>
                     <div className="pc-kan-card-head">
                       <PlatformGlyph platform={item.platform} />
-                      <span className="pc-kan-date">{fmtShortDate(item.publishedAt)}</span>
+                      <span className={"pc-kan-date" + (basis === "pulled" ? " pc-pulled" : "")}
+                        title={`${BASIS_LABEL[basis]} ${basisDate(item, basis) || "—"}`}>
+                        {basis === "pulled" ? "↓ " : ""}{fmtShortDate(basisDate(item, basis))}
+                      </span>
                       {item.starred && <span className="pc-star-flag">★</span>}
                     </div>
                     <div className="pc-kan-title">{item.title || "(untitled)"}</div>
@@ -383,14 +416,50 @@ export function PulseComprehensive({
   const [expandedId, setExpandedId] = useState(null);
   const toggle = useCallback((id) => setExpandedId((cur) => (cur === id ? null : id)), []);
 
+  /* Date basis (Published ⇄ Pulled), persisted. Drives timeline grouping +
+     the date shown on timeline/cards/board; the Table view shows both as
+     separate columns, and the inline detail always shows both. */
+  const [basis, setBasis] = useState(loadBasis);
+  const setBasisPersist = useCallback((v) => {
+    const next = v === "pulled" ? "pulled" : "published";
+    setBasis(next);
+    try { localStorage.setItem(PULSE_BASIS_KEY, next); } catch (_) {}
+  }, []);
+
   const detailProps = { isOwner, onSave, onMarkRead, onToggleStar, onArchive, onTrash };
 
   if (!list.length) return null;
 
-  if (layout === "magazine") return <MagazineLayout items={list} expandedId={expandedId} toggle={toggle} detailProps={detailProps} />;
-  if (layout === "table")    return <TableLayout    items={list} expandedId={expandedId} toggle={toggle} detailProps={detailProps} />;
-  if (layout === "kanban")   return <KanbanLayout   items={list} expandedId={expandedId} toggle={toggle} detailProps={detailProps} />;
-  return <TimelineLayout items={list} expandedId={expandedId} toggle={toggle} detailProps={detailProps} />;
+  const body =
+    layout === "magazine" ? <MagazineLayout items={list} basis={basis} expandedId={expandedId} toggle={toggle} detailProps={detailProps} /> :
+    layout === "table"    ? <TableLayout    items={list} expandedId={expandedId} toggle={toggle} detailProps={detailProps} /> :
+    layout === "kanban"   ? <KanbanLayout   items={list} basis={basis} expandedId={expandedId} toggle={toggle} detailProps={detailProps} /> :
+                            <TimelineLayout  items={list} basis={basis} expandedId={expandedId} toggle={toggle} detailProps={detailProps} />;
+
+  return (
+    <div className="pc-comprehensive">
+      <div className="pc-basisbar">
+        <span className="pc-layoutbar-label">Date</span>
+        <div className="pc-layout-switch" role="group" aria-label="Date basis">
+          {(["published", "pulled"]).map((b) => (
+            <button key={b} type="button"
+              className={"pc-layout-btn" + (basis === b ? " is-on" : "")}
+              aria-pressed={basis === b}
+              title={b === "pulled"
+                ? "Show & group by when Pulse pulled each item in (track what's new)"
+                : "Show & group by the article's own publish date"}
+              onClick={() => setBasisPersist(b)}>{BASIS_LABEL[b]}</button>
+          ))}
+        </div>
+        {layout === "timeline"
+          ? <span className="pc-basisbar-hint">grouped by {BASIS_LABEL[basis].toLowerCase()} date</span>
+          : layout === "table"
+            ? <span className="pc-basisbar-hint">both dates shown as columns</span>
+            : null}
+      </div>
+      {body}
+    </div>
+  );
 }
 
 export const PULSE_LAYOUTS = [
