@@ -22,6 +22,7 @@ import { Scout } from "./scout.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { fetchStorageStats } from "../lib/social-client.js";
 import { useIsOwner } from "../lib/permissions.jsx";
+import { loadGates, saveGates, isBlocked, GATE_FEATURES, loadUsage, loadDailyUsage, resetUsage } from "../lib/free-llm-gates.js";
 // .mon-spark* / .mon-stat-* live in monitor.css; import it here so the
 // perf card is styled even when the Infra sub-tab (which also imports it)
 // isn't the mounted sub-view. CSS imports are idempotent/deduped by Vite.
@@ -187,7 +188,7 @@ function PerfSparkline({ values = [], color = PERF_SPARK_COLOR, label }) {
   );
 }
 
-function FrontendPerfCard({ onStats }) {
+export function FrontendPerfCard({ onStats }) {
   const isOwner = useIsOwner();
   const [state, setState] = useState({ status: "loading", rows: [] });
 
@@ -347,7 +348,7 @@ function fmtAgo(iso) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function EditorUsageCard({ onStats }) {
+export function EditorUsageCard({ onStats }) {
   const isOwner = useIsOwner();
   const [state, setState] = useState({ status: "loading", sessions: [], locks: [] });
   const [tick, setTick] = useState(0); // manual / interval refresh
@@ -557,7 +558,7 @@ function EditorUsageCard({ onStats }) {
 
 const INSTALLS_WINDOW_DAYS = 14;
 
-function CapCutInstallsCard({ onStats }) {
+export function CapCutInstallsCard({ onStats }) {
   const isOwner = useIsOwner();
   const [state, setState] = useState({ status: "loading", events: [] });
   const [tick, setTick] = useState(0);
@@ -716,7 +717,7 @@ function fmtBytes(n) {
 // (reel-videos, location-photos, …) from /api/monitor/status, plus Rocket.Chat
 // video attachments vs other uploads vs messages from the JWT-gated RC route.
 // Both degrade to empty rather than throwing when undeployed.
-function StorageBreakdownCard({ onStats }) {
+export function StorageBreakdownCard({ onStats }) {
   const isOwner = useIsOwner();
   const [state, setState] = useState({ status: "loading", buckets: [], rc: null });
   const [tick, setTick] = useState(0);
@@ -845,13 +846,512 @@ function StorageBreakdownCard({ onStats }) {
   );
 }
 
+/* ── Free LLM gates card ──────────────────────────────────────
+   Owner-only. Lets the owner globally disable (or selectively
+   disable) all four features that burn the free OpenRouter quota.
+   Persists to app_settings["free_llm_gates"] via the "owner write
+   app_settings" RLS policy — same pattern as gamify_enabled.
+   localStorage key "fb_free_llm_gates" keeps a sync cache so
+   per-feature guards in other pages are instant (no await). */
+
+/* ── Free-LLM usage donut ──────────────────────────────────────
+   Browser-local call counts per feature, sized into a donut so the
+   owner can see at a glance which feature is eating the shared free
+   quota — and on which model. Data from loadUsage() (localStorage).
+   Segments are grouped by model so same-model features sit adjacent. */
+function FreeLLMUsageDonut({ usage, onReset }) {
+  const counts = usage?.counts || {};
+  const rows = GATE_FEATURES
+    .map(f => ({ ...f, n: counts[f.key] || 0 }))
+    .sort((a, b) => (a.model < b.model ? -1 : a.model > b.model ? 1 : 0));
+  const total = rows.reduce((s, r) => s + r.n, 0);
+
+  const R = 42, STROKE = 16, C = 2 * Math.PI * R;
+  let offset = 0;
+
+  return (
+    <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ position: "relative", width: 116, height: 116, flexShrink: 0 }}>
+        <svg width={116} height={116} viewBox="0 0 120 120">
+          <circle cx={60} cy={60} r={R} fill="none"
+            stroke="var(--border-dim, rgba(127,127,127,.16))" strokeWidth={STROKE} />
+          {total > 0 && rows.map(r => {
+            if (!r.n) return null;
+            const len = (r.n / total) * C;
+            const seg = (
+              <circle key={r.key} cx={60} cy={60} r={R} fill="none"
+                stroke={r.color} strokeWidth={STROKE}
+                strokeDasharray={`${len} ${C - len}`}
+                strokeDashoffset={-offset}
+                transform="rotate(-90 60 60)" strokeLinecap="butt" />
+            );
+            offset += len;
+            return seg;
+          })}
+        </svg>
+        <div style={{
+          position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", pointerEvents: "none",
+        }}>
+          <div style={{ fontSize: 21, fontWeight: 700, lineHeight: 1 }}>{total}</div>
+          <div className="mono dim" style={{ fontSize: 9 }}>calls</div>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, minWidth: 168 }}>
+        {rows.map(r => {
+          const pct = total ? Math.round((r.n / total) * 100) : 0;
+          return (
+            <div key={r.key} style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+              <span style={{
+                width: 9, height: 9, borderRadius: 2, background: r.color,
+                flexShrink: 0, opacity: r.n ? 1 : 0.35,
+              }} />
+              <span style={{ fontSize: 11, opacity: r.n ? 1 : 0.6 }}>{r.label}</span>
+              <span className="mono dim" style={{ fontSize: 9, marginLeft: "auto" }}>{r.model}</span>
+              <span className="mono" style={{ fontSize: 10, minWidth: 42, textAlign: "right" }}>
+                {r.n}{total ? ` · ${pct}%` : ""}
+              </span>
+            </div>
+          );
+        })}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 7 }}>
+          <span className="mono dim" style={{ fontSize: 9 }}>
+            {usage?.since ? `since ${new Date(usage.since).toLocaleDateString()}` : "no calls yet"} · this browser
+          </span>
+          <button onClick={onReset} className="mono dim" style={{
+            fontSize: 9, background: "none", color: "inherit", cursor: "pointer",
+            border: "1px solid var(--border-dim, rgba(127,127,127,.25))",
+            borderRadius: 4, padding: "2px 7px",
+          }}>reset</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function FreeLLMControlCard() {
+  const isOwner = useIsOwner();
+  const [gates, setGates] = React.useState(null);   // null = loading
+  const [saving, setSaving] = React.useState(false);
+  const [usage, setUsage] = React.useState(() => loadUsage());
+
+  React.useEffect(() => {
+    if (!isOwner) return;
+    loadGates().then(g => setGates({ ...g }));
+    setUsage(loadUsage());
+  }, [isOwner]);
+
+  if (!isOwner) return null;
+
+  const loading = gates === null;
+  const globalOff = !!(gates?.global);
+  const enabledCount = GATE_FEATURES.filter(f => !gates?.[f.key] && !globalOff).length;
+
+  async function toggle(key, checked) {
+    const next = { ...(gates || {}), [key]: checked };
+    setGates(next);
+    setSaving(true);
+    await saveGates(next);
+    setSaving(false);
+  }
+
+  return (
+    <Card
+      title="Free LLM gates"
+      right={
+        <span className="mono dim" style={{ fontSize: 11 }}>
+          {loading ? "…" : saving ? "saving…" : `${enabledCount} / ${GATE_FEATURES.length} on`}
+        </span>
+      }
+      footLeft="app_settings · free_llm_gates · owner-write"
+    >
+      <div className="mon-section-body">
+        {loading && <div className="mono dim" style={{ padding: "4px 0" }}>loading…</div>}
+
+        {!loading && (
+          <>
+            {/* Usage donut — which feature burns what, per model */}
+            <div style={{
+              marginBottom: 12, paddingBottom: 12,
+              borderBottom: "1px solid var(--border-dim, rgba(127,127,127,.18))",
+            }}>
+              <FreeLLMUsageDonut usage={usage} onReset={() => { resetUsage(); setUsage(loadUsage()); }} />
+            </div>
+
+            {/* Global kill switch */}
+            <label style={{
+              display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+              marginBottom: 12, paddingBottom: 10,
+              borderBottom: "1px solid var(--border-dim, rgba(127,127,127,.18))",
+            }}>
+              <input
+                type="checkbox"
+                checked={globalOff}
+                onChange={e => toggle("global", e.target.checked)}
+                style={{ width: 14, height: 14, cursor: "pointer", accentColor: "var(--c-amber, #e0a458)" }}
+              />
+              <span style={{ fontSize: 12, fontWeight: 700 }}>Kill ALL free LLM calls</span>
+              {globalOff && (
+                <span style={{
+                  fontSize: 10, fontFamily: "var(--f-mono, monospace)",
+                  color: "var(--c-amber, #e0a458)", letterSpacing: ".05em",
+                }}>ALL BLOCKED</span>
+              )}
+            </label>
+
+            {/* Per-feature checkboxes */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              {GATE_FEATURES.map(f => {
+                const blocked = !!(gates?.[f.key]);
+                return (
+                  <label key={f.key} style={{
+                    display: "flex", alignItems: "flex-start", gap: 8,
+                    cursor: globalOff ? "default" : "pointer",
+                    opacity: globalOff ? 0.45 : 1,
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={blocked || globalOff}
+                      disabled={globalOff}
+                      onChange={e => toggle(f.key, e.target.checked)}
+                      style={{
+                        marginTop: 2, width: 13, height: 13,
+                        cursor: globalOff ? "default" : "pointer",
+                        accentColor: "var(--c-amber, #e0a458)",
+                      }}
+                    />
+                    <div>
+                      <div style={{ fontSize: 12 }}>{f.label}</div>
+                      <div className="mono dim" style={{ fontSize: 10, marginTop: 1 }}>{f.desc}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="mono dim" style={{ fontSize: 10, marginTop: 12 }}>
+              donut counts free-LLM calls made from THIS browser since tracking began (no backfill) · blocked features show a notice in-page
+            </div>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ── API Budgets & Limits card ─────────────────────────────────
+   Owner-only. Surfaces (a) the $300 GCP free-trial credit with a
+   LIVE day-countdown to expiry (turns amber→red as it nears — the
+   owner must spend it before it's lost), and (b) the escalating
+   Content-Forge LLM ladder rungs + the IG Graph API, each with its
+   daily limit / balance and a short description.
+
+   Values are a maintained CONFIG constant (these limits rarely move).
+   Only the day-countdown is computed live (pure Date math — no API).
+   LIVE per-call usage import is NOT done here: GCP/Gemini have no
+   simple usage API, and OpenRouter/Graph keys are server-side secrets
+   that would need an api/* proxy (Vercel is at its 12-function cap) or
+   backend header-capture. Browser-local OpenRouter call counts already
+   live in the Free-LLM usage donut above. */
+
+// $300 GCP free-trial credit. Account converted to paid 2026-06-26;
+// "73 days remaining" shown 2026-06-27 → expiry ≈ 2026-09-07. Update
+// `remainingNote` by eyeballing GCP → Billing → Credits when it matters.
+const GCP_CREDIT = {
+  amount: 300,
+  currency: "USD",
+  grantedOn: "2026-06-26",
+  expiresOn: "2026-09-07",
+  appliesTo: "Vertex AI (ladder rung 2) — NOT the Gemini API or Claude/Marketplace",
+  href: "https://console.cloud.google.com/billing",   // Billing → Credits to see live balance
+};
+
+// The escalating ladder rungs (matches _forge_llm in content_forge.py)
+// + the IG Graph API, which is separate from the LLM ladder.
+const PROVIDER_LIMITS = [
+  {
+    key: "gemini_api", label: "Gemini API (AI Studio)", tone: "ok",
+    rung: "Rung 1 · default", limit: "~1,500 req/day · free",
+    desc: "gemini-2.0-flash · 15 req/min · free tier (no credit, no card). 30× OpenRouter's cap — the main fix for rate-limiting.",
+    href: "https://aistudio.google.com/usage",
+  },
+  {
+    key: "vertex_gemini", label: "Vertex AI (Gemini)", tone: "credit",
+    rung: "Rung 2 · escalation", limit: "$300 GCP credit",
+    desc: "google/gemini-2.0-flash-001 · billed to the credit above. Reliable burst capacity when the free Gemini tier is exhausted.",
+    href: "https://console.cloud.google.com/vertex-ai",
+  },
+  {
+    key: "openrouter", label: "OpenRouter (free)", tone: "warn",
+    rung: "Rung 4 · safety net", limit: "~50 req/day (1,000 with $10)",
+    desc: "Curated :free model chain on the MAIN key — shared by Content Forge, Reel Analyze, tagging, insights, news, ideas. Scout has its OWN OpenRouter key (separate quota — see the Scout card).",
+    href: "https://openrouter.ai/activity",
+  },
+  {
+    key: "ig_graph", label: "Instagram Graph API", tone: "info",
+    rung: "IG sync · separate", limit: "~200 calls/user/hr",
+    desc: "App-level rate limit (X-App-Usage headers). Live % tracking needs backend header-capture — not yet wired (follow-up).",
+    href: "https://developers.facebook.com/apps/",
+  },
+];
+
+function _daysBetween(a, b) {
+  return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
+}
+
+// External-usage link: opens the provider's own usage page in a new tab.
+// Falls back to plain text when no href is configured.
+function ExtUsageLink({ href, children, style }) {
+  if (!href) return <span style={style}>{children}</span>;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`Open usage on ${href.replace(/^https?:\/\//, "").split("/")[0]} ↗`}
+      style={{
+        color: "var(--c-cyan, #4fb6c8)", textDecoration: "none",
+        borderBottom: "1px dotted currentColor", cursor: "pointer", ...style,
+      }}
+    >
+      {children}<span style={{ fontSize: ".82em", opacity: 0.7 }}> ↗</span>
+    </a>
+  );
+}
+
+// Thin per-rung meter. `untracked` renders a hatched empty track (we can't read
+// that provider's live usage from the browser) instead of a misleading fill.
+function RungBar({ pct = 0, color, label, sub, untracked }) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+        <span className="mono dim" style={{ fontSize: 9 }}>{label}</span>
+        {sub && (
+          <span className="mono" style={{ fontSize: 9, color: untracked ? "var(--fg-faint, #888)" : color }}>{sub}</span>
+        )}
+      </div>
+      <div style={{
+        height: 6, borderRadius: 3, overflow: "hidden",
+        background: "var(--border-dim, rgba(127,127,127,.16))",
+        ...(untracked ? {
+          backgroundImage: "repeating-linear-gradient(45deg, rgba(127,127,127,.04) 0, rgba(127,127,127,.04) 4px, rgba(127,127,127,.16) 4px, rgba(127,127,127,.16) 8px)",
+        } : {}),
+      }}>
+        {!untracked && (
+          <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: "100%", background: color }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function ProviderBudgetsCard({ onStats }) {
+  const isOwner = useIsOwner();
+
+  const credit = React.useMemo(() => {
+    const now = new Date();
+    const total = Math.max(1, _daysBetween(GCP_CREDIT.grantedOn, GCP_CREDIT.expiresOn));
+    const left = Math.max(0, _daysBetween(now, GCP_CREDIT.expiresOn));
+    const elapsedPct = Math.min(100, Math.max(0, Math.round(((total - left) / total) * 100)));
+    const tone = left <= 7 ? "alert" : left <= 30 ? "warn" : "ok";
+    return { total, left, elapsedPct, tone };
+  }, []);
+
+  React.useEffect(() => {
+    onStats && onStats({ daysLeft: credit.left, tone: credit.tone });
+  }, [credit, onStats]);
+
+  if (!isOwner) return null;
+
+  const barColor = credit.tone === "alert" ? "var(--c-red, #e0564f)"
+    : credit.tone === "warn" ? "var(--c-amber, #e0a458)" : "var(--c-green, #5fb87a)";
+  const expLabel = new Date(GCP_CREDIT.expiresOn).toLocaleDateString(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+  });
+
+  // Live-ish OpenRouter usage: today's MAIN-pool free-LLM calls from THIS browser
+  // (Scout excluded — separate key). Plain localStorage read; no hook needed.
+  const daily = loadDailyUsage();
+  const mainFeatures = GATE_FEATURES.filter(f => f.key !== "scout");
+  const OR_DAILY_CAP = 50;
+  const orToday = mainFeatures.reduce((s, f) => s + (daily.counts[f.key] || 0), 0);
+  const orPct = Math.min(100, Math.round((orToday / OR_DAILY_CAP) * 100));
+  const orColor = orPct >= 90 ? "var(--c-red, #e0564f)"
+    : orPct >= 70 ? "var(--c-amber, #e0a458)" : "var(--c-green, #5fb87a)";
+  const orBreakdown = mainFeatures
+    .map(f => ({ label: f.label, n: daily.counts[f.key] || 0, color: f.color }))
+    .filter(x => x.n > 0)
+    .sort((a, b) => b.n - a.n);
+
+  return (
+    <Card
+      title="API Budgets & Limits"
+      right={
+        <span className="mono" style={{ fontSize: 11, color: barColor }}>
+          {credit.left} days left
+        </span>
+      }
+      footLeft="GCP day-countdown + OpenRouter today are live · Gemini/IG limits static"
+    >
+      <div className="mon-section-body">
+        {/* $300 GCP credit — live countdown */}
+        <div style={{
+          marginBottom: 12, paddingBottom: 12,
+          borderBottom: "1px solid var(--border-dim, rgba(127,127,127,.18))",
+        }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 20, fontWeight: 700 }}>${GCP_CREDIT.amount}</span>
+            <ExtUsageLink href={GCP_CREDIT.href} style={{ fontSize: 10 }}>
+              <span className="mono">GCP free-trial credit</span>
+            </ExtUsageLink>
+            <span className="mono" style={{ fontSize: 11, marginLeft: "auto", color: barColor }}>
+              {credit.left} / {credit.total} days
+            </span>
+          </div>
+          {/* time-elapsed bar */}
+          <div style={{
+            height: 8, borderRadius: 4, overflow: "hidden",
+            background: "var(--border-dim, rgba(127,127,127,.18))",
+          }}>
+            <div style={{ width: `${credit.elapsedPct}%`, height: "100%", background: barColor }} />
+          </div>
+          <div className="mono dim" style={{ fontSize: 10, marginTop: 6 }}>
+            expires {expLabel} · {credit.elapsedPct}% of window elapsed · spend before expiry — unused credit is lost
+          </div>
+          <div className="mono dim" style={{ fontSize: 10, marginTop: 3 }}>
+            applies to: {GCP_CREDIT.appliesTo}
+          </div>
+        </div>
+
+        {/* Ladder rungs + IG Graph */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+          {PROVIDER_LIMITS.map(p => {
+            const dot = p.tone === "warn" ? "var(--c-amber, #e0a458)"
+              : p.tone === "credit" ? "var(--c-cyan, #4fb6c8)"
+              : p.tone === "info" ? "var(--c-violet, #9b8cce)"
+              : "var(--c-green, #5fb87a)";
+            return (
+              <div key={p.key} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <span style={{
+                  width: 9, height: 9, borderRadius: 2, background: dot,
+                  flexShrink: 0, marginTop: 3,
+                }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <ExtUsageLink href={p.href} style={{ fontSize: 12, fontWeight: 700 }}>
+                      {p.label}
+                    </ExtUsageLink>
+                    <span className="mono dim" style={{ fontSize: 9 }}>{p.rung}</span>
+                    <span className="mono" style={{ fontSize: 10, marginLeft: "auto", textAlign: "right" }}>
+                      {p.limit}
+                    </span>
+                  </div>
+                  <div className="mono dim" style={{ fontSize: 10, marginTop: 1 }}>{p.desc}</div>
+
+                  {p.key === "gemini_api" && (
+                    <RungBar untracked label="live usage — not tracked client-side" sub="see AI Studio ↗" />
+                  )}
+                  {p.key === "vertex_gemini" && (
+                    <RungBar pct={credit.elapsedPct} color={barColor} label="$300 credit window" sub={`${credit.left}d left`} />
+                  )}
+                  {p.key === "openrouter" && (
+                    <>
+                      <RungBar pct={orPct} color={orColor} label="calls today · this browser" sub={`${orToday} / ~${OR_DAILY_CAP}`} />
+                      <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+                        {orBreakdown.length === 0 ? (
+                          <div className="mono dim" style={{ fontSize: 9 }}>no free-LLM calls yet today (this browser)</div>
+                        ) : orBreakdown.map(b => (
+                          <div key={b.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ width: 7, height: 7, borderRadius: 2, background: b.color, flexShrink: 0 }} />
+                            <span className="mono dim" style={{ fontSize: 9.5, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.label}</span>
+                            <span className="mono" style={{ fontSize: 9.5 }}>{b.n}</span>
+                          </div>
+                        ))}
+                        <div className="mono dim" style={{ fontSize: 8.5, marginTop: 1, opacity: 0.85 }}>
+                          turn unneeded ones off in Free LLM gates ↑ to reserve the 50/day for new features
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  {p.key === "ig_graph" && (
+                    <RungBar untracked label="live usage — needs backend header capture" sub="see Meta ↗" />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mono dim" style={{ fontSize: 10, marginTop: 12 }}>
+          OpenRouter bar = free-LLM calls from THIS browser today (resets 00:00 UTC) · Gemini / Vertex / IG live usage needs backend work — limits shown are maintained in-code
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// MapForge — quick-access launcher for the two static viewer pages hosted
+// under /mapforge/ (built by the MapForge repo's scripts/build-static.mjs and
+// dropped into public/mapforge/). Owner-only by riding the "monitor" gate.
+function MapForgeLanding() {
+  const links = [
+    {
+      href: "/mapforge/dashboard.html",
+      title: "Owner Dashboard",
+      desc: "Lead funnel, per-target status, sites built/hot, outreach + engagement — across every scrape job.",
+      bg: "#23314f", fg: "#bcd0ff",
+    },
+    {
+      href: "/mapforge/index.html",
+      title: "Preview Gallery",
+      desc: "Every generated demo site — Standard vs Premium build, side by side. Each carries the noindex + unofficial-demo watermark.",
+      bg: "#3a2a4f", fg: "#e3c0ff",
+    },
+  ];
+  return (
+    <Card title="MapForge">
+      <p style={{ color: "var(--fg-dim, #9aa3b2)", margin: "0 0 14px", maxWidth: 720 }}>
+        Scrape-to-site engine. Open either viewer in a new tab.
+      </p>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        {links.map((l) => (
+          <a
+            key={l.href}
+            href={l.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "block", textDecoration: "none", flex: "1 1 280px", minWidth: 260,
+              background: "var(--bg-2, #1a1d24)", border: "1px solid var(--line, #262a33)",
+              borderRadius: 12, padding: "16px 18px",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-block", marginBottom: 8, padding: "4px 12px", borderRadius: 999,
+                fontSize: 13, fontWeight: 700, background: l.bg, color: l.fg,
+              }}
+            >
+              {l.title} ↗
+            </span>
+            <div style={{ color: "var(--fg-dim, #9aa3b2)", fontSize: 13, lineHeight: 1.5 }}>{l.desc}</div>
+          </a>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 // view = the permission-catalog key each sub-view is gated by (preserved
 // verbatim from when these were top-level tabs, so gating never changes).
+// MapForge rides the "monitor" gate (owner-only, same as Infra).
 const SUBVIEWS = [
-  { key: "infra",  label: "Infra",    view: "monitor", Comp: Monitor },
-  { key: "pulse",  label: "Pulse",    view: "pulse",   Comp: Pulse },
-  { key: "ai",     label: "AI Brain", view: "ai",      Comp: AIBrain },
-  { key: "scout",  label: "Scout",    view: "scout",   Comp: Scout },
+  { key: "infra",    label: "Infra",    view: "monitor", Comp: Monitor },
+  { key: "pulse",    label: "Pulse",    view: "pulse",   Comp: Pulse },
+  { key: "ai",       label: "AI Brain", view: "ai",      Comp: AIBrain },
+  { key: "scout",    label: "Scout",    view: "scout",   Comp: Scout },
+  { key: "mapforge", label: "MapForge", view: "monitor", Comp: MapForgeLanding },
 ];
 
 // Clamp any numeric to a 0..100 conic-gradient percentage.
@@ -862,13 +1362,6 @@ function gaugePct(v) {
 
 export function MonitorHub({ canView }) {
   const allowed = useMemo(() => SUBVIEWS.filter(s => canView(s.view)), [canView]);
-
-  // Real derived stats lifted from the two owner data cards (no new queries).
-  const [perfStats, setPerfStats] = useState(null);
-  const [usageStats, setUsageStats] = useState(null);
-  const [installStats, setInstallStats] = useState(null);
-  const [storageStats, setStorageStats] = useState(null);
-  const isOwner = useIsOwner();   // gate the kept owner cards
 
   const [mode, setMode] = useState(() => localStorage.getItem(MONITOR_MODE_KEY) || "infra");
 
@@ -882,8 +1375,6 @@ export function MonitorHub({ canView }) {
   if (allowed.length === 0) return null;   // defensive: hub only mounts when ≥1 granted
 
   const Active = (allowed.find(s => s.key === activeKey) || allowed[0]).Comp;
-
-  const liveEditing = (usageStats?.liveCount || 0) > 0;
 
   return (
     <div className="mon-wrap">
@@ -900,47 +1391,10 @@ export function MonitorHub({ canView }) {
         </div>
       )}
 
-      {/* Infrastructure-only owner cards. The two KEPT telemetry cards
-          (frontend-performance graph + editor usage) render ONLY on the Infra
-          sub-tab and self-gate to the owner — so Pulse / AI Brain / Scout show
-          just their own function. The other HUD cards (header, gauge row, Live
-          Now, Perf Vitals, Subsystems, Active View) were removed as redundant. */}
-      {activeKey === "infra" && isOwner && (
-      <div className="mon-grid" style={{ padding: "12px 22px 0", display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-        {/* panel 3: frontend perf */}
-        <div className="mon-panel">
-          <div className="mon-panel-head">
-            <span className={`mon-status-dot ${perfStats?.count ? "ok" : "alert"}`} />
-            <span className="mon-panel-title">Frontend Performance</span>
-          </div>
-          <FrontendPerfCard onStats={setPerfStats} />
-        </div>
-        {/* panel 4: editor usage */}
-        <div className="mon-panel">
-          <div className="mon-panel-head">
-            <span className={`mon-status-dot ${liveEditing ? "ok" : "alert"}`} />
-            <span className="mon-panel-title">Editor Usage</span>
-          </div>
-          <EditorUsageCard onStats={setUsageStats} />
-        </div>
-        {/* panel 5: capcut tracker installs */}
-        <div className="mon-panel">
-          <div className="mon-panel-head">
-            <span className={`mon-status-dot ${installStats?.recentCount ? "ok" : "alert"}`} />
-            <span className="mon-panel-title">CapCut Tracker Installs</span>
-          </div>
-          <CapCutInstallsCard onStats={setInstallStats} />
-        </div>
-        {/* panel 6: storage breakdown */}
-        <div className="mon-panel">
-          <div className="mon-panel-head">
-            <span className={`mon-status-dot ${storageStats?.total ? "ok" : "alert"}`} />
-            <span className="mon-panel-title">Storage Breakdown</span>
-          </div>
-          <StorageBreakdownCard onStats={setStorageStats} />
-        </div>
-      </div>
-      )}
+      {/* The 6 owner telemetry cards (frontend perf, editor usage, CapCut
+          installs, storage, free-LLM gates, API budgets) now render INSIDE
+          the Infra sub-view (monitor.jsx) as part of its unified sectioned
+          layout — see Monitor(). MonitorHub is just the sub-tab shell now. */}
 
       {/* The mounted sub-view (infra Monitor / Pulse / AI Brain / Scout) —
           its own content only, exactly as each function rendered before. */}
