@@ -1348,12 +1348,16 @@ export default async function handler(req, res) {
     }
 
     // ── Synchronous proxy: expand one opportunity into 3 hook versions ────────
-    // Expansion (Sonnet pro / Gemini free) is typically <8s, so we wait and
-    // return the hooks JSON inline. Abort at ~9s (Vercel Hobby ceiling ~10s) and
-    // surface a retriable timeout rather than a non-JSON 500.
+    // Expansion waits and returns the hooks JSON inline. The free tier walks a
+    // fallback chain of OpenRouter models (rate-limited ones 429 fast, then a
+    // working model generates), so a full pass can take ~15-25s. This function
+    // declares maxDuration:60, so we abort at ~45s — comfortably inside the
+    // ceiling but long enough for the chain to finish — and surface a retriable
+    // timeout rather than a non-JSON 500. (The backend writes hook_versions to
+    // the row regardless, so even a rare timeout self-heals on the next read.)
     if (action === "forge-expand") {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 9000);
+      const t = setTimeout(() => ctrl.abort(), 45000);
       try {
         const r = await fetch(
           `https://api.footagebrain.com/api/content-forge/expand?secret=${encodeURIComponent(forgeSecret)}` +

@@ -86,7 +86,17 @@ router = APIRouter(prefix="/content-forge", tags=["content-forge"])
 
 # ── FREE provider (OpenRouter, OpenAI-compatible) — mirrors reel_deconstruct.py ─────
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-DEFAULT_FREE_MODEL = "google/gemini-2.0-flash-exp:free"
+# Ordered fallback chain of free OpenRouter models. Free models get rate-limited
+# (429) or retired (404) upstream with no warning (e.g. google/gemini-2.0-flash-exp
+# :free was removed; llama-3.3-70b:free 429s under load), so the free path tries
+# each in turn and only fails if ALL are unavailable. CONTENT_FORGE_MODEL_FREE, if
+# set, is tried FIRST. Keep these to currently-available ':free' chat models.
+DEFAULT_FREE_MODELS = [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "openai/gpt-oss-120b:free",
+]
+DEFAULT_FREE_MODEL = DEFAULT_FREE_MODELS[0]   # primary (shown in /health)
 
 # ── PRO provider (Anthropic) — model ids per kind ───────────────────────────────────
 # Haiku 4.5 for cheap/fast batched discovery; Sonnet 4.6 for higher-quality hook writing.
@@ -139,8 +149,23 @@ def _transcript_dir() -> str | None:
     return p if (p and os.path.isdir(p)) else None
 
 
+def _free_models() -> list[str]:
+    """Ordered free-model fallback chain. CONTENT_FORGE_MODEL_FREE (if set) is tried
+    first, then DEFAULT_FREE_MODELS. Deduped, order-preserving."""
+    override = (os.environ.get("CONTENT_FORGE_MODEL_FREE") or "").strip()
+    chain = ([override] if override else []) + DEFAULT_FREE_MODELS
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in chain:
+        if m and m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out
+
+
 def _free_model() -> str:
-    return (os.environ.get("CONTENT_FORGE_MODEL_FREE") or "").strip() or DEFAULT_FREE_MODEL
+    """Primary free model (first in the fallback chain) — shown in /health output."""
+    return _free_models()[0]
 
 
 def _discovery_model() -> str:
@@ -311,7 +336,12 @@ def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
         if tok not in counts:
             order.append(tok)
         counts[tok] = counts.get(tok, 0) + 1
-    order.sort(key=lambda w: (-counts[w], order.index(w)))
+    # NB: precompute first-appearance positions BEFORE sorting. Do NOT call
+    # order.index(w) inside the sort key — CPython empties the list in place
+    # during list.sort() (its mutation guard), so .index() raises ValueError
+    # ("<w> is not in list") and crashes the whole ingest/keyword pass.
+    pos = {w: i for i, w in enumerate(order)}
+    order.sort(key=lambda w: (-counts[w], pos[w]))
     return order[:limit]
 
 
@@ -570,25 +600,28 @@ def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
         return text, {"provider": "anthropic", "model": model,
                       "tier_used": "pro", "fell_back": False}
 
-    # FREE provider (OpenRouter / Gemini).
-    model = _free_model()
-    text = _call_openrouter(messages, model=model)
-    return text, {"provider": "openrouter", "model": model,
+    # FREE provider (OpenRouter) — try the fallback chain (429/404-resilient).
+    text, used_model = _call_openrouter(messages, models=_free_models())
+    return text, {"provider": "openrouter", "model": used_model,
                   "tier_used": "free", "fell_back": fell_back}
 
 
-def _call_openrouter(messages: list[dict[str, str]], *, model: str) -> str:
+def _call_openrouter(messages: list[dict[str, str]], *, models: list[str] | str) -> tuple[str, str]:
     """FREE provider call — OpenRouter OpenAI-compatible chat completions over httpx.
-    Same request/headers shape as reel_deconstruct.run_narrative()."""
+    Same request/headers shape as reel_deconstruct.run_narrative().
+
+    `models` is the ordered fallback chain (or a single id). Each model is tried in
+    turn; a RETRYABLE upstream condition (404 model gone / 429 rate-limited / 5xx)
+    falls through to the next model, while a hard client error (401/400) stops
+    immediately. Returns (text, model_used). Raises RuntimeError only if EVERY model
+    in the chain is unavailable, carrying the last error for diagnosis."""
     key = _openrouter_key()
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY unset — cannot run free-tier LLM pass")
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.4,
-        "max_tokens": 2400,
-    }
+    if isinstance(models, str):
+        models = [models]
+    if not models:
+        raise RuntimeError("no free models configured")
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -596,15 +629,38 @@ def _call_openrouter(messages: list[dict[str, str]], *, model: str) -> str:
         "HTTP-Referer": "https://footagebrain.com",
         "X-Title": "FootageBrain Content Forge",
     }
-    with httpx.Client(timeout=LLM_TIMEOUT) as client:
-        r = client.post(f"{OPENROUTER_BASE}/chat/completions", headers=headers, json=payload)
-    if r.status_code != 200:
+    last_err = "no free model attempted"
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.4,
+            "max_tokens": 2400,
+        }
+        try:
+            with httpx.Client(timeout=LLM_TIMEOUT) as client:
+                r = client.post(f"{OPENROUTER_BASE}/chat/completions",
+                                headers=headers, json=payload)
+        except Exception as e:  # noqa: BLE001 — network blip → try next model
+            last_err = f"OpenRouter request failed for {model}: {e}"
+            log.info("content_forge: %s", last_err)
+            continue
+        if r.status_code == 200:
+            data = r.json()
+            try:
+                return (data["choices"][0]["message"]["content"] or ""), model
+            except Exception as e:  # noqa: BLE001 — odd body → try next model
+                last_err = f"OpenRouter malformed response from {model}: {e}: {json.dumps(data)[:200]}"
+                log.info("content_forge: %s", last_err)
+                continue
+        # 404 (model retired) / 429 (rate-limited) / 5xx (upstream) → next model.
+        if r.status_code in (404, 408, 429, 500, 502, 503, 504):
+            last_err = f"OpenRouter HTTP {r.status_code} for {model}: {r.text[:200]}"
+            log.info("content_forge: %s — trying next free model", last_err)
+            continue
+        # Hard client error (401 bad key / 400 bad request) → no point retrying.
         raise RuntimeError(f"OpenRouter HTTP {r.status_code}: {r.text[:300]}")
-    data = r.json()
-    try:
-        return data["choices"][0]["message"]["content"] or ""
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError(f"OpenRouter malformed response: {e}: {json.dumps(data)[:300]}")
+    raise RuntimeError(f"all free models unavailable; last: {last_err}")
 
 
 def _call_anthropic(messages: list[dict[str, str]], *, model: str) -> str:
