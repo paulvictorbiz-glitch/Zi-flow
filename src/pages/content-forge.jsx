@@ -19,6 +19,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase-client.js";
 import { useIsOwner } from "../lib/permissions.jsx";
+import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 import "../content-forge.css";
 
 /* Virality tiers, best → worst. Order drives the filter pills + sort. */
@@ -37,6 +38,15 @@ const STYLE_LABEL = {
   controversy: "Controversy",
   personal_stakes: "Personal Stakes",
 };
+
+/* Vetting segments — the triage workflow. The owner vets discovered opportunities
+   on title+angle (no LLM spend); only 'shortlisted' ones can be elevated/expounded.
+   vet_state is a column orthogonal to `status` (migration 0104) — a row stays
+   'shortlisted' even after it's expanded into hooks. A missing/absent value (e.g.
+   before the migration is applied) reads as 'new'. */
+const VET_VIEWS = ["new", "shortlisted", "rejected", "all"];
+const VET_LABEL = { new: "New", shortlisted: "Shortlisted", rejected: "Rejected", all: "All" };
+const vetOf = (o) => o?.vet_state || "new";
 
 const DEFAULT_SORT = { key: "virality", dir: "desc" };
 
@@ -96,6 +106,21 @@ function hookForVersion(hookVersions, version) {
   );
 }
 
+/* Has this opportunity already been expanded into real hooks? Used to (a) skip
+   re-spending tokens when ForgeModal opens on an already-expounded row, and (b)
+   badge such rows so the owner doesn't elevate them twice. */
+function hasHooks(o) {
+  return Array.isArray(o?.hook_versions) && o.hook_versions.some((h) => h?.text);
+}
+function isExpanded(o) {
+  return ["hook_generated", "attached", "sent"].includes(o?.status) || hasHooks(o);
+}
+function hookCount(o) {
+  return Array.isArray(o?.hook_versions)
+    ? o.hook_versions.filter((h) => h?.text).length
+    : 0;
+}
+
 const COLUMNS = [
   { key: "virality", label: "Tier", cls: "cf-c-tier" },
   { key: null, label: "Opportunity" },
@@ -142,6 +167,13 @@ function ForgeModal({ opportunity, tier, reels, onClose, onSent, showToast }) {
   const [expandErr, setExpandErr] = useState(null);
   const [sending, setSending] = useState(false);
 
+  // Expansion is now an EXPLICIT, deliberate action (no auto-spend on open).
+  // hasRun flips once the owner clicks Expound, or immediately if the row already
+  // carries hooks (cached → render with zero network calls).
+  const [hasRun, setHasRun] = useState(() => returnedVersions.size > 0);
+  // Only vetted (shortlisted) opportunities may be expounded — the token gate.
+  const isVetted = vetOf(opportunity) === "shortlisted";
+
   const applyHooks = useCallback((hookVersions) => {
     if (!Array.isArray(hookVersions)) return;
     const got = new Set();
@@ -161,6 +193,12 @@ function ForgeModal({ opportunity, tier, reels, onClose, onSent, showToast }) {
 
   // Expand on open (and whenever the tier toggle changes while open).
   const runExpand = useCallback(async () => {
+    if (isBlockedSync("content_forge")) {
+      setExpandErr("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
+      return;
+    }
+    recordUsage("content_forge");
+    setHasRun(true);
     setExpanding(true);
     setExpandErr(null);
     try {
@@ -196,7 +234,17 @@ function ForgeModal({ opportunity, tier, reels, onClose, onSent, showToast }) {
     }
   }, [opportunity.id, tier, applyHooks]);
 
-  useEffect(() => { runExpand(); /* eslint-disable-next-line */ }, []);
+  // NO auto-expand on open — expansion is deliberate (the owner clicks Expound).
+  // Opening a row never spends tokens; cached hooks (if any) render from state.
+
+  // Re-run hook generation, confirm-gated when it would overwrite existing hooks.
+  const handleRegenerate = useCallback(() => {
+    if (
+      returnedVersions.size > 0 &&
+      !window.confirm("Re-generate hooks? This spends tokens and replaces the current hooks.")
+    ) return;
+    runExpand();
+  }, [returnedVersions, runExpand]);
 
   // Close on Escape.
   useEffect(() => {
@@ -265,6 +313,31 @@ function ForgeModal({ opportunity, tier, reels, onClose, onSent, showToast }) {
           <p className="cf-modal-angle">{opportunity.angle_summary}</p>
         )}
 
+        {!hasRun && returnedVersions.size === 0 ? (
+          /* Pre-expand state: no tokens spent yet. Expounding is deliberate and
+             gated on a vetted (shortlisted) opportunity. */
+          <div className="cf-expound-cta">
+            <p className="cf-expound-blurb">
+              {isVetted
+                ? "Expound this vetted opportunity into 3 hook angles (Curiosity · Controversy · Personal Stakes). This spends an LLM call."
+                : "Shortlist this opportunity first — only vetted opportunities can be expounded into hooks."}
+            </p>
+            <button
+              type="button"
+              className="cf-btn primary cf-expound-btn"
+              onClick={runExpand}
+              disabled={!isVetted || expanding}
+              title={
+                isVetted
+                  ? "Generate 3 hook versions"
+                  : "Shortlist this opportunity to enable expounding"
+              }
+            >
+              {expanding ? "Generating…" : "✦ Expound into 3 hooks"}
+            </button>
+            {expandErr && <div className="cf-col-skeleton err">{expandErr}</div>}
+          </div>
+        ) : (
         <div className="cf-cols">
           {HOOK_STYLES.map((s) => {
             const has = returnedVersions.has(s.version);
@@ -311,17 +384,20 @@ function ForgeModal({ opportunity, tier, reels, onClose, onSent, showToast }) {
             );
           })}
         </div>
+        )}
 
         <div className="cf-modal-foot">
-          <button
-            type="button"
-            className="cf-btn"
-            onClick={runExpand}
-            disabled={expanding}
-            title="Re-run hook generation"
-          >
-            {expanding ? "Generating…" : "↻ Regenerate"}
-          </button>
+          {(hasRun || returnedVersions.size > 0) && (
+            <button
+              type="button"
+              className="cf-btn"
+              onClick={handleRegenerate}
+              disabled={expanding}
+              title="Re-run hook generation (spends tokens)"
+            >
+              {expanding ? "Generating…" : "↻ Regenerate"}
+            </button>
+          )}
           <span className="cf-foot-spacer" />
           <label htmlFor="cf-reel-target">Target reel</label>
           <select
@@ -374,6 +450,7 @@ export function ContentForge() {
   const [tierSel, setTierSel] = useState(() => new Set()); // empty = all tiers
   const [country, setCountry] = useState("all");
   const [sort, setSort] = useState(DEFAULT_SORT);
+  const [vetView, setVetView] = useState("new"); // triage queue front-and-center
 
   const [discovering, setDiscovering] = useState(false);
   const [openOpp, setOpenOpp] = useState(null);
@@ -406,6 +483,20 @@ export function ContentForge() {
       setLoading(false);
     }
   }, []);
+
+  // Vet an opportunity (Shortlist / Reject / clear back to New). Optimistic with
+  // rollback. Vetting is free (no LLM) — it just sets the gate for elevation.
+  const setVet = useCallback(async (id, next) => {
+    setOpps((prev) => prev.map((o) => (o.id === id ? { ...o, vet_state: next } : o)));
+    const { error: err } = await supabase
+      .from("content_opportunities")
+      .update({ vet_state: next, vetted_at: new Date().toISOString() })
+      .eq("id", id);
+    if (err) {
+      showToast(`Vet failed: ${err.message}`);
+      loadOpps(); // rollback to truth
+    }
+  }, [showToast, loadOpps]);
 
   const loadReels = useCallback(async () => {
     try {
@@ -488,11 +579,20 @@ export function ContentForge() {
 
   const filtered = useMemo(() => {
     return opps.filter((o) => {
+      if (vetView !== "all" && vetOf(o) !== vetView) return false;
       if (tierSel.size > 0 && !tierSel.has(String(o.virality_tier || "C").toUpperCase())) return false;
       if (country !== "all" && o.country !== country) return false;
       return true;
     });
-  }, [opps, tierSel, country]);
+  }, [opps, vetView, tierSel, country]);
+
+  // Counts for the segmented control + header (cheap; over already-loaded rows).
+  const vetCounts = useMemo(() => {
+    const c = { new: 0, shortlisted: 0, rejected: 0, all: opps.length };
+    for (const o of opps) c[vetOf(o)] = (c[vetOf(o)] || 0) + 1;
+    return c;
+  }, [opps]);
+  const expandedCount = useMemo(() => opps.filter(isExpanded).length, [opps]);
 
   const sorted = useMemo(() => {
     const rows = [...filtered];
@@ -577,11 +677,26 @@ export function ContentForge() {
   }, [clipCount, loadClipCount, showToast]);
 
   const handleDiscover = useCallback(async () => {
+    if (isBlockedSync("content_forge")) {
+      showToast("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
+      return;
+    }
     // Guard the chicken-and-egg: with no clips, discovery is a guaranteed no-op.
     if (clipCount === 0) {
       showToast("No transcript clips yet — click ⤓ Ingest first, then Discover.");
       return;
     }
+    // Token-bleed guard: re-running discovery with opportunities already on hand
+    // re-pays to mine the whole corpus. Confirm BEFORE recording usage so a cancel
+    // costs nothing.
+    if (
+      opps.length > 0 &&
+      !window.confirm(
+        `You already have ${opps.length} opportunit${opps.length === 1 ? "y" : "ies"}. ` +
+          "Re-discover anyway? This spends tokens."
+      )
+    ) return;
+    recordUsage("content_forge");
     setDiscovering(true);
     setProgress(`Discovering (${tier} tier)…`);
     try {
@@ -643,7 +758,7 @@ export function ContentForge() {
     } finally {
       setDiscovering(false);
     }
-  }, [tier, discoverTarget, clipCount, loadOpps, showToast]);
+  }, [tier, discoverTarget, clipCount, opps.length, loadOpps, showToast]);
 
   if (!isOwner) {
     return (
@@ -666,6 +781,22 @@ export function ContentForge() {
         >
           {clipCount === null ? "… clips" : `${clipCount} clip${clipCount === 1 ? "" : "s"}`}
         </span>
+        {expandedCount > 0 && (
+          <span
+            className="cf-count"
+            title="Opportunities already expanded into hooks — don't re-spend tokens on these."
+          >
+            {expandedCount} expanded
+          </span>
+        )}
+        {isBlockedSync("content_forge") && (
+          <span
+            className="cf-gate-warn"
+            title="Content Forge is OFF in Monitor → Free LLM Gates. Discover and Expound are disabled."
+          >
+            ⚠ disabled
+          </span>
+        )}
         <button
           style={{ marginLeft: "auto" }}
           className="cf-btn"
@@ -732,6 +863,20 @@ export function ContentForge() {
       </div>
 
       <div className="cf-filters">
+        <div className="cf-vet-views" role="group" aria-label="Vetting queue">
+          {VET_VIEWS.map((v) => (
+            <button
+              key={v}
+              type="button"
+              className={vetView === v ? "on" : ""}
+              onClick={() => setVetView(v)}
+              title={`Show ${VET_LABEL[v].toLowerCase()} opportunities`}
+            >
+              {VET_LABEL[v]}
+              <span className="cf-vet-n">{vetCounts[v] ?? 0}</span>
+            </button>
+          ))}
+        </div>
         <div className="cf-tier-pills" role="group" aria-label="Filter by virality tier">
           {TIERS.map((t) => (
             <button
@@ -802,8 +947,13 @@ export function ContentForge() {
               {sorted.map((o) => {
                 const t = String(o.virality_tier || "C").toUpperCase();
                 const topics = Array.isArray(o.topics) ? o.topics : [];
+                const vet = vetOf(o);
                 return (
-                  <tr key={o.id} className="cf-tr" onClick={() => setOpenOpp(o)}>
+                  <tr
+                    key={o.id}
+                    className={"cf-tr" + (vet === "rejected" ? " rejected" : "")}
+                    onClick={() => setOpenOpp(o)}
+                  >
                     <td className="cf-c-tier">
                       <span className={`cf-tier-badge t-${t}`}>{t}</span>
                     </td>
@@ -822,7 +972,34 @@ export function ContentForge() {
                     <td>{o.country || "—"}</td>
                     <td className="cf-num">{fmtScore(o)}</td>
                     <td className="cf-num" title={o.created_at || ""}>{fmtDate(o.created_at)}</td>
-                    <td><span className="cf-status">{o.status || "discovered"}</span></td>
+                    <td>
+                      <div className="cf-status-cell">
+                        <span className="cf-status">{o.status || "discovered"}</span>
+                        {isExpanded(o) && (
+                          <span className="cf-expanded-badge" title="Already expanded into hooks — don't re-spend.">
+                            ✦ {hookCount(o) > 0 ? `${hookCount(o)} hook${hookCount(o) === 1 ? "" : "s"}` : "expanded"}
+                          </span>
+                        )}
+                        <div className="cf-vet-btns" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className={"cf-vet-btn shortlist" + (vet === "shortlisted" ? " on" : "")}
+                            onClick={() => setVet(o.id, vet === "shortlisted" ? "new" : "shortlisted")}
+                            title={vet === "shortlisted" ? "Shortlisted — click to clear" : "Shortlist (enables Expound)"}
+                          >
+                            ✓
+                          </button>
+                          <button
+                            type="button"
+                            className={"cf-vet-btn reject" + (vet === "rejected" ? " on" : "")}
+                            onClick={() => setVet(o.id, vet === "rejected" ? "new" : "rejected")}
+                            title={vet === "rejected" ? "Rejected — click to clear" : "Reject"}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}

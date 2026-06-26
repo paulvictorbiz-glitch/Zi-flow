@@ -414,3 +414,128 @@
   font-size: 0.9rem;
   line-height: 1.45;
 }
+
+/* ---- Vetting (triage) + segmented view + token-bleed indicators ---- */
+
+/* Kill-switch chip in the header when the free-LLM gate is off. */
+.cf-gate-warn {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-danger, #f44);
+  border: 1px solid var(--color-danger, #f44);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  background: rgba(255, 68, 68, 0.08);
+  white-space: nowrap;
+}
+
+/* Segmented New · Shortlisted · Rejected · All control (mirrors .cf-tier). */
+.cf-vet-views {
+  display: inline-flex;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cf-vet-views button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.74rem;
+  background: transparent;
+  color: var(--color-muted, #888);
+  border: none;
+  border-right: 1px solid var(--color-border, #333);
+  cursor: pointer;
+}
+.cf-vet-views button:last-child { border-right: none; }
+.cf-vet-views button.on {
+  background: var(--color-accent, #6bd6e0);
+  color: var(--color-bg, #0e0e0e);
+  font-weight: 600;
+}
+.cf-vet-views .cf-vet-n {
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+/* Status cell now holds status + expanded badge + vet buttons. */
+.cf-status-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+/* "✦ N hooks" badge on already-expanded rows (accent-tinted, like t-A). */
+.cf-expanded-badge {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(107, 214, 224, 0.14);
+  color: var(--color-accent, #6bd6e0);
+  border: 1px solid rgba(107, 214, 224, 0.4);
+  white-space: nowrap;
+}
+
+/* Per-row Shortlist ✓ / Reject ✕ buttons. */
+.cf-vet-btns {
+  display: inline-flex;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+.cf-vet-btn {
+  width: 1.5rem;
+  height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  line-height: 1;
+  border-radius: 5px;
+  border: 1px solid var(--color-border, #333);
+  background: transparent;
+  color: var(--color-muted, #888);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.cf-vet-btn.shortlist:hover { border-color: var(--color-accent, #6bd6e0); color: var(--color-accent, #6bd6e0); }
+.cf-vet-btn.reject:hover { border-color: var(--color-danger, #f44); color: var(--color-danger, #f44); }
+.cf-vet-btn.shortlist.on {
+  background: var(--color-accent, #6bd6e0);
+  border-color: var(--color-accent, #6bd6e0);
+  color: var(--color-bg, #0e0e0e);
+}
+.cf-vet-btn.reject.on {
+  background: var(--color-danger, #f44);
+  border-color: var(--color-danger, #f44);
+  color: #fff;
+}
+
+/* De-emphasize rejected rows in the All view. */
+.cf-table tbody tr.cf-tr.rejected { opacity: 0.5; }
+.cf-table tbody tr.cf-tr.rejected:hover { opacity: 0.75; }
+
+/* Pre-expand CTA inside ForgeModal (deliberate, vet-gated expounding). */
+.cf-expound-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  text-align: center;
+  padding: 2rem 1rem;
+  border: 1px dashed var(--color-border, #333);
+  border-radius: 8px;
+}
+.cf-expound-blurb {
+  margin: 0;
+  max-width: 36rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--color-muted, #888);
+}
+.cf-expound-btn { font-size: 0.9rem; padding: 0.5rem 1.2rem; }

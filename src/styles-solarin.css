@@ -356,11 +356,10 @@ html:has([data-theme="solarin"]) { background: var(--bg-base); }
 
 /* ═══════════════════════════════════════════════════════════════════
    Monitor — infra card consistency.
-   Make the infra Monitor cards (the DIRECT .card children of .mon-grid in
-   monitor.jsx) match the two kept HUD cards: orange square panel, orange
-   uppercase title, green flowing status dot. The `>` child combinator
-   EXCLUDES the top-2 cards' inner .card (which sits inside .mon-panel, so
-   it's a grandchild of .mon-grid, not a direct child).
+   Every infra card is now a DIRECT .card child of a .mon-grid — the 6 owner
+   telemetry cards were un-nested from their old .mon-panel wrapper in the
+   sectioned redesign — so this one rule skins them ALL uniformly: orange
+   square panel, orange uppercase title, green flowing status dot.
    ═══════════════════════════════════════════════════════════════════ */
 [data-theme="solarin"] .mon-grid > .card {
   background: var(--hud-panel);
@@ -403,10 +402,111 @@ html:has([data-theme="solarin"]) { background: var(--bg-base); }
 [data-theme="solarin"] .mon-bar-fill--red   { background: var(--hud-alert); }
 [data-theme="solarin"] .mon-bar-pct--red    { color: var(--hud-alert); }
 
+/* ── Monitor redesign — sectioned HUD chrome (hero band, section headers,
+   status strip). Cards themselves are skinned by `.mon-grid > .card` above;
+   these style the NEW surrounding chrome so the whole tab reads as one HUD. */
+[data-theme="solarin"] .mon-grid > .card { box-shadow: 0 2px 16px rgba(0,0,0,.34); }
+
+[data-theme="solarin"] .mon-section-title {
+  font-family: var(--f-label); color: var(--orange-bright);
+  border-bottom-color: var(--hud-border); letter-spacing: .16em;
+}
+[data-theme="solarin"] .mon-section-title::after {
+  background: linear-gradient(90deg, var(--hud-border), transparent);
+}
+
+[data-theme="solarin"] .mon-hero {
+  border-color: var(--hud-border);
+  box-shadow: 0 0 0 1px rgba(255,138,42,.07), 0 10px 34px rgba(0,0,0,.5);
+}
+[data-theme="solarin"] .mon-hero-overlay {
+  background: linear-gradient(108deg,
+    rgba(14,11,8,.93) 0%, rgba(26,13,5,.68) 46%, rgba(48,20,4,.34) 100%);
+}
+[data-theme="solarin"] .mon-hero-title { font-family: var(--f-label); color: var(--orange-bright); }
+[data-theme="solarin"] .mon-hero-sub   { font-family: var(--f-label); color: var(--amber-hud); }
+[data-theme="solarin"] .mon-hero-status        { border-color: var(--hud-ok);    color: var(--hud-ok); }
+[data-theme="solarin"] .mon-hero-status--amber { border-color: var(--orange);    color: var(--orange-bright); }
+[data-theme="solarin"] .mon-hero-status--red   { border-color: var(--hud-alert); color: var(--hud-alert); }
+
+[data-theme="solarin"] .mon-strip-chip {
+  font-family: var(--f-label); background: var(--hud-panel);
+  border-color: var(--hud-border); color: var(--amber-hud);
+}
+[data-theme="solarin"] .mon-strip-chip b { color: var(--orange-bright); }
+[data-theme="solarin"] .mon-strip-k      { color: var(--hud-muted); }
+[data-theme="solarin"] .mon-strip-chip--ok  .mon-strip-dot { background: var(--hud-ok);    box-shadow: 0 0 6px var(--hud-ok); }
+[data-theme="solarin"] .mon-strip-chip--red .mon-strip-dot { background: var(--hud-alert); box-shadow: 0 0 6px var(--hud-alert); }
+
 /* Themed text selection — replaces the jarring bright-yellow default
    highlight (seen over the AI Credits / Scout bars) with an on-brand tint. */
 [data-theme="solarin"] ::selection      { background: rgba(255,138,42,.38); color: #fff; }
 [data-theme="solarin"] ::-moz-selection { background: rgba(255,138,42,.38); color: #fff; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Content Forge — Solarin skin (var-remap, no component edits).
+   The page wires to its OWN semantic --color-* tokens (with dark
+   fallbacks), so redefining those VALUES retints the whole page at once
+   — header, filters, the discovery table, tier badges, the vet buttons,
+   and the ForgeModal. `.cf-root` lives inside #root, but the ForgeModal
+   is PORTALED to <body> (it escapes the #root[data-theme] scope), so
+   every rule here is reached via `html:has([data-theme="solarin"])` —
+   the same pattern the html-canvas rule uses above — which matches both
+   the in-#root page and the body-portaled modal when Solarin is active.
+   Mint accent · teal fills · translucent Solarin surfaces · Space Mono
+   labels. Reverts 1:1 when the data-theme attribute is removed.
+   ═══════════════════════════════════════════════════════════════════ */
+html:has([data-theme="solarin"]) .cf-root,
+html:has([data-theme="solarin"]) .cf-modal-overlay {
+  --color-accent:  #9FEDD7;                /* --mint   (accent text/icons/badges) */
+  --color-bg:      #0e1211;                /* --bg-base */
+  --color-surface: rgba(18,24,22,.85);     /* --s-card  (translucent panels) */
+  --color-border:  rgba(130,150,143,.22);  /* --s-border */
+  --color-muted:   #9bb5ad;                /* --s-fg-secondary */
+  --color-danger:  #FF6A4A;                /* --hud-alert */
+  --color-blue:    #5FA8D6;                /* --data-blue */
+}
+
+/* Uppercase label-class text → Space Mono, matching the HUD label language. */
+html:has([data-theme="solarin"]) .cf-table thead th,
+html:has([data-theme="solarin"]) .cf-status,
+html:has([data-theme="solarin"]) .cf-count,
+html:has([data-theme="solarin"]) .cf-col-title,
+html:has([data-theme="solarin"]) .cf-vet-views button,
+html:has([data-theme="solarin"]) .cf-expanded-badge,
+html:has([data-theme="solarin"]) .cf-gate-warn,
+html:has([data-theme="solarin"]) .cf-target label {
+  font-family: var(--f-label, 'Space Mono', ui-monospace, monospace);
+}
+
+/* Translucent surfaces so the fixed background reads through (page + modal). */
+html:has([data-theme="solarin"]) .cf-table-wrap,
+html:has([data-theme="solarin"]) .cf-modal {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+html:has([data-theme="solarin"]) .cf-modal-overlay {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* Polish the handful of literal cyan/blue tints the var-remap can't reach,
+   so fills land in the teal/mint family instead of the old cyan. */
+html:has([data-theme="solarin"]) .cf-btn.primary:hover:not(:disabled) { background: rgba(17,100,102,.18); }
+html:has([data-theme="solarin"]) .cf-progress { background: rgba(17,100,102,.10); }
+html:has([data-theme="solarin"]) .cf-expanded-badge {
+  background: rgba(159,237,215,.14);
+  border-color: rgba(159,237,215,.40);
+}
+html:has([data-theme="solarin"]) .cf-tier-badge.t-B {
+  background: rgba(95,168,214,.16);
+  color: var(--data-blue, #5FA8D6);
+  border-color: rgba(95,168,214,.40);
+}
+html:has([data-theme="solarin"]) .cf-pill.on.t-B {
+  background: var(--data-blue, #5FA8D6);
+  border-color: var(--data-blue, #5FA8D6);
+}
 
 /* ── Keyframes ── */
 @keyframes pulseGlow {
