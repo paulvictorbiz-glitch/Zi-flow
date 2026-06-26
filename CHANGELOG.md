@@ -4,6 +4,20 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-26 (session v) — Content Forge: QA-verified implementation plan + Obsidian node
+
+**What changed:** Designed and produced a full QA-verified implementation plan for **Content Forge** — an AI-powered content discovery and hook generation feature built into FootageBrain. No code was deployed this session; this is a planning artefact. Also generated multiple travel reel scripts across 14 countries (Kosovo, Syria, Philippines, Japan, etc.) as part of a content strategy conversation that seeded the feature idea.
+
+**Where:** `CONTENT-FORGE-PLAN.md` (project root, new), `obsidian-vault/02 - Features/Content Forge.md` (new). Plan covers: new Supabase tables `transcript_clips` + `content_opportunities` (migrations 0101–0103), Hetzner `content_forge.py` FastAPI router, Claude Haiku 4.5 discovery + Sonnet 4.6 expansion endpoints, Vercel `suggest.js` / `status.js` action folding (zero new functions), Coverage tab health layer, ForgeModal, A/B hook tracking, IG performance feedback loop.
+
+**Path we took:** Content strategy conversation → identified that already-transcribed footage data on the Hetzner backend is the foundation, not raw transcription. Scoped the two reel creation paths (Content Forge vs Reel DNA). Ran 4 parallel domain agents (DB, Backend, Frontend, Infra/DevOps) followed by an adversarial QA agent pass. QA found 8 blocking issues; resolved 6 locally (wrong supabase import path, wrong isOwner hook, partial-index ON CONFLICT 42P10 risk, missing `anthropic` Python package, Caddyfile not in repo, suggest.js 400-guard location at line 1269). 2 open decisions escalated to owner (transcript path on Hetzner, `instagram_manage_insights` scope).
+
+**What we learned:** (1) The correct Supabase client import is `src/lib/supabase-client.js` (not `supabase.js`). (2) `isOwner` comes from `useIsOwner()` in `src/lib/permissions.jsx`, NOT from `useWorkflow()`. (3) Partial unique indexes CANNOT serve as ON CONFLICT arbiters (42P10) — this project burned this exact bug before (migration 0059/0061). (4) `anthropic` Python SDK is not in `requirements-hosting.txt` — must add before any Hetzner rebuild that uses it. (5) Caddyfile is live-only on Hetzner; not in the repo — always scp before editing. (6) Hybrid Haiku+Sonnet cost model: ~$0.067/session at 50% expansion rate → $5 ≈ 370 hooks from ~740 discovered topics. (7) Sonnet expansion prompt at ~180 tokens is below the 1024-token prompt caching threshold — needs padding or accept uncached pricing.
+
+**Status:** Planning only — no code written, no migrations applied, no deployment. Ready to build in a future session pending owner answers on the 5 open decisions in `CONTENT-FORGE-PLAN.md`.
+
+---
+
 ## 2026-06-25 (session u) — Reel DNA "not updating" investigation → IG poller hardening (Hetzner, LIVE)
 
 **What changed:** Owner reported the Reel DNA IG-shorts spreadsheet "not updating even after refresh + sending new assets." Deep live diagnosis proved the pipeline was **healthy** (no bug); separately shipped a **resilience hardening** to the IG poller: each conversation now ALWAYS hydrates its newest ~60 messages via tiny per-message Graph fetches (`messages{id}` projection → individual `/{mid}` hydration) that can't trip the heavy-thread "reduce the amount of data" 500, so a flaky bulk sweep can no longer delay a capture; plus #230 token-permission errors now write a loud "reconnect Instagram" note on the `ig_sync_runs` row instead of a silent `inserted=0`.

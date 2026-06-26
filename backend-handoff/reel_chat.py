@@ -291,6 +291,13 @@ async def slash_reel(request: Request):
             text = text[len(w):].strip()
             break
 
+    # The sibling `!reel-state` trigger shares the `!reel` prefix, so on RC
+    # instances that match trigger words by prefix this handler can also fire for
+    # it (leaving "-state …" after the strip). That command is owned by
+    # /slash/reel-state — ignore it here so we don't post a junk "no match" card.
+    if text.lower().startswith("-state"):
+        return {"text": ""}
+
     channel_name = data.get("channel_name") or data.get("channel") or "team"
     channel_id = data.get("channel_id") or ""
     user_name = data.get("user_name") or "someone"
@@ -387,6 +394,108 @@ async def slash_reel(request: Request):
                      f"(`{r.get('stage') or '—'}`)")
     lines.append(f"Re-run with a specific id, e.g. `/reel {reels[0].get('id')} your feedback`.")
     return {"text": "\n".join(lines)}
+
+
+@router.post("/slash/reel-state")
+async def slash_reel_state(request: Request):
+    """`!reel-state REEL-201` outgoing-webhook → attach the CALLER'S most-recent
+    video upload in this channel as that reel's current state, then post a
+    confirmation card. Same re-host contract as the dashboard "Pick from Chat"
+    picker and the /app/* routes.
+
+    This is the NO-APP delivery path for Phase 2's slash fallback — parity with
+    the live `!reel` integration (the installed-RC-App message-action button
+    needs an app the workspace can't currently install). Mirrors slash_reel's
+    payload handling: form OR JSON, trigger-word strip, shared-secret guard, and
+    a bot-loop guard.
+    """
+    data = {}
+    try:
+        form = await request.form()
+        data = dict(form)
+    except Exception:
+        data = {}
+    if not data:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+
+    # Shared-secret guard.
+    expected = os.environ.get("REEL_SLASH_TOKEN", "")
+    if expected and data.get("token") != expected:
+        return JSONResponse({"text": "Unauthorized."}, status_code=401)
+
+    # Ignore the bot's own messages to avoid an outgoing-webhook loop.
+    bot_id = os.environ.get("ROCKETCHAT_ADMIN_USER_ID", "")
+    if data.get("bot") or (bot_id and data.get("user_id") == bot_id):
+        return {"text": ""}
+
+    text = (data.get("text") or "").strip()
+    for w in ("!reel-state", "/reel-state", "reel-state"):
+        if text.lower().startswith(w.lower()):
+            text = text[len(w):].strip()
+            break
+
+    channel_name = data.get("channel_name") or data.get("channel") or ""
+    channel_id = data.get("channel_id") or ""
+    user_name = data.get("user_name") or ""
+
+    import re as _re
+    reel_id = (text.split() or [""])[0].strip() if text else ""
+    if _re.fullmatch(r"\d+", reel_id):
+        reel_id = f"REEL-{reel_id}"
+    if not reel_id:
+        return {"text": "Usage: `!reel-state REEL-201` — attaches your latest "
+                        "screen recording in this channel as that reel's current "
+                        "state."}
+
+    # Reel must exist before we touch storage.
+    reels = await _find_reels(reel_id, limit=5)
+    if not any(str(r.get("id", "")).upper() == reel_id.upper() for r in reels):
+        return {"text": f"No pipeline reel matches *{reel_id}*."}
+
+    # The caller's most-recent video in this room — try public channel files
+    # first, then private group files (the webhook payload omits the room type).
+    file = await _recent_video_in_channel(channel_name, False, uploader=user_name)
+    if not file:
+        file = await _recent_video_in_channel(channel_name, True, uploader=user_name)
+    if not file or not file.get("id"):
+        return {"text": f"No recent video upload by *{user_name}* in this channel. "
+                        f"Post your screen recording here first, then run "
+                        f"`!reel-state {reel_id}`."}
+
+    import time
+    import secrets
+    import asyncio
+    name = file["name"]
+    path = f"{reel_id}/{int(time.time() * 1000)}-chat-{secrets.token_hex(4)}.mp4"
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            blob = await _download_rc_file(c, file["id"], name)
+            if not blob:
+                return {"text": "Couldn't download the recording from chat."}
+            blob, mime = await asyncio.to_thread(_to_web_mp4, blob)
+            ok = await _upload_to_reel_videos(c, path, blob, mime)
+            if not ok:
+                return {"text": "Re-host to storage failed."}
+    except Exception as e:
+        return {"text": f"Attach failed: {e}"}
+
+    await _set_reel_media(reel_id, path)
+    await _save_feedback_comment(
+        reel_id, f"📎 Set the current reel state from a recording in #{channel_name}",
+        author=user_name or "Team chat")
+
+    # Confirmation card (pink reel reference) back into the channel.
+    r0 = next((r for r in reels
+               if str(r.get("id", "")).upper() == reel_id.upper()), reels[0])
+    title = r0.get("title") or reel_id
+    attachment = _reel_attachment(
+        reel_id, title, subtitle=f"📎 Current reel state set from `{name}`",
+        lead="Reel state")
+    await _post_to_channel(channel_id, channel_name, "", attachments=[attachment])
+    return {"text": ""}
 
 
 # ── Autocomplete feed for the Rocket.Chat Slash Command App ───────────────────
@@ -998,6 +1107,184 @@ async def dashboard_attach_recording(request: Request):
             reel_id, f"📎 Attached a screen recording from #{channel}",
             author=user["name"])
     return {"ok": True, "media_path": path}
+
+
+@router.post("/app/attach-recording")
+async def app_attach_recording(request: Request):
+    """Rocket.Chat-NATIVE (message-action button) → re-host a chat video into
+    reel-videos + point a reel at it. Shared-secret gated.
+
+    Phase 2 of "Current reel state". The Rocket.Chat App holds REEL_SLASH_TOKEN
+    (the slash shared secret), not a Supabase JWT, so this mirrors
+    dashboard_attach_recording but authenticates with the shared token instead of
+    a per-user JWT. Same download → transcode → re-host → media_path contract, so
+    the result is identical to the dashboard "Pick from Chat" picker.
+
+    Body: { token, reel_id, file_id, name, channel, private, user_name }.
+    Returns { ok, media_path, reel_id } or { ok:false, error }. Never throws past
+    here. Validates the reel EXISTS before re-hosting so a typo'd id can't orphan
+    an upload in storage.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # Shared-secret guard (same token the /reel slash command uses).
+    expected = os.environ.get("REEL_SLASH_TOKEN", "")
+    if expected and body.get("token") != expected:
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+
+    import re as _re
+    reel_id = (body.get("reel_id") or "").strip()
+    if _re.fullmatch(r"\d+", reel_id):          # "201" -> "REEL-201"
+        reel_id = f"REEL-{reel_id}"
+    file_id = (body.get("file_id") or "").strip()
+    name = (body.get("name") or "recording.mp4").strip() or "recording.mp4"
+    channel = (body.get("channel") or "").strip()
+    user_name = (body.get("user_name") or "Team chat").strip() or "Team chat"
+    if not reel_id or not file_id:
+        return {"ok": False, "error": "reel_id and file_id required"}
+
+    # Make sure the reel exists (exact id match) — avoids orphaning an upload on
+    # a mistyped id, since this path takes free-text id input from the modal.
+    reels = await _find_reels(reel_id, limit=5)
+    if not any(str(r.get("id", "")).upper() == reel_id.upper() for r in reels):
+        return {"ok": False, "error": f"No reel {reel_id} found."}
+
+    import time
+    import secrets
+    import asyncio
+    # Always re-host as a web-playable .mp4 (we transcode below).
+    path = f"{reel_id}/{int(time.time() * 1000)}-chat-{secrets.token_hex(4)}.mp4"
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            data = await _download_rc_file(c, file_id, name)
+            if not data:
+                return {"ok": False, "error": "Could not download the file from chat."}
+            # Normalize to H.264+AAC so every browser plays it WITH audio (HEVC
+            # screen recordings otherwise play silent). Runs off the event loop.
+            data, mime = await asyncio.to_thread(_to_web_mp4, data)
+            ok = await _upload_to_reel_videos(c, path, data, mime)
+            if not ok:
+                return {"ok": False, "error": "Re-host to storage failed."}
+    except Exception as e:
+        return {"ok": False, "error": f"Attach failed: {e}"}
+
+    await _set_reel_media(reel_id, path)
+    # Best-effort breadcrumb on the reel's comment feed.
+    breadcrumb = "📎 Set the current reel state from a recording"
+    if channel:
+        breadcrumb += f" in #{channel}"
+    await _save_feedback_comment(reel_id, breadcrumb, author=user_name)
+    return {"ok": True, "media_path": path, "reel_id": reel_id}
+
+
+async def _recent_video_in_channel(channel: str, private: bool,
+                                   uploader: str = "") -> dict | None:
+    """The most-recent VIDEO upload in a channel, optionally by a given uploader.
+
+    Returns {id, name, uploader} for the newest matching video, or None. Uses the
+    admin token (already in env). When `uploader` is given, matches the file's
+    uploader name OR username case-insensitively, so the slash fallback attaches
+    the CALLER'S own latest recording rather than someone else's.
+    """
+    channel = (channel or "").strip()
+    if not channel:
+        return None
+    ep = "groups.files" if private else "channels.files"
+    want = (uploader or "").strip().lower()
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_rc_base()}/api/v1/{ep}",
+                headers=_rc_headers(),
+                params={"roomName": channel, "count": 100,
+                        "sort": '{"uploadedAt":-1}'},
+            )
+            if r.status_code != 200:
+                return None
+            for f in (r.json().get("files") or []):
+                if not _is_video_file(f):
+                    continue
+                u = f.get("user") or {}
+                uname = str(u.get("name") or "").strip().lower()
+                ulogin = str(u.get("username") or "").strip().lower()
+                if want and want not in (uname, ulogin):
+                    continue
+                return {"id": f.get("_id") or "",
+                        "name": f.get("name") or "recording.mp4",
+                        "uploader": u.get("name") or u.get("username") or ""}
+    except Exception:
+        return None
+    return None
+
+
+@router.post("/app/attach-recent-recording")
+async def app_attach_recent_recording(request: Request):
+    """`/reel-state REEL-201` slash fallback → attach the CALLER'S most-recent
+    video upload in the current room as that reel's current state. Shared-secret.
+
+    The lighter-weight sibling of /app/attach-recording: instead of the user
+    clicking a specific message, the slash command grabs their latest screen
+    recording in the room. Same re-host contract. Body: { token, reel_id,
+    channel, private, user_name }. Returns { ok, media_path, reel_id, file_name }
+    or { ok:false, error }.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    expected = os.environ.get("REEL_SLASH_TOKEN", "")
+    if expected and body.get("token") != expected:
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+
+    import re as _re
+    reel_id = (body.get("reel_id") or "").strip()
+    if _re.fullmatch(r"\d+", reel_id):
+        reel_id = f"REEL-{reel_id}"
+    channel = (body.get("channel") or "").strip()
+    is_private = body.get("private") in (1, "1", True, "true")
+    user_name = (body.get("user_name") or "").strip()
+    if not reel_id or not channel:
+        return {"ok": False, "error": "reel_id and channel required"}
+
+    # Reel must exist before we touch storage.
+    reels = await _find_reels(reel_id, limit=5)
+    if not any(str(r.get("id", "")).upper() == reel_id.upper() for r in reels):
+        return {"ok": False, "error": f"No reel {reel_id} found."}
+
+    file = await _recent_video_in_channel(channel, is_private, uploader=user_name)
+    if not file or not file.get("id"):
+        return {"ok": False,
+                "error": f"No recent video upload by you in #{channel}. "
+                         f"Use the 📎 'Set as reel state' button on a message instead."}
+
+    import time
+    import secrets
+    import asyncio
+    name = file["name"]
+    path = f"{reel_id}/{int(time.time() * 1000)}-chat-{secrets.token_hex(4)}.mp4"
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            data = await _download_rc_file(c, file["id"], name)
+            if not data:
+                return {"ok": False, "error": "Could not download the file from chat."}
+            data, mime = await asyncio.to_thread(_to_web_mp4, data)
+            ok = await _upload_to_reel_videos(c, path, data, mime)
+            if not ok:
+                return {"ok": False, "error": "Re-host to storage failed."}
+    except Exception as e:
+        return {"ok": False, "error": f"Attach failed: {e}"}
+
+    await _set_reel_media(reel_id, path)
+    await _save_feedback_comment(
+        reel_id, f"📎 Set the current reel state from a recording in #{channel}",
+        author=user_name or "Team chat")
+    return {"ok": True, "media_path": path, "reel_id": reel_id,
+            "file_name": name}
 
 
 # ── No-copy chat recordings: stream from RC + transcode-cache on local disk ────

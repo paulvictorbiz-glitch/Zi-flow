@@ -1,6 +1,6 @@
 {
     "id": "9d0576f7-bd3e-446e-8ef0-d4b80273bcf8",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "requiredApiVersion": "1.58.1",
     "iconFile": "icon.png",
     "author": {
@@ -11,6 +11,8 @@
     "name": "Reel Command",
     "nameSlug": "reel-command",
     "classFile": "ReelCommandApp.ts",
-    "description": "Type /reel to pick a pipeline reel from a dropdown and attach feedback that saves to that reel in the FootageBrain dashboard.",
-    "implements": []
+    "description": "Type /reel to pick a pipeline reel and attach feedback, or use the \"📎 Set as reel state\" message action to attach a screen recording as a reel's current state in the FootageBrain dashboard.",
+    "implements": [
+        "IUIKitInteractionHandler"
+    ]
 }

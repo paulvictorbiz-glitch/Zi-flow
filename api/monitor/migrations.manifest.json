@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-25T16:28:44.312Z",
+  "generated": "2026-06-26T13:18:36.337Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -396,6 +396,18 @@
     {
       "version": "0100_capcut_install_events.sql",
       "checksum": "07315bbe3be5698cb1f8d98625022d245bf8bd160c3357acd6b8026d7f50630a"
+    },
+    {
+      "version": "0101_transcript_clips.sql",
+      "checksum": "3c6f07c4fccd8672d8fd03d8bf0c177b981cb7a53a009e6e9fa9e48ba151c828"
+    },
+    {
+      "version": "0102_content_opportunities.sql",
+      "checksum": "534cd7ee4a53df089fa04bb0834f54e3144b4773131f81903e2649713887217e"
+    },
+    {
+      "version": "0103_reels_creative_brief.sql",
+      "checksum": "c8d94bc8e03ad12fd3f6aef4ab722d883b609be52a4de697a0b2966f86fa8eff"
     }
   ]
 }

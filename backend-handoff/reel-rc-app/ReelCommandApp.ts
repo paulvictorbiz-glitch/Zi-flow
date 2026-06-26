@@ -1,15 +1,32 @@
 import {
     IAppAccessors,
     IConfigurationExtend,
-    ILogger,
     IEnvironmentRead,
+    IHttp,
+    ILogger,
+    IModify,
+    IPersistence,
+    IRead,
 } from '@rocket.chat/apps-engine/definition/accessors';
 import { App } from '@rocket.chat/apps-engine/definition/App';
 import { IAppInfo } from '@rocket.chat/apps-engine/definition/metadata';
-import { ReelCommand } from './ReelCommand';
 import { SettingType } from '@rocket.chat/apps-engine/definition/settings';
+import { UIActionButtonContext } from '@rocket.chat/apps-engine/definition/ui';
+import {
+    IUIKitInteractionHandler,
+    IUIKitResponse,
+    UIKitActionButtonInteractionContext,
+    UIKitViewSubmitInteractionContext,
+} from '@rocket.chat/apps-engine/definition/uikit';
+import { ReelCommand } from './ReelCommand';
+import {
+    handleReelStateButton,
+    handleReelStateSubmit,
+    REEL_STATE_ACTION_ID,
+} from './ReelStateAction';
+import { ReelStateCommand } from './ReelStateCommand';
 
-export class ReelCommandApp extends App {
+export class ReelCommandApp extends App implements IUIKitInteractionHandler {
     constructor(info: IAppInfo, logger: ILogger, accessors: IAppAccessors) {
         super(info, logger, accessors);
     }
@@ -40,5 +57,39 @@ export class ReelCommandApp extends App {
         });
 
         await configuration.slashCommands.provideSlashCommand(new ReelCommand(this));
+        await configuration.slashCommands.provideSlashCommand(new ReelStateCommand(this));
+
+        // Phase 2: a message-action button to set a chat recording as a reel's
+        // "current reel state" — shown in the "•••" menu of every message; it
+        // checks for a video upload when clicked (see ReelStateAction).
+        await configuration.ui.registerButton({
+            actionId: REEL_STATE_ACTION_ID,
+            labelI18n: 'reel_state_button',
+            context: UIActionButtonContext.MESSAGE_ACTION,
+        });
+    }
+
+    // ── UIKit interaction handlers (message-action button + modal submit) ──────
+    public async executeActionButtonHandler(
+        context: UIKitActionButtonInteractionContext,
+        read: IRead,
+        http: IHttp,
+        persistence: IPersistence,
+        modify: IModify,
+    ): Promise<IUIKitResponse> {
+        if (context.getInteractionData().actionId === REEL_STATE_ACTION_ID) {
+            return handleReelStateButton(this, context, read, http, persistence, modify);
+        }
+        return context.getInteractionResponder().successResponse();
+    }
+
+    public async executeViewSubmitHandler(
+        context: UIKitViewSubmitInteractionContext,
+        read: IRead,
+        http: IHttp,
+        persistence: IPersistence,
+        modify: IModify,
+    ): Promise<IUIKitResponse> {
+        return handleReelStateSubmit(this, context, read, http, persistence, modify);
     }
 }
