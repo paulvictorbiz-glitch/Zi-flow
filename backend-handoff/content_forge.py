@@ -91,10 +91,17 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 # :free was removed; llama-3.3-70b:free 429s under load), so the free path tries
 # each in turn and only fails if ALL are unavailable. CONTENT_FORGE_MODEL_FREE, if
 # set, is tried FIRST. Keep these to currently-available ':free' chat models.
+# Curated to instruction-tuned models that reliably emit STRICT JSON (no
+# reasoning/thinking preambles that break _extract_json). Ordered by observed
+# reliability; spread across providers so a per-provider 429 falls through to a
+# different upstream. (Reasoning models like nvidia/nemotron-*-reasoning return
+# 200 but 0 parseable opportunities, so they're deliberately excluded.)
 DEFAULT_FREE_MODELS = [
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-next-80b-a3b-instruct:free",
-    "openai/gpt-oss-120b:free",
+    "openai/gpt-oss-120b:free",                    # OpenAI OSS — proven good JSON
+    "meta-llama/llama-3.3-70b-instruct:free",      # Meta
+    "qwen/qwen3-next-80b-a3b-instruct:free",       # Qwen / Alibaba
+    "google/gemma-4-31b-it:free",                  # Google
+    "nousresearch/hermes-3-llama-3.1-405b:free",   # Nous
 ]
 DEFAULT_FREE_MODEL = DEFAULT_FREE_MODELS[0]   # primary (shown in /health)
 
