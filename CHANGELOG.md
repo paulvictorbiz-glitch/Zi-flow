@@ -4,6 +4,48 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ---
 
+## 2026-06-26 (session x) — Content Forge: backend wired + LIVE end-to-end
+
+**What changed:** Took the committed Content Forge v1 (frontend `b592d23`) from "code present, backend 404" to **fully live**. Verified migrations 0101–0103 on the live DB, set `CONTENT_FORGE_SECRET` on Vercel, deployed `content_forge.py` to Hetzner (router registered, secret added, backend image rebuilt + recreated), then redeployed Vercel. `api.footagebrain.com/api/content-forge/health` now returns **401** (gated) / **200-with-secret**. Discovery + hook expansion run on the **free OpenRouter (Gemini) tier** by default.
+
+**Where:** Live DB (0101–0103 already in `schema_migrations`; verified objects exist). Hetzner box: `backend/app/api/content_forge.py` (scp'd), `backend/app/api/__init__.py` (router registered like siblings), `deploy/hetzner/docker-compose.yml` (added `CONTENT_FORGE_SECRET` literal to backend env), image rebuild + `docker compose up -d --force-recreate backend`. Vercel: `CONTENT_FORGE_SECRET` env + `vercel --prod` (dpl_ikznc3gp). `.forgebak` backups of the 3 box files left for rollback.
+
+**Path we took:** Probed `content-forge/health` → 404 (backend not deployed) while `/health` → 200 (box healthy). Ran a scoped migration runner — `schema_migrations` reported 0101–0103 already applied, so audited the **live catalog** (not the ledger): `transcript_clips` / `content_opportunities` / `reels.creative_brief` exist; the `attached_footage_items` Drive cols my check flagged were **intentionally deferred** in the lean 0103 (its header says so) and nothing references them. SSH recon found the router convention (`app/api/__init__.py` includes each router with **no per-include prefix**; `main.py` adds `/api` once). Registered `content_forge` the same way → `/api/content-forge/*`. Validated `docker compose config -q` + Python syntax before rebuilding; gated the rebuild so a failed build couldn't recreate the container; confirmed the container started clean (`Application startup complete`).
+
+**What we learned:** (1) **No Caddy change needed** for a new `/api/*` subpath — the edge already forwards `/api/*` to the backend; the earlier 404 was the backend itself (router unregistered), not the edge. (2) The committed **lean 0103** adds only `reels.creative_brief`; the full-plan `attached_footage_items` Drive cols are deferred — the live DB correctly matches the shipped files (**audit catalog, not the plan**). (3) `content_forge.py` imports `anthropic` **lazily** (line 622, inside a function) → backend starts fine without it; free OpenRouter tier is the default (`anthropic_set:false`). (4) The backend env block is a **mix** of literal + `${}` values; adding a **literal** `CONTENT_FORGE_SECRET` works universally. (5) **The auto-mode classifier needs the specific action/host NAMED** — "continue" / "deploy everything" / "do it for me" were all rejected for the live migration apply AND the Hetzner SSH; only "authorization to apply migrations" and "SSH into root@178.105.14.144 …" unlocked them. See [[reference_classifier-explicit-host-rule]].
+
+**Status:** **LIVE in production** end-to-end. Owner UI smoke test (Discover → Expand on the free tier) still pending. Optional follow-ups: add `ANTHROPIC_API_KEY`/`TAVILY_API_KEY` to the box for the pro tier; delete `.forgebak` once stable; fold the `__init__.py` router-registration into the `footagebrain-backend` repo so a fresh snapshot doesn't lose it.
+
+---
+
+## 2026-06-26 (session x) — Pulled-date tracking (Pulse/Scout) + Reel DNA column sort + card kebab (LIVE)
+
+**What changed:** Three quality-of-life UI features. **Pulse**: a persisted "Date: Published | Pulled" toggle — the timeline regroups by ingest date, the table gains a sortable "Pulled" column, cards/board show the chosen basis, and the inline detail always shows both dates (so newly-pulled items cluster regardless of source publish date). **Scout**: a sortable "Pulled" (`first_seen`) column distinct from origin "Created", plus grouping by category OR by date-pulled (newest day first). **Reel DNA**: clickable Classic-spreadsheet column headers (A→Z / Z→A / off; blanks sink to bottom; sticky header + filters preserved). **Cards**: the kebab menu now stays visible on collapsed cards (not just compact).
+
+**Where:** `src/components/pulse-comprehensive.jsx` + `src/pages/pulse.css`; `src/pages/scout.jsx` + `src/pages/scout.css`; `src/pages/reel-dna.jsx` + `src/pages/reel-dna.css`; `src/components/components.jsx` (ReelCard kebab). Committed `f0011ee`, shipped via `vercel --prod` (dpl_GFyiddry).
+
+**Path we took:** Owner was losing track of newly-pulled Pulse/Scout items. The "date pulled" signal already existed in the data but was never surfaced — Pulse mapped `createdAt` (DB insert) yet grouped by `publishedAt`; Scout used `first_seen` only for default ordering while showing `source_created_at` as "Created". Surfaced both. For Reel DNA, reused the existing `resolveTags` getters so the sort matches what each cell displays. Deliberately scoped around the active Content Forge surface (`detail.jsx`, `app.jsx`, `suggest.js`, `status.js`) to avoid collisions.
+
+**What we learned:** "Date pulled" vs "date published" were conflated in both feeds; the ingest timestamp was present (`createdAt` / `first_seen`) but invisible. A 4-task triage confirmed the other 3 requests (manual URL news-link attach, 10-clip cap + flashing asset-count badge, mp4-audio on final-video upload) all live in `detail.jsx` / `components.jsx` (Content Forge / dirty WIP) or need the Hetzner HEVC→H.264 transcode — so only the Reel DNA sort was collision-free at the time.
+
+**Status:** **LIVE in production** (dpl_GFyiddry). Tasks 1–3 from the triage deferred (now unblocked since Content Forge's `detail.jsx` is committed).
+
+---
+
+## 2026-06-26 (session x) — Rocket.Chat /reel-state command + message-action app (committed)
+
+**What changed:** Committed Phase 2 of chat-recording-to-reel-state: an RC-native slash command (`ReelStateCommand`) and message-action (`ReelStateAction`) to set a reel's current state straight from Rocket.Chat, plus backend wiring in `reel_chat.py`.
+
+**Where:** `backend-handoff/reel-rc-app/{ReelStateCommand,ReelStateAction,ReelCommandApp}.ts` + `app.json` + `i18n/en.json` + `tsconfig.json`; `backend-handoff/reel_chat.py`. Committed `2ee56a7` (alongside doc/manifest syncs). This is a **separate RC app** — NOT shipped by `vercel --prod`; it deploys to the Rocket.Chat instance separately.
+
+**Path we took:** These files were dirty in the tree at session start (prior WIP). Committed on the owner's "commit everything" instruction, kept in their own commit (not bundled with the UI work), and flagged as not part of the Vercel deploy.
+
+**What we learned:** `backend-handoff/reel-rc-app/*` is a standalone Rocket.Chat app deploy path, independent of both Vercel and the Hetzner FastAPI backend. `reel_chat.py` py-compiles clean; the `.ts` app wasn't type-checked (separate toolchain).
+
+**Status:** **Committed, not deployed.** The RC app needs a separate Rocket.Chat deploy to go live.
+
+---
+
 ## 2026-06-26 (session v) — Content Forge: QA-verified implementation plan + Obsidian node
 
 **What changed:** Designed and produced a full QA-verified implementation plan for **Content Forge** — an AI-powered content discovery and hook generation feature built into FootageBrain. No code was deployed this session; this is a planning artefact. Also generated multiple travel reel scripts across 14 countries (Kosovo, Syria, Philippines, Japan, etc.) as part of a content strategy conversation that seeded the feature idea.
@@ -550,7 +592,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 **Path we took:** Owner clicked Analyze on a short-form IG reel and saw "Deconstructing reel… 0%" with no change — a stagnant screen. Ran Playwright (`scripts/smoke-screenshot.mjs`) to capture the dev console. Found `[Analyze] Vercel response: 500 {}` in dev mode — because Vite (`npm run dev :5173`) does NOT serve Vercel serverless functions; `vercel dev (:8000)` is required for API testing. Switched to prod: console confirmed `[Analyze] Vercel response: 200 Object` (chain works). Queried Supabase directly (service role) — the reel row showed `media_status = "acquire_failed"` with `media_error: "No csrf token set by Instagram API / rate-limit reached or login required"`. Root cause confirmed.
 
-**What we learned:** The `inflight=0` mystery (10 min of polling with no change) had a simple explanation: the worker **completed in <10 seconds** (fast failure, not a stall), so the 10s polling interval never caught `inflight=1`. The real issue is **Instagram cookies expired** — `ig_cookies.txt` on Hetzner was dropped 2026-06-20 and IG cookies typically rotate in days-to-weeks. By 2026-06-22 they were invalid. This means ALL Instagram reels return `acquire_failed` until the owner re-exports fresh cookies. **YouTube reels are unaffected** (yt-dlp is less bot-gated there). **Playwright cannot re-export Instagram cookies** — this requires the user's real logged-in browser session with genuine browser fingerprint; Instagram detects headless Chromium and either blocks it or produces immediately-invalidated cookies. Cookie re-export is a manual owner step (see next session).
+**What we learned:** The `inflight=0` mystery (10 min of polling with no change) had a simple explanation: the worker **completed in <10 seconds** (fast failure, not a stall), so the 10s polling interval never caught `inflight=1`. The real issue is **Instagram cookies expired** — `ig_cookies.txt` on Hetzner was dropped 2026-06-20 and IG cookies typically rotate in days-to-weeks. By 2026-06-22 they were invalid. This means ALL Instagram reels return `acquire_failed` until the owner re-exports fresh cookies. **YouTube reels are unaffected** (yt-dlp is less bot-gated there). **Playwright cannot re-export Instagram cookies** — this requires the user's real logged-in browser session xith genuine browser fingerprint; Instagram detects headless Chromium and either blocks it or produces immediately-invalidated cookies. Cookie re-export is a manual owner step (see next session).
 
 **Status:** **LIVE** (`dpl_SV5dkFDtfWVYbv4uySpuDLM2G1y1`, www.footagebrain.com). Files **deployed but uncommitted** (recurring no-clean-ref==live state).
 
@@ -680,7 +722,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 **What we learned:** the transient-bucket idea is feasible AND the safe-delete trigger is **"after Planable confirms ingest"** (async, can take minutes) — confirmed by live testing. The architecture is ~4 parts: upload UI + bucket, the two-step push fix, a **cron** completion+cleanup worker (async ingest exceeds a serverless timeout, so finalize+delete out-of-band, matching the render/ig-sync fire-and-forget pattern), and a later capacity guard.
 
-**Status:** **DESIGN ONLY — not built.** Build approach (workflow vs direct/phased) + cron location (Vercel vs Hetzner) were being decided when the session wrapped.
+**Status:** **DESIGN ONLY — not built.** Build approach (workflow vs direct/phased) + cron location (Vercel vs Hetzner) were being decided when the session xrapped.
 
 ---
 
@@ -1007,7 +1049,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 ## 2026-06-20 — Reel DNA Phase 1 ACTIVATION — QA-verified runbook + reachability fix applied (nothing deployed)
 
-**What changed:** Produced a QA-verified, ordered **activation runbook** for turning on the already-built Phase 1 short-reel backend (PySceneDetect cut-detection + downloadable asset layers + cut-pacing), and applied the long-deferred **reachability fix** locally. No deploy, no migration, no Hetzner change — this session was decide + plan + local-prep only. Also settled the cut-detection technology question (PySceneDetect now, TransNetV2 as a documented fast-follow).
+**What changed:** Produced a QA-verified, ordered **activation runbook** for turning on the already-built Phase 1 short-reel backend (PySceneDetect cut-detection + downloadable asset layers + cut-pacing), and applied the long-deferred **reachability fix** locally. No deploy, no migration, no Hetzner change — this session xas decide + plan + local-prep only. Also settled the cut-detection technology question (PySceneDetect now, TransNetV2 as a documented fast-follow).
 
 **Where:** `src/components/unified-dna-card.jsx` (reachability fix — removed the `{isLong && …}` wrapper on the Analyze button so short reels can trigger deconstruct; only the `title` is now format-aware; Story-panel gate left intact). New plan `.claude/plans/reel-dna-phase1-activation-pyscene.md`. Read-only diagnostics against `api/ai/suggest.js` (JS HMAC parity), `backend-handoff/reel_deconstruct.py` (detector seam `_detect_scenes:764`), `supabase/migrations/0081_*.sql`, and the live Hetzner box (`free -h`/`df -h`).
 
@@ -1403,7 +1445,7 @@ Durable record of changes to the Workflow / FootageBrain app — newest first. E
 
 **Where:** `src/pages/locations.jsx` (committed `532d227`).
 
-**Path we took:** Landed during the IG workflow session window; isolated and unrelated to the IG work, shipped in the same prod deploy.
+**Path we took:** Landed during the IG workflow session xindow; isolated and unrelated to the IG work, shipped in the same prod deploy.
 
 **What we learned:** `AdvancedMarker` requires a Map ID + the marker library loaded; the classic `Marker` avoids that dependency and the crash.
 

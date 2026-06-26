@@ -40,6 +40,27 @@ const STYLE_LABEL = {
 
 const DEFAULT_SORT = { key: "virality", dir: "desc" };
 
+/* Discovery TARGET presets — the region/country the discovery pass should aim the
+   angles at. This is a HINT fed to the LLM, independent of the post-hoc filter
+   dropdown (which is derived from already-discovered rows). "__custom__" reveals a
+   free-text box so any country/region can be targeted before any opportunity
+   exists — the fix for "couldn't select a particular country". */
+const DISCOVERY_TARGETS = [
+  { value: "global", label: "Global (no specific country)" },
+  { value: "United States", label: "United States" },
+  { value: "United Kingdom", label: "United Kingdom" },
+  { value: "Canada", label: "Canada" },
+  { value: "Australia", label: "Australia" },
+  { value: "India", label: "India" },
+  { value: "Nigeria", label: "Nigeria" },
+  { value: "Philippines", label: "Philippines" },
+  { value: "__custom__", label: "Custom…" },
+];
+
+/* How long the post-Discover poll waits for the background batch to write rows. */
+const FORGE_POLL_TRIES = 14;
+const FORGE_POLL_MS = 2500;
+
 /* Google Drive share-URL → permanent file ID. Store the ID, never the raw URL.
    Falls through to the input unchanged if no ID pattern is found (lets a bare
    file ID paste straight through). */
@@ -358,6 +379,13 @@ export function ContentForge() {
   const [openOpp, setOpenOpp] = useState(null);
   const [toast, setToast] = useState(null);
 
+  // Ingest + discovery-target + live discovery progress.
+  const [clipCount, setClipCount] = useState(null);   // transcript_clips count (null = unknown)
+  const [ingesting, setIngesting] = useState(false);
+  const [discoverTarget, setDiscoverTarget] = useState("global"); // a DISCOVERY_TARGETS value or free text
+  const [targetIsCustom, setTargetIsCustom] = useState(false);
+  const [progress, setProgress] = useState(null);      // live discovery status line
+
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
@@ -392,12 +420,29 @@ export function ContentForge() {
     }
   }, []);
 
+  // Count ingested transcript_clips — the precondition for discovery. The owner
+  // can read this table directly under RLS (auth_read_transcript_clips). A head
+  // count avoids pulling rows; null stays "unknown" so the UI never claims 0 by
+  // mistake on a transient error.
+  const loadClipCount = useCallback(async () => {
+    try {
+      const { count, error: err } = await supabase
+        .from("transcript_clips")
+        .select("id", { count: "exact", head: true });
+      if (err) throw err;
+      setClipCount(typeof count === "number" ? count : 0);
+    } catch {
+      /* leave clipCount as-is (unknown) — don't block Discover on a read blip */
+    }
+  }, []);
+
   // Owner-only: skip all data wiring entirely for non-owners.
   useEffect(() => {
     if (!isOwner) return;
     loadOpps();
     loadReels();
-  }, [isOwner, loadOpps, loadReels]);
+    loadClipCount();
+  }, [isOwner, loadOpps, loadReels, loadClipCount]);
 
   // Realtime — live discovery updates on content_opportunities (preferred over
   // pure polling). Falls back gracefully: if the channel never connects, the
@@ -483,13 +528,69 @@ export function ContentForge() {
   const arrow = (key) =>
     key && key === sort.key ? <span className="cf-arrow">{sort.dir === "asc" ? "▲" : "▼"}</span> : null;
 
+  // Pull the 12+ footage transcripts (attached_footage_items.full_transcript)
+  // into transcript_clips. This is the missing first step — discovery reads
+  // clips, so with 0 clips it silently produces nothing. Fire-and-forget on the
+  // backend; we poll the clip count for a few seconds so the badge updates.
+  const handleIngest = useCallback(async () => {
+    setIngesting(true);
+    setProgress("Ingesting footage transcripts…");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { showToast("Not signed in — ingest skipped."); return; }
+      const r = await fetch("/api/ai/suggest?action=forge-ingest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({}),
+      });
+      if (!r.ok && r.status !== 202) {
+        const b = await r.json().catch(() => ({}));
+        showToast(`Ingest failed (${r.status}): ${b.error || "unknown error"}`);
+        setProgress(null);
+        return;
+      }
+      // Poll the clip count until it rises (the worker writes async).
+      let last = clipCount || 0;
+      for (let i = 0; i < FORGE_POLL_TRIES; i++) {
+        await new Promise((res) => setTimeout(res, FORGE_POLL_MS));
+        await loadClipCount();
+        const { count } = await supabase
+          .from("transcript_clips")
+          .select("id", { count: "exact", head: true });
+        const n = typeof count === "number" ? count : last;
+        setProgress(`Ingesting… ${n} clip${n === 1 ? "" : "s"} so far`);
+        if (n > last && i >= 1) { last = n; }
+        if (n > 0 && i >= 2) break; // got clips and gave the worker a moment
+        last = Math.max(last, n);
+      }
+      setProgress(null);
+      showToast("Transcript ingest complete — you can Discover now.");
+    } catch {
+      setProgress(null);
+      showToast("Could not reach the ingest worker. Try again.");
+    } finally {
+      setIngesting(false);
+    }
+  }, [clipCount, loadClipCount, showToast]);
+
   const handleDiscover = useCallback(async () => {
+    // Guard the chicken-and-egg: with no clips, discovery is a guaranteed no-op.
+    if (clipCount === 0) {
+      showToast("No transcript clips yet — click ⤓ Ingest first, then Discover.");
+      return;
+    }
     setDiscovering(true);
+    setProgress(`Discovering (${tier} tier)…`);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { showToast("Not signed in — discovery skipped."); return; }
       const body = { tier };
-      if (country !== "all") body.country = country;
+      // Discovery TARGET (the LLM hint) — independent of the filter dropdown.
+      const target = (discoverTarget || "").trim();
+      if (target && target !== "global" && target !== "__custom__") body.country = target;
       const r = await fetch("/api/ai/suggest?action=forge-discover", {
         method: "POST",
         headers: {
@@ -498,18 +599,51 @@ export function ContentForge() {
         },
         body: JSON.stringify(body),
       });
+      const out = await r.json().catch(() => ({}));
       if (!r.ok && r.status !== 202) {
-        const b = await r.json().catch(() => ({}));
-        showToast(`Discovery failed (${r.status}): ${b.error || "unknown error"}`);
+        showToast(`Discovery failed (${r.status}): ${out.error || "unknown error"}`);
+        setProgress(null);
         return;
       }
-      showToast(`Discovering (${tier} tier)… new opportunities will appear shortly.`);
+      const batchId = out.batch_id;
+      // Poll the batch via the forge-status proxy until rows land (or we time out).
+      let found = 0;
+      for (let i = 0; i < FORGE_POLL_TRIES; i++) {
+        await new Promise((res) => setTimeout(res, FORGE_POLL_MS));
+        if (batchId) {
+          try {
+            const sr = await fetch(
+              `/api/monitor/status?action=forge-status&batch_id=${encodeURIComponent(batchId)}`,
+              { headers: { Authorization: `Bearer ${session.access_token}` } }
+            );
+            const sb = await sr.json().catch(() => ({}));
+            if (typeof sb.count === "number") found = sb.count;
+          } catch { /* keep polling */ }
+        }
+        setProgress(
+          found > 0
+            ? `Discovering… ${found} opportunit${found === 1 ? "y" : "ies"} found`
+            : `Discovering (${tier} tier)… analyzing footage`
+        );
+        if (found > 0) { await loadOpps(); break; }
+      }
+      await loadOpps();
+      setProgress(null);
+      if (found > 0) {
+        showToast(`Discovery complete — ${found} new opportunit${found === 1 ? "y" : "ies"}.`);
+      } else {
+        showToast(
+          "Discovery finished but found 0 opportunities. Try ingesting more footage " +
+          "or a different target country."
+        );
+      }
     } catch {
+      setProgress(null);
       showToast("Could not reach the discovery engine. Try again.");
     } finally {
       setDiscovering(false);
     }
-  }, [tier, country, showToast]);
+  }, [tier, discoverTarget, clipCount, loadOpps, showToast]);
 
   if (!isOwner) {
     return (
@@ -526,7 +660,22 @@ export function ContentForge() {
         {!loading && (
           <span className="cf-count">{sorted.length} / {opps.length} opportunities</span>
         )}
-        <span style={{ marginLeft: "auto" }} className="cf-tier" role="group" aria-label="LLM tier">
+        <span
+          className="cf-count"
+          title="Footage transcript segments available for discovery. Discovery reads these — with 0 clips it produces nothing."
+        >
+          {clipCount === null ? "… clips" : `${clipCount} clip${clipCount === 1 ? "" : "s"}`}
+        </span>
+        <button
+          style={{ marginLeft: "auto" }}
+          className="cf-btn"
+          onClick={handleIngest}
+          disabled={ingesting}
+          title="Pull your footage transcripts into the discovery store"
+        >
+          {ingesting ? "Ingesting…" : "⤓ Ingest"}
+        </button>
+        <span className="cf-tier" role="group" aria-label="LLM tier">
           <button
             className={tier === "free" ? "on" : ""}
             onClick={() => setTier("free")}
@@ -537,6 +686,38 @@ export function ContentForge() {
             onClick={() => setTier("pro")}
             title="Pro tier — Claude (Haiku discovery / Sonnet expansion)"
           >Pro</button>
+        </span>
+        <span className="cf-target" title="Country/region the discovery pass targets">
+          <label htmlFor="cf-discover-target">Target</label>
+          <select
+            id="cf-discover-target"
+            className="cf-select"
+            value={targetIsCustom ? "__custom__" : discoverTarget}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "__custom__") {
+                setTargetIsCustom(true);
+                setDiscoverTarget("");
+              } else {
+                setTargetIsCustom(false);
+                setDiscoverTarget(v);
+              }
+            }}
+          >
+            {DISCOVERY_TARGETS.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          {targetIsCustom && (
+            <input
+              type="text"
+              className="cf-select cf-target-input"
+              value={discoverTarget}
+              onChange={(e) => setDiscoverTarget(e.target.value)}
+              placeholder="e.g. Kenya, Southeast Asia…"
+              autoFocus
+            />
+          )}
         </span>
         <button
           className="cf-btn primary"
@@ -581,11 +762,23 @@ export function ContentForge() {
         </select>
       </div>
 
+      {progress && <div className="cf-progress">{progress}</div>}
       {error && <div className="cf-error">{error}</div>}
       {loading && <div className="cf-empty">Loading opportunities…</div>}
       {!loading && !error && sorted.length === 0 && (
         <div className="cf-empty">
-          No opportunities yet. Click <strong>✦ Discover</strong> to surface ranked content angles from your footage.
+          {clipCount === 0 ? (
+            <>
+              No footage transcripts ingested yet. Click <strong>⤓ Ingest</strong> to
+              pull your transcribed footage into the discovery store, then{" "}
+              <strong>✦ Discover</strong> to surface ranked content angles.
+            </>
+          ) : (
+            <>
+              No opportunities yet. Pick a <strong>Target</strong> country, then click{" "}
+              <strong>✦ Discover</strong> to surface ranked content angles from your footage.
+            </>
+          )}
         </div>
       )}
 
