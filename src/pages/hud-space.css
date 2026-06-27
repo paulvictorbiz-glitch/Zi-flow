@@ -1,0 +1,569 @@
+/* =====================================================
+   HUD SPACE — CSS 3D Dashboard replacing /space
+   Fonts: Share Tech Mono (mono) + Chakra Petch (display)
+   ===================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+/* ── Keyframes ─────────────────────────────────────── */
+@keyframes hudpulse { 0%,100% { opacity:1 } 50% { opacity:.3 } }
+@keyframes hudspin  { to { transform:rotate(360deg) } }
+@keyframes hudflick { 0%,100% { opacity:.45 } 50% { opacity:.85 } }
+
+/* ── Scrollbar ─────────────────────────────────────── */
+.hud-root ::-webkit-scrollbar { width:9px; height:9px }
+.hud-root ::-webkit-scrollbar-track { background:rgba(10,18,28,.4) }
+.hud-root ::-webkit-scrollbar-thumb { background:rgba(110,160,210,.32); border-radius:5px }
+.hud-root ::-webkit-scrollbar-thumb:hover { background:rgba(110,160,210,.55) }
+
+/* ── Root container ────────────────────────────────── */
+.hud-root {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse 70% 55% at 50% 42%, #0a131f 0%, #060b13 55%, #03060a 100%);
+  overflow: hidden;
+  perspective: var(--hud-perspective, 1700px);
+  perspective-origin: 50% 47%;
+  touch-action: none;
+  cursor: grab;
+  font-family: 'Share Tech Mono', monospace;
+  user-select: none;
+}
+.hud-root.hud-dragging { cursor: grabbing }
+
+/* ── Decorative grid overlay ───────────────────────── */
+.hud-grid-overlay {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(80,130,180,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(80,130,180,.045) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 45%, #000 30%, transparent 80%);
+  pointer-events: none;
+}
+.hud-top-accent {
+  position: absolute;
+  top: 0; left: 50%;
+  width: 2px; height: 140px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, rgba(255,150,60,.7), transparent);
+  pointer-events: none;
+}
+
+/* ── Stage: 1760×1000 centered ─────────────────────── */
+.hud-stage {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 1760px; height: 1000px;
+  transform: translate(-50%,-50%);
+  transform-origin: center center;
+  transform-style: preserve-3d;
+  will-change: transform;
+  transition: filter .35s ease;
+}
+
+/* ── World: the 3D-rotatable container ─────────────── */
+.hud-world {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transform-origin: 880px 412px;
+  will-change: transform;
+}
+
+/* ── Pedestal rings (behind globe) ─────────────────── */
+.hud-pedestal {
+  position: absolute;
+  left: 620px; top: 582px;
+  width: 520px; height: 280px;
+  pointer-events: none;
+  z-index: 0;
+}
+.hud-pedestal-ring-outer {
+  position: absolute; left: 50%; top: 50%;
+  width: 480px; height: 480px;
+  border: 1px solid rgba(92,201,255,.22);
+  border-radius: 50%;
+  transform: translate(-50%,-50%) scaleY(.32);
+  box-shadow: 0 0 34px rgba(92,201,255,.13);
+}
+.hud-pedestal-ring-mid {
+  position: absolute; left: 50%; top: 50%;
+  width: 330px; height: 330px;
+  border: 1px solid rgba(255,154,77,.28);
+  border-radius: 50%;
+  transform: translate(-50%,-50%) scaleY(.32);
+  box-shadow: 0 0 24px rgba(255,140,60,.12);
+}
+.hud-pedestal-spin-1 {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%,-50%) scaleY(.32);
+}
+.hud-pedestal-spin-1 > div {
+  width: 410px; height: 410px;
+  border: 1px dashed rgba(255,154,77,.42);
+  border-radius: 50%;
+  animation: hudspin 30s linear infinite;
+}
+.hud-pedestal-spin-2 {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%,-50%) scaleY(.32);
+}
+.hud-pedestal-spin-2 > div {
+  width: 250px; height: 250px;
+  border: 1px dashed rgba(92,201,255,.5);
+  border-radius: 50%;
+  animation: hudspin 18s linear infinite reverse;
+}
+
+/* ── Globe billboard (counter-rotates with world) ──── */
+.hud-bill {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transform-origin: 880px 412px;
+  pointer-events: none;
+}
+.hud-globe-glow {
+  position: absolute;
+  left: 700px; top: 232px;
+  width: 360px; height: 360px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 46% 40%, rgba(60,150,230,.18), rgba(255,140,50,.16) 50%, transparent 72%);
+  filter: blur(8px);
+  pointer-events: none;
+}
+.hud-globe-canvas {
+  position: absolute;
+  left: 700px; top: 232px;
+  width: 360px; height: 360px;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+.hud-globe-canvas:active { cursor: grabbing }
+
+/* ── Pipeline process strip (center decoration) ─────── */
+.hud-pipeline-strip {
+  position: absolute;
+  left: 600px; top: 628px;
+  width: 560px; height: 56px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 22px;
+}
+.hud-pipeline-line {
+  position: absolute;
+  left: 42px; right: 42px; top: 16px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,154,77,.45), rgba(92,201,255,.45), transparent);
+}
+.hud-pipeline-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  z-index: 1;
+}
+.hud-pipeline-node span:first-child {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: #0a131f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 10px 'Share Tech Mono';
+}
+.hud-pipeline-node span:last-child {
+  font: 8px 'Chakra Petch';
+  letter-spacing: .14em;
+  color: #9fb4cc;
+}
+
+/* ── Faces ──────────────────────────────────────────── */
+.hud-face {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: opacity .25s ease;
+}
+.hud-face--front {
+  transform: translateZ(150px);
+}
+.hud-face--back {
+  transform: rotateY(180deg) translateZ(150px);
+  transform-origin: 880px 412px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Cards ──────────────────────────────────────────── */
+.hud-card {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 13px 14px;
+  background: linear-gradient(158deg, rgba(13,20,30,.94), rgba(7,11,18,.96));
+  border: 1px solid rgba(110,150,200,.16);
+  border-radius: 3px;
+  backdrop-filter: blur(3px);
+  box-shadow: inset 0 0 24px rgba(20,40,70,.25);
+  cursor: pointer;
+  overflow: hidden;
+  clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 0 100%);
+  transform: var(--card-base-transform, none);
+  transition: transform .35s cubic-bezier(.2,.8,.2,1), box-shadow .35s, border-color .35s;
+}
+.hud-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--card-shine, rgba(95,224,168,.6)), transparent);
+}
+.hud-card:hover {
+  transform: rotateY(0deg) translateZ(var(--hud-card-depth, 200px)) scale(1.04) !important;
+  box-shadow: 0 24px 50px rgba(0,0,0,.6), 0 0 26px rgba(92,201,255,.18);
+  border-color: rgba(120,200,255,.5);
+}
+
+/* Card with orange accent (API budgets, scout, etc.) */
+.hud-card.hud-card--orange:hover {
+  box-shadow: 0 24px 50px rgba(0,0,0,.6), 0 0 26px rgba(255,154,77,.2);
+  border-color: rgba(255,170,90,.5);
+}
+.hud-card.hud-card--back-item {
+  border-left: 3px solid var(--card-accent, rgba(110,150,200,.5));
+}
+.hud-card.hud-card--back-item:hover {
+  box-shadow: 0 30px 60px rgba(0,0,0,.72), 0 0 30px rgba(255,122,26,.3);
+}
+
+/* ── Card internals ─────────────────────────────────── */
+.hud-card-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+.hud-card-title {
+  font: 600 11px 'Chakra Petch';
+  letter-spacing: .14em;
+}
+.hud-card-badge {
+  margin-left: auto;
+  font: 9px 'Share Tech Mono';
+  border: 1px solid;
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+.hud-card-expand {
+  position: absolute;
+  bottom: 9px; right: 12px;
+  font: 10px 'Share Tech Mono';
+  color: rgba(150,190,230,.5);
+  pointer-events: none;
+}
+.hud-status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.hud-status-dot--pulse { animation: hudpulse 2.4s infinite }
+
+/* ── Progress bars ──────────────────────────────────── */
+.hud-bar-row {
+  display: flex;
+  justify-content: space-between;
+  font: 9px 'Share Tech Mono';
+  color: #8ea6c2;
+  margin-bottom: 2px;
+}
+.hud-bar-track {
+  height: 5px;
+  background: rgba(120,160,200,.15);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.hud-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+.hud-bar-fill--green { background: linear-gradient(90deg, #5fe0a8, #5cc9ff) }
+.hud-bar-fill--orange { background: linear-gradient(90deg, #ff9a4d, #ff6b3d) }
+.hud-bar-fill--blue { background: #5cc9ff }
+.hud-bar-fill--purple { background: #c98bff }
+
+/* ── Metric rows ────────────────────────────────────── */
+.hud-metric-row {
+  display: flex;
+  justify-content: space-between;
+  font: 10px 'Share Tech Mono';
+  color: #8ea6c2;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(120,160,200,.07);
+}
+.hud-metric-row:last-child { border-bottom: none }
+.hud-metric-val { color: #e8f1ff }
+
+/* ── Section label ──────────────────────────────────── */
+.hud-section-label {
+  font: 8px 'Share Tech Mono';
+  color: #5f7790;
+  letter-spacing: .12em;
+  margin: 6px 0 4px;
+}
+
+/* ── Toggle switch ──────────────────────────────────── */
+.hud-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font: 10px 'Share Tech Mono';
+}
+.hud-toggle {
+  display: inline-flex;
+  width: 30px; height: 16px;
+  border-radius: 8px;
+  position: relative;
+  flex-shrink: 0;
+  transition: background .2s;
+  cursor: pointer;
+}
+.hud-toggle--on  { background: rgba(95,224,168,.5) }
+.hud-toggle--off { background: rgba(120,160,200,.2) }
+.hud-toggle-knob {
+  position: absolute;
+  top: 2px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left .2s;
+}
+.hud-toggle--on  .hud-toggle-knob { left: 16px }
+.hud-toggle--off .hud-toggle-knob { left: 2px }
+
+/* ── SVG sparkline ──────────────────────────────────── */
+.hud-sparkline { display: block; width: 100%; height: 30px; margin-bottom: 8px }
+
+/* ── Donut gauge ────────────────────────────────────── */
+.hud-donut { overflow: visible }
+
+/* ── Social token row ───────────────────────────────── */
+.hud-social-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(120,160,200,.08);
+  font: 11px 'Share Tech Mono';
+}
+.hud-social-row:last-child { border-bottom: none }
+
+/* ── Pipeline card in back face ─────────────────────── */
+.hud-pipeline-item {
+  background: rgba(20,28,42,.8);
+  border-radius: 2px;
+  padding: 5px 8px;
+  color: #cfe0f2;
+  font: 9px 'Share Tech Mono';
+  margin-bottom: 5px;
+  border-left: 3px solid;
+}
+
+/* ── Modal overlay ──────────────────────────────────── */
+.hud-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(8,16,28,.9), rgba(3,6,12,.95));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s ease;
+}
+.hud-modal.hud-modal--open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.hud-modal-wrap {
+  position: relative;
+  width: 92vw;
+  max-width: 640px;
+  max-height: 84vh;
+  background: linear-gradient(158deg, rgba(14,22,34,.97), rgba(8,13,21,.99));
+  border: 1px solid rgba(110,150,200,.25);
+  border-radius: 3px;
+  box-shadow: 0 40px 80px rgba(0,0,0,.7), 0 0 40px rgba(92,201,255,.12);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateY(20px) scale(.97);
+  transition: opacity .25s ease, transform .25s ease;
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+}
+.hud-modal--open .hud-modal-wrap {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.hud-modal-close {
+  position: absolute;
+  top: -8px; right: -8px;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: rgba(92,201,255,.15);
+  border: 1px solid rgba(92,201,255,.35);
+  color: #5cc9ff;
+  font: 14px/28px 'Share Tech Mono';
+  text-align: center;
+  cursor: pointer;
+  z-index: 10;
+  transition: background .2s;
+}
+.hud-modal-close:hover { background: rgba(92,201,255,.3) }
+.hud-modal-header {
+  padding: 22px 26px 14px;
+  border-bottom: 1px solid rgba(120,160,200,.12);
+  flex-shrink: 0;
+}
+.hud-modal-body {
+  padding: 16px 26px 22px;
+  overflow-y: auto;
+  flex: 1;
+}
+.hud-modal-hint {
+  font: 9px 'Share Tech Mono';
+  color: rgba(120,160,200,.45);
+  text-align: center;
+  padding: 10px 0 4px;
+  border-top: 1px solid rgba(120,160,200,.1);
+  flex-shrink: 0;
+}
+
+/* ── Layout menu button ─────────────────────────────── */
+.hud-menu-btn {
+  position: fixed;
+  bottom: 22px; right: 22px;
+  z-index: 800;
+  background: rgba(10,20,35,.85);
+  border: 1px solid rgba(92,201,255,.3);
+  border-radius: 3px;
+  color: #5cc9ff;
+  font: 10px 'Chakra Petch';
+  letter-spacing: .14em;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background .2s, border-color .2s;
+}
+.hud-menu-btn:hover {
+  background: rgba(20,40,65,.9);
+  border-color: rgba(92,201,255,.6);
+}
+
+/* ── Layout menu panel ──────────────────────────────── */
+.hud-layout-menu {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: 280px;
+  z-index: 810;
+  background: rgba(7,12,20,.95);
+  border-left: 1px solid rgba(92,201,255,.2);
+  backdrop-filter: blur(8px);
+  overflow-y: auto;
+  padding: 20px 18px 30px;
+  font: 10px 'Share Tech Mono';
+}
+.hud-layout-menu h3 {
+  font: 600 12px 'Chakra Petch';
+  letter-spacing: .2em;
+  color: #5cc9ff;
+  margin: 0 0 18px;
+  border-bottom: 1px solid rgba(92,201,255,.2);
+  padding-bottom: 10px;
+}
+.hud-layout-menu h4 {
+  font: 600 10px 'Chakra Petch';
+  letter-spacing: .14em;
+  color: #8ea6c2;
+  margin: 14px 0 8px;
+}
+.hud-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  color: #8ea6c2;
+}
+.hud-slider-row label { flex: 1; min-width: 0; font: 9px 'Share Tech Mono'; color: #7e93ab }
+.hud-slider-row input[type=range] {
+  flex: 2;
+  height: 3px;
+  accent-color: #5cc9ff;
+  cursor: pointer;
+}
+.hud-slider-row span {
+  width: 40px;
+  text-align: right;
+  color: #e8f1ff;
+  font: 9px 'Share Tech Mono';
+  flex-shrink: 0;
+}
+.hud-reset-btn {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  padding: 8px;
+  background: rgba(92,201,255,.1);
+  border: 1px solid rgba(92,201,255,.3);
+  border-radius: 3px;
+  color: #5cc9ff;
+  font: 9px 'Chakra Petch';
+  letter-spacing: .14em;
+  cursor: pointer;
+  text-align: center;
+  transition: background .2s;
+}
+.hud-reset-btn:hover { background: rgba(92,201,255,.2) }
+.hud-menu-close-btn {
+  position: absolute;
+  top: 16px; right: 16px;
+  background: none;
+  border: none;
+  color: rgba(92,201,255,.5);
+  font: 16px 'Share Tech Mono';
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+.hud-menu-close-btn:hover { color: #5cc9ff }
+
+/* ── Utilities ──────────────────────────────────────── */
+.hud-muted  { color: #7e93ab }
+.hud-bright { color: #e8f1ff }
+.hud-green  { color: #5fe0a8 }
+.hud-cyan   { color: #5cc9ff }
+.hud-orange { color: #ff9a4d }
+.hud-purple { color: #c98bff }
+.hud-red    { color: #ff5a5a }
+
+.hud-sub-header {
+  font: 9px 'Share Tech Mono';
+  color: #6f88a4;
+  letter-spacing: .1em;
+  margin-bottom: 3px;
+}
+.hud-info-box {
+  font: 9px 'Share Tech Mono';
+  color: #7e93ab;
+  border-top: 1px solid rgba(120,160,200,.1);
+  padding-top: 8px;
+  margin-top: 8px;
+  line-height: 1.5;
+}

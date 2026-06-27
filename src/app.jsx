@@ -651,7 +651,7 @@ function AppShell() {
           inbox:     '/assets/bg/world-monitor.jpeg',
           team:      '/assets/bg/aethelian-spine.jpeg',
           analytics: '/assets/bg/bg-monitor-hud.jpg',
-          monitor:   '/assets/bg/dark-luxury-hud.jpeg',
+          monitor:   '/assets/bg/bg-monitor-hud.jpg',
           activity:  '/assets/bg/destroyed-city.jpeg',
           settings:  '/assets/bg/dark-luxury-hud.jpeg',
           detail:    '/assets/bg/bg-detail-dna.jpeg',
@@ -661,7 +661,7 @@ function AppShell() {
           music:[.74,.92], footage:[.70,.88], coverage:[.72,.90], locations:[.72,.90],
           editor:[.78,.94], projects:[.66,.84], lossless:[.66,.84], export:[.70,.88],
           training:[.72,.90], resources:[.66,.84], inbox:[.74,.92], team:[.70,.88],
-          analytics:[.74,.92], monitor:[.80,.96], activity:[.72,.90], settings:[.78,.94],
+          analytics:[.74,.92], monitor:[.60,.82], activity:[.72,.90], settings:[.78,.94],
           detail:[.64,.82],
         };
         const bg = BG[view];
@@ -1106,11 +1106,10 @@ class AppErrorBoundary extends React.Component {
    entirely outside the AuthGate. */
 const Landing = lazyPage(() => import("./pages/landing.jsx"), "Landing");
 
-/* Owner-only 3D "Space" alternate homepage (/space). Lazy-loaded so the
-   three.js/cube bundle never ships with the normal app. Rendered INSIDE
-   the authed provider tree below so it has live store + locations; its
-   own owner gate bounces non-owners to /app. */
-const Space3D = lazyPage(() => import("./pages/space3d.jsx"), "Space3D");
+/* Owner-only 3D HUD dashboard at /space. Lazy-loaded so the CSS-3D bundle
+   never ships with the normal app. Rendered INSIDE the authed provider tree
+   so it has live store access; its own owner gate bounces non-owners to /app. */
+const HudSpace = lazyPage(() => import("./pages/hud-space.jsx"), "HudSpace");
 
 function App() {
   // Root path "/" is the fully public landing page (no auth). Anything else
@@ -1148,9 +1147,9 @@ function App() {
                       <PermissionsProvider>
                         {isSpace ? (
                           <React.Suspense
-                            fallback={<div style={{ minHeight: "100vh", background: "#05070d" }} />}
+                            fallback={<div style={{ minHeight: "100vh", background: "#04070c" }} />}
                           >
-                            <Space3D />
+                            <HudSpace />
                           </React.Suspense>
                         ) : (
                           <ThemeProvider>
