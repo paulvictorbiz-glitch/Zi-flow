@@ -1100,6 +1100,17 @@ function _daysBetween(a, b) {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
 }
 
+// Compact "Xs/Xm/Xh ago" from an epoch-ms timestamp (used by the budgets-card
+// refresh tooltip so the owner can see how stale the live spend is).
+function _agoLabel(ms) {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.round(m / 60)}h ago`;
+}
+
 // External-usage link: opens the provider's own usage page in a new tab.
 // Falls back to plain text when no href is configured.
 function ExtUsageLink({ href, children, style }) {
@@ -1198,22 +1209,36 @@ export function ProviderBudgetsCard({ onStats }) {
   // Live Content Forge LLM spend — proxied from the Hetzner /content-forge/usage
   // rollup (calls / tokens / cost, all-time + today + 30d, by provider). null =
   // loading; { ok:false } or { configured:false } = degrade to the static view
-  // (e.g. migration 0106 not applied yet). Owner-only fetch; one-shot on mount.
+  // (e.g. migration 0106 not applied yet). Owner-only. Loaded on mount, then
+  // AUTO-POLLED every 60s while the tab is visible, plus a manual ⟳ refresh
+  // button in the card header (refreshForge) — so live spend stays current
+  // without a full page reload. (Budget config is NOT reloaded here on purpose,
+  // so the poll never clobbers a half-typed limit before its onBlur saves.)
   const [forgeUsage, setForgeUsage] = React.useState(null);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [lastRefresh, setLastRefresh] = React.useState(null);
+  const refreshForge = React.useCallback(async () => {
+    if (!isOwner) return;
+    setRefreshing(true);
+    try {
+      const r = await fetch("/api/monitor/status?action=forge-usage");
+      const d = r.ok ? await r.json() : { ok: false };
+      setForgeUsage(d);
+      setLastRefresh(Date.now());
+    } catch (_) {
+      setForgeUsage({ ok: false });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [isOwner]);
   React.useEffect(() => {
     if (!isOwner) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch("/api/monitor/status?action=forge-usage");
-        const d = r.ok ? await r.json() : { ok: false };
-        if (!cancelled) setForgeUsage(d);
-      } catch (_) {
-        if (!cancelled) setForgeUsage({ ok: false });
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [isOwner]);
+    refreshForge();
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") refreshForge();
+    }, 60000);
+    return () => clearInterval(id);
+  }, [isOwner, refreshForge]);
 
   // Content Forge budget / kill switch (app_settings, owner-write). null = loading.
   const [budget, setBudget] = React.useState(null);
@@ -1258,6 +1283,10 @@ export function ProviderBudgetsCard({ onStats }) {
   // Live Content Forge spend (Vertex + any other paid provider). cfu is the rollup
   // when the usage table exists and has data; null otherwise (→ static fallback).
   const cfu = (forgeUsage && forgeUsage.ok && forgeUsage.configured) ? forgeUsage : null;
+  // Last discovery pass's transcript-truncation stats (how much of the corpus actually
+  // reached the LLM vs was cut by the 24k-char prompt cap). Present once a discover has
+  // run on the new backend; null otherwise.
+  const ld = (forgeUsage && forgeUsage.ok && forgeUsage.last_discover) ? forgeUsage.last_discover : null;
   const vertexProv = cfu ? (cfu.by_provider || []).find(p => p.provider === "vertex_gemini") : null;
   const fmtUsd = (n) => {
     const v = Number(n) || 0;
@@ -1294,8 +1323,30 @@ export function ProviderBudgetsCard({ onStats }) {
     <Card
       title="API Budgets & Limits"
       right={
-        <span className="mono" style={{ fontSize: 11, color: barColor }}>
-          {credit.left} days left
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            onClick={refreshForge}
+            disabled={refreshing}
+            title={
+              (refreshing ? "Refreshing live spend…" : "Refresh live spend") +
+              (lastRefresh ? ` · updated ${_agoLabel(lastRefresh)}` : "") +
+              " · auto-refreshes every 60s"
+            }
+            className="mono"
+            style={{
+              fontSize: 11, lineHeight: 1, padding: "3px 7px", borderRadius: 5,
+              cursor: refreshing ? "default" : "pointer",
+              background: "var(--bg-2, #1a1d24)", color: "inherit",
+              border: "1px solid var(--line, #2a2f3a)",
+              opacity: refreshing ? 0.6 : 1,
+            }}
+          >
+            {refreshing ? "…" : "⟳"}
+          </button>
+          <span className="mono" style={{ fontSize: 11, color: barColor }}>
+            {credit.left} days left
+          </span>
         </span>
       }
       footLeft="GCP countdown + Content Forge spend (Vertex calls/$) + OpenRouter today are live · Gemini-free/IG limits static"
@@ -1508,6 +1559,48 @@ export function ProviderBudgetsCard({ onStats }) {
             </>
           )}
         </div>
+
+        {/* Transcript coverage — how much of the corpus reached the LLM last discover */}
+        {ld && (
+          <div style={{
+            marginBottom: 12, paddingBottom: 12,
+            borderBottom: "1px solid var(--border-dim, rgba(127,127,127,.18))",
+          }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+              <span className="mono dim" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".06em" }}>
+                Transcript coverage — last discover
+              </span>
+              {ld.model && (
+                <span className="mono dim" style={{ fontSize: 9, marginLeft: "auto" }}>
+                  {String(ld.model).split("/").pop()}
+                </span>
+              )}
+            </div>
+            {(() => {
+              const read = Number(ld.clips_read) || 0;
+              const sent = Number(ld.clips_sent) || 0;
+              const pct = Number(ld.truncated_pct) || 0;
+              const sentPct = read ? Math.round((sent / read) * 100) : 0;
+              const tone = pct >= 50 ? "var(--c-red, #e0564f)"
+                : pct >= 15 ? "var(--c-amber, #e0a458)" : "var(--c-green, #5fb87a)";
+              return (
+                <>
+                  <RungBar
+                    pct={sentPct}
+                    color={tone}
+                    label="clips sent to the LLM vs read"
+                    sub={`${sent} / ${read}`}
+                  />
+                  <div className="mono dim" style={{ fontSize: 9.5, marginTop: 6 }}>
+                    <span style={{ color: tone }}>{pct}% truncated</span>
+                    {" "}· {ld.opportunities ?? 0} opp{(ld.opportunities ?? 0) === 1 ? "y" : "ies"} generated
+                    {pct > 0 ? " · truncated clips retry on the next Discover (incremental)" : ""}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
 
         {/* Ladder rungs + IG Graph */}
         <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>

@@ -1327,7 +1327,15 @@ export default async function handler(req, res) {
             method: "POST",
             signal: ctrl.signal,
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ country: body.country, tier }),
+            // max_opportunities (optional): caps how many opportunities the LLM
+            // writes per pass — the dominant cost lever (output tokens). 0/absent
+            // = backend default (8-20). Forwarded verbatim; the backend clamps it.
+            body: JSON.stringify({
+              country: body.country,
+              tier,
+              max_opportunities: body.max_opportunities,
+              model: body.model, // owner's model toggle (backend validates against allowlist)
+            }),
           });
         const out = await r.json().catch(() => ({}));
         if (!r.ok) { res.status(502).json({ error: `Hetzner discover HTTP ${r.status}`, ...out }); return; }
@@ -1366,7 +1374,7 @@ export default async function handler(req, res) {
             method: "POST",
             signal: ctrl.signal,
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ opportunity_id: body.opportunity_id, tier }),
+            body: JSON.stringify({ opportunity_id: body.opportunity_id, tier, model: body.model }),
           });
         const out = await r.json().catch(() => ({}));
         if (!r.ok) { res.status(502).json({ error: `Hetzner expand HTTP ${r.status}`, ...out }); return; }

@@ -940,6 +940,26 @@ async def _read_budget_settings(client: httpx.AsyncClient) -> dict[str, Any]:
     return out
 
 
+async def _read_last_discover(client: httpx.AsyncClient) -> dict[str, Any] | None:
+    """Read the last discovery pass's clip/truncation stats from app_settings
+    (key 'content_forge_last_discover', written by _write_last_discover). Powers the
+    Monitor's transcript-truncation line. Returns None if absent or on any error."""
+    url = _supabase_url()
+    if not url:
+        return None
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/app_settings?key=eq.content_forge_last_discover&select=value&limit=1",
+            headers=_supabase_headers(),
+        )
+        if r.status_code == 200 and isinstance(r.json(), list) and r.json():
+            v = r.json()[0].get("value")
+            return v if isinstance(v, dict) else None
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: last-discover read failed: %s", e)
+    return None
+
+
 async def _today_usage(client: httpx.AsyncClient) -> tuple[int, float]:
     """Today's (UTC) Content Forge LLM usage from content_forge_usage: (calls, cost_usd).
     Call count is exact (Content-Range header); cost is summed from the day's rows (tiny
@@ -1098,7 +1118,8 @@ def _call_vertex_gemini(messages: list[dict[str, str]], *,
 
 
 def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
-               kind: str = "discovery") -> tuple[str, dict[str, Any]]:
+               kind: str = "discovery",
+               model_override: str | None = None) -> tuple[str, dict[str, Any]]:
     """PROVIDER SEAM — the ONLY place the Content Forge LLM provider is selected.
 
     Escalating ladder (cheapest-first; each rung skipped when its keys are absent, a
@@ -1117,17 +1138,25 @@ def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
     carries provider/model/tier_used + fell_back (True once any earlier rung errored).
     Raises RuntimeError only when EVERY configured rung is exhausted."""
 
+    # Per-call model override (the owner's UI model toggle, e.g. 2.5-flash vs the
+    # ~6x-cheaper 2.0-flash). Validated to a known model by the endpoint before it
+    # reaches here. The Vertex rung uses the "google/"-prefixed form; the AI-Studio
+    # (Gemini API) rung uses the bare form, so strip the prefix for that rung.
+    ov = (model_override or "").strip() or None
+
     def _rung_gemini_api():
         if not _gemini_key():
             return None
-        model = (os.environ.get("CONTENT_FORGE_MODEL_GEMINI") or "").strip() or DEFAULT_GEMINI_MODEL
+        model = (ov.split("/")[-1] if ov else None) \
+            or (os.environ.get("CONTENT_FORGE_MODEL_GEMINI") or "").strip() or DEFAULT_GEMINI_MODEL
         text, used, usage = _call_gemini_api(messages, model=model)
         return text, {"provider": "gemini_api", "model": used, "tier_used": "gemini", "usage": usage}
 
     def _rung_vertex_gemini():
         if not (_gcp_project() and _gcp_sa_json()):
             return None
-        model = (os.environ.get("CONTENT_FORGE_MODEL_VERTEX_GEMINI") or "").strip() \
+        model = ov \
+            or (os.environ.get("CONTENT_FORGE_MODEL_VERTEX_GEMINI") or "").strip() \
             or DEFAULT_VERTEX_GEMINI_MODEL
         text, used, usage = _call_vertex_gemini(messages, model=model)
         return text, {"provider": "vertex_gemini", "model": used, "tier_used": "vertex", "usage": usage}
@@ -1579,8 +1608,48 @@ def _norm_score(v: Any) -> float:
     return max(0.0, min(1.0, f))
 
 
+# Models the owner's UI toggle may request (validated before reaching _forge_llm).
+# Both Vertex-prefixed and bare forms are accepted; the rungs normalize per-provider.
+_ALLOWED_MODELS = {
+    "google/gemini-2.5-flash",
+    "google/gemini-2.0-flash-001",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-001",
+}
+
+
+def _clean_model(v: Any) -> str:
+    """Validate a requested model against the allowlist. Returns "" (→ env/default)
+    for anything not explicitly allowed, so the toggle can never inject an arbitrary
+    or unpriced model."""
+    s = (str(v or "")).strip()
+    return s if s in _ALLOWED_MODELS else ""
+
+
+async def _write_last_discover(client: httpx.AsyncClient, stats: dict[str, Any]) -> None:
+    """Persist the most recent discovery pass's clip/truncation stats into app_settings
+    key 'content_forge_last_discover' (service role; no migration). Surfaced by /usage so
+    the Monitor can show how much of the transcript corpus actually reached the LLM vs was
+    truncated by the 24k-char prompt cap. Best-effort — never raises."""
+    url = _supabase_url()
+    if not url:
+        return
+    try:
+        await client.post(
+            f"{url}/rest/v1/app_settings?on_conflict=key",
+            headers={**_supabase_headers("return=minimal"),
+                     "Prefer": "resolution=merge-duplicates"},
+            json={"key": "content_forge_last_discover", "value": stats,
+                  "updated_at": _now_iso()},
+        )
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: last-discover write failed: %s", e)
+
+
 async def _discover_worker(batch_id: str, tier: str, country: str | None,
-                           only_new: bool = True) -> None:
+                           only_new: bool = True, max_opportunities: int = 0,
+                           model_override: str | None = None) -> None:
     """Fire-and-forget discovery: read transcript_clips, run ONE batched LLM pass via the
     provider seam, upsert content_opportunities tagged with discovery_run_id=batch_id.
     only_new=True (default) feeds ONLY clips not yet analyzed (token-saver); ?rescan=1 forces
@@ -1600,13 +1669,27 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
                 return
             existing = await _read_existing_titles(client, country)  # cross-run dedup hint
             transcript = _clips_to_prompt(clips)
+            # Truncation accounting: _clips_to_prompt fills up to DISCOVERY_TRANSCRIPT_CHARS
+            # then stops, so only the first N clips actually reach the LLM. Each clip is one
+            # newline-joined line (_clip_to_line strips inner newlines), so the line count IS
+            # the sent-clip count. Anything beyond that is truncated this pass.
+            clips_read = len(clips)
+            clips_sent = (transcript.count("\n") + 1) if transcript.strip() else 0
+            truncated = max(0, clips_read - clips_sent)
+            trunc_pct = round(100.0 * truncated / clips_read, 1) if clips_read else 0.0
             avoid = ""
             if existing:
                 avoid = ("ALREADY COVERED — do NOT repeat or rephrase these existing angles; "
                          "propose only NEW ones:\n"
                          + "\n".join(f"- {t}" for t in existing) + "\n\n")
+            cap = ""
+            if max_opportunities and max_opportunities > 0:
+                cap = (f"OUTPUT LIMIT: return AT MOST {max_opportunities} opportunities — only "
+                       "the strongest. Prefer fewer high-quality angles over padding to a "
+                       "count. This overrides the 8-20 range above.\n\n")
             user = (
                 f"{_DISCOVERY_GUIDANCE}\n\n"
+                + cap
                 + (f"TARGET COUNTRY/REGION: {country}\n\n" if country else "")
                 + avoid
                 + f"FOOTAGE TRANSCRIPT CLIPS:\n{transcript}"
@@ -1616,7 +1699,9 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
                 {"role": "user", "content": user},
             ]
             # Provider seam — free (Gemini) by default, pro (Haiku) if requested+keyed.
-            text, meta = _forge_llm(messages, tier=tier, kind="discovery")
+            # model_override = the owner's UI model toggle (validated; "" → env default).
+            text, meta = _forge_llm(messages, tier=tier, kind="discovery",
+                                    model_override=model_override)
             # Log the call's token usage + cost (best-effort; never blocks discovery).
             await _log_usage(client, kind="discovery", meta=meta, batch_id=batch_id)
             parsed = _extract_json(text)
@@ -1652,14 +1737,31 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
                     "discovery_run_id": batch_id,
                 })
             written = await _upsert_opportunities(client, rows)
-            # Windowing: stamp the clips we just analyzed so the next pass skips them.
-            # Mark on a successful LLM pass even if 0 rows (the footage WAS analyzed), but not
-            # on a hard provider failure (handled by the outer except → clips stay un-stamped
-            # and get retried next pass).
-            await _mark_clips_discovered(client, [str(c.get("id")) for c in clips if c.get("id")])
-            log.info("content_forge: discover batch=%s provider=%s tier=%s clips=%d items=%d "
-                     "upserted=%d avoid=%d only_new=%s", batch_id, meta.get("provider"),
-                     meta.get("tier_used"), len(clips), len(rows), written, len(existing), only_new)
+            # Windowing: stamp ONLY the clips that actually reached the LLM (the first
+            # clips_sent). Previously ALL read clips were marked even when the 24k-char cap
+            # truncated the tail — silently dropping those clips from ever being analyzed.
+            # Marking only the sent ones means a truncated tail is retried on the NEXT pass
+            # (incremental), so truncation self-heals across passes instead of losing footage.
+            await _mark_clips_discovered(
+                client, [str(c.get("id")) for c in clips[:clips_sent] if c.get("id")])
+            # Persist this pass's truncation accounting for the Monitor (best-effort).
+            await _write_last_discover(client, {
+                "batch_id": batch_id,
+                "at": _now_iso(),
+                "provider": meta.get("provider"),
+                "model": meta.get("model"),
+                "clips_read": clips_read,
+                "clips_sent": clips_sent,
+                "clips_truncated": truncated,
+                "truncated_pct": trunc_pct,
+                "opportunities": written,
+                "max_opportunities": max_opportunities,
+            })
+            log.info("content_forge: discover batch=%s provider=%s model=%s tier=%s clips_read=%d "
+                     "clips_sent=%d truncated=%d(%.1f%%) items=%d upserted=%d avoid=%d only_new=%s",
+                     batch_id, meta.get("provider"), meta.get("model"), meta.get("tier_used"),
+                     clips_read, clips_sent, truncated, trunc_pct, len(rows), written,
+                     len(existing), only_new)
     except Exception as e:  # noqa: BLE001 — never crash the worker
         log.exception("content_forge: discover worker error (batch=%s): %s", batch_id, e)
 
@@ -1709,6 +1811,7 @@ async def usage(request: Request):
     async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
         rollup = await _read_usage_rollup(client)
         budget = await _read_budget_settings(client)
+        last_discover = await _read_last_discover(client)
     # Compute the live blocked state from today's spend (already in the rollup) vs the limits,
     # so the card can render the same verdict the backend gate enforces.
     today_cost = (rollup.get("today") or {}).get("cost_usd", 0.0) or 0.0
@@ -1722,7 +1825,8 @@ async def usage(request: Request):
     prices = {m: {"input_per_mtok": p[0], "output_per_mtok": p[1]}
               for m, p in _MODEL_PRICES.items()}
     return JSONResponse({"ok": True, "generated_at": _now_iso(),
-                         "prices": prices, "budget": budget_out, **rollup}, status_code=200)
+                         "prices": prices, "budget": budget_out,
+                         "last_discover": last_discover, **rollup}, status_code=200)
 
 
 @router.post("/ingest-transcript")
@@ -1794,10 +1898,36 @@ async def discover(request: Request, background_tasks: BackgroundTasks):
             pass
         if tier not in ("free", "pro"):
             tier = "free"
+    # max_opportunities (optional cost cap) — the dominant cost lever, since OUTPUT
+    # tokens (the opportunities written) dominate a discovery pass's bill. The Vercel
+    # proxy sends it in the JSON body; read it from query or body. Also backfill
+    # `country` from the body (the tier-gated parse above is skipped when tier arrives
+    # as a query param, so a body-only country would otherwise be lost). 0/absent =
+    # the backend default (8-20). Clamped to 1-50.
+    max_opps = 0
+    mq = request.query_params.get("max_opportunities") or request.query_params.get("count")
+    try:
+        b2 = await request.json()
+    except Exception:  # noqa: BLE001
+        b2 = None
+    if isinstance(b2, dict):
+        if country is None:
+            country = b2.get("country") or None
+        if mq is None:
+            mq = b2.get("max_opportunities")
+    try:
+        max_opps = max(0, min(50, int(mq))) if mq is not None else 0
+    except (TypeError, ValueError):
+        max_opps = 0
+    # model toggle (validated to the allowlist; "" → env/default). Query or body.
+    model = _clean_model(request.query_params.get("model")
+                         or (b2.get("model") if isinstance(b2, dict) else None))
     batch_id = str(uuid.uuid4())
-    background_tasks.add_task(_discover_worker, batch_id, tier, country, only_new)
+    background_tasks.add_task(_discover_worker, batch_id, tier, country, only_new,
+                             max_opps, model or None)
     return JSONResponse({"ok": True, "batch_id": batch_id, "tier": tier,
-                         "country": country, "only_new": only_new}, status_code=200)
+                         "country": country, "only_new": only_new,
+                         "max_opportunities": max_opps, "model": model}, status_code=200)
 
 
 @router.get("/discover-status/{batch_id}")
@@ -1841,6 +1971,14 @@ async def expand(request: Request):
         tier = "free"
     if not opp_id:
         return JSONResponse({"ok": False, "error": "opportunity_id required"}, status_code=400)
+    # model toggle (validated to the allowlist; "" → env/default). Query or body.
+    # request.json() caches the body, so re-reading here is safe.
+    try:
+        _mb = await request.json()
+    except Exception:  # noqa: BLE001
+        _mb = None
+    expand_model = _clean_model(request.query_params.get("model")
+                                or (_mb.get("model") if isinstance(_mb, dict) else None))
 
     async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
         opp = await _read_opportunity(client, opp_id)
@@ -1865,7 +2003,8 @@ async def expand(request: Request):
             {"role": "user", "content": _expansion_user_prompt(opp, grounding)},
         ]
         try:
-            text, meta = _forge_llm(messages, tier=tier, kind="expansion")
+            text, meta = _forge_llm(messages, tier=tier, kind="expansion",
+                                    model_override=expand_model or None)
             # Log the call's token usage + cost (best-effort; never blocks hook generation).
             await _log_usage(client, kind="expansion", meta=meta, batch_id=None)
             parsed = _extract_json(text)

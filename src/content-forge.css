@@ -539,3 +539,55 @@
   color: var(--color-muted, #888);
 }
 .cf-expound-btn { font-size: 0.9rem; padding: 0.5rem 1.2rem; }
+
+/* ---- Country folders (grouped view) ---- */
+.cf-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.cf-folder {
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cf-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  background: var(--color-surface, #1a1d24);
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.cf-folder-head:hover { background: var(--color-surface-hover, rgba(127, 127, 127, 0.08)); }
+.cf-folder-caret {
+  font-size: 0.75rem;
+  width: 0.9rem;
+  color: var(--color-muted, #888);
+  flex-shrink: 0;
+}
+.cf-folder-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.cf-folder-count {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: var(--color-border, #333);
+  color: var(--color-muted, #bbb);
+}
+.cf-folder-tiers {
+  margin-left: auto;
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+.cf-folder-tiers .cf-tier-badge { font-size: 0.65rem; }
+.cf-folder .cf-table-wrap { border-top: 1px solid var(--color-border, #333); }
+.cf-folder-toggle { white-space: nowrap; }

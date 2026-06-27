@@ -136,7 +136,7 @@ const COLUMNS = [
    Portaled to document.body so an overflow/transform ancestor never clips it
    (ref: reference_portal-escape-overflow-clip.md).
    ========================================================================= */
-function ForgeModal({ opportunity, tier, reels, onClose, onSent, showToast }) {
+function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToast }) {
   // Per-column hook text, keyed by 1-based version. Seeded from any hooks the
   // row already carries, then refreshed by the expand call.
   const seed = useCallback(
@@ -210,9 +210,18 @@ function ForgeModal({ opportunity, tier, reels, onClose, onSent, showToast }) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ opportunity_id: opportunity.id, tier }),
+        body: JSON.stringify({ opportunity_id: opportunity.id, tier, model }),
       });
       const body = await r.json().catch(() => ({}));
+      // Kill-switch / daily-limit: the backend returns HTTP 200 { ok:false, blocked:true }
+      // (a deliberate non-error) — surface the reason instead of leaving empty hook columns.
+      if (body && body.blocked) {
+        setExpandErr(
+          body.error ||
+          "Content Forge LLM is paused (kill switch / daily limit). Re-enable it in Monitor → API Budgets & Limits."
+        );
+        return;
+      }
       if (!r.ok && r.status !== 202) {
         setExpandErr(body.error || `Expansion failed (${r.status}).`);
       }
@@ -232,7 +241,7 @@ function ForgeModal({ opportunity, tier, reels, onClose, onSent, showToast }) {
     } finally {
       setExpanding(false);
     }
-  }, [opportunity.id, tier, applyHooks]);
+  }, [opportunity.id, tier, model, applyHooks]);
 
   // NO auto-expand on open — expansion is deliberate (the owner clicks Expound).
   // Opening a row never spends tokens; cached hooks (if any) render from state.
@@ -456,12 +465,33 @@ export function ContentForge() {
   const [openOpp, setOpenOpp] = useState(null);
   const [toast, setToast] = useState(null);
 
+  // Country "folders" view — group the (filtered/sorted) opportunities into
+  // collapsible per-country buckets. Off = the flat table. `collapsed` holds the
+  // country names that are folded shut.
+  const [grouped, setGrouped] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const toggleCountry = useCallback((c) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c); else next.add(c);
+      return next;
+    });
+  }, []);
+
   // Ingest + discovery-target + live discovery progress.
   const [clipCount, setClipCount] = useState(null);   // transcript_clips count (null = unknown)
   const [ingesting, setIngesting] = useState(false);
   const [discoverTarget, setDiscoverTarget] = useState("global"); // a DISCOVERY_TARGETS value or free text
   const [targetIsCustom, setTargetIsCustom] = useState(false);
   const [progress, setProgress] = useState(null);      // live discovery status line
+  const [maxOpps, setMaxOpps] = useState(0);           // 0 = auto (backend default 8-20); else cap per pass
+  const [model, setModel] = useState("google/gemini-2.5-flash"); // model toggle (compare 2.5 vs cheaper 2.0)
+
+  // Backend kill-switch / daily-limit state (the authoritative verdict computed
+  // server-side, mirrored from the Monitor budgets card). Drives the page banner
+  // so Discover/Expound aren't silently no-ops when the LLM is paused. null =
+  // unknown (banner hidden). { enabled, daily_limit_usd, daily_call_limit, blocked }.
+  const [cfBudget, setCfBudget] = useState(null);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -527,13 +557,28 @@ export function ContentForge() {
     }
   }, []);
 
+  // Read the Content Forge kill-switch / daily-limit state from the same proxy the
+  // Monitor budgets card uses (the backend computes `blocked` authoritatively).
+  // Best-effort — leaves cfBudget null (banner hidden) on any failure.
+  const loadBudgetState = useCallback(async () => {
+    try {
+      const r = await fetch("/api/monitor/status?action=forge-usage");
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.ok && d.budget) setCfBudget(d.budget);
+    } catch {
+      /* non-fatal — the banner just stays hidden */
+    }
+  }, []);
+
   // Owner-only: skip all data wiring entirely for non-owners.
   useEffect(() => {
     if (!isOwner) return;
     loadOpps();
     loadReels();
     loadClipCount();
-  }, [isOwner, loadOpps, loadReels, loadClipCount]);
+    loadBudgetState();
+  }, [isOwner, loadOpps, loadReels, loadClipCount, loadBudgetState]);
 
   // Realtime — live discovery updates on content_opportunities (preferred over
   // pure polling). Falls back gracefully: if the channel never connects, the
@@ -616,6 +661,19 @@ export function ContentForge() {
     return rows;
   }, [filtered, sort]);
 
+  // Country "folders": group the sorted rows into [country, rows[]] buckets, biggest
+  // bucket first (ties alpha). Drives the grouped view; the flat table ignores it.
+  const countryGroups = useMemo(() => {
+    const map = new Map();
+    for (const o of sorted) {
+      const c = (o.country && String(o.country).trim()) || "Global";
+      if (!map.has(c)) map.set(c, []);
+      map.get(c).push(o);
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  }, [sorted]);
+
   const onSort = useCallback((key) => {
     if (!key) return;
     setSort((prev) =>
@@ -627,6 +685,82 @@ export function ContentForge() {
 
   const arrow = (key) =>
     key && key === sort.key ? <span className="cf-arrow">{sort.dir === "asc" ? "▲" : "▼"}</span> : null;
+
+  // One opportunity row — shared by the flat table and the per-country folder tables.
+  const renderRow = useCallback((o) => {
+    const t = String(o.virality_tier || "C").toUpperCase();
+    const topics = Array.isArray(o.topics) ? o.topics : [];
+    const vet = vetOf(o);
+    return (
+      <tr
+        key={o.id}
+        className={"cf-tr" + (vet === "rejected" ? " rejected" : "")}
+        onClick={() => setOpenOpp(o)}
+      >
+        <td className="cf-c-tier">
+          <span className={`cf-tier-badge t-${t}`}>{t}</span>
+        </td>
+        <td>
+          <span className="cf-opp-title">{o.title || "(untitled)"}</span>
+          {o.angle_summary && <span className="cf-opp-angle">{o.angle_summary}</span>}
+        </td>
+        <td>
+          <div className="cf-topics">
+            {topics.slice(0, 4).map((tp, i) => (
+              <span key={tp + i} className="cf-topic-tag">{tp}</span>
+            ))}
+            {topics.length === 0 && "—"}
+          </div>
+        </td>
+        <td>{o.country || "—"}</td>
+        <td className="cf-num">{fmtScore(o)}</td>
+        <td className="cf-num" title={o.created_at || ""}>{fmtDate(o.created_at)}</td>
+        <td>
+          <div className="cf-status-cell">
+            <span className="cf-status">{o.status || "discovered"}</span>
+            {isExpanded(o) && (
+              <span className="cf-expanded-badge" title="Already expanded into hooks — don't re-spend.">
+                ✦ {hookCount(o) > 0 ? `${hookCount(o)} hook${hookCount(o) === 1 ? "" : "s"}` : "expanded"}
+              </span>
+            )}
+            <div className="cf-vet-btns" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                className={"cf-vet-btn shortlist" + (vet === "shortlisted" ? " on" : "")}
+                onClick={() => setVet(o.id, vet === "shortlisted" ? "new" : "shortlisted")}
+                title={vet === "shortlisted" ? "Shortlisted — click to clear" : "Shortlist (enables Expound)"}
+              >
+                ✓
+              </button>
+              <button
+                type="button"
+                className={"cf-vet-btn reject" + (vet === "rejected" ? " on" : "")}
+                onClick={() => setVet(o.id, vet === "rejected" ? "new" : "rejected")}
+                title={vet === "rejected" ? "Rejected — click to clear" : "Reject"}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </td>
+      </tr>
+    );
+  }, [setVet]);
+
+  // Column header row — shared markup for the flat + folder tables.
+  const headRow = (
+    <tr>
+      {COLUMNS.map((c, i) => (
+        <th
+          key={c.label + i}
+          className={[c.key ? "sortable" : "", c.cls || ""].filter(Boolean).join(" ")}
+          onClick={c.key ? () => onSort(c.key) : undefined}
+        >
+          {c.label}{arrow(c.key)}
+        </th>
+      ))}
+    </tr>
+  );
 
   // Pull the 12+ footage transcripts (attached_footage_items.full_transcript)
   // into transcript_clips. This is the missing first step — discovery reads
@@ -681,6 +815,15 @@ export function ContentForge() {
       showToast("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
       return;
     }
+    // Backend kill-switch / daily-limit fast-path: don't burn a round-trip when the
+    // server would just skip the LLM (the banner already shows why). The backend is
+    // still the real guard; this only avoids a confusing "found 0 opportunities".
+    if (cfBudget && (cfBudget.enabled === false || cfBudget.blocked)) {
+      showToast(cfBudget.enabled === false
+        ? "Content Forge LLM is OFF (kill switch) — re-enable it in Monitor → API Budgets & Limits."
+        : "Daily limit reached — discovery is paused until 00:00 UTC (raise it in Monitor → API Budgets & Limits).");
+      return;
+    }
     // Guard the chicken-and-egg: with no clips, discovery is a guaranteed no-op.
     if (clipCount === 0) {
       showToast("No transcript clips yet — click ⤓ Ingest first, then Discover.");
@@ -706,6 +849,11 @@ export function ContentForge() {
       // Discovery TARGET (the LLM hint) — independent of the filter dropdown.
       const target = (discoverTarget || "").trim();
       if (target && target !== "global" && target !== "__custom__") body.country = target;
+      // Cost cap (optional): how many opportunities the LLM writes this pass. Output
+      // tokens dominate the bill, so this is the real cost lever. 0 = backend default.
+      if (maxOpps > 0) body.max_opportunities = maxOpps;
+      // Model toggle — compare 2.5-flash (sharper) vs 2.0-flash (~6x cheaper output).
+      if (model) body.model = model;
       const r = await fetch("/api/ai/suggest?action=forge-discover", {
         method: "POST",
         headers: {
@@ -757,8 +905,9 @@ export function ContentForge() {
       showToast("Could not reach the discovery engine. Try again.");
     } finally {
       setDiscovering(false);
+      loadBudgetState(); // a run may have crossed a daily limit — refresh the banner
     }
-  }, [tier, discoverTarget, clipCount, opps.length, loadOpps, showToast]);
+  }, [tier, discoverTarget, maxOpps, model, clipCount, opps.length, cfBudget, loadOpps, loadBudgetState, showToast]);
 
   if (!isOwner) {
     return (
@@ -850,6 +999,33 @@ export function ContentForge() {
             />
           )}
         </span>
+        <span className="cf-target" title="LLM model for Discover + Expound. 2.5-flash is sharper; 2.0-flash is ~6x cheaper on output. Toggle to compare output quality.">
+          <label htmlFor="cf-model">Model</label>
+          <select
+            id="cf-model"
+            className="cf-select"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+          >
+            <option value="google/gemini-2.5-flash">2.5 Flash (sharper)</option>
+            <option value="google/gemini-2.0-flash-001">2.0 Flash (~6× cheaper)</option>
+          </select>
+        </span>
+        <span className="cf-target" title="How many opportunities to generate per Discover (the main cost lever — output tokens dominate the bill)">
+          <label htmlFor="cf-max-opps">Max</label>
+          <select
+            id="cf-max-opps"
+            className="cf-select"
+            value={maxOpps}
+            onChange={(e) => setMaxOpps(Number(e.target.value) || 0)}
+          >
+            <option value={0}>Auto (8–20)</option>
+            <option value={5}>~5 (cheapest)</option>
+            <option value={10}>~10</option>
+            <option value={15}>~15</option>
+            <option value={20}>~20</option>
+          </select>
+        </span>
         <button
           className="cf-btn primary"
           onClick={handleDiscover}
@@ -861,6 +1037,49 @@ export function ContentForge() {
           {loading ? "Loading…" : "⟳ Reload"}
         </button>
       </div>
+
+      {cfBudget && (cfBudget.enabled === false || cfBudget.blocked) && (
+        <div
+          className="cf-blocked-banner"
+          role="alert"
+          style={{
+            display: "flex", alignItems: "center", gap: 10, margin: "10px 0",
+            padding: "10px 14px", borderRadius: 8, fontSize: 13,
+            background: "rgba(224,86,79,.10)",
+            border: "1px solid rgba(224,86,79,.45)",
+            color: "var(--c-red, #e0564f)",
+          }}
+        >
+          <span style={{ fontSize: 16, flexShrink: 0 }}>
+            {cfBudget.enabled === false ? "⛔" : "⏸"}
+          </span>
+          <span style={{ minWidth: 0 }}>
+            {cfBudget.enabled === false ? (
+              <>
+                <strong>Content Forge LLM is OFF (kill switch).</strong>{" "}
+                Discover &amp; Expound will skip the LLM — no opportunities or hooks
+                will be generated (zero credit spend). Re-enable it in{" "}
+                <strong>Monitor → API Budgets &amp; Limits</strong>.
+              </>
+            ) : (
+              <>
+                <strong>Daily limit reached.</strong>{" "}
+                Discovery &amp; expansion are paused until <strong>00:00 UTC</strong>.
+                Raise the limit in <strong>Monitor → API Budgets &amp; Limits</strong>
+                {(() => {
+                  const lim = Number(cfBudget.daily_limit_usd) || 0;
+                  const clim = Number(cfBudget.daily_call_limit) || 0;
+                  const parts = [];
+                  if (lim > 0) parts.push(`$${lim.toFixed(2)}/day`);
+                  if (clim > 0) parts.push(`${clim} calls/day`);
+                  return parts.length ? ` (limit: ${parts.join(" · ")})` : "";
+                })()}
+                .
+              </>
+            )}
+          </span>
+        </div>
+      )}
 
       <div className="cf-filters">
         <div className="cf-vet-views" role="group" aria-label="Vetting queue">
@@ -905,6 +1124,14 @@ export function ContentForge() {
           <option value="virality">Sort: Virality ↓</option>
           <option value="newest">Sort: Newest</option>
         </select>
+        <button
+          type="button"
+          className={"cf-btn cf-folder-toggle" + (grouped ? " primary" : "")}
+          onClick={() => setGrouped((g) => !g)}
+          title={grouped ? "Show a single flat list" : "Group opportunities into per-country folders"}
+        >
+          {grouped ? "▾ Folders" : "▸ Folders"}
+        </button>
       </div>
 
       {progress && <div className="cf-progress">{progress}</div>}
@@ -927,84 +1154,54 @@ export function ContentForge() {
         </div>
       )}
 
-      {!loading && !error && sorted.length > 0 && (
+      {!loading && !error && sorted.length > 0 && !grouped && (
         <div className="cf-table-wrap">
           <table className="cf-table">
-            <thead>
-              <tr>
-                {COLUMNS.map((c, i) => (
-                  <th
-                    key={c.label + i}
-                    className={[c.key ? "sortable" : "", c.cls || ""].filter(Boolean).join(" ")}
-                    onClick={c.key ? () => onSort(c.key) : undefined}
-                  >
-                    {c.label}{arrow(c.key)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((o) => {
-                const t = String(o.virality_tier || "C").toUpperCase();
-                const topics = Array.isArray(o.topics) ? o.topics : [];
-                const vet = vetOf(o);
-                return (
-                  <tr
-                    key={o.id}
-                    className={"cf-tr" + (vet === "rejected" ? " rejected" : "")}
-                    onClick={() => setOpenOpp(o)}
-                  >
-                    <td className="cf-c-tier">
-                      <span className={`cf-tier-badge t-${t}`}>{t}</span>
-                    </td>
-                    <td>
-                      <span className="cf-opp-title">{o.title || "(untitled)"}</span>
-                      {o.angle_summary && <span className="cf-opp-angle">{o.angle_summary}</span>}
-                    </td>
-                    <td>
-                      <div className="cf-topics">
-                        {topics.slice(0, 4).map((tp, i) => (
-                          <span key={tp + i} className="cf-topic-tag">{tp}</span>
-                        ))}
-                        {topics.length === 0 && "—"}
-                      </div>
-                    </td>
-                    <td>{o.country || "—"}</td>
-                    <td className="cf-num">{fmtScore(o)}</td>
-                    <td className="cf-num" title={o.created_at || ""}>{fmtDate(o.created_at)}</td>
-                    <td>
-                      <div className="cf-status-cell">
-                        <span className="cf-status">{o.status || "discovered"}</span>
-                        {isExpanded(o) && (
-                          <span className="cf-expanded-badge" title="Already expanded into hooks — don't re-spend.">
-                            ✦ {hookCount(o) > 0 ? `${hookCount(o)} hook${hookCount(o) === 1 ? "" : "s"}` : "expanded"}
-                          </span>
-                        )}
-                        <div className="cf-vet-btns" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            className={"cf-vet-btn shortlist" + (vet === "shortlisted" ? " on" : "")}
-                            onClick={() => setVet(o.id, vet === "shortlisted" ? "new" : "shortlisted")}
-                            title={vet === "shortlisted" ? "Shortlisted — click to clear" : "Shortlist (enables Expound)"}
-                          >
-                            ✓
-                          </button>
-                          <button
-                            type="button"
-                            className={"cf-vet-btn reject" + (vet === "rejected" ? " on" : "")}
-                            onClick={() => setVet(o.id, vet === "rejected" ? "new" : "rejected")}
-                            title={vet === "rejected" ? "Rejected — click to clear" : "Reject"}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
+            <thead>{headRow}</thead>
+            <tbody>{sorted.map(renderRow)}</tbody>
           </table>
+        </div>
+      )}
+
+      {!loading && !error && sorted.length > 0 && grouped && (
+        <div className="cf-folders">
+          {countryGroups.map(([cn, rows]) => {
+            const isShut = collapsed.has(cn);
+            // Tier breakdown badge for the folder header (S/A count is the useful signal).
+            const tierCounts = rows.reduce((m, r) => {
+              const t = String(r.virality_tier || "C").toUpperCase();
+              m[t] = (m[t] || 0) + 1; return m;
+            }, {});
+            return (
+              <div key={cn} className="cf-folder">
+                <button
+                  type="button"
+                  className="cf-folder-head"
+                  onClick={() => toggleCountry(cn)}
+                  aria-expanded={!isShut}
+                >
+                  <span className="cf-folder-caret">{isShut ? "▸" : "▾"}</span>
+                  <span className="cf-folder-name">{cn}</span>
+                  <span className="cf-folder-count">{rows.length}</span>
+                  <span className="cf-folder-tiers">
+                    {TIERS.filter((t) => tierCounts[t]).map((t) => (
+                      <span key={t} className={`cf-tier-badge t-${t}`} title={`${tierCounts[t]} ${t}-tier`}>
+                        {t}·{tierCounts[t]}
+                      </span>
+                    ))}
+                  </span>
+                </button>
+                {!isShut && (
+                  <div className="cf-table-wrap">
+                    <table className="cf-table">
+                      <thead>{headRow}</thead>
+                      <tbody>{rows.map(renderRow)}</tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -1012,6 +1209,7 @@ export function ContentForge() {
         <ForgeModal
           opportunity={openOpp}
           tier={tier}
+          model={model}
           reels={reels}
           onClose={() => setOpenOpp(null)}
           onSent={loadOpps}
