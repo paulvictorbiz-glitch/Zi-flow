@@ -151,6 +151,9 @@ SUPABASE_TIMEOUT = 20        # service-role REST reads/writes
 # Guardrails
 MAX_CLIPS_FOR_DISCOVERY = 400      # cap clips fed to one discovery pass (token budget)
 DISCOVERY_TRANSCRIPT_CHARS = 24000  # max chars of flattened transcript in the prompt
+GEMINI_MAX_TOKENS = 8192           # Gemini 2.5 thinking shares this budget — wide enough that
+                                   # reasoning + a full 8-20 item discovery JSON both fit (a
+                                   # 2400 cap truncated the array → "no JSON value found")
 HOOK_STYLES = ("curiosity", "controversy", "personal_stakes")  # EXACTLY these 3, in order
 
 
@@ -497,24 +500,99 @@ async def _count_clips(client: httpx.AsyncClient, reel_id: str | None) -> int:
 
 
 async def _read_clips_for_discovery(client: httpx.AsyncClient,
-                                    limit: int = MAX_CLIPS_FOR_DISCOVERY) -> list[dict[str, Any]]:
-    """Read a bounded recent window of transcript_clips for a discovery pass."""
+                                    limit: int = MAX_CLIPS_FOR_DISCOVERY,
+                                    only_new: bool = True) -> list[dict[str, Any]]:
+    """Read a bounded window of transcript_clips for a discovery pass.
+
+    INCREMENTAL by default (only_new=True): feeds only clips not yet analyzed
+    (last_discovered_at IS NULL), newest first, capped at `limit` — so a repeat Discover
+    pass doesn't re-spend the LLM on the same footage. An empty result then legitimately
+    means "no new clips" (the worker logs + returns). DEGRADE-SAFE: if the
+    last_discovered_at column doesn't exist yet (migration 0105 not applied), the filtered
+    request 400s → we fall back to the original unfiltered recent window so prod behaviour
+    is unchanged. only_new=False forces the full recent window (a deliberate ?rescan=1)."""
     url = _supabase_url()
     if not url:
         return []
+    select = ("select=id,footage_file_id,filename,start_time,end_time,transcript_text,"
+              "keywords,topics")
+    base = f"{url}/rest/v1/transcript_clips?{select}&order=created_at.desc&limit={int(limit)}"
     try:
-        r = await client.get(
-            f"{url}/rest/v1/transcript_clips"
-            f"?select=id,footage_file_id,filename,start_time,end_time,transcript_text,"
-            f"keywords,topics&order=created_at.desc&limit={int(limit)}",
-            headers=_supabase_headers(),
-        )
+        if only_new:
+            r = await client.get(base + "&last_discovered_at=is.null", headers=_supabase_headers())
+            if r.status_code == 200:
+                data = r.json()
+                return data if isinstance(data, list) else []
+            # Column missing (pre-0105) or filter rejected → fall back to the full window.
+            log.info("content_forge: incremental clip read HTTP %s — falling back to full window",
+                     r.status_code)
+        r = await client.get(base, headers=_supabase_headers())
         if r.status_code == 200:
             data = r.json()
             return data if isinstance(data, list) else []
         log.warning("content_forge: clip read HTTP %s: %s", r.status_code, r.text[:300])
     except Exception as e:  # noqa: BLE001
         log.warning("content_forge: clip read failed: %s", e)
+    return []
+
+
+async def _mark_clips_discovered(client: httpx.AsyncClient, clip_ids: list[str]) -> None:
+    """Stamp last_discovered_at=now() on the clips fed into a discovery pass so the next
+    incremental pass skips them (the windowing half of the token-saver). Best-effort: if the
+    column doesn't exist yet (pre-0105) the PATCH 400s and we log-and-continue. Never raises."""
+    url = _supabase_url()
+    if not url or not clip_ids:
+        return
+    now = _now_iso()
+    # PostgREST in-list; chunk so the URL length stays sane.
+    for i in range(0, len(clip_ids), 100):
+        ids = ",".join(str(c) for c in clip_ids[i:i + 100])
+        try:
+            r = await client.patch(
+                f"{url}/rest/v1/transcript_clips?id=in.({ids})",
+                headers=_supabase_headers("return=minimal"),
+                json={"last_discovered_at": now},
+            )
+            if r.status_code not in (200, 204):
+                log.info("content_forge: mark-discovered HTTP %s: %s", r.status_code, r.text[:200])
+        except Exception as e:  # noqa: BLE001
+            log.info("content_forge: mark-discovered failed: %s", e)
+
+
+async def _read_existing_titles(client: httpx.AsyncClient, country: str | None,
+                                limit: int = 80) -> list[str]:
+    """Recent content_opportunities titles for the same country (+ global) — fed into the
+    discovery prompt as a 'do NOT repeat' list so the LLM spends output on NOVEL angles
+    instead of regenerating ones already discovered (the cross-run dedup half of the
+    token-saver; prompt-level only, no index change). Best-effort: returns [] on any error."""
+    url = _supabase_url()
+    if not url:
+        return []
+    # country filter: match the target country OR rows tagged 'global'; if no country, take all.
+    if country:
+        ctry = country.replace(",", "")  # PostgREST in-list is comma-delimited
+        flt = f"&country=in.({ctry},global)"
+    else:
+        flt = ""
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/content_opportunities"
+            f"?select=title&order=created_at.desc&limit={int(limit)}{flt}",
+            headers=_supabase_headers(),
+        )
+        if r.status_code == 200 and isinstance(r.json(), list):
+            seen: set[str] = set()
+            out: list[str] = []
+            for row in r.json():
+                t = (row.get("title") or "").strip()
+                k = t.lower()
+                if t and k not in seen:
+                    seen.add(k)
+                    out.append(t)
+            return out
+        log.info("content_forge: existing-titles read HTTP %s", r.status_code)
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: existing-titles read failed: %s", e)
     return []
 
 
@@ -670,7 +748,10 @@ def _call_gemini_api(messages: list[dict[str, str]], *,
     if not key:
         raise RuntimeError("GEMINI_API_KEY unset")
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    payload = {"model": model, "messages": messages, "temperature": 0.4, "max_tokens": 2400}
+    payload = {"model": model, "messages": messages, "temperature": 0.4,
+               # Gemini 2.5 is a THINKING model — reasoning tokens share the output budget, so
+               # a tight cap truncates the JSON array. Headroom + minimal thinking keep it whole.
+               "max_tokens": GEMINI_MAX_TOKENS, "reasoning_effort": "minimal"}
     with httpx.Client(timeout=LLM_TIMEOUT) as client:
         r = client.post(f"{GEMINI_API_BASE}/chat/completions", headers=headers, json=payload)
     if r.status_code == 200:
@@ -693,7 +774,9 @@ def _call_vertex_gemini(messages: list[dict[str, str]], *,
     url = (f"https://{region}-aiplatform.googleapis.com/v1/projects/{project}"
            f"/locations/{region}/endpoints/openapi/chat/completions")
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"model": model, "messages": messages, "temperature": 0.4, "max_tokens": 2400}
+    payload = {"model": model, "messages": messages, "temperature": 0.4,
+               # Gemini 2.5 thinking — see _call_gemini_api: give the JSON room past reasoning.
+               "max_tokens": GEMINI_MAX_TOKENS, "reasoning_effort": "minimal"}
     with httpx.Client(timeout=LLM_TIMEOUT) as client:
         r = client.post(url, headers=headers, json=payload)
     if r.status_code == 200:
@@ -1173,20 +1256,30 @@ def _norm_score(v: Any) -> float:
     return max(0.0, min(1.0, f))
 
 
-async def _discover_worker(batch_id: str, tier: str, country: str | None) -> None:
+async def _discover_worker(batch_id: str, tier: str, country: str | None,
+                           only_new: bool = True) -> None:
     """Fire-and-forget discovery: read transcript_clips, run ONE batched LLM pass via the
     provider seam, upsert content_opportunities tagged with discovery_run_id=batch_id.
-    Never raises."""
+    only_new=True (default) feeds ONLY clips not yet analyzed (token-saver); ?rescan=1 forces
+    the full recent window. Never raises."""
     try:
         async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
-            clips = await _read_clips_for_discovery(client)
+            clips = await _read_clips_for_discovery(client, only_new=only_new)
             if not clips:
-                log.info("content_forge: discover batch=%s — no clips to analyze", batch_id)
+                log.info("content_forge: discover batch=%s — no clips to analyze%s",
+                         batch_id, " (no new clips since last pass)" if only_new else "")
                 return
+            existing = await _read_existing_titles(client, country)  # cross-run dedup hint
             transcript = _clips_to_prompt(clips)
+            avoid = ""
+            if existing:
+                avoid = ("ALREADY COVERED — do NOT repeat or rephrase these existing angles; "
+                         "propose only NEW ones:\n"
+                         + "\n".join(f"- {t}" for t in existing) + "\n\n")
             user = (
                 f"{_DISCOVERY_GUIDANCE}\n\n"
                 + (f"TARGET COUNTRY/REGION: {country}\n\n" if country else "")
+                + avoid
                 + f"FOOTAGE TRANSCRIPT CLIPS:\n{transcript}"
             )
             messages = [
@@ -1228,8 +1321,14 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None) -> Non
                     "discovery_run_id": batch_id,
                 })
             written = await _upsert_opportunities(client, rows)
-            log.info("content_forge: discover batch=%s provider=%s tier=%s items=%d upserted=%d",
-                     batch_id, meta.get("provider"), meta.get("tier_used"), len(rows), written)
+            # Windowing: stamp the clips we just analyzed so the next pass skips them.
+            # Mark on a successful LLM pass even if 0 rows (the footage WAS analyzed), but not
+            # on a hard provider failure (handled by the outer except → clips stay un-stamped
+            # and get retried next pass).
+            await _mark_clips_discovered(client, [str(c.get("id")) for c in clips if c.get("id")])
+            log.info("content_forge: discover batch=%s provider=%s tier=%s clips=%d items=%d "
+                     "upserted=%d avoid=%d only_new=%s", batch_id, meta.get("provider"),
+                     meta.get("tier_used"), len(clips), len(rows), written, len(existing), only_new)
     except Exception as e:  # noqa: BLE001 — never crash the worker
         log.exception("content_forge: discover worker error (batch=%s): %s", batch_id, e)
 
@@ -1313,11 +1412,15 @@ async def discover(request: Request, background_tasks: BackgroundTasks):
     Secret-gated. Fire-and-forget (BackgroundTasks): read transcript_clips, run ONE batched
     discovery pass via the provider seam (free Gemini default; pro = Claude Haiku), upsert
     content_opportunities tagged with discovery_run_id=batch_id. Returns the batch_id
-    immediately; poll /discover-status/{batch_id} for the results."""
+    immediately; poll /discover-status/{batch_id} for the results.
+
+    Incremental by default (feeds only un-analyzed clips). Pass ?rescan=1 to force a full
+    re-scan of the recent clip window (e.g. to re-discover after the backlog is drained)."""
     if not _check_secret(request):
         return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
     tier = (request.query_params.get("tier") or "free").strip().lower()
     country = request.query_params.get("country") or None
+    only_new = (request.query_params.get("rescan") or "").strip().lower() not in ("1", "true", "yes")
     if tier not in ("free", "pro"):
         # Also accept tier/country from a JSON body (proxy convenience).
         try:
@@ -1330,9 +1433,9 @@ async def discover(request: Request, background_tasks: BackgroundTasks):
         if tier not in ("free", "pro"):
             tier = "free"
     batch_id = str(uuid.uuid4())
-    background_tasks.add_task(_discover_worker, batch_id, tier, country)
-    return JSONResponse({"ok": True, "batch_id": batch_id,
-                         "tier": tier, "country": country}, status_code=200)
+    background_tasks.add_task(_discover_worker, batch_id, tier, country, only_new)
+    return JSONResponse({"ok": True, "batch_id": batch_id, "tier": tier,
+                         "country": country, "only_new": only_new}, status_code=200)
 
 
 @router.get("/discover-status/{batch_id}")
