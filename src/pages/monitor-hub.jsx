@@ -1146,6 +1146,39 @@ function RungBar({ pct = 0, color, label, sub, untracked }) {
   );
 }
 
+// Content Forge budget / kill switch — owner-controlled credit guard. Stored in
+// app_settings["content_forge_budget"] (owner-write RLS, same pattern as free_llm_gates)
+// and ENFORCED backend-side: discover + expand skip the LLM when disabled or over the
+// daily limit. Shape: { enabled, daily_limit_usd, daily_call_limit }.
+const CF_BUDGET_KEY = "content_forge_budget";
+async function loadCfBudget() {
+  try {
+    const { data } = await supabase
+      .from("app_settings").select("value").eq("key", CF_BUDGET_KEY).maybeSingle();
+    const v = data?.value || {};
+    return {
+      enabled: v.enabled !== false,                 // missing → ON
+      daily_limit_usd: Number(v.daily_limit_usd) || 0,
+      daily_call_limit: Number(v.daily_call_limit) || 0,
+    };
+  } catch (_) {
+    return { enabled: true, daily_limit_usd: 0, daily_call_limit: 0 };
+  }
+}
+async function saveCfBudget(b) {
+  try {
+    await supabase.from("app_settings").upsert({
+      key: CF_BUDGET_KEY,
+      value: {
+        enabled: b.enabled !== false,
+        daily_limit_usd: Math.max(0, Number(b.daily_limit_usd) || 0),
+        daily_call_limit: Math.max(0, Math.round(Number(b.daily_call_limit) || 0)),
+      },
+      updated_at: new Date().toISOString(),
+    });
+  } catch (_) { /* RLS / offline — UI already reflects the intent */ }
+}
+
 export function ProviderBudgetsCard({ onStats }) {
   const isOwner = useIsOwner();
 
@@ -1161,6 +1194,44 @@ export function ProviderBudgetsCard({ onStats }) {
   React.useEffect(() => {
     onStats && onStats({ daysLeft: credit.left, tone: credit.tone });
   }, [credit, onStats]);
+
+  // Live Content Forge LLM spend — proxied from the Hetzner /content-forge/usage
+  // rollup (calls / tokens / cost, all-time + today + 30d, by provider). null =
+  // loading; { ok:false } or { configured:false } = degrade to the static view
+  // (e.g. migration 0106 not applied yet). Owner-only fetch; one-shot on mount.
+  const [forgeUsage, setForgeUsage] = React.useState(null);
+  React.useEffect(() => {
+    if (!isOwner) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/monitor/status?action=forge-usage");
+        const d = r.ok ? await r.json() : { ok: false };
+        if (!cancelled) setForgeUsage(d);
+      } catch (_) {
+        if (!cancelled) setForgeUsage({ ok: false });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isOwner]);
+
+  // Content Forge budget / kill switch (app_settings, owner-write). null = loading.
+  const [budget, setBudget] = React.useState(null);
+  React.useEffect(() => {
+    if (!isOwner) return;
+    let cancelled = false;
+    loadCfBudget().then(b => { if (!cancelled) setBudget(b); });
+    return () => { cancelled = true; };
+  }, [isOwner]);
+  // Merge a patch into budget; optionally persist (toggle persists instantly; number
+  // inputs persist onBlur to avoid an upsert per keystroke).
+  const patchBudget = React.useCallback((patch, persist) => {
+    setBudget(prev => {
+      const next = { ...(prev || { enabled: true, daily_limit_usd: 0, daily_call_limit: 0 }), ...patch };
+      if (persist) saveCfBudget(next);
+      return next;
+    });
+  }, []);
 
   if (!isOwner) return null;
 
@@ -1184,6 +1255,41 @@ export function ProviderBudgetsCard({ onStats }) {
     .filter(x => x.n > 0)
     .sort((a, b) => b.n - a.n);
 
+  // Live Content Forge spend (Vertex + any other paid provider). cfu is the rollup
+  // when the usage table exists and has data; null otherwise (→ static fallback).
+  const cfu = (forgeUsage && forgeUsage.ok && forgeUsage.configured) ? forgeUsage : null;
+  const vertexProv = cfu ? (cfu.by_provider || []).find(p => p.provider === "vertex_gemini") : null;
+  const fmtUsd = (n) => {
+    const v = Number(n) || 0;
+    return v === 0 ? "$0" : `$${v.toFixed(v < 1 ? 4 : 2)}`;
+  };
+  const fmtTok = (n) => {
+    const v = Number(n) || 0;
+    return v >= 1000 ? `${(v / 1000).toFixed(v >= 100000 ? 0 : 1)}k` : String(v);
+  };
+  const lastCallAgo = (() => {
+    const iso = cfu?.last_call?.created_at;
+    if (!iso) return null;
+    const ms = Date.now() - new Date(iso).getTime();
+    if (!isFinite(ms) || ms < 0) return null;
+    const m = Math.round(ms / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  })();
+
+  // Budget / kill-switch derived state (today's numbers come from the live usage rollup).
+  const killed = budget ? budget.enabled === false : false;
+  const limUsd = Number(budget?.daily_limit_usd) || 0;
+  const limCalls = Number(budget?.daily_call_limit) || 0;
+  const todayCalls = cfu?.today?.calls ?? 0;
+  const todayCost = cfu?.today?.cost_usd ?? 0;
+  const overUsd = limUsd > 0 && todayCost >= limUsd;
+  const overCalls = limCalls > 0 && todayCalls >= limCalls;
+  const blockedNow = killed || overUsd || overCalls;
+
   return (
     <Card
       title="API Budgets & Limits"
@@ -1192,7 +1298,7 @@ export function ProviderBudgetsCard({ onStats }) {
           {credit.left} days left
         </span>
       }
-      footLeft="GCP day-countdown + OpenRouter today are live · Gemini/IG limits static"
+      footLeft="GCP countdown + Content Forge spend (Vertex calls/$) + OpenRouter today are live · Gemini-free/IG limits static"
     >
       <div className="mon-section-body">
         {/* $300 GCP credit — live countdown */}
@@ -1224,6 +1330,185 @@ export function ProviderBudgetsCard({ onStats }) {
           </div>
         </div>
 
+        {/* Daily limit + KILL SWITCH — backend-enforced credit guard (app_settings) */}
+        <div style={{
+          marginBottom: 12, paddingBottom: 12,
+          borderBottom: "1px solid var(--border-dim, rgba(127,127,127,.18))",
+        }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+            <span className="mono dim" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".06em" }}>
+              Daily limit & kill switch
+            </span>
+            <span className="mono" style={{
+              fontSize: 9, marginLeft: "auto", padding: "1px 7px", borderRadius: 999,
+              background: blockedNow ? "rgba(224,86,79,.16)" : "rgba(95,184,122,.16)",
+              color: blockedNow ? "var(--c-red, #e0564f)" : "var(--c-green, #5fb87a)",
+            }}>
+              {budget == null ? "…" : killed ? "OFF" : blockedNow ? "LIMIT HIT" : "ARMED"}
+            </span>
+          </div>
+
+          {budget == null ? (
+            <div className="mono dim" style={{ fontSize: 10 }}>loading…</div>
+          ) : (
+            <>
+              {/* Kill switch */}
+              <label style={{
+                display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 10,
+              }}>
+                <input
+                  type="checkbox"
+                  checked={budget.enabled !== false}
+                  onChange={(e) => patchBudget({ enabled: e.target.checked }, true)}
+                  style={{ width: 16, height: 16, flexShrink: 0, accentColor: "var(--c-green, #5fb87a)" }}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: killed ? "var(--c-red, #e0564f)" : "inherit" }}>
+                    Content Forge LLM spend — {killed ? "OFF" : "ON"}
+                  </div>
+                  <div className="mono dim" style={{ fontSize: 9.5 }}>
+                    {killed
+                      ? "discover + expand SKIP the LLM — zero credit spend"
+                      : "discover + expand call Vertex/Gemini and bill the $300 credit"}
+                  </div>
+                </div>
+              </label>
+
+              {/* Daily spend limit ($) */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span className="mono dim" style={{ fontSize: 10, flex: 1 }}>Daily spend limit</span>
+                <span className="mono dim" style={{ fontSize: 11 }}>$</span>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={budget.daily_limit_usd || 0}
+                  onChange={(e) => patchBudget({ daily_limit_usd: Math.max(0, Number(e.target.value) || 0) })}
+                  onBlur={() => setBudget(b => { saveCfBudget(b); return b; })}
+                  style={{
+                    width: 78, fontSize: 12, textAlign: "right", padding: "3px 6px",
+                    background: "var(--bg-2, #1a1d24)", color: "inherit",
+                    border: "1px solid var(--line, #2a2f3a)", borderRadius: 5,
+                  }}
+                />
+                <span className="mono dim" style={{ fontSize: 9 }}>0 = none</span>
+              </div>
+              {limUsd > 0 && (
+                <RungBar
+                  pct={Math.min(100, (todayCost / limUsd) * 100)}
+                  color={overUsd ? "var(--c-red, #e0564f)" : "var(--c-green, #5fb87a)"}
+                  label="today's spend vs limit"
+                  sub={`${fmtUsd(todayCost)} / ${fmtUsd(limUsd)}`}
+                />
+              )}
+
+              {/* Daily call limit (rows/day) */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, marginBottom: 6 }}>
+                <span className="mono dim" style={{ fontSize: 10, flex: 1 }}>Daily call limit</span>
+                <input
+                  type="number" min="0" step="1"
+                  value={budget.daily_call_limit || 0}
+                  onChange={(e) => patchBudget({ daily_call_limit: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+                  onBlur={() => setBudget(b => { saveCfBudget(b); return b; })}
+                  style={{
+                    width: 78, fontSize: 12, textAlign: "right", padding: "3px 6px",
+                    background: "var(--bg-2, #1a1d24)", color: "inherit",
+                    border: "1px solid var(--line, #2a2f3a)", borderRadius: 5,
+                  }}
+                />
+                <span className="mono dim" style={{ fontSize: 9 }}>rows/day · 0 = none</span>
+              </div>
+              {limCalls > 0 && (
+                <RungBar
+                  pct={Math.min(100, (todayCalls / limCalls) * 100)}
+                  color={overCalls ? "var(--c-red, #e0564f)" : "var(--c-green, #5fb87a)"}
+                  label="today's calls vs limit"
+                  sub={`${todayCalls} / ${limCalls}`}
+                />
+              )}
+
+              <div className="mono dim" style={{ fontSize: 9.5, marginTop: 8 }}>
+                today: {todayCalls} call{todayCalls === 1 ? "" : "s"} · {fmtUsd(todayCost)}
+                {blockedNow && !killed ? " · limit reached — discover/expand paused until tomorrow (UTC)" : ""}
+              </div>
+              <div className="mono dim" style={{ fontSize: 8.5, marginTop: 3, opacity: 0.75 }}>
+                enforced server-side on every discover + expand · limits reset 00:00 UTC
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Live Content Forge LLM spend — from the usage rollup (Vertex + paid providers) */}
+        <div style={{
+          marginBottom: 12, paddingBottom: 12,
+          borderBottom: "1px solid var(--border-dim, rgba(127,127,127,.18))",
+        }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+            <span className="mono dim" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".06em" }}>
+              Content Forge — live spend
+            </span>
+            {cfu && lastCallAgo && (
+              <span className="mono dim" style={{ fontSize: 9, marginLeft: "auto" }}>
+                last call {lastCallAgo}
+              </span>
+            )}
+          </div>
+          {forgeUsage == null ? (
+            <div className="mono dim" style={{ fontSize: 10 }}>loading live usage…</div>
+          ) : !cfu ? (
+            <div className="mono dim" style={{ fontSize: 10 }}>
+              no usage recorded yet — applies once migration 0106 is live and a discover/expand has run
+              {forgeUsage?.error ? ` (${forgeUsage.error})` : ""}
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtUsd(cfu.totals?.cost_usd)}</div>
+                  <div className="mono dim" style={{ fontSize: 9 }}>spent all-time</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{cfu.all_time_calls ?? cfu.totals?.calls ?? 0}</div>
+                  <div className="mono dim" style={{ fontSize: 9 }}>LLM calls</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtTok(cfu.totals?.total_tokens)}</div>
+                  <div className="mono dim" style={{ fontSize: 9 }}>tokens</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtUsd(cfu.today?.cost_usd)}</div>
+                  <div className="mono dim" style={{ fontSize: 9 }}>today · {cfu.today?.calls ?? 0} call{(cfu.today?.calls ?? 0) === 1 ? "" : "s"}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtUsd(cfu.last_30d?.cost_usd)}</div>
+                  <div className="mono dim" style={{ fontSize: 9 }}>last 30 days</div>
+                </div>
+              </div>
+              {(cfu.by_provider || []).length > 0 && (
+                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 2 }}>
+                  {cfu.by_provider.map(bp => (
+                    <div key={bp.provider} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span className="mono dim" style={{ fontSize: 9.5, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {bp.provider}
+                      </span>
+                      <span className="mono dim" style={{ fontSize: 9.5 }}>{bp.calls} call{bp.calls === 1 ? "" : "s"}</span>
+                      <span className="mono" style={{ fontSize: 9.5, minWidth: 56, textAlign: "right" }}>{fmtUsd(bp.cost_usd)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {cfu.last_call && (
+                <div className="mono dim" style={{ fontSize: 9, marginTop: 6, opacity: 0.85 }}>
+                  last: {cfu.last_call.kind} · {cfu.last_call.provider} · {fmtTok(cfu.last_call.total_tokens)} tok · {fmtUsd(cfu.last_call.cost_usd)}{cfu.last_call.fell_back ? " · fell back" : ""}
+                </div>
+              )}
+              {cfu.window_capped && (
+                <div className="mono dim" style={{ fontSize: 8.5, marginTop: 3, opacity: 0.7 }}>
+                  token/cost totals reflect the most recent {cfu.totals?.calls ?? 0} calls (call count is exact)
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
         {/* Ladder rungs + IG Graph */}
         <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
           {PROVIDER_LIMITS.map(p => {
@@ -1253,7 +1538,16 @@ export function ProviderBudgetsCard({ onStats }) {
                     <RungBar untracked label="live usage — not tracked client-side" sub="see AI Studio ↗" />
                   )}
                   {p.key === "vertex_gemini" && (
-                    <RungBar pct={credit.elapsedPct} color={barColor} label="$300 credit window" sub={`${credit.left}d left`} />
+                    <>
+                      <RungBar pct={credit.elapsedPct} color={barColor} label="$300 credit window" sub={`${credit.left}d left`} />
+                      {vertexProv ? (
+                        <div className="mono dim" style={{ fontSize: 9.5, marginTop: 6 }}>
+                          live: {vertexProv.calls} call{vertexProv.calls === 1 ? "" : "s"} · {fmtTok(vertexProv.total_tokens)} tok · <span className="mono" style={{ color: "var(--c-cyan, #4fb6c8)" }}>{fmtUsd(vertexProv.cost_usd)}</span> billed to the credit
+                        </div>
+                      ) : cfu ? (
+                        <div className="mono dim" style={{ fontSize: 9.5, marginTop: 6 }}>live: no Vertex calls recorded yet</div>
+                      ) : null}
+                    </>
                   )}
                   {p.key === "openrouter" && (
                     <>
@@ -1284,7 +1578,7 @@ export function ProviderBudgetsCard({ onStats }) {
         </div>
 
         <div className="mono dim" style={{ fontSize: 10, marginTop: 12 }}>
-          OpenRouter bar = free-LLM calls from THIS browser today (resets 00:00 UTC) · Gemini / Vertex / IG live usage needs backend work — limits shown are maintained in-code
+          Content Forge spend = live Vertex/LLM usage logged server-side per call (calls · tokens · cost) · OpenRouter bar = free-LLM calls from THIS browser today (resets 00:00 UTC) · Gemini-free / IG live usage still needs backend capture
         </div>
       </div>
     </Card>

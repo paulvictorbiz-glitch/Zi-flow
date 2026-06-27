@@ -140,6 +140,55 @@ DEFAULT_VERTEX_GEMINI_MODEL = "google/gemini-2.0-flash-001"
 DEFAULT_DISCOVERY_MODEL = "claude-haiku-4-5"
 DEFAULT_EXPANSION_MODEL = "claude-sonnet-4-6"
 
+# ── PRICING (USD per 1,000,000 tokens: (input, output)) ──────────────────────────────
+# Maintained constant — these list prices rarely move. Used to stamp a cost_usd on every
+# logged LLM call so the Monitor "API Budgets & Limits" card can show live Vertex spend
+# (calls / tokens / $) against the $300 GCP credit. Keys are the EXACT model strings the
+# provider rungs pass (Vertex prefixes Gemini with "google/"; the AI-Studio rung doesn't).
+# OpenRouter's free chain is always $0 (priced by provider, not model). Unknown models
+# price at $0 (logged with their real model id so a price can be added later).
+#   Vertex/Gemini 2.5-flash $0.30/$2.50 · 2.0-flash $0.10/$0.40 (public list, 2026-06).
+#   Claude Haiku 4.5 $1/$5 · Sonnet 4.6 $3/$15 (per the claude-api pricing table).
+_MODEL_PRICES: dict[str, tuple[float, float]] = {
+    "google/gemini-2.5-flash":      (0.30, 2.50),   # Vertex rung default (LIVE)
+    "google/gemini-2.0-flash-001":  (0.10, 0.40),   # Vertex rung legacy default
+    "gemini-2.5-flash":             (0.30, 2.50),   # AI-Studio rung
+    "gemini-2.0-flash":             (0.10, 0.40),   # AI-Studio rung default
+    "gemini-2.0-flash-001":         (0.10, 0.40),
+    "claude-haiku-4-5":             (1.00, 5.00),    # Anthropic discovery
+    "claude-sonnet-4-6":            (3.00, 15.00),   # Anthropic expansion
+}
+
+
+def _usage_from_openai(data: dict[str, Any]) -> dict[str, int]:
+    """Pull token usage out of an OpenAI-compatible chat-completions body (the shape Gemini
+    API, Vertex Gemini, and OpenRouter all return): data["usage"] = {prompt_tokens,
+    completion_tokens, total_tokens}. Best-effort — returns zeros if the field is missing or
+    malformed (some providers omit usage on edge responses). Never raises."""
+    u = (data or {}).get("usage") or {}
+    try:
+        pt = int(u.get("prompt_tokens") or 0)
+        ct = int(u.get("completion_tokens") or 0)
+        tt = int(u.get("total_tokens") or (pt + ct))
+    except (TypeError, ValueError):
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt}
+
+
+def _estimate_cost(provider: str, model: str, usage: dict[str, int]) -> float:
+    """Estimate the USD cost of one call from its token usage + the price table. OpenRouter's
+    free chain is always $0. Unknown models price at $0 (so the column never lies upward) —
+    add the model to _MODEL_PRICES to start counting it. Rounded to 6 dp (micro-dollars)."""
+    if provider == "openrouter":
+        return 0.0
+    prices = _MODEL_PRICES.get(model) or _MODEL_PRICES.get(model.split("/")[-1])
+    if not prices:
+        return 0.0
+    p_in, p_out = prices
+    pt = usage.get("prompt_tokens", 0) or 0
+    ct = usage.get("completion_tokens", 0) or 0
+    return round(pt / 1_000_000.0 * p_in + ct / 1_000_000.0 * p_out, 6)
+
 # ── Tavily grounding ────────────────────────────────────────────────────────────────
 TAVILY_URL = "https://api.tavily.com/search"
 
@@ -679,6 +728,265 @@ async def _patch_opportunity(client: httpx.AsyncClient, opp_id: str,
     return False
 
 
+# ── LLM usage logging (powers the Monitor "API Budgets & Limits" live spend) ──────────
+async def _log_usage(client: httpx.AsyncClient, *, kind: str, meta: dict[str, Any],
+                     batch_id: str | None = None) -> None:
+    """Append ONE content_forge_usage row per LLM call: the provider/model actually used,
+    the token usage captured from the response, and the cost_usd _forge_llm already stamped
+    onto meta. Best-effort: if the table doesn't exist yet (migration 0106 not applied) the
+    insert 400s and we log-and-continue — discovery/expansion must never fail on telemetry.
+    Never raises."""
+    url = _supabase_url()
+    if not url:
+        return
+    usage = meta.get("usage") or {}
+    row = {
+        "provider": meta.get("provider"),
+        "model": meta.get("model"),
+        "kind": kind,
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+        "completion_tokens": int(usage.get("completion_tokens") or 0),
+        "total_tokens": int(usage.get("total_tokens") or 0),
+        "cost_usd": float(meta.get("cost_usd") or 0.0),
+        "fell_back": bool(meta.get("fell_back")),
+        "batch_id": batch_id,
+    }
+    try:
+        r = await client.post(
+            f"{url}/rest/v1/content_forge_usage",
+            headers=_supabase_headers("return=minimal"),
+            json=row,
+        )
+        if r.status_code not in (200, 201, 204):
+            log.info("content_forge: usage log HTTP %s: %s", r.status_code, r.text[:200])
+    except Exception as e:  # noqa: BLE001 — telemetry must never break the pipeline
+        log.info("content_forge: usage log failed: %s", e)
+
+
+# Cap the rows pulled for the /usage rollup. At ~$0.002/run this covers years of history;
+# all_time_calls is still reported exactly from the Content-Range header even when capped.
+MAX_USAGE_ROWS = 5000
+
+
+async def _read_usage_rollup(client: httpx.AsyncClient) -> dict[str, Any]:
+    """Aggregate content_forge_usage for the Monitor budgets card: all-time + today + last-30d
+    totals (calls / tokens / cost), plus per-provider and per-kind breakdowns and the last
+    call. Pulls a bounded recent window (MAX_USAGE_ROWS) and rolls it up in Python — robust
+    across PostgREST versions and plenty for this volume. all_time_calls comes from the exact
+    count header so the headline call count is never capped. Degrade-safe: returns an empty
+    rollup (all zeros, configured=False) if the table is missing (pre-0106) or on any error."""
+    empty = {
+        "configured": False,
+        "totals": {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                   "total_tokens": 0, "cost_usd": 0.0},
+        "today": {"calls": 0, "total_tokens": 0, "cost_usd": 0.0},
+        "last_30d": {"calls": 0, "total_tokens": 0, "cost_usd": 0.0},
+        "by_provider": [], "by_kind": [], "last_call": None,
+        "all_time_calls": 0, "window_capped": False,
+    }
+    url = _supabase_url()
+    if not url:
+        return empty
+    select = ("select=created_at,provider,model,kind,prompt_tokens,completion_tokens,"
+              "total_tokens,cost_usd,fell_back")
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/content_forge_usage?{select}"
+            f"&order=created_at.desc&limit={MAX_USAGE_ROWS}",
+            headers={**_supabase_headers(), "Prefer": "count=exact",
+                     "Range-Unit": "items", "Range": f"0-{MAX_USAGE_ROWS - 1}"},
+        )
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: usage rollup read failed: %s", e)
+        return empty
+    if r.status_code not in (200, 206):
+        # Table missing (pre-0106) or query rejected → return the empty (configured:False) shape.
+        log.info("content_forge: usage rollup HTTP %s — returning empty", r.status_code)
+        return empty
+    rows = r.json() if isinstance(r.json(), list) else []
+
+    # Exact all-time count from the Content-Range header ("0-N/<total>").
+    cr = r.headers.get("content-range") or r.headers.get("Content-Range") or ""
+    all_time = len(rows)
+    if "/" in cr:
+        tail = cr.rsplit("/", 1)[-1].strip()
+        if tail.isdigit():
+            all_time = int(tail)
+
+    now = _dt.datetime.now(tz=_dt.timezone.utc)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    cutoff_30d = now - _dt.timedelta(days=30)
+
+    def _blank():
+        return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                "total_tokens": 0, "cost_usd": 0.0}
+
+    totals = _blank()
+    today = {"calls": 0, "total_tokens": 0, "cost_usd": 0.0}
+    last_30d = {"calls": 0, "total_tokens": 0, "cost_usd": 0.0}
+    by_provider: dict[str, dict[str, Any]] = {}
+    by_kind: dict[str, dict[str, Any]] = {}
+
+    def _parse_ts(s: str) -> _dt.datetime | None:
+        try:
+            return _dt.datetime.fromisoformat((s or "").replace("Z", "+00:00"))
+        except Exception:  # noqa: BLE001
+            return None
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        pt = int(row.get("prompt_tokens") or 0)
+        ct = int(row.get("completion_tokens") or 0)
+        tt = int(row.get("total_tokens") or (pt + ct))
+        cost = float(row.get("cost_usd") or 0.0)
+        totals["calls"] += 1
+        totals["prompt_tokens"] += pt
+        totals["completion_tokens"] += ct
+        totals["total_tokens"] += tt
+        totals["cost_usd"] += cost
+
+        prov = row.get("provider") or "unknown"
+        bp = by_provider.setdefault(prov, {"provider": prov, "calls": 0,
+                                           "total_tokens": 0, "cost_usd": 0.0})
+        bp["calls"] += 1
+        bp["total_tokens"] += tt
+        bp["cost_usd"] += cost
+
+        knd = row.get("kind") or "unknown"
+        bk = by_kind.setdefault(knd, {"kind": knd, "calls": 0,
+                                      "total_tokens": 0, "cost_usd": 0.0})
+        bk["calls"] += 1
+        bk["total_tokens"] += tt
+        bk["cost_usd"] += cost
+
+        ts = _parse_ts(row.get("created_at"))
+        if ts and ts >= midnight:
+            today["calls"] += 1
+            today["total_tokens"] += tt
+            today["cost_usd"] += cost
+        if ts and ts >= cutoff_30d:
+            last_30d["calls"] += 1
+            last_30d["total_tokens"] += tt
+            last_30d["cost_usd"] += cost
+
+    # Round the money fields (avoid float-dust like 0.0020000000003 in the UI).
+    for d in (totals, today, last_30d):
+        d["cost_usd"] = round(d["cost_usd"], 6)
+    for d in list(by_provider.values()) + list(by_kind.values()):
+        d["cost_usd"] = round(d["cost_usd"], 6)
+
+    last_call = None
+    if rows and isinstance(rows[0], dict):
+        h = rows[0]
+        last_call = {
+            "created_at": h.get("created_at"),
+            "provider": h.get("provider"),
+            "model": h.get("model"),
+            "kind": h.get("kind"),
+            "total_tokens": int(h.get("total_tokens") or 0),
+            "cost_usd": float(h.get("cost_usd") or 0.0),
+            "fell_back": bool(h.get("fell_back")),
+        }
+
+    return {
+        "configured": True,
+        "totals": totals,
+        "today": today,
+        "last_30d": last_30d,
+        "by_provider": sorted(by_provider.values(), key=lambda x: x["cost_usd"], reverse=True),
+        "by_kind": sorted(by_kind.values(), key=lambda x: x["calls"], reverse=True),
+        "last_call": last_call,
+        "all_time_calls": all_time,
+        "window_capped": all_time > len(rows),
+    }
+
+
+# ── BUDGET / KILL SWITCH — owner-controlled credit guard (app_settings) ───────────────
+# The owner toggles these on the Monitor "API Budgets & Limits" card; they live in
+# app_settings key "content_forge_budget" (owner-write RLS, read here via service role —
+# no new migration). Shape: {enabled: bool, daily_limit_usd: number, daily_call_limit: int}.
+# When enabled is false (kill switch) OR a positive daily limit is hit, discover + expand
+# SKIP the LLM entirely — zero credit spend. Defaults are permissive (enabled, no limit) so
+# a missing/empty setting never blocks the pipeline.
+async def _read_budget_settings(client: httpx.AsyncClient) -> dict[str, Any]:
+    """Read the Content Forge budget/kill-switch from app_settings. Best-effort — returns the
+    permissive default (enabled, no limits) if the key/table is absent or on any error, so the
+    guard can only ever be tightened deliberately, never break the pipeline by accident."""
+    out = {"enabled": True, "daily_limit_usd": 0.0, "daily_call_limit": 0}
+    url = _supabase_url()
+    if not url:
+        return out
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/app_settings?key=eq.content_forge_budget&select=value&limit=1",
+            headers=_supabase_headers(),
+        )
+        if r.status_code == 200 and isinstance(r.json(), list) and r.json():
+            v = r.json()[0].get("value") or {}
+            if isinstance(v, dict):
+                en = v.get("enabled")
+                out["enabled"] = True if en is None else bool(en)
+                try:
+                    out["daily_limit_usd"] = max(0.0, float(v.get("daily_limit_usd") or 0))
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    out["daily_call_limit"] = max(0, int(v.get("daily_call_limit") or 0))
+                except (TypeError, ValueError):
+                    pass
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: budget-settings read failed (default permissive): %s", e)
+    return out
+
+
+async def _today_usage(client: httpx.AsyncClient) -> tuple[int, float]:
+    """Today's (UTC) Content Forge LLM usage from content_forge_usage: (calls, cost_usd).
+    Call count is exact (Content-Range header); cost is summed from the day's rows (tiny
+    volume). Best-effort: (0, 0.0) if the table is missing or on any error."""
+    url = _supabase_url()
+    if not url:
+        return (0, 0.0)
+    midnight = _dt.datetime.now(tz=_dt.timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0).isoformat()
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/content_forge_usage?select=cost_usd&created_at=gte.{midnight}&limit=5000",
+            headers={**_supabase_headers(), "Prefer": "count=exact",
+                     "Range-Unit": "items", "Range": "0-4999"},
+        )
+        if r.status_code in (200, 206):
+            rows = r.json() if isinstance(r.json(), list) else []
+            cost = round(sum(float(x.get("cost_usd") or 0) for x in rows if isinstance(x, dict)), 6)
+            cr = r.headers.get("content-range") or r.headers.get("Content-Range") or ""
+            calls = len(rows)
+            if "/" in cr:
+                tail = cr.rsplit("/", 1)[-1].strip()
+                if tail.isdigit():
+                    calls = int(tail)
+            return (calls, cost)
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: today-usage read failed: %s", e)
+    return (0, 0.0)
+
+
+async def _forge_llm_gate(client: httpx.AsyncClient) -> tuple[bool, str]:
+    """The credit guard checked before every discover/expand LLM call. Returns
+    (allowed, reason). Blocks when the kill switch is off, or when a positive daily spend /
+    call limit has been reached today. Permissive on any read failure (allowed=True)."""
+    s = await _read_budget_settings(client)
+    if not s["enabled"]:
+        return False, "Content Forge LLM is switched OFF (kill switch) — no credit spend"
+    lim, clim = s["daily_limit_usd"], s["daily_call_limit"]
+    if (lim and lim > 0) or (clim and clim > 0):
+        calls, cost = await _today_usage(client)
+        if lim and lim > 0 and cost >= lim:
+            return False, f"daily spend limit ${lim:.2f} reached (today ${cost:.4f})"
+        if clim and clim > 0 and calls >= clim:
+            return False, f"daily call limit {clim} reached (today {calls})"
+    return True, ""
+
+
 # ── PROVIDER SEAM ─────────────────────────────────────────────────────────────────────
 # _forge_llm() is the ONLY place the LLM provider is chosen. tier="free" reuses the
 # existing FREE OpenRouter Gemini path (OpenAI-compatible chat completions) — the exact
@@ -739,10 +1047,10 @@ def _get_vertex_token() -> str | None:
 
 
 def _call_gemini_api(messages: list[dict[str, str]], *,
-                     model: str = DEFAULT_GEMINI_MODEL) -> tuple[str, str]:
+                     model: str = DEFAULT_GEMINI_MODEL) -> tuple[str, str, dict[str, int]]:
     """Ladder rung 1 — Gemini API (AI Studio) free tier, OpenAI-compatible. Same request
     shape as _call_openrouter; single model (the free quota is per-project, not per-model,
-    so a model fallback chain buys nothing here). Returns (text, model_used). Raises
+    so a model fallback chain buys nothing here). Returns (text, model_used, usage). Raises
     RuntimeError on any non-200 so the ladder escalates (429/5xx == rate/temp; 4xx == key)."""
     key = _gemini_key()
     if not key:
@@ -756,16 +1064,17 @@ def _call_gemini_api(messages: list[dict[str, str]], *,
         r = client.post(f"{GEMINI_API_BASE}/chat/completions", headers=headers, json=payload)
     if r.status_code == 200:
         try:
-            return (r.json()["choices"][0]["message"]["content"] or ""), model
+            data = r.json()
+            return (data["choices"][0]["message"]["content"] or ""), model, _usage_from_openai(data)
         except Exception as e:  # noqa: BLE001 — odd body → escalate
             raise RuntimeError(f"Gemini API malformed response: {e}")
     raise RuntimeError(f"Gemini API HTTP {r.status_code}: {r.text[:300]}")
 
 
 def _call_vertex_gemini(messages: list[dict[str, str]], *,
-                        model: str = DEFAULT_VERTEX_GEMINI_MODEL) -> tuple[str, str]:
+                        model: str = DEFAULT_VERTEX_GEMINI_MODEL) -> tuple[str, str, dict[str, int]]:
     """Ladder rung 2 — Vertex AI Gemini (bills the $300 GCP credit), OpenAI-compatible
-    endpoint authed with the cached SA Bearer token. Returns (text, model_used). Raises
+    endpoint authed with the cached SA Bearer token. Returns (text, model_used, usage). Raises
     RuntimeError on missing token / non-200 so the ladder escalates."""
     project, region = _gcp_project(), _gcp_region()
     token = _get_vertex_token()
@@ -781,7 +1090,8 @@ def _call_vertex_gemini(messages: list[dict[str, str]], *,
         r = client.post(url, headers=headers, json=payload)
     if r.status_code == 200:
         try:
-            return (r.json()["choices"][0]["message"]["content"] or ""), model
+            data = r.json()
+            return (data["choices"][0]["message"]["content"] or ""), model, _usage_from_openai(data)
         except Exception as e:  # noqa: BLE001 — odd body → escalate
             raise RuntimeError(f"Vertex Gemini malformed response: {e}")
     raise RuntimeError(f"Vertex Gemini HTTP {r.status_code}: {r.text[:300]}")
@@ -811,27 +1121,27 @@ def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
         if not _gemini_key():
             return None
         model = (os.environ.get("CONTENT_FORGE_MODEL_GEMINI") or "").strip() or DEFAULT_GEMINI_MODEL
-        text, used = _call_gemini_api(messages, model=model)
-        return text, {"provider": "gemini_api", "model": used, "tier_used": "gemini"}
+        text, used, usage = _call_gemini_api(messages, model=model)
+        return text, {"provider": "gemini_api", "model": used, "tier_used": "gemini", "usage": usage}
 
     def _rung_vertex_gemini():
         if not (_gcp_project() and _gcp_sa_json()):
             return None
         model = (os.environ.get("CONTENT_FORGE_MODEL_VERTEX_GEMINI") or "").strip() \
             or DEFAULT_VERTEX_GEMINI_MODEL
-        text, used = _call_vertex_gemini(messages, model=model)
-        return text, {"provider": "vertex_gemini", "model": used, "tier_used": "vertex"}
+        text, used, usage = _call_vertex_gemini(messages, model=model)
+        return text, {"provider": "vertex_gemini", "model": used, "tier_used": "vertex", "usage": usage}
 
     def _rung_anthropic():
         if not _anthropic_key():
             return None
         model = _discovery_model() if kind == "discovery" else _expansion_model()
-        text = _call_anthropic(messages, model=model)
-        return text, {"provider": "anthropic", "model": model, "tier_used": "pro"}
+        text, usage = _call_anthropic(messages, model=model)
+        return text, {"provider": "anthropic", "model": model, "tier_used": "pro", "usage": usage}
 
     def _rung_openrouter():
-        text, used = _call_openrouter(messages, models=_free_models())
-        return text, {"provider": "openrouter", "model": used, "tier_used": "free"}
+        text, used, usage = _call_openrouter(messages, models=_free_models())
+        return text, {"provider": "openrouter", "model": used, "tier_used": "free", "usage": usage}
 
     rungs = [_rung_gemini_api, _rung_vertex_gemini, _rung_anthropic, _rung_openrouter]
 
@@ -849,18 +1159,24 @@ def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
             continue  # provider not configured → skip silently
         text, meta = result
         meta["fell_back"] = fell_back
+        # Stamp an estimated USD cost from the captured token usage + price table, so the
+        # caller can log it for the Monitor budgets card. usage defaults to zeros if a
+        # provider omitted it; cost is $0 for unknown models / the free OpenRouter chain.
+        meta.setdefault("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+        meta["cost_usd"] = _estimate_cost(meta.get("provider", ""), meta.get("model", ""), meta["usage"])
         return text, meta
     raise RuntimeError(f"all providers exhausted; last: {last_err}")
 
 
-def _call_openrouter(messages: list[dict[str, str]], *, models: list[str] | str) -> tuple[str, str]:
+def _call_openrouter(messages: list[dict[str, str]], *,
+                     models: list[str] | str) -> tuple[str, str, dict[str, int]]:
     """FREE provider call — OpenRouter OpenAI-compatible chat completions over httpx.
     Same request/headers shape as reel_deconstruct.run_narrative().
 
     `models` is the ordered fallback chain (or a single id). Each model is tried in
     turn; a RETRYABLE upstream condition (404 model gone / 429 rate-limited / 5xx)
     falls through to the next model, while a hard client error (401/400) stops
-    immediately. Returns (text, model_used). Raises RuntimeError only if EVERY model
+    immediately. Returns (text, model_used, usage). Raises RuntimeError only if EVERY model
     in the chain is unavailable, carrying the last error for diagnosis."""
     key = _openrouter_key()
     if not key:
@@ -895,7 +1211,7 @@ def _call_openrouter(messages: list[dict[str, str]], *, models: list[str] | str)
         if r.status_code == 200:
             data = r.json()
             try:
-                return (data["choices"][0]["message"]["content"] or ""), model
+                return (data["choices"][0]["message"]["content"] or ""), model, _usage_from_openai(data)
             except Exception as e:  # noqa: BLE001 — odd body → try next model
                 last_err = f"OpenRouter malformed response from {model}: {e}: {json.dumps(data)[:200]}"
                 log.info("content_forge: %s", last_err)
@@ -910,14 +1226,14 @@ def _call_openrouter(messages: list[dict[str, str]], *, models: list[str] | str)
     raise RuntimeError(f"all free models unavailable; last: {last_err}")
 
 
-def _call_anthropic(messages: list[dict[str, str]], *, model: str) -> str:
+def _call_anthropic(messages: list[dict[str, str]], *, model: str) -> tuple[str, dict[str, int]]:
     """PRO provider call — Anthropic Messages API via the `anthropic` SDK. Splits the
     chat-style messages into a top-level `system` string + user/assistant turns (the
     Messages API takes system separately). The large discovery system prompt carries a
     cache_control: {type: "ephemeral"} breakpoint so repeat discovery runs hit the prompt
     cache (it's padded well over the ~1024-token minimum; the short expansion prompt won't
-    cache, which is fine). Imported lazily so this module loads even if `anthropic` isn't
-    installed (the free-only deployments)."""
+    cache, which is fine). Returns (text, usage). Imported lazily so this module loads even
+    if `anthropic` isn't installed (the free-only deployments)."""
     key = _anthropic_key()
     if not key:
         raise RuntimeError("ANTHROPIC_API_KEY unset — cannot run pro-tier LLM pass")
@@ -956,7 +1272,14 @@ def _call_anthropic(messages: list[dict[str, str]], *, model: str) -> str:
     for block in (resp.content or []):
         if getattr(block, "type", None) == "text":
             parts.append(getattr(block, "text", "") or "")
-    return "".join(parts)
+    # Map Anthropic's input/output token names onto the shared prompt/completion shape so
+    # _estimate_cost prices it uniformly. Cache reads/writes are billed differently, but at
+    # Content Forge volume the small discrepancy isn't worth tracking separately.
+    u = getattr(resp, "usage", None)
+    pt = int(getattr(u, "input_tokens", 0) or 0) if u else 0
+    ct = int(getattr(u, "output_tokens", 0) or 0) if u else 0
+    usage = {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
+    return "".join(parts), usage
 
 
 # ── JSON extraction (robust to fences / surrounding prose) ────────────────────────────
@@ -1264,6 +1587,12 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
     the full recent window. Never raises."""
     try:
         async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
+            # Credit guard — kill switch / daily limit. Skip the whole pass (no clip read,
+            # no LLM, no marking) when blocked, so re-enabling re-analyzes the same footage.
+            allowed, reason = await _forge_llm_gate(client)
+            if not allowed:
+                log.info("content_forge: discover batch=%s SKIPPED — %s", batch_id, reason)
+                return
             clips = await _read_clips_for_discovery(client, only_new=only_new)
             if not clips:
                 log.info("content_forge: discover batch=%s — no clips to analyze%s",
@@ -1288,6 +1617,8 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
             ]
             # Provider seam — free (Gemini) by default, pro (Haiku) if requested+keyed.
             text, meta = _forge_llm(messages, tier=tier, kind="discovery")
+            # Log the call's token usage + cost (best-effort; never blocks discovery).
+            await _log_usage(client, kind="discovery", meta=meta, batch_id=batch_id)
             parsed = _extract_json(text)
             items = parsed if isinstance(parsed, list) else parsed.get("opportunities", [])
             if not isinstance(items, list):
@@ -1361,6 +1692,37 @@ async def health(request: Request):
         "discovery_model": _discovery_model(),
         "expansion_model": _expansion_model(),
     }, status_code=200)
+
+
+@router.get("/usage")
+async def usage(request: Request):
+    """GET /api/content-forge/usage?secret=<CONTENT_FORGE_SECRET> → live LLM spend rollup.
+
+    Secret-gated (401 without a valid secret). Aggregates content_forge_usage — one row per
+    discovery/expansion LLM call — into all-time + today + last-30d totals (calls / tokens /
+    cost_usd), per-provider and per-kind breakdowns, and the last call. Powers the Monitor
+    "API Budgets & Limits" card's live Vertex usage. `configured:false` (all zeros) means the
+    0106 table isn't applied yet — the card then falls back to its static credit-window view.
+    Also echoes the price table so the card can show each provider's per-MTok rate."""
+    if not _check_secret(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
+    async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
+        rollup = await _read_usage_rollup(client)
+        budget = await _read_budget_settings(client)
+    # Compute the live blocked state from today's spend (already in the rollup) vs the limits,
+    # so the card can render the same verdict the backend gate enforces.
+    today_cost = (rollup.get("today") or {}).get("cost_usd", 0.0) or 0.0
+    today_calls = (rollup.get("today") or {}).get("calls", 0) or 0
+    blocked = (not budget["enabled"]) \
+        or (budget["daily_limit_usd"] > 0 and today_cost >= budget["daily_limit_usd"]) \
+        or (budget["daily_call_limit"] > 0 and today_calls >= budget["daily_call_limit"])
+    budget_out = {**budget, "blocked": blocked}
+    # Per-MTok price table (input, output) so the frontend can label live rates without
+    # hardcoding numbers that could drift from the backend's pricing.
+    prices = {m: {"input_per_mtok": p[0], "output_per_mtok": p[1]}
+              for m, p in _MODEL_PRICES.items()}
+    return JSONResponse({"ok": True, "generated_at": _now_iso(),
+                         "prices": prices, "budget": budget_out, **rollup}, status_code=200)
 
 
 @router.post("/ingest-transcript")
@@ -1485,6 +1847,13 @@ async def expand(request: Request):
         if not opp:
             return JSONResponse({"ok": False, "error": "opportunity not found"}, status_code=404)
 
+        # Credit guard — kill switch / daily limit. Return a non-error "blocked" so the UI can
+        # surface it without treating it as a backend failure (HTTP 200, ok:false, blocked).
+        allowed, reason = await _forge_llm_gate(client)
+        if not allowed:
+            return JSONResponse({"ok": False, "blocked": True, "error": reason,
+                                 "opportunity_id": opp_id}, status_code=200)
+
         # Optional grounding — never blocks hook generation; degrades on quota/no-key.
         gq = (opp.get("title") or "") + " " + (opp.get("angle_summary") or "")
         fact_check = _tavily_ground(gq.strip()) if gq.strip() else {"skipped": True,
@@ -1497,6 +1866,8 @@ async def expand(request: Request):
         ]
         try:
             text, meta = _forge_llm(messages, tier=tier, kind="expansion")
+            # Log the call's token usage + cost (best-effort; never blocks hook generation).
+            await _log_usage(client, kind="expansion", meta=meta, batch_id=None)
             parsed = _extract_json(text)
         except Exception as e:  # noqa: BLE001
             log.warning("content_forge: expand LLM failed for %s: %s", opp_id, e)

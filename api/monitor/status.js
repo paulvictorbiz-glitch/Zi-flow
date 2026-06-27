@@ -30,6 +30,14 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Content Forge — live LLM usage rollup (calls / tokens / cost) for the Monitor
+  // "API Budgets & Limits" card. Proxies the Hetzner /content-forge/usage endpoint
+  // (CONTENT_FORGE_SECRET stays server-side). Folded in here to stay under the cap.
+  if (req.query?.action === "forge-usage") {
+    res.status(200).json(await fetchForgeUsage());
+    return;
+  }
+
   const [sbResult, hzResult, gcpResult, osResult, wmResult] = await Promise.allSettled([
     fetchSupabaseStats(),
     fetchHetznerStats(),
@@ -138,6 +146,36 @@ async function fetchForgeStatus(req) {
     return body;
   } catch (e) {
     return { ok: false, error: `Couldn't reach the content-forge worker: ${e.message}` };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// ── Content Forge usage proxy ──────────────────────────────────────────────────
+// GET /api/monitor/status?action=forge-usage
+// Proxies the Hetzner content-forge /usage endpoint so the Monitor budgets card
+// can show live LLM spend (calls / tokens / cost, all-time + today + 30d, by
+// provider). The CONTENT_FORGE_SECRET is read here (server-side) and never
+// reaches the browser. Returns { ok:false, configured:false } shape on any
+// failure so the card degrades to its static credit-window view.
+
+async function fetchForgeUsage() {
+  const forgeSecret = process.env.CONTENT_FORGE_SECRET;
+  if (!forgeSecret) {
+    return { ok: false, configured: false, error: "CONTENT_FORGE_SECRET not configured" };
+  }
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 12000);
+  try {
+    const r = await fetch(
+      `https://api.footagebrain.com/api/content-forge/usage?secret=${encodeURIComponent(forgeSecret)}`,
+      { signal: controller.signal }
+    );
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, configured: false, error: `Hetzner forge-usage HTTP ${r.status}`, ...body };
+    return body;
+  } catch (e) {
+    return { ok: false, configured: false, error: `Couldn't reach the content-forge worker: ${e.message}` };
   } finally {
     clearTimeout(t);
   }
