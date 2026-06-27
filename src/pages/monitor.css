@@ -356,3 +356,95 @@
 .mon-migcheck-fix   { margin-top: 3px; opacity: 0.85; font-style: italic; }
 .mon-migcheck-fix code,
 .mon-migcheck-head code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 4px; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Sectioned HUD layout — hero band, category section headers, status strip.
+   Base-theme styling; the Solarin orange-HUD overrides live in
+   styles-solarin.css. Cards themselves keep the shared <Card> chrome.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Hero band — imagery header with overall status + lean strip. */
+.mon-hero {
+  position: relative;
+  margin: 14px 22px 4px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background-size: cover;
+  background-position: center;
+  isolation: isolate;
+}
+.mon-hero-overlay {
+  position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(108deg,
+    rgba(8,10,9,.93) 0%, rgba(8,10,9,.70) 46%, rgba(8,10,9,.42) 100%);
+}
+.mon-hero-content {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 20px 22px 12px; flex-wrap: wrap;
+}
+.mon-hero-title {
+  margin: 0; font-family: var(--f-mono); font-size: 22px; font-weight: 700;
+  letter-spacing: .03em; color: var(--fg);
+}
+.mon-hero-sub {
+  margin-top: 5px; font-family: var(--f-mono); font-size: 11px;
+  letter-spacing: .03em; color: var(--fg-dim);
+}
+.mon-hero-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.mon-hero-status {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--f-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase;
+  padding: 5px 12px; border-radius: 999px;
+  border: 1px solid var(--c-green); color: var(--c-green);
+}
+.mon-hero-status-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 8px 1px currentColor;
+}
+.mon-hero-status--amber { border-color: var(--c-amber); color: var(--c-amber); }
+.mon-hero-status--red   { border-color: var(--c-red);   color: var(--c-red); }
+
+/* Lean status strip — at-a-glance chips, sits inside the hero band. */
+.mon-strip {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 2px 22px 18px;
+}
+.mon-strip-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--f-mono); font-size: 11px;
+  padding: 5px 11px; border-radius: 8px;
+  border: 1px solid var(--line); background: rgba(0,0,0,.34);
+  color: var(--fg-mute);
+}
+.mon-strip-chip b { color: var(--fg); font-weight: 600; }
+.mon-strip-k {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--fg-faint);
+}
+.mon-strip-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--fg-faint);
+  flex-shrink: 0;
+}
+.mon-strip-chip--ok    .mon-strip-dot { background: var(--c-green); box-shadow: 0 0 6px var(--c-green); }
+.mon-strip-chip--amber .mon-strip-dot { background: var(--c-amber); box-shadow: 0 0 6px var(--c-amber); }
+.mon-strip-chip--red   .mon-strip-dot { background: var(--c-red);   box-shadow: 0 0 6px var(--c-red); }
+
+/* Category section header — a labelled divider above each card grid. */
+.mon-section { padding: 0 22px; }
+/* Grids inside a section drop their own page padding (the section supplies the
+   22px gutters); the title's top margin gives the inter-section rhythm. */
+.mon-section .mon-grid { padding: 0; }
+.mon-section:last-of-type { padding-bottom: 44px; }
+.mon-section-title {
+  display: flex; align-items: center; gap: 12px;
+  font-family: var(--f-mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--fg-faint);
+  margin: 24px 0 10px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mon-section-title::after {
+  content: ""; flex: 1; height: 1px;
+  background: linear-gradient(90deg, var(--line-soft), transparent);
+}

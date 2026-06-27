@@ -19,7 +19,9 @@
 .hud-root {
   position: fixed;
   inset: 0;
-  background: radial-gradient(ellipse 70% 55% at 50% 42%, #0a131f 0%, #060b13 55%, #03060a 100%);
+  background:
+    radial-gradient(ellipse 60% 50% at 12% 8%, rgba(40,34,22,.55) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 55% at 50% 42%, #060a12 0%, #03060c 55%, #010205 100%);
   overflow: hidden;
   perspective: var(--hud-perspective, 1700px);
   perspective-origin: 50% 47%;
@@ -29,6 +31,32 @@
   user-select: none;
 }
 .hud-root.hud-dragging { cursor: grabbing }
+
+/* ── Deep-space backdrop: stars + sun ──────────────── */
+.hud-stars {
+  position: absolute;
+  left: 0; top: 0;
+  width: 1px; height: 1px;
+  border-radius: 50%;
+  background: transparent;
+  pointer-events: none;
+  z-index: 0;
+  animation: hudflick 6s ease-in-out infinite;
+}
+.hud-sun {
+  position: absolute;
+  left: -120px; top: -120px;
+  width: 460px; height: 460px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 38%,
+    rgba(255,250,235,.9) 0%,
+    rgba(255,225,170,.5) 22%,
+    rgba(255,180,90,.18) 45%,
+    transparent 70%);
+  filter: blur(4px);
+  pointer-events: none;
+  z-index: 0;
+}
 
 /* ── Decorative grid overlay ───────────────────────── */
 .hud-grid-overlay {
@@ -221,6 +249,17 @@
   top: 0; left: 0; right: 0;
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--card-shine, rgba(95,224,168,.6)), transparent);
+  z-index: 2;
+}
+/* Sun-side sheen — light from the upper-left corner reflects off the card */
+.hud-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 120% at 0% 0%, rgba(255,244,224,.14), transparent 42%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  z-index: 1;
 }
 .hud-card:hover {
   transform: rotateY(0deg) translateZ(var(--hud-card-depth, 200px)) scale(1.04) !important;
@@ -445,6 +484,26 @@
   padding: 10px 0 4px;
   border-top: 1px solid rgba(120,160,200,.1);
   flex-shrink: 0;
+}
+
+/* ── Back-to-app button ─────────────────────────────── */
+.hud-back-btn {
+  position: fixed;
+  top: 22px; left: 22px;
+  z-index: 800;
+  background: rgba(10,20,35,.85);
+  border: 1px solid rgba(92,201,255,.3);
+  border-radius: 3px;
+  color: #5cc9ff;
+  font: 10px 'Chakra Petch';
+  letter-spacing: .14em;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background .2s, border-color .2s;
+}
+.hud-back-btn:hover {
+  background: rgba(20,40,65,.9);
+  border-color: rgba(92,201,255,.6);
 }
 
 /* ── Layout menu button ─────────────────────────────── */

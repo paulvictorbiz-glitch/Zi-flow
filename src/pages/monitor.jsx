@@ -17,6 +17,14 @@ import { useRoster } from "../lib/roster.jsx";
 import SpiderChart from "../components/SpiderChart.jsx";
 import { MEDAL_TIERS } from "../lib/gamify-data.jsx";
 import "../components/gamify.css";
+// The 6 owner telemetry cards live in monitor-hub.jsx; the Infra view renders
+// them inline as part of its unified sectioned layout. (monitor-hub.jsx imports
+// { Monitor } back from here — a render-time-only cycle of hoisted components,
+// safe because nothing is referenced at module-eval time.)
+import {
+  FrontendPerfCard, EditorUsageCard, CapCutInstallsCard,
+  StorageBreakdownCard, FreeLLMControlCard, ProviderBudgetsCard,
+} from "./monitor-hub.jsx";
 
 /* Distinct overlay colors for the team spider chart (one per person). */
 const GF_SERIES_COLORS = ["#6fd6ff", "#a99bff", "#5ad17a", "#f0c060", "#ff6f91", "#ff9f5a"];
@@ -1429,6 +1437,64 @@ function ScoutSection() {
 }
 
 /* ── Main Monitor component ──────────────────────────────── */
+/* ── Lean status strip — at-a-glance HUD chips inside the hero band.
+   Consumes the live /api/monitor/status payload + stats lifted from the
+   telemetry cards (editor "live now", GCP credit days, p75 load) via onStats —
+   no new query. Each chip renders only when its source is present. ─────────── */
+function MonStrip({ data, usageStats, budgetStats, perfStats }) {
+  const chips = [];
+  const hz = data?.hetzner;
+  if (hz?.configured && !hz.error) {
+    chips.push({ k: "Server", v: hz.status || "—",
+      tone: hz.status === "running" ? "ok" : hz.status === "off" ? "red" : "amber" });
+  }
+  const sb = data?.supabase;
+  if (sb?.configured) {
+    const p = Math.round(Math.max(sb.rowPct || 0, sb.storage?.dbPct || 0, sb.storage?.filePct || 0));
+    chips.push({ k: "DB", v: `${p}%`, tone: pctTone(p) });
+  }
+  const os = data?.os;
+  if (os?.configured && os.load1 != null) {
+    chips.push({ k: "Load", v: `${os.load1}`,
+      tone: os.load1 > 3 ? "red" : os.load1 > 1.5 ? "amber" : "ok" });
+  }
+  if (budgetStats?.daysLeft != null) {
+    chips.push({ k: "GCP credit", v: `${budgetStats.daysLeft}d`,
+      tone: budgetStats.tone === "alert" ? "red" : budgetStats.tone === "warn" ? "amber" : "ok" });
+  }
+  if (usageStats) {
+    chips.push({ k: "Editing now", v: usageStats.liveCount ? `${usageStats.liveCount}` : "none",
+      tone: usageStats.liveCount ? "ok" : "" });
+  }
+  if (perfStats?.p75Load != null) {
+    chips.push({ k: "p75 load", v: `${perfStats.p75Load} ms`, tone: "" });
+  }
+  if (!chips.length) return null;
+  return (
+    <div className="mon-strip">
+      {chips.map((c, i) => (
+        <span key={i} className={`mon-strip-chip${c.tone ? " mon-strip-chip--" + c.tone : ""}`}>
+          <span className="mon-strip-dot" />
+          <span className="mon-strip-k">{c.k}</span>
+          <b>{c.v}</b>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ── Section wrapper — a labelled HUD divider. The caller supplies the
+   .mon-grid(s) so every card stays a DIRECT child of .mon-grid, which is what
+   the Solarin `.mon-grid > .card` HUD skin keys on. ───────────────────────── */
+function MonSection({ label, children }) {
+  return (
+    <div className="mon-section">
+      <div className="mon-section-title">{label}</div>
+      {children}
+    </div>
+  );
+}
+
 export function Monitor() {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1436,6 +1502,11 @@ export function Monitor() {
   const [lastFetch, setLastFetch] = useState(null);
   const [fromCache, setFromCache] = useState(false);
   const [toast, setToast]     = useState(null);
+
+  // Stats lifted from the telemetry cards feed the lean status strip (no new query).
+  const [perfStats, setPerfStats]     = useState(null);
+  const [usageStats, setUsageStats]   = useState(null);
+  const [budgetStats, setBudgetStats] = useState(null);
 
   // Mirror the latest merged data into a ref so load() can read it as the
   // "previous" payload without re-creating the callback on every change.
@@ -1529,27 +1600,66 @@ export function Monitor() {
     return () => clearInterval(id);
   }, [load]);
 
+  // Overall HUD status for the hero band — the worst of server / DB / OS
+  // utilisation + staleness. ok → "all systems nominal", amber → "degraded",
+  // red → "alert". Pure derivation of the already-loaded payload (no query).
+  const overall = React.useMemo(() => {
+    const d = data;
+    if (!d) return { tone: "ok", label: "Initializing" };
+    let worst = 0;
+    const bump = (lvl) => { if (lvl > worst) worst = lvl; };
+    const hz = d.hetzner;
+    if (hz?.configured) {
+      if (hz.status === "off") bump(2);
+      else if (hz.status && hz.status !== "running") bump(1);
+      if (hz.bwPct >= 95) bump(2); else if (hz.bwPct >= WARN_PCT) bump(1);
+    }
+    const sb = d.supabase;
+    if (sb?.configured) {
+      const p = Math.max(sb.rowPct || 0, sb.storage?.dbPct || 0, sb.storage?.filePct || 0);
+      if (p >= 95) bump(2); else if (p >= WARN_PCT) bump(1);
+    }
+    const os = d.os;
+    if (os?.configured) {
+      const p = Math.max(os.memPct || 0, os.diskPct || 0, os.swapPct || 0);
+      if (p >= 95) bump(2); else if (p >= WARN_PCT) bump(1);
+    }
+    if (d.hetzner?._stale || d.os?._stale || d.supabase?._stale || d.gcp?._stale) bump(1);
+    return worst === 2
+      ? { tone: "red", label: "Alert" }
+      : worst === 1 ? { tone: "amber", label: "Degraded" }
+      : { tone: "ok", label: "All systems nominal" };
+  }, [data]);
+
   return (
     <div className="monitor">
       <Toast msg={toast} onDismiss={() => setToast(null)} />
 
-      <div className="page-head">
-        <div className="titles">
-          <h1>Infrastructure monitor</h1>
-          <div className="sub">
-            Supabase, Hetzner server, and Google Cloud quota usage.
-            Alerts when any metric crosses 80% of its limit.
+      {/* ── Hero band — imagery header + overall status + lean strip ─────── */}
+      <div className="mon-hero" style={{ backgroundImage: 'url("/assets/bg/bg-monitor-hud.jpg")' }}>
+        <div className="mon-hero-overlay" />
+        <div className="mon-hero-content">
+          <div className="mon-hero-titles">
+            <h1 className="mon-hero-title">Infrastructure Monitor</h1>
+            <div className="mon-hero-sub">
+              Supabase · Hetzner · Google Cloud · realtime owner intelligence
+            </div>
+          </div>
+          <div className="mon-hero-actions">
+            <span className={`mon-hero-status mon-hero-status--${overall.tone}`}>
+              <span className="mon-hero-status-dot" />
+              {overall.label}
+            </span>
+            {loading && <span className="mono muted" style={{ fontSize: 11 }}>refreshing…</span>}
+            {lastFetch && !loading && (
+              <span className="mono muted" style={{ fontSize: 11 }}>
+                updated {relTime(lastFetch.toISOString())}{fromCache ? " (cached)" : ""}
+              </span>
+            )}
+            <DPill onClick={load}>Refresh</DPill>
           </div>
         </div>
-        <div className="actions" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {loading && <span className="mono muted" style={{ fontSize: 11 }}>refreshing…</span>}
-          {lastFetch && !loading && (
-            <span className="mono muted" style={{ fontSize: 11 }}>
-              updated {relTime(lastFetch.toISOString())}{fromCache ? " (cached)" : ""}
-            </span>
-          )}
-          <DPill onClick={load}>Refresh</DPill>
-        </div>
+        <MonStrip data={data} usageStats={usageStats} budgetStats={budgetStats} perfStats={perfStats} />
       </div>
 
       {error && (
@@ -1558,80 +1668,113 @@ export function Monitor() {
         </div>
       )}
 
-      <div className="mon-grid">
-        <Card title="Supabase" footLeft="Database · Storage · Bandwidth">
-          {data?.supabase?._stale && <StaleTag />}
-          <SupabaseSection data={data?.supabase} />
-        </Card>
-
-        <Card title="Hetzner server" footLeft="api.footagebrain.com · Docker host">
-          {data?.hetzner?._stale && <StaleTag />}
-          <HetznerSection data={data?.hetzner} />
-        </Card>
-
-        <Card title="Server OS" footLeft="Memory · Swap · Disk · Load">
-          {data?.os?._stale && <StaleTag />}
-          <OsSection data={data?.os} />
-        </Card>
-
-        <Card title="Google Cloud" footLeft="YouTube · Maps · Cloud Billing">
-          {data?.gcp?._stale && <StaleTag />}
-          <GcpSection data={data?.gcp} />
-        </Card>
-
-        <Card title="AI Credits" footLeft="Cohere free tier · FAQ bot usage">
-          <AiCreditsSection />
-        </Card>
-
-        <Card title="News Monitor" footLeft="Pulse feeds · auto-ingest health" defaultOpen={false}>
-          <NewsMonitorSection />
-        </Card>
-
-        <Card title="World Monitor" footLeft="Free APIs · Limits · Usage" defaultOpen={false}>
-          {data?.worldMonitor?._stale && <StaleTag />}
-          <WorldMonitorSection data={data?.worldMonitor} />
-        </Card>
-
-        <Card title="Scout" footLeft="MicroSaaS radar · free pull limits">
-          <ScoutSection />
-        </Card>
-
-        <Card title="Vercel" footLeft="Hosting · Functions · Bandwidth">
-          <div className="mon-section-body">
-            <div className="mon-hint" style={{ marginBottom: 10 }}>
-              Vercel does not expose usage metrics via API — function invocations,
-              bandwidth, and build minutes are only visible in their dashboard.
+      {/* ── SYSTEM HEALTH ───────────────────────────────────────────────── */}
+      <MonSection label="System health">
+        <div className="mon-grid">
+          {/* Server / Host — Hetzner provider API + live OS metrics, merged into
+              one card. Each half keeps its own guard + stale tag, so a missing
+              provider (or OS) source never blanks the other. */}
+          <Card title="Server / Host" footLeft="api.footagebrain.com · Hetzner provider + OS metrics">
+            {data?.hetzner?._stale && <StaleTag />}
+            {data?.os?._stale && <StaleTag />}
+            <div className="mon-section-body">
+              <div className="mon-table-label">Provider · Hetzner</div>
+              <HetznerSection data={data?.hetzner} />
+              <div className="mon-table-label" style={{ marginTop: 12 }}>Host OS · live metrics</div>
+              <OsSection data={data?.os} />
             </div>
-            <a
-              href="https://vercel.com/dashboard/usage"
-              target="_blank"
-              rel="noreferrer"
-              className="mon-vercel-link"
-            >
-              Open Vercel usage dashboard ↗
-            </a>
-            <div className="mon-stats-grid" style={{ marginTop: 14 }}>
-              <StatRow label="Project" value="ziflow-project-final" />
-              <StatRow label="Domain" value="footagebrain.com" />
-              <StatRow label="Runtime" value="Vercel Serverless (Node 18)" />
+          </Card>
+
+          <Card title="Supabase" footLeft="Database · Storage · Bandwidth">
+            {data?.supabase?._stale && <StaleTag />}
+            <SupabaseSection data={data?.supabase} />
+          </Card>
+
+          <StorageBreakdownCard />
+
+          <Card title="Vercel" footLeft="Hosting · Functions · Bandwidth">
+            <div className="mon-section-body">
+              <div className="mon-hint" style={{ marginBottom: 10 }}>
+                Vercel does not expose usage metrics via API — function invocations,
+                bandwidth, and build minutes are only visible in their dashboard.
+              </div>
+              <a
+                href="https://vercel.com/dashboard/usage"
+                target="_blank"
+                rel="noreferrer"
+                className="mon-vercel-link"
+              >
+                Open Vercel usage dashboard ↗
+              </a>
+              <div className="mon-stats-grid" style={{ marginTop: 14 }}>
+                <StatRow label="Project" value="ziflow-project-final" />
+                <StatRow label="Domain" value="footagebrain.com" />
+                <StatRow label="Runtime" value="Vercel Serverless (Node 18)" />
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        </div>
+      </MonSection>
 
-        <Card title="Anthropic (Claude)" footLeft="Generate · AI Brain · FAQ bot">
-          <AnthropicSection />
-        </Card>
+      {/* ── COST & QUOTAS ───────────────────────────────────────────────── */}
+      <MonSection label="Cost & quotas">
+        <div className="mon-grid">
+          <ProviderBudgetsCard onStats={setBudgetStats} />
 
-        <Card title="🎮 Gamify" footLeft="Skill XP · Spider charts · Rubrics">
-          <GamifySection />
-        </Card>
-      </div>
+          <Card title="Google Cloud" footLeft="YouTube · Maps · Cloud Billing">
+            {data?.gcp?._stale && <StaleTag />}
+            <GcpSection data={data?.gcp} />
+          </Card>
 
-      <div style={{ padding: "0 22px 40px" }}>
-        <Card title="Social accounts — token health" footLeft="OAuth expiry · Last health check">
-          <SocialTokenSection />
-        </Card>
-      </div>
+          <Card title="AI Credits" footLeft="Cohere free tier · FAQ bot usage">
+            <AiCreditsSection />
+          </Card>
+
+          <Card title="Scout" footLeft="MicroSaaS radar · free pull limits">
+            <ScoutSection />
+          </Card>
+        </div>
+      </MonSection>
+
+      {/* ── USAGE & TELEMETRY ───────────────────────────────────────────── */}
+      <MonSection label="Usage & telemetry">
+        <div className="mon-grid">
+          <FrontendPerfCard onStats={setPerfStats} />
+          <EditorUsageCard onStats={setUsageStats} />
+          <CapCutInstallsCard />
+        </div>
+        {/* Social token-health table is wide — own full-width single-col grid so
+            it still styles as a direct .mon-grid > .card under Solarin. */}
+        <div className="mon-grid" style={{ gridTemplateColumns: "1fr", marginTop: 12 }}>
+          <Card title="Social accounts — token health" footLeft="OAuth expiry · Last health check">
+            <SocialTokenSection />
+          </Card>
+        </div>
+      </MonSection>
+
+      {/* ── CONTROLS & FEATURE GATES ────────────────────────────────────── */}
+      <MonSection label="Controls & feature gates">
+        <div className="mon-grid">
+          <FreeLLMControlCard />
+
+          <Card title="Anthropic (Claude)" footLeft="Generate · AI Brain · FAQ bot">
+            <AnthropicSection />
+          </Card>
+
+          <Card title="🎮 Gamify" footLeft="Skill XP · Spider charts · Rubrics">
+            <GamifySection />
+          </Card>
+
+          <Card title="World Monitor" footLeft="Free APIs · Limits · Usage" defaultOpen={false}>
+            {data?.worldMonitor?._stale && <StaleTag />}
+            <WorldMonitorSection data={data?.worldMonitor} />
+          </Card>
+
+          <Card title="News Monitor" footLeft="Pulse feeds · auto-ingest health" defaultOpen={false}>
+            <NewsMonitorSection />
+          </Card>
+        </div>
+      </MonSection>
     </div>
   );
 }

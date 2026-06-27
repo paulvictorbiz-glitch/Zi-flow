@@ -19,9 +19,15 @@ import "./hud-space.css";
 const PREFS_KEY = "hud_layout_prefs";
 const DEFAULT_PREFS = {
   perspective: 1700,
-  zoom: 1.0,
+  zoom: 1.0,            // kept for the mouse-wheel gesture (no menu slider)
   colAngles: [-44, -24, 0, 24, 44],
   cardDepth: 200,
+  colTighten: 0,        // px to pull outer columns toward center (window effect)
+  topTilt: 0,           // rotateX deg for cards above the globe midline
+  bottomTilt: 0,        // rotateX deg for cards below the midline
+  globeSpin: 1.0,       // globe spin-speed multiplier (0 = frozen)
+  rayHeight: 1.0,       // hot-point ray length multiplier
+  mapOpacity: 0,        // 0 = dotted globe · 1 = filled world-map overlay
 };
 function loadPrefs() {
   try { return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") }; }
@@ -37,10 +43,19 @@ const COL_BASE = [
   { tx:  86, tz: 76  },   // 4 = far right
 ];
 
-function colTransform(col, angles) {
-  const { tx, tz } = COL_BASE[col];
-  const a = angles[col] ?? 0;
-  return `translateX(${tx}px) translateZ(${tz}px) rotateY(${a}deg)`;
+/* Per-column inward direction for the "tighten" control (pull side cols toward center) */
+const COL_TIGHTEN_DIR = [1, 0.5, 0, -0.5, -1];
+
+/* Full per-card transform: column offset + tighten + column rotateY + row tilt */
+function cardTransform(card, prefs) {
+  const center = card.pos.top + card.pos.height / 2;
+  const tilt   = center < 412 ? (prefs.topTilt || 0) : (prefs.bottomTilt || 0);
+  const tiltStr = tilt ? ` rotateX(${tilt}deg)` : "";
+  if (card.colTransformOverride) return card.colTransformOverride + tiltStr;
+  const { tx, tz } = COL_BASE[card.col];
+  const a       = prefs.colAngles[card.col] ?? 0;
+  const tighten = (prefs.colTighten || 0) * COL_TIGHTEN_DIR[card.col];
+  return `translateX(${tx + tighten}px) translateZ(${tz}px) rotateY(${a}deg)${tiltStr}`;
 }
 
 /* ─────────────────────────────────────────────────────
@@ -814,10 +829,8 @@ const BACK_CARDS = [
 /* ─────────────────────────────────────────────────────
    HudCard — renders one card on a face
 ─────────────────────────────────────────────────────── */
-function HudCard({ card, colAngles, wf, onOpen }) {
-  const baseTransform = card.colTransformOverride
-    ? card.colTransformOverride
-    : colTransform(card.col, colAngles);
+function HudCard({ card, prefs, wf, onOpen }) {
+  const baseTransform = cardTransform(card, prefs);
 
   return (
     <div
@@ -924,18 +937,57 @@ function HudLayoutMenu({ prefs, onUpdate, onUpdateCol, onReset, onClose }) {
         <span>{prefs.perspective}px</span>
       </div>
       <div className="hud-slider-row">
-        <label>Zoom</label>
-        <input type="range" min="0.5" max="2.0" step="0.05"
-          value={prefs.zoom}
-          onChange={e => onUpdate("zoom", Number(e.target.value))} />
-        <span>{prefs.zoom.toFixed(2)}×</span>
-      </div>
-      <div className="hud-slider-row">
         <label>Card depth</label>
         <input type="range" min="0" max="300" step="10"
           value={prefs.cardDepth}
           onChange={e => onUpdate("cardDepth", Number(e.target.value))} />
         <span>{prefs.cardDepth}px</span>
+      </div>
+      <div className="hud-slider-row">
+        <label>Column tighten</label>
+        <input type="range" min="0" max="400" step="10"
+          value={prefs.colTighten}
+          onChange={e => onUpdate("colTighten", Number(e.target.value))} />
+        <span>{prefs.colTighten}px</span>
+      </div>
+
+      <h4>CARD TILT</h4>
+      <div className="hud-slider-row">
+        <label>Top tilt</label>
+        <input type="range" min="-45" max="45" step="1"
+          value={prefs.topTilt}
+          onChange={e => onUpdate("topTilt", Number(e.target.value))} />
+        <span>{prefs.topTilt}°</span>
+      </div>
+      <div className="hud-slider-row">
+        <label>Bottom tilt</label>
+        <input type="range" min="-45" max="45" step="1"
+          value={prefs.bottomTilt}
+          onChange={e => onUpdate("bottomTilt", Number(e.target.value))} />
+        <span>{prefs.bottomTilt}°</span>
+      </div>
+
+      <h4>GLOBE</h4>
+      <div className="hud-slider-row">
+        <label>Spin</label>
+        <input type="range" min="0" max="3" step="0.1"
+          value={prefs.globeSpin}
+          onChange={e => onUpdate("globeSpin", Number(e.target.value))} />
+        <span>{prefs.globeSpin.toFixed(1)}×</span>
+      </div>
+      <div className="hud-slider-row">
+        <label>Ray height</label>
+        <input type="range" min="0" max="3" step="0.1"
+          value={prefs.rayHeight}
+          onChange={e => onUpdate("rayHeight", Number(e.target.value))} />
+        <span>{prefs.rayHeight.toFixed(1)}×</span>
+      </div>
+      <div className="hud-slider-row">
+        <label>World map</label>
+        <input type="range" min="0" max="1" step="0.05"
+          value={prefs.mapOpacity}
+          onChange={e => onUpdate("mapOpacity", Number(e.target.value))} />
+        <span>{Math.round(prefs.mapOpacity * 100)}%</span>
       </div>
 
       <h4>COLUMN ANGLES</h4>
@@ -957,7 +1009,7 @@ function HudLayoutMenu({ prefs, onUpdate, onUpdateCol, onReset, onClose }) {
 /* ─────────────────────────────────────────────────────
    HudGlobe — rotating canvas globe
 ─────────────────────────────────────────────────────── */
-function HudGlobe({ billRef, canvasRef }) {
+function HudGlobe({ canvasRef, prefsRef }) {
   useEffect(() => {
     const cv = canvasRef.current;
     if (!cv) return;
@@ -1024,8 +1076,12 @@ function HudGlobe({ billRef, canvasRef }) {
     };
 
     const draw = () => {
+      const gp     = prefsRef?.current || {};
+      const spin   = gp.globeSpin ?? 1;
+      const rayH   = gp.rayHeight ?? 1;
+      const mapOp  = gp.mapOpacity ?? 0;
       ctx.clearRect(0, 0, CSS, CSS);
-      if (!gDrag) { gA += 0.0019 + gVel; gVel *= 0.93; }
+      if (!gDrag) { gA += 0.0019 * spin + gVel; gVel *= 0.93; }
       const ca = Math.cos(gA), sa = Math.sin(gA), ct = Math.cos(gTilt), st = Math.sin(gTilt);
       const g = ctx.createRadialGradient(cx-46,cy-54,14,cx,cy,R+14);
       g.addColorStop(0,"rgba(42,112,172,.34)"); g.addColorStop(.55,"rgba(18,52,92,.24)"); g.addColorStop(1,"rgba(6,16,30,.05)");
@@ -1049,6 +1105,19 @@ function HudGlobe({ billRef, canvasRef }) {
         ctx.fillStyle = p.land ? `rgba(74,205,150,${.2+al*.5})` : `rgba(92,162,228,${.05+al*.2})`;
         ctx.fill();
       }
+      /* World-map overlay: fill the land blobs as solid continents (slider-driven) */
+      if (mapOp > 0.01) {
+        for (const [la, lo, rr] of land) {
+          const lat = la * D2R, lon = lo * D2R;
+          const q = proj({ x: Math.cos(lat)*Math.cos(lon), y: Math.sin(lat), z: Math.cos(lat)*Math.sin(lon) }, ca, sa, ct, st);
+          if (q.z < -0.05) continue;
+          const facing = (q.z + 1) / 2;
+          const sr = rr * D2R * R * (0.6 + 0.4 * facing);
+          ctx.beginPath(); ctx.arc(q.sx, q.sy, sr, 0, 7);
+          ctx.fillStyle = `rgba(74,205,150,${mapOp * (0.10 + 0.22 * facing)})`;
+          ctx.fill();
+        }
+      }
       ctx.lineWidth = 0.8;
       for (let i = 0; i < hot.length; i += 2) {
         const q1 = proj(hot[i],ca,sa,ct,st), q2 = proj(hot[(i+3)%hot.length],ca,sa,ct,st);
@@ -1066,7 +1135,7 @@ function HudGlobe({ billRef, canvasRef }) {
         const al = (q.z+1)/2;
         const dx = q.sx-cx, dy = q.sy-cy, len = Math.hypot(dx,dy)||1;
         const ux = dx/len, uy = dy/len, px = -uy, py = ux;
-        const L = 14 + al*48*(0.7+0.3*pulse), bw = 1.5+al*1.7;
+        const L = (14 + al*48*(0.7+0.3*pulse)) * rayH, bw = 1.5+al*1.7;
         const tx2 = q.sx+ux*L, ty2 = q.sy+uy*L;
         const grd = ctx.createLinearGradient(q.sx,q.sy,tx2,ty2);
         grd.addColorStop(0,`rgba(255,150,50,${.55*al})`); grd.addColorStop(.5,`rgba(255,120,40,${.28*al})`); grd.addColorStop(1,"rgba(255,90,30,0)");
@@ -1090,7 +1159,7 @@ function HudGlobe({ billRef, canvasRef }) {
       cv.removeEventListener("pointerup",   pdEnd);
       cv.removeEventListener("pointercancel", pdEnd);
     };
-  }, [canvasRef]);
+  }, [canvasRef, prefsRef]);
 
   return null;
 }
@@ -1123,6 +1192,20 @@ function HudSpaceInner() {
   const [prefs, setPrefs] = useState(loadPrefs);
   const [menuOpen,    setMenuOpen]    = useState(false);
   const [activeCard,  setActiveCard]  = useState(null);
+
+  /* ── Starfield (generated once) ───────────────────── */
+  const starShadow = useMemo(() => {
+    const W = (typeof window !== "undefined" ? window.innerWidth  : 1920) + 200;
+    const H = (typeof window !== "undefined" ? window.innerHeight : 1080) + 200;
+    const stars = [];
+    for (let i = 0; i < 140; i++) {
+      const x = Math.floor(Math.random() * W);
+      const y = Math.floor(Math.random() * H);
+      const a = (Math.random() * 0.5 + 0.3).toFixed(2);
+      stars.push(`${x}px ${y}px 0 0 rgba(255,255,255,${a})`);
+    }
+    return stars.join(",");
+  }, []);
 
   /* ── Apply CSS vars whenever prefs change ─────────── */
   useEffect(() => {
@@ -1249,6 +1332,10 @@ function HudSpaceInner() {
 
   return (
     <div ref={rootRef} className="hud-root" id="hud-root">
+      {/* Deep-space backdrop */}
+      <div className="hud-sun" />
+      <div className="hud-stars" style={{ boxShadow: starShadow }} />
+
       {/* Decorative overlays */}
       <div className="hud-grid-overlay" />
       <div className="hud-top-accent" />
@@ -1286,21 +1373,32 @@ function HudSpaceInner() {
           {/* ── FRONT FACE ── */}
           <div ref={frontRef} className="hud-face hud-face--front">
             {FRONT_CARDS.map(card => (
-              <HudCard key={card.id} card={card} colAngles={prefs.colAngles} wf={wf} onOpen={setActiveCard} />
+              <HudCard key={card.id} card={card} prefs={prefs} wf={wf} onOpen={setActiveCard} />
             ))}
           </div>
 
           {/* ── BACK FACE ── */}
           <div ref={backRef} className="hud-face hud-face--back">
             {BACK_CARDS.map(card => (
-              <HudCard key={card.id} card={card} colAngles={prefs.colAngles} wf={wf} onOpen={setActiveCard} />
+              <HudCard key={card.id} card={card} prefs={prefs} wf={wf} onOpen={setActiveCard} />
             ))}
           </div>
         </div>
       </div>
 
       {/* Globe drawing hook (no DOM output) */}
-      <HudGlobe billRef={billRef} canvasRef={canvasRef} />
+      <HudGlobe canvasRef={canvasRef} prefsRef={prefsRef} />
+
+      {/* ← Back to My Work */}
+      <button
+        className="hud-back-btn"
+        onClick={() => {
+          try { localStorage.setItem("wb_view", "mywork"); } catch {}
+          window.location.assign("/app");
+        }}
+      >
+        ← MY WORK
+      </button>
 
       {/* ⚙ Layout menu toggle */}
       <button className="hud-menu-btn" onClick={() => setMenuOpen(o => !o)}>

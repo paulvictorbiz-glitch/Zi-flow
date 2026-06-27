@@ -6,6 +6,7 @@ import { DPill } from "../components/components.jsx";
 import { useAuth } from "../auth.jsx";
 
 import { supabase as _sb } from "../lib/supabase-client.js";
+import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 function fmtDate(iso) {
@@ -572,6 +573,11 @@ function InsightsTab({ session }) {
   };
 
   const parseNow = async () => {
+    if (isBlockedSync("workflow_insights")) {
+      setRunMsg("Workflow Insights is disabled — enable it in Monitor → Free LLM Gates.");
+      return;
+    }
+    recordUsage("workflow_insights");
     setParsing(true);
     setRunMsg("Parsing recent conversations…");
     try {

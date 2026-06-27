@@ -18,6 +18,7 @@ import React, { useMemo, useState, useEffect, useRef } from "react";
 import { DPill } from "../components/components.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { footageBrainThumbnailUrl, footageBrainFileUrl, tagFootage } from "../lib/footage-brain-client.js";
+import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 import { VisionTagChips, flattenVisionTags } from "../components/AttachedFootageList.jsx";
 
 /* Group all attached_footage_items rows by clip identity. Each
@@ -224,10 +225,13 @@ function FootageLibrary({ onOpen }) {
   const [selectedTags, setSelectedTags] = useState(() => new Set());
   const [analyzingKeys, setAnalyzingKeys] = useState(() => new Set()); // clip keys mid-analysis
   const [bulk, setBulk] = useState(null); // { done, total } | null while bulk-analyzing
+  const [tagGateNotice, setTagGateNotice] = useState(false); // true when footage tagging is blocked
 
   /* Analyze one clip's thumbnail and persist tags across its attachments. */
   async function analyzeClip(c) {
+    if (isBlockedSync("footage_tag")) { setTagGateNotice(true); return; }
     if (!c.footage_file_id || !c.thumbnail_url) return;
+    recordUsage("footage_tag");
     setAnalyzingKeys(prev => new Set(prev).add(c.key));
     try {
       const tags = await tagFootage(c.footage_file_id, c.thumbnail_url, c.filename);
@@ -407,6 +411,17 @@ function FootageLibrary({ onOpen }) {
             </button>
           )}
         </div>
+        {tagGateNotice && (
+          <div style={{
+            marginTop: 8, padding: "6px 12px", borderRadius: 4,
+            background: "rgba(224,164,88,.12)", border: "1px solid var(--c-amber, #e0a458)",
+            fontSize: 11, color: "var(--c-amber, #e0a458)", fontFamily: "var(--f-mono, monospace)",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <span>Footage tagging is disabled — enable it in Monitor → Free LLM Gates.</span>
+            <button onClick={() => setTagGateNotice(false)} style={{ background: "none", border: 0, cursor: "pointer", color: "inherit", padding: "0 4px", fontSize: 14 }}>×</button>
+          </div>
+        )}
       </div>
 
       <div style={{

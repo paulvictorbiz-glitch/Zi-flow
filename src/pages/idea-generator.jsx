@@ -11,6 +11,7 @@ import { useWorkflow, nextReelId } from "../store/store.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
+import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 
 const MAX_HISTORY = 20;
 
@@ -378,6 +379,14 @@ export function IdeaGenerator() {
 
   const generate = async () => {
     if (!prompt.trim() || loading) return;
+    // Only the free OpenRouter provider draws on the shared free quota; the
+    // anthropic (paid) and puter (client-side) paths are unaffected by the gate.
+    const usesFreeOpenRouter = model === "openrouter";
+    if (usesFreeOpenRouter && isBlockedSync("idea_generator")) {
+      setError("Idea Generator's free model is disabled — enable it in Monitor → Free LLM Gates, or pick another model.");
+      return;
+    }
+    if (usesFreeOpenRouter) recordUsage("idea_generator");
     setLoading(true);
     setError(null);
     setResult(null);

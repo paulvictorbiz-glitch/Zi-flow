@@ -18,6 +18,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase-client.js";
+import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 import {
   scoutSupabase,
   fetchShortlist,
@@ -380,6 +381,11 @@ export function Scout() {
   }, [expandedId, showToast]);
 
   const handleRefresh = useCallback(async () => {
+    if (isBlockedSync("scout")) {
+      showToast("Scout is disabled — enable it in Monitor → Free LLM Gates.");
+      return;
+    }
+    recordUsage("scout");
     setRefreshing(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();

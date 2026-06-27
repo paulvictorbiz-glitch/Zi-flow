@@ -1,46 +1,40 @@
-# Handoff — last updated 2026-06-26 (session x)
+# Handoff — last updated 2026-06-27 (session ae)
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **Content Forge is LIVE end-to-end.** Verified migrations 0101–0103 on the live DB, set `CONTENT_FORGE_SECRET` on Vercel, deployed `content_forge.py` to Hetzner (router registered + secret + image rebuild + recreate), redeployed Vercel. Health: 401 gated / 200 with secret. Runs on the **free OpenRouter/Gemini tier** by default.
-- **UI batch shipped (LIVE, `f0011ee`, dpl_GFyiddry):** Pulse/Scout "date pulled" tracking (toggle + sortable Pulled column + group-by-pulled) and Reel DNA Classic-spreadsheet **clickable column sort** (A→Z/Z→A) + always-visible card kebab.
-- **RC reel-state Phase 2 committed (`2ee56a7`, NOT deployed):** Rocket.Chat `/reel-state` slash command + message-action under `backend-handoff/reel-rc-app/` — separate RC app deploy.
-- **Deploys this session:** `vercel --prod` ×2 (dpl_GFyiddry, dpl_ikznc3gp); Hetzner backend image rebuild + `up -d --force-recreate`; Vercel env `CONTENT_FORGE_SECRET`.
-- **Branch:** `feat/capcut-replica-v2` @ `2ee56a7` (pushed). Tree clean.
-- **Learned:** the auto-mode classifier needs the **specific action/host NAMED** ("authorization to apply migrations", "SSH into root@178.105.14.144 …") — general "deploy everything"/"continue" is rejected for live-DB + Hetzner.
+- Continued **MapForge** (standalone repo `C:\Users\Mi\Downloads\mapforge`). Committed the parked **premium design tier** (`298e39d`).
+- Built the next slice — the **MapForge owner dashboard**: new `apps/dashboard/` workspace (TS, Node-ESM, no framework), pure tested aggregate/render, a DataSource seam (offline fixture default / env-gated live Supabase PostgREST reader). Committed `1d2509c`.
+- Owner asked to deploy the dashboard + preview gallery and add a Monitor button. Since the pages were localhost-only and MapForge has no live host, built them as **static files hosted inside FootageBrain at `/mapforge/`** via new `scripts/build-static.mjs`.
+- Added an owner-only **"MapForge" sub-tab** to the Monitor hub (opens both pages in new tabs) and **deployed LIVE** (`vercel --prod`, `dpl_FdDnCz5…`, www.footagebrain.com). All pages verified 200.
+- Committed FootageBrain side (`dec6b4e` bundle, `ac20744` monitor-hub), pushed `feat/capcut-replica-v2` to origin, closed the local dev servers.
 
 ## Where we left off
-Content Forge is functional on prod (owner-only tab). All code committed + pushed; tree clean. The only unverified piece is the **authenticated owner UI flow** (Discover → Expand) — needs the owner to click through it.
+MapForge dashboard + premium tier are LIVE-accessible from footagebrain.com → **Monitor → MapForge** → opens `/mapforge/dashboard.html` (funnel + per-target status) and `/mapforge/index.html` (preview gallery, Standard vs Premium). The deployed dashboard is a **static snapshot** of the synthetic demo fixture; the **live-Supabase reader** in `apps/dashboard` activates only once `0001_init.sql` is applied (human-gated). MapForge repo is local-only (no git remote): HEAD `1d2509c` on `main`. FootageBrain branch `feat/capcut-replica-v2` @ `ac20744`, pushed.
 
 ## Open blockers
-- None. (Pre-deploy gates were all cleared with explicit per-action authorization.)
+- **Live `--ai` still unverified** (unchanged from session ad) — Gemini free tier `limit:0` (billing-tainted account; $300 credit excluded from Gemini API) + OpenRouter free tokens exhausted. No code fault. See `reference_gemini-free-tier-billing-taint.md`.
 
-## Pending (written but not yet live / follow-up)
-- **Content Forge UI smoke test** — owner opens the tab, runs Discover → Expand (free tier) to confirm end-to-end.
-- **Content Forge pro tier (optional)** — add `ANTHROPIC_API_KEY` (+ `TAVILY_API_KEY` for grounding) to the Hetzner backend env block + rebuild → discovery uses Haiku, expansion uses Sonnet. Currently `anthropic_set:false` (free Gemini).
-- **Box hygiene** — delete `.forgebak` backups on Hetzner once stable; fold the `backend/app/api/__init__.py` router-registration into the `footagebrain-backend` repo so a fresh snapshot doesn't drop it.
-- **RC reel-state app** — `2ee56a7` committed but needs a separate Rocket.Chat deploy.
-- **Triage tasks 1–3 (deferred, now unblocked):** (1) manually add a URL news link to a card; (2) raise the ~10-clip cap + add a slow-flashing neon asset-count badge on cards (like the analytics world-map dots) + auto-collapse asset cards; (3) fix no-audio on local MP4 upload for the finished reel state (HEVC→H.264/AAC transcode on Hetzner). All live in `detail.jsx`/`components.jsx` (now committed, so editable) — task 3 also needs a Hetzner backend change.
-- **Carried from prior sessions:** OD-2 Reviewer re-save, 0099 RLS delete-hardening (unwritten), Scout backend redeploy, OpenCut caddy-bridge persist, Epidemic calibration, migration 0100 (CapCut install events) committed-not-applied.
+## Pending (written but not yet live)
+- MapForge **owner dashboard live-Supabase mode** — built + tested, but only serves real data once `0001_init.sql` is applied to a live DB (human-gated) and `MAPFORGE_SUPABASE_URL` + `MAPFORGE_SUPABASE_SERVICE_KEY` are set. The deployed `/mapforge/` pages are a static demo snapshot until then.
+- All prior MapForge pending items unchanged (see `project_mapforge-plan.md`): live gosom scrape + R2/DNS go-live, A/B traffic-split+tracking (Worker+DB).
+- FootageBrain tree still has the owner's other uncommitted WIP (app.jsx, content-forge.jsx, scout.jsx, etc.) — untouched this session, owner manages.
 
 ## Next session — start here
-1. **Owner: smoke-test Content Forge** (Discover → Expand). If anything errors, check `docker logs fb-backend` + the Vercel function logs.
-2. **Tackle triage tasks 1–3** in `detail.jsx`/`components.jsx` (now collision-free) — start with the flashing asset-count badge (reuse `.an-pulse-dot`/`pulseGlow` from the analytics map).
-3. Optional: wire Content Forge pro tier (Anthropic key) if free-tier quality is insufficient.
+1. **Verify live `--ai`** the moment an LLM path frees (clean-account Gemini key via the 3 `MAPFORGE_AI_*` env vars, OR OpenRouter replenish) — run `--ai` on the SLC fixture, confirm `copy: ai` + no fallback.
+2. **Wire the dashboard to live data** if/when ready: apply `0001_init.sql` (human-gated), set `MAPFORGE_SUPABASE_*`, run `npm run dashboard` locally to confirm the Supabase reader, then optionally re-deploy a live-backed dashboard.
+3. **Next LLM-independent slice** otherwise: Astro/AstroWind richer generator, OR A/B traffic-split + conversion tracking (Worker + DB).
 
 ## Verification commands (to confirm current state on resume)
 ```bash
-# Git: clean tree on feat/capcut-replica-v2 @ 2ee56a7
-git -C "c:/Users/Mi/Downloads/ziflow project-final" log --oneline -4
-# → 2ee56a7 (reel-state), f0011ee (ui), b592d23 (content-forge), 051279f
+# Live MapForge pages (expect 200):
+curl -s -o /dev/null -w "%{http_code}\n" https://www.footagebrain.com/mapforge/dashboard.html
+curl -s -o /dev/null -w "%{http_code}\n" https://www.footagebrain.com/mapforge/index.html
 
-# Content Forge backend live + gated (expect 401)
-curl -s -o /dev/null -w "%{http_code}\n" "https://api.footagebrain.com/api/content-forge/health"
-# With the secret → JSON {"ok":true,"secret_set":true,"supabase_configured":true,"openrouter_set":true,...}
-curl -s "https://api.footagebrain.com/api/content-forge/health?secret=841342afbe2f531dbfd82f3c67e7f720f29549a5198c8273a60b95d52943d225"
+# MapForge repo state (no remote; expect 1d2509c HEAD):
+cd 'C:/Users/Mi/Downloads/mapforge' && git log --oneline -3 && npm run build && npm test   # 56 tests (15 dashboard + 31 orch + 10 worker)
 
-# Live site (expect 200)
-curl -s -o /dev/null -w "%{http_code}\n" "https://www.footagebrain.com"
+# Regenerate + redeploy the static bundle after data/template changes:
+node scripts/build-static.mjs --out "C:/Users/Mi/Downloads/ziflow project-final/public/mapforge"
 ```

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-26T16:57:12.022Z",
+  "generated": "2026-06-27T10:12:48.368Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -408,6 +408,10 @@
     {
       "version": "0103_reels_creative_brief.sql",
       "checksum": "c8d94bc8e03ad12fd3f6aef4ab722d883b609be52a4de697a0b2966f86fa8eff"
+    },
+    {
+      "version": "0104_content_opps_vet_state.sql",
+      "checksum": "4a90a1bebf90ae30754e5a40f4c64dea6dbbf40e7990bb0c38611731e2a9553d"
     }
   ]
 }

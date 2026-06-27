@@ -84,6 +84,7 @@ import { ROLES } from "../lib/shared-data.jsx";
 // helpers (column + facet) now live inside ReelDnaComprehensive. RD_COLUMNS +
 // makeColVisibility drive the per-column hide/show (Feature A).
 import { RD_SELECT_COLUMNS, RD_TEXT_COLUMNS, RD_COLUMNS, makeColVisibility } from "../lib/reel-dna-filters.jsx";
+import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 
 /* The text-column filter keys (location, music, font, sfx, story, notes, reel) —
    used by DnaTable's FILTER-ON-HIDDEN auto-clear to reset a per-column text
@@ -1046,7 +1047,14 @@ export function ReelDna({ prefill }) {
     actions.createReelDnaCapture({ ...payload, capturedBy: me?.id || null });
 
   const onView = (item) => setActive({ id: item.id, mode: "view" });
-  const onDeconstruct = (item) => setActive({ id: item.id, mode: "deconstruct" });
+  const onDeconstruct = (item) => {
+    if (isBlockedSync("reel_deconstruct")) {
+      setNotice({ tone: "err", text: "Reel DNA Analyze is disabled — enable it in Monitor → Free LLM Gates." });
+      return;
+    }
+    recordUsage("reel_deconstruct");
+    setActive({ id: item.id, mode: "deconstruct" });
+  };
   const closeOverlay = () => setActive(null);
 
   // Refresh: force the Hetzner IG poller to run now, then reload from Supabase.

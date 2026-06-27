@@ -29,6 +29,7 @@ import { PulseEntryModal } from "../components/pulse-entry-modal.jsx";
 import { PulseSources } from "../components/pulse-sources.jsx";
 import { PulseWorld } from "../components/pulse-world.jsx";
 import { PulseEventLink } from "../components/pulse-event-link.jsx";
+import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 
 /* Default filter state. `section` and `status` use 'all' as the
    "no filter" sentinel; `platform` and `severity` use null. */
@@ -189,6 +190,12 @@ export function Pulse() {
   /* ── Refresh now: run the news-monitor ingest on demand ──── */
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
+    if (isBlockedSync("news_ingest")) {
+      setToast("News ingest is disabled — enable it in Monitor → Free LLM Gates.");
+      setTimeout(() => setToast(""), 6000);
+      return;
+    }
+    recordUsage("news_ingest");
     setRefreshing(true);
     setToast("");
     try {

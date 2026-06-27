@@ -97,7 +97,7 @@ export function CreateFab() {
 
   return (
     <React.Fragment>
-      <div className="fab-wrap">
+      <div className="fab-wrap" style={{ right: 72, bottom: 20 }}>
         {/* Bot chat widget — shown above FAB when active */}
         {flow === "bot" && <BotChat onClose={close} />}
 
@@ -132,9 +132,10 @@ export function CreateFab() {
 
         <button
           className={"fab " + (open || flow === "bot" ? "is-open" : "")}
+          style={{ width: 38, height: 38 }}
           onClick={() => { if (flow === "bot") { close(); } else { setOpen(o => !o); } }}
         >
-          <span className="plus">{(open || flow === "bot") ? "×" : "+"}</span>
+          <span className="plus" style={{ fontSize: 18 }}>{(open || flow === "bot") ? "×" : "+"}</span>
         </button>
       </div>
 

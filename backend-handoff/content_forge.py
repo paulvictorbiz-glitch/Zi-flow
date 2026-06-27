@@ -32,11 +32,18 @@ v1 lean core of the flagship "Content Forge" pipeline:
      degrades gracefully on 429/quota. Writes hook_versions JSONB back onto the row.
 
 PROVIDER SEAM (the important bit): `_forge_llm(messages, *, tier, kind)` is the ONLY place
-the LLM provider is chosen. `tier="free"` (default) reuses the existing FREE OpenRouter
-Gemini client/key (OPENROUTER_API_KEY) — same idiom as reel_deconstruct.run_narrative().
-`tier="pro"` uses the `anthropic` SDK: claude-haiku-4-5 for kind=="discovery",
-claude-sonnet-4-6 for kind=="expansion" (ANTHROPIC_API_KEY). If "pro" is requested but
-ANTHROPIC_API_KEY is missing, it FALLS BACK to free and records that in the result.
+the LLM provider is chosen. It walks an ESCALATING LADDER (cheapest-first); each rung is
+skipped when its env keys are absent, and a RuntimeError at any rung escalates to the next:
+    1. Gemini API (AI Studio) — GEMINI_API_KEY, free tier ~1500/day (OpenAI-compatible).
+    2. Vertex AI Gemini       — GCP_PROJECT_ID + GCP_SA_JSON, bills the $300 GCP credit.
+    3. Anthropic direct (opt) — ANTHROPIC_API_KEY; claude-haiku-4-5 (discovery) /
+                                claude-sonnet-4-6 (expansion).
+    4. OpenRouter free chain  — OPENROUTER_API_KEY, the existing safety net.
+`kind` ∈ {discovery, expansion} still selects the Anthropic model. `tier` is retained for
+call-site compat but no longer gates free-vs-pro. The result meta carries the provider/model
+actually used plus fell_back (True once an earlier rung errored). NOTE: Claude-on-Vertex is
+intentionally NOT wired — GCP promo credits exclude Marketplace purchases, so it would bill a
+real card; a future session can add a `_rung_vertex_claude` above the OpenRouter rung.
 
 SECRET GATE: every endpoint compares a ?secret= query param to CONTENT_FORGE_SECRET and
 returns 401 on missing/mismatch — mirrors ig_webhook's IG_SYNC_SECRET gate, so a curl
@@ -48,17 +55,23 @@ All secrets are read from environment variables — NOTHING is hardcoded:
     CONTENT_FORGE_SECRET           Shared secret gating every endpoint (?secret=…)
     SUPABASE_URL                   Supabase project URL
     SUPABASE_SERVICE_ROLE_KEY      Service role key (server-side only)
-    OPENROUTER_API_KEY             FREE-tier OpenRouter key (default "free" provider)
-    ANTHROPIC_API_KEY              Claude key for the "pro" tier (optional → free fallback)
+    GEMINI_API_KEY                 Ladder rung 1 — AI Studio Gemini key (free tier)
+    GCP_PROJECT_ID                 Ladder rung 2 — GCP project for Vertex (e.g. footage-brain-database)
+    GCP_SA_JSON                    Ladder rung 2 — full service-account JSON (one line) for Vertex auth
+    GCP_REGION                     (optional) Vertex region (default us-central1)
+    OPENROUTER_API_KEY             Ladder rung 4 — FREE-tier OpenRouter key (safety net)
+    ANTHROPIC_API_KEY              Ladder rung 3 — Claude key (optional)
     TAVILY_API_KEY                 (optional) Tavily grounding for expansion; absent → skip
     CONTENT_FORGE_TRANSCRIPT_DIR   (optional) base dir for disk-file transcript ingest;
                                    UNSET → the disk branch is a no-op (Supabase-only)
-    CONTENT_FORGE_MODEL_FREE       (optional) override the OpenRouter model id (free tier)
-    CONTENT_FORGE_MODEL_DISCOVERY  (optional) override the pro discovery model (Haiku)
-    CONTENT_FORGE_MODEL_EXPANSION  (optional) override the pro expansion model (Sonnet)
+    CONTENT_FORGE_MODEL_GEMINI         (optional) override the Gemini API model (rung 1)
+    CONTENT_FORGE_MODEL_VERTEX_GEMINI  (optional) override the Vertex Gemini model (rung 2)
+    CONTENT_FORGE_MODEL_FREE       (optional) override the OpenRouter model id (free chain)
+    CONTENT_FORGE_MODEL_DISCOVERY  (optional) override the Anthropic discovery model (Haiku)
+    CONTENT_FORGE_MODEL_EXPANSION  (optional) override the Anthropic expansion model (Sonnet)
 
-`httpx` and `anthropic` are the only external deps used here — both in
-requirements-hosting.txt (anthropic added alongside this file).
+`httpx`, `anthropic`, and `google-auth` are the only external deps used here — all in
+requirements-hosting.txt (anthropic + google-auth already present).
 """
 
 from __future__ import annotations
@@ -104,6 +117,22 @@ DEFAULT_FREE_MODELS = [
     "nousresearch/hermes-3-llama-3.1-405b:free",   # Nous
 ]
 DEFAULT_FREE_MODEL = DEFAULT_FREE_MODELS[0]   # primary (shown in /health)
+
+# ── Gemini API (AI Studio) — OpenAI-compat, free tier ~1500 req/day ─────────────────
+# Default ladder rung 1. Runs on AI Studio's FREE tier (the $300 GCP credit does NOT
+# apply to the Gemini API — Google excludes it — but the free quota is ~30x OpenRouter's,
+# which is the whole reason this rung exists). Same OpenAI-compatible request shape as
+# OpenRouter, so _call_gemini_api reuses that idiom. CONTENT_FORGE_MODEL_GEMINI overrides.
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+
+# ── Vertex AI (Gemini) — GCP-$300-credit-backed ─────────────────────────────────────
+# Ladder rung 2. Bills the owner's $300 GCP credit directly (Vertex is a native Google
+# product, credit-eligible — unlike the Gemini API and unlike Marketplace/Claude). Uses a
+# service-account Bearer token (GCP_SA_JSON). CONTENT_FORGE_MODEL_VERTEX_GEMINI overrides.
+# (Claude-on-Vertex is intentionally NOT wired this session — promo credit excludes
+# Marketplace purchases, so it would bill a real card. Deferred.)
+DEFAULT_VERTEX_GEMINI_MODEL = "google/gemini-2.0-flash-001"
 
 # ── PRO provider (Anthropic) — model ids per kind ───────────────────────────────────
 # Haiku 4.5 for cheap/fast batched discovery; Sonnet 4.6 for higher-quality hook writing.
@@ -154,6 +183,26 @@ def _transcript_dir() -> str | None:
     unconfirmed (see the v1 plan's open decision)."""
     p = (os.environ.get("CONTENT_FORGE_TRANSCRIPT_DIR") or "").strip()
     return p if (p and os.path.isdir(p)) else None
+
+
+def _gemini_key() -> str | None:
+    """AI Studio Gemini API key (ladder rung 1, free tier). Absent → rung skipped."""
+    return os.environ.get("GEMINI_API_KEY")
+
+
+def _gcp_project() -> str | None:
+    """GCP project id for the Vertex rung (e.g. footage-brain-database)."""
+    return os.environ.get("GCP_PROJECT_ID")
+
+
+def _gcp_region() -> str:
+    """Vertex region (defaults to us-central1 where Gemini models are served)."""
+    return os.environ.get("GCP_REGION", "us-central1")
+
+
+def _gcp_sa_json() -> str | None:
+    """Full service-account JSON (one line) for Vertex auth. Absent → Vertex rung skipped."""
+    return os.environ.get("GCP_SA_JSON")
 
 
 def _free_models() -> list[str]:
@@ -577,40 +626,148 @@ _SYSTEM_BY_KIND = {
 }
 
 
+# ── Vertex auth — service-account access token (cached) ───────────────────────────────
+# Vertex calls need a short-lived OAuth Bearer token minted from the service-account JSON.
+# Tokens last ~1h; we cache for 45m to avoid refreshing on every LLM call. Module-level
+# cache is fine — the box runs single-process per worker and the token is read-only.
+_vertex_token_cache: dict[str, Any] = {"token": None, "valid_until": 0.0}
+
+
+def _get_vertex_token() -> str | None:
+    """Return a cached/refreshed GCP access token from GCP_SA_JSON, or None if the SA JSON
+    is absent/invalid (Vertex rung then skips). Never raises — a refresh failure logs a
+    warning and returns None so the ladder escalates to the next rung."""
+    import time
+    if _vertex_token_cache["token"] and time.time() < _vertex_token_cache["valid_until"]:
+        return _vertex_token_cache["token"]
+    sa_json = _gcp_sa_json()
+    if not sa_json:
+        return None
+    try:
+        from google.oauth2 import service_account            # type: ignore
+        import google.auth.transport.requests as _gr         # type: ignore
+        creds = service_account.Credentials.from_service_account_info(
+            json.loads(sa_json),
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+        creds.refresh(_gr.Request())
+        _vertex_token_cache["token"] = creds.token
+        _vertex_token_cache["valid_until"] = time.time() + 2700  # 45 min
+        return creds.token
+    except Exception as e:  # noqa: BLE001 — bad JSON / network / missing dep → skip rung
+        log.warning("content_forge: Vertex SA token refresh failed: %s", e)
+        _vertex_token_cache["token"] = None
+        return None
+
+
+def _call_gemini_api(messages: list[dict[str, str]], *,
+                     model: str = DEFAULT_GEMINI_MODEL) -> tuple[str, str]:
+    """Ladder rung 1 — Gemini API (AI Studio) free tier, OpenAI-compatible. Same request
+    shape as _call_openrouter; single model (the free quota is per-project, not per-model,
+    so a model fallback chain buys nothing here). Returns (text, model_used). Raises
+    RuntimeError on any non-200 so the ladder escalates (429/5xx == rate/temp; 4xx == key)."""
+    key = _gemini_key()
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY unset")
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    payload = {"model": model, "messages": messages, "temperature": 0.4, "max_tokens": 2400}
+    with httpx.Client(timeout=LLM_TIMEOUT) as client:
+        r = client.post(f"{GEMINI_API_BASE}/chat/completions", headers=headers, json=payload)
+    if r.status_code == 200:
+        try:
+            return (r.json()["choices"][0]["message"]["content"] or ""), model
+        except Exception as e:  # noqa: BLE001 — odd body → escalate
+            raise RuntimeError(f"Gemini API malformed response: {e}")
+    raise RuntimeError(f"Gemini API HTTP {r.status_code}: {r.text[:300]}")
+
+
+def _call_vertex_gemini(messages: list[dict[str, str]], *,
+                        model: str = DEFAULT_VERTEX_GEMINI_MODEL) -> tuple[str, str]:
+    """Ladder rung 2 — Vertex AI Gemini (bills the $300 GCP credit), OpenAI-compatible
+    endpoint authed with the cached SA Bearer token. Returns (text, model_used). Raises
+    RuntimeError on missing token / non-200 so the ladder escalates."""
+    project, region = _gcp_project(), _gcp_region()
+    token = _get_vertex_token()
+    if not token:
+        raise RuntimeError("Vertex SA token unavailable (GCP_SA_JSON missing/invalid)")
+    url = (f"https://{region}-aiplatform.googleapis.com/v1/projects/{project}"
+           f"/locations/{region}/endpoints/openapi/chat/completions")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"model": model, "messages": messages, "temperature": 0.4, "max_tokens": 2400}
+    with httpx.Client(timeout=LLM_TIMEOUT) as client:
+        r = client.post(url, headers=headers, json=payload)
+    if r.status_code == 200:
+        try:
+            return (r.json()["choices"][0]["message"]["content"] or ""), model
+        except Exception as e:  # noqa: BLE001 — odd body → escalate
+            raise RuntimeError(f"Vertex Gemini malformed response: {e}")
+    raise RuntimeError(f"Vertex Gemini HTTP {r.status_code}: {r.text[:300]}")
+
+
 def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
                kind: str = "discovery") -> tuple[str, dict[str, Any]]:
     """PROVIDER SEAM — the ONLY place the Content Forge LLM provider is selected.
 
-    `messages` is a chat-style [{role, content}] list (system + user). `tier` ∈ {free,pro}
-    (default free). `kind` ∈ {discovery, expansion} selects the pro model.
+    Escalating ladder (cheapest-first; each rung skipped when its keys are absent, a
+    RuntimeError at any rung escalates to the next):
+        1. Gemini API (AI Studio, free ~1500/day)   — GEMINI_API_KEY
+        2. Vertex AI Gemini ($300 GCP credit)        — GCP_PROJECT_ID + GCP_SA_JSON
+        3. Anthropic direct (optional pro)           — ANTHROPIC_API_KEY
+        4. OpenRouter free chain (existing safety net) — OPENROUTER_API_KEY
+    (Claude-on-Vertex is intentionally NOT wired — the promo credit excludes Marketplace
+    purchases, so it would bill a real card. A future session can add a `_rung_vertex_claude`
+    above the OpenRouter rung.)
 
-      tier="free" → OpenRouter Gemini (OPENROUTER_API_KEY) over httpx.
-      tier="pro"  → Anthropic SDK: claude-haiku-4-5 (discovery) / claude-sonnet-4-6
-                    (expansion), via ANTHROPIC_API_KEY. Missing key → fall back to free.
+    `messages` is a chat-style [{role, content}] list. `kind` ∈ {discovery, expansion}
+    still selects the Anthropic model. `tier` is retained for call-site backward-compat but
+    no longer gates free-vs-pro — the ladder auto-escalates. Returns (text, meta) where meta
+    carries provider/model/tier_used + fell_back (True once any earlier rung errored).
+    Raises RuntimeError only when EVERY configured rung is exhausted."""
 
-    Returns (text, meta). Raises RuntimeError only when even the free path is unusable
-    (no OPENROUTER_API_KEY), so callers always get a meaningful provider error."""
-    tier = (tier or "free").strip().lower()
-    if tier not in ("free", "pro"):
-        tier = "free"
+    def _rung_gemini_api():
+        if not _gemini_key():
+            return None
+        model = (os.environ.get("CONTENT_FORGE_MODEL_GEMINI") or "").strip() or DEFAULT_GEMINI_MODEL
+        text, used = _call_gemini_api(messages, model=model)
+        return text, {"provider": "gemini_api", "model": used, "tier_used": "gemini"}
 
-    fell_back = False
-    if tier == "pro" and not _anthropic_key():
-        # Pro requested but no Claude key configured → degrade to free, note it.
-        log.info("content_forge: pro tier requested but ANTHROPIC_API_KEY unset — using free")
-        tier = "free"
-        fell_back = True
+    def _rung_vertex_gemini():
+        if not (_gcp_project() and _gcp_sa_json()):
+            return None
+        model = (os.environ.get("CONTENT_FORGE_MODEL_VERTEX_GEMINI") or "").strip() \
+            or DEFAULT_VERTEX_GEMINI_MODEL
+        text, used = _call_vertex_gemini(messages, model=model)
+        return text, {"provider": "vertex_gemini", "model": used, "tier_used": "vertex"}
 
-    if tier == "pro":
+    def _rung_anthropic():
+        if not _anthropic_key():
+            return None
         model = _discovery_model() if kind == "discovery" else _expansion_model()
         text = _call_anthropic(messages, model=model)
-        return text, {"provider": "anthropic", "model": model,
-                      "tier_used": "pro", "fell_back": False}
+        return text, {"provider": "anthropic", "model": model, "tier_used": "pro"}
 
-    # FREE provider (OpenRouter) — try the fallback chain (429/404-resilient).
-    text, used_model = _call_openrouter(messages, models=_free_models())
-    return text, {"provider": "openrouter", "model": used_model,
-                  "tier_used": "free", "fell_back": fell_back}
+    def _rung_openrouter():
+        text, used = _call_openrouter(messages, models=_free_models())
+        return text, {"provider": "openrouter", "model": used, "tier_used": "free"}
+
+    rungs = [_rung_gemini_api, _rung_vertex_gemini, _rung_anthropic, _rung_openrouter]
+
+    fell_back = False
+    last_err = "no provider configured"
+    for rung in rungs:
+        try:
+            result = rung()
+        except RuntimeError as e:
+            last_err = str(e)
+            log.info("content_forge: provider rung failed (%s) — escalating", last_err)
+            fell_back = True
+            continue
+        if result is None:
+            continue  # provider not configured → skip silently
+        text, meta = result
+        meta["fell_back"] = fell_back
+        return text, meta
+    raise RuntimeError(f"all providers exhausted; last: {last_err}")
 
 
 def _call_openrouter(messages: list[dict[str, str]], *, models: list[str] | str) -> tuple[str, str]:
@@ -1091,11 +1248,17 @@ async def health(request: Request):
         "ok": True,
         "secret_set": bool(_secret()),
         "supabase_configured": bool(_supabase_url()) and bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
-        "openrouter_set": bool(_openrouter_key()),       # free tier
-        "anthropic_set": bool(_anthropic_key()),         # pro tier
+        "openrouter_set": bool(_openrouter_key()),       # free tier (safety-net rung)
+        "gemini_api_set": bool(_gemini_key()),           # ladder rung 1 (AI Studio free)
+        "vertex_configured": bool(_gcp_project() and _gcp_sa_json()),  # ladder rung 2 ($300 credit)
+        "gcp_project": _gcp_project() or "",
+        "gcp_region": _gcp_region(),
+        "anthropic_set": bool(_anthropic_key()),         # optional pro rung
         "tavily_set": bool(_tavily_key()),               # optional grounding
         "transcript_dir_set": bool(_transcript_dir()),   # optional disk ingest
         "free_model": _free_model(),
+        "gemini_model": (os.environ.get("CONTENT_FORGE_MODEL_GEMINI") or "").strip() or DEFAULT_GEMINI_MODEL,
+        "vertex_gemini_model": (os.environ.get("CONTENT_FORGE_MODEL_VERTEX_GEMINI") or "").strip() or DEFAULT_VERTEX_GEMINI_MODEL,
         "discovery_model": _discovery_model(),
         "expansion_model": _expansion_model(),
     }, status_code=200)

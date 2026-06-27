@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#04070c;overflow:hidden;font-family:'Share Tech Mono',monospace;}
+@keyframes hudpulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes hudspin{to{transform:rotate(360deg)}}
+@keyframes hudflick{0%,100%{opacity:.45}50%{opacity:.85}}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:rgba(10,18,28,.4)}
+::-webkit-scrollbar-thumb{background:rgba(110,160,210,.32);border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:rgba(110,160,210,.55)}
+</style>
+</helmet>
+<div ref="{{ setRoot }}" style="position:fixed;inset:0;background:radial-gradient(ellipse 70% 55% at 50% 42%,#0a131f 0%,#060b13 55%,#03060a 100%);overflow:hidden;perspective:1700px;perspective-origin:50% 47%;touch-action:none;">
+
+  <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(80,130,180,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(80,130,180,.045) 1px,transparent 1px);background-size:46px 46px;mask-image:radial-gradient(ellipse 75% 65% at 50% 45%,#000 30%,transparent 80%);pointer-events:none;"></div>
+  <div style="position:absolute;top:0;left:50%;width:2px;height:140px;transform:translateX(-50%);background:linear-gradient(180deg,rgba(255,150,60,.7),transparent);pointer-events:none;"></div>
+
+  <div data-screen-label="3D HUD" ref="{{ setStage }}" style="position:absolute;left:50%;top:50%;width:1760px;height:1000px;transform:translate(-50%,-50%);transform-origin:center center;transform-style:preserve-3d;will-change:transform;transition:filter .35s ease;">
+
+    <div ref="{{ setWorld }}" style="position:absolute;inset:0;transform-style:preserve-3d;transform-origin:880px 412px;will-change:transform;">
+    <!-- ===== PEDESTAL RINGS (behind globe/core) ===== -->
+    <div style="position:absolute;left:620px;top:582px;width:520px;height:280px;pointer-events:none;z-index:0;">
+      <div style="position:absolute;left:50%;top:50%;width:480px;height:480px;border:1px solid rgba(92,201,255,.22);border-radius:50%;transform:translate(-50%,-50%) scaleY(.32);box-shadow:0 0 34px rgba(92,201,255,.13);"></div>
+      <div style="position:absolute;left:50%;top:50%;width:330px;height:330px;border:1px solid rgba(255,154,77,.28);border-radius:50%;transform:translate(-50%,-50%) scaleY(.32);box-shadow:0 0 24px rgba(255,140,60,.12);"></div>
+      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scaleY(.32);"><div style="width:410px;height:410px;border:1px dashed rgba(255,154,77,.42);border-radius:50%;animation:hudspin 30s linear infinite;"></div></div>
+      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scaleY(.32);"><div style="width:250px;height:250px;border:1px dashed rgba(92,201,255,.5);border-radius:50%;animation:hudspin 18s linear infinite reverse;"></div></div>
+    </div>
+
+    <!-- ===== GLOBE ===== -->
+    <div ref="{{ setBill }}" style="position:absolute;inset:0;transform-style:preserve-3d;transform-origin:880px 412px;pointer-events:none;">
+      <div style="position:absolute;left:700px;top:232px;width:360px;height:360px;border-radius:50%;background:radial-gradient(circle at 46% 40%,rgba(60,150,230,.18),rgba(255,140,50,.16) 50%,transparent 72%);filter:blur(8px);pointer-events:none;"></div>
+      <canvas ref="{{ setGlobe }}" style="position:absolute;left:700px;top:232px;width:360px;height:360px;pointer-events:auto;cursor:grab;touch-action:none;"></canvas>
+    </div>
+
+    <!-- ================= FRONT FACE — MONITOR DATA ================= -->
+    <div ref="{{ setFront }}" style="position:absolute;inset:0;transform-style:preserve-3d;transform:translateZ(150px);transition:opacity .25s ease;">
+    <!-- ============ FAR LEFT COLUMN ============ -->
+    <!-- SERVER / HOST -->
+    <div data-card style="position:absolute;left:20px;top:20px;width:292px;height:520px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-86px) translateZ(76px) rotateY(44deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(92,201,255,.18);border-color:rgba(120,200,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(95,224,168,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;animation:hudpulse 2.4s infinite;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#bfe6d6;">SERVER / HOST</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#5fe0a8;border:1px solid rgba(95,224,168,.4);padding:1px 5px;border-radius:2px;">RUNNING</span></div>
+      <div style="font:9px 'Share Tech Mono';color:#6f88a4;letter-spacing:.1em;margin-bottom:3px;">PROVIDER · HETZNER</div>
+      <div style="font:12px 'Share Tech Mono';color:#e8f1ff;margin-bottom:9px;">ubuntu-4gb-fsn1-1 · cx33</div>
+      <div style="font:8px 'Share Tech Mono';color:#5f7790;letter-spacing:.12em;margin-bottom:2px;">CPU % · 7-DAY</div>
+      <svg viewBox="0 0 240 34" style="width:100%;height:30px;display:block;margin-bottom:8px;"><polyline fill="none" stroke="#5fe0a8" stroke-width="1.3" points="0,28 14,24 28,26 42,12 56,22 70,9 84,18 98,14 112,6 126,20 140,11 154,16 168,8 182,19 196,13 210,7 224,17 240,12"/></svg>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;font:11px 'Share Tech Mono';margin-bottom:11px;">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;"><span>Location</span><span style="color:#e8f1ff;">fsn1</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;"><span>Cores</span><span style="color:#e8f1ff;">4</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;"><span>RAM</span><span style="color:#e8f1ff;">8 GB</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;"><span>Disk</span><span style="color:#e8f1ff;">80 GB</span></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px;">
+        <svg viewBox="0 0 64 64" style="width:58px;height:58px;flex:0 0 auto;"><circle cx="32" cy="32" r="25" fill="none" stroke="rgba(120,160,200,.15)" stroke-width="6"/><circle cx="32" cy="32" r="25" fill="none" stroke="#5fe0a8" stroke-width="6" stroke-linecap="round" stroke-dasharray="86 157" transform="rotate(-90 32 32)"/><text x="32" y="30" text-anchor="middle" fill="#e8f1ff" font-size="13" font-family="Share Tech Mono">2.5</text><text x="32" y="42" text-anchor="middle" fill="#6f88a4" font-size="6" font-family="Share Tech Mono">GB MEM</text></svg>
+        <div style="flex:1;font:10px 'Share Tech Mono';">
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="color:#5fe0a8;">●</span><span style="flex:1;margin-left:6px;">rocketchat</span><span style="color:#e8f1ff;">1.42 GB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="color:#5cc9ff;">●</span><span style="flex:1;margin-left:6px;">mongodb</span><span style="color:#e8f1ff;">502 MB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="color:#ff9a4d;">●</span><span style="flex:1;margin-left:6px;">opencut-ai</span><span style="color:#e8f1ff;">157 MB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="color:#c98bff;">●</span><span style="flex:1;margin-left:6px;">backend</span><span style="color:#e8f1ff;">92 MB</span></div>
+        </div>
+      </div>
+      <div data-more style="display:none;">
+        <div style="font:8px 'Share Tech Mono';color:#5f7790;letter-spacing:.12em;margin:6px 0 5px;border-top:1px solid rgba(120,160,200,.1);padding-top:8px;">MEMORY BY CONTAINER · CONT'D</div>
+        <div style="font:10px 'Share Tech Mono';">
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="flex:1;">scout</span><span style="color:#e8f1ff;">65 MB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="flex:1;">qdrant</span><span style="color:#e8f1ff;">61 MB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="flex:1;">postgres</span><span style="color:#e8f1ff;">41 MB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="flex:1;">caddy</span><span style="color:#e8f1ff;">30 MB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="flex:1;">mailsink · frontend</span><span style="color:#e8f1ff;">26 MB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="flex:1;">OS / other</span><span style="color:#e8f1ff;">5.02 GB</span></div>
+        </div>
+        <div style="font:8px 'Share Tech Mono';color:#5f7790;letter-spacing:.12em;margin:10px 0 5px;">DISK BY CATEGORY · 48.4 GB</div>
+        <div style="font:10px 'Share Tech Mono';">
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="color:#5cc9ff;">●</span><span style="flex:1;margin-left:6px;">Containers</span><span style="color:#e8f1ff;">39.60 GB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="color:#ff9a4d;">●</span><span style="flex:1;margin-left:6px;">App data</span><span style="color:#e8f1ff;">3.29 GB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="color:#5fe0a8;">●</span><span style="flex:1;margin-left:6px;">Swapfile</span><span style="color:#e8f1ff;">2.15 GB</span></div>
+          <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:1px 0;"><span style="color:#c98bff;">●</span><span style="flex:1;margin-left:6px;">System / Docker</span><span style="color:#e8f1ff;">2.55 GB</span></div>
+        </div>
+      </div>
+      <div style="margin-top:4px;">
+        <div style="display:flex;justify-content:space-between;font:9px 'Share Tech Mono';color:#8ea6c2;margin-bottom:2px;"><span>Memory</span><span style="color:#e8f1ff;">36%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:6px;"><div style="width:36%;height:100%;background:linear-gradient(90deg,#5fe0a8,#5cc9ff);"></div></div>
+        <div style="display:flex;justify-content:space-between;font:9px 'Share Tech Mono';color:#8ea6c2;margin-bottom:2px;"><span>Swap</span><span style="color:#ff9a4d;">61%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:6px;"><div style="width:61%;height:100%;background:linear-gradient(90deg,#ff9a4d,#ff6b3d);"></div></div>
+        <div style="display:flex;justify-content:space-between;font:9px 'Share Tech Mono';color:#8ea6c2;margin-bottom:2px;"><span>Disk (/)</span><span style="color:#ff9a4d;">60%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;"><div style="width:60%;height:100%;background:linear-gradient(90deg,#ff9a4d,#ff6b3d);"></div></div>
+      </div>
+    </div>
+
+    <!-- SOCIAL ACCOUNTS -->
+    <div data-card style="position:absolute;left:20px;top:552px;width:292px;height:200px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-86px) translateZ(76px) rotateY(44deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(92,201,255,.18);border-color:rgba(120,200,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(92,201,255,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#bcd6f2;">SOCIAL · TOKEN HEALTH</span></div>
+      <div style="font:11px 'Share Tech Mono';">
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.08);"><span style="color:#5cc9ff;">▣</span><span style="flex:1;color:#cfe0f2;">Facebook</span><span style="color:#5fe0a8;">● connected</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.08);"><span style="color:#e07ab8;">▣</span><span style="flex:1;color:#cfe0f2;">Instagram</span><span style="color:#5fe0a8;">● connected</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.08);"><span style="color:#ff5a5a;">▣</span><span style="flex:1;color:#cfe0f2;">YouTube</span><span style="color:#ff7a4d;">● expired 8d</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;"><span style="color:#9fb4cc;">▣</span><span style="flex:1;color:#cfe0f2;">TikTok</span><span style="color:#7e93ab;">○ disconnected</span></div>
+      </div>
+      <div data-more style="display:none;font:10px 'Share Tech Mono';color:#7e93ab;margin-top:9px;border-top:1px solid rgba(120,160,200,.1);padding-top:8px;">Last health check 11h ago · OAuth expiry monitored · YouTube @paulvictortravels token expired 2026-06-20 — reconnect required. TikTok never linked.</div>
+    </div>
+
+    <!-- API BUDGETS & LIMITS -->
+    <div data-card style="position:absolute;left:20px;top:766px;width:292px;height:218px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-86px) translateZ(76px) rotateY(44deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(255,154,77,.2);border-color:rgba(255,170,90,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,154,77,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#ff9a4d;box-shadow:0 0 9px #ff9a4d;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#ffd4ab;">API BUDGETS & LIMITS</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#ff9a4d;">72d LEFT</span></div>
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;"><span style="font:600 26px 'Chakra Petch';color:#ff9a4d;">$300</span><span style="font:10px 'Share Tech Mono';color:#8ea6c2;">GCP free-trial credit</span></div>
+      <div style="height:6px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:4px;"><div style="width:98%;height:100%;background:linear-gradient(90deg,#5fe0a8,#ff9a4d);"></div></div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-bottom:10px;">72 / 73 days · expires Sep 7 2026 · 1% window elapsed</div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.08);"><span style="color:#cfe0f2;">Gemini API</span><span style="color:#8ea6c2;">1,500 req/day</span></div>
+        <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.08);"><span style="color:#cfe0f2;">OpenRouter</span><span style="color:#8ea6c2;">50 req/day</span></div>
+        <div data-more style="display:none;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.08);"><span style="color:#cfe0f2;">Vertex AI</span><span style="color:#8ea6c2;">$300 credit</span></div>
+        <div data-more style="display:none;justify-content:space-between;padding:3px 0;"><span style="color:#cfe0f2;">Instagram Graph</span><span style="color:#8ea6c2;">200 calls/user/hr</span></div>
+      </div>
+    </div>
+
+    <!-- ============ INNER LEFT COLUMN ============ -->
+    <!-- SUPABASE -->
+    <div data-card style="position:absolute;left:326px;top:20px;width:250px;height:300px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-24px) translateZ(2px) rotateY(24deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(92,201,255,.18);border-color:rgba(120,200,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(95,224,168,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#bfe6d6;">SUPABASE</span></div>
+      <div style="font:10px 'Share Tech Mono';margin-bottom:9px;">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;margin-bottom:3px;"><span>Total rows · 335 / 50.0k</span><span style="color:#5fe0a8;">1%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:8px;"><div style="width:2%;height:100%;background:#5fe0a8;"></div></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;margin-bottom:3px;"><span>Database · 21.9 / 624 MB</span><span style="color:#5cc9ff;">4%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:8px;"><div style="width:4%;height:100%;background:#5cc9ff;"></div></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;margin-bottom:3px;"><span>File storage · 183 MB / 1.1 GB</span><span style="color:#ff9a4d;">17%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;"><div style="width:17%;height:100%;background:#ff9a4d;"></div></div>
+      </div>
+      <div style="font:8px 'Share Tech Mono';color:#5f7790;letter-spacing:.12em;margin:6px 0 4px;">ROW COUNTS BY TABLE</div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>attached_footage_items</span><span style="color:#e8f1ff;">131</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>reels</span><span style="color:#e8f1ff;">89</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>resource_cells</span><span style="color:#e8f1ff;">56</span></div>
+        <div data-more style="display:none;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>daily_tasks</span><span style="color:#e8f1ff;">29</span></div>
+        <div data-more style="display:none;justify-content:space-between;color:#8ea6c2;padding:2px 0;"><span>resource_rows</span><span style="color:#e8f1ff;">22</span></div>
+      </div>
+      <div style="margin-top:10px;font:10px 'Share Tech Mono';color:#c98bff;border:1px solid rgba(201,139,255,.4);border-radius:3px;padding:6px;text-align:center;">Check migrations</div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-top:7px;">Monthly active users (30d) · <span style="color:#e8f1ff;">6</span></div>
+    </div>
+
+    <!-- STORAGE BREAKDOWN -->
+    <div data-card style="position:absolute;left:326px;top:332px;width:250px;height:250px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-24px) translateZ(2px) rotateY(24deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(92,201,255,.18);border-color:rgba(120,200,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(95,224,168,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#bfe6d6;">STORAGE BREAKDOWN</span></div>
+      <div style="display:flex;justify-content:space-between;font:11px 'Share Tech Mono';color:#8ea6c2;margin-bottom:9px;"><span>total tracked</span><span style="color:#e8f1ff;">397 MB</span></div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;margin-bottom:2px;"><span>RC video attachments</span><span style="color:#5cc9ff;">217 MB · 55%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:8px;"><div style="width:55%;height:100%;background:#5cc9ff;"></div></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;margin-bottom:2px;"><span>Supabase reel-videos</span><span style="color:#5fe0a8;">176 MB · 44%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:8px;"><div style="width:44%;height:100%;background:#5fe0a8;"></div></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;margin-bottom:2px;"><span>RC other uploads</span><span style="color:#ff9a4d;">5.0 MB · 1%</span></div>
+        <div style="height:5px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:8px;"><div style="width:3%;height:100%;background:#ff9a4d;"></div></div>
+        <div data-more style="display:none;justify-content:space-between;color:#8ea6c2;margin-bottom:8px;"><span>RC messages · 179 msg</span><span style="color:#7e93ab;">~0 MB · 0%</span></div>
+      </div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-top:4px;">27 clips · 21 files · 13 files · est. 1 KB/msg</div>
+    </div>
+
+    <!-- GOOGLE CLOUD -->
+    <div data-card style="position:absolute;left:326px;top:594px;width:250px;height:390px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-24px) translateZ(2px) rotateY(24deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(255,154,77,.2);border-color:rgba(255,170,90,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,154,77,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#ffd4ab;">GOOGLE CLOUD</span></div>
+      <div style="font:10px 'Share Tech Mono';color:#7e93ab;margin-bottom:10px;line-height:1.5;">No billing cost reported yet (free trial / under credit). Project · footage-brain-database</div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="margin-bottom:9px;"><div style="display:flex;justify-content:space-between;color:#cfe0f2;margin-bottom:2px;"><span>YouTube Data API</span><span style="color:#7e93ab;">0 / 10.0k · 0%</span></div><div style="height:4px;background:rgba(120,160,200,.15);border-radius:2px;"><div style="width:0%;height:100%;background:#ff9a4d;"></div></div></div>
+        <div style="margin-bottom:9px;"><div style="display:flex;justify-content:space-between;color:#cfe0f2;margin-bottom:2px;"><span>Maps JS API</span><span style="color:#7e93ab;">0 / 28.0k · 0%</span></div><div style="height:4px;background:rgba(120,160,200,.15);border-radius:2px;"><div style="width:0%;height:100%;background:#ff9a4d;"></div></div></div>
+        <div style="margin-bottom:9px;"><div style="display:flex;justify-content:space-between;color:#cfe0f2;margin-bottom:2px;"><span>Maps · peak/day</span><span style="color:#7e93ab;">0 / 30.0k · 0%</span></div><div style="height:4px;background:rgba(120,160,200,.15);border-radius:2px;"><div style="width:0%;height:100%;background:#ff9a4d;"></div></div></div>
+        <div data-more style="display:none;margin-bottom:9px;"><div style="display:flex;justify-content:space-between;color:#cfe0f2;margin-bottom:2px;"><span>Places · peak/day</span><span style="color:#7e93ab;">0 / 8.0k · 0%</span></div><div style="height:4px;background:rgba(120,160,200,.15);border-radius:2px;"><div style="width:0%;height:100%;background:#ff9a4d;"></div></div></div>
+        <div data-more style="display:none;margin-bottom:9px;"><div style="display:flex;justify-content:space-between;color:#cfe0f2;margin-bottom:2px;"><span>Geocoding · peak/day</span><span style="color:#7e93ab;">0 / 3.0k · 0%</span></div><div style="height:4px;background:rgba(120,160,200,.15);border-radius:2px;"><div style="width:0%;height:100%;background:#ff9a4d;"></div></div></div>
+      </div>
+      <div data-more style="display:none;font:10px 'Share Tech Mono';color:#7e93ab;margin-top:6px;border-top:1px solid rgba(120,160,200,.1);padding-top:8px;line-height:1.5;">$200/mo free credit ≈ 28k map loads/mo. Per-minute limits fixed by Google (not adjustable). YouTube · Maps · Cloud Billing.</div>
+    </div>
+
+    <!-- ============ CENTER TOP — NEWS MONITOR ============ -->
+    <div data-card style="position:absolute;left:640px;top:20px;width:480px;height:142px;z-index:6;box-sizing:border-box;padding:13px 16px;background:linear-gradient(158deg,rgba(14,22,34,.95),rgba(8,13,21,.96));border:1px solid rgba(110,170,220,.22);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 28px rgba(30,60,100,.3),0 0 22px rgba(40,90,150,.15);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:translateZ(200px) scale(1.03);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 30px rgba(92,201,255,.25);border-color:rgba(120,200,255,.6);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(92,201,255,.7),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:14px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><span style="width:8px;height:8px;border-radius:50%;background:#5cc9ff;box-shadow:0 0 11px #5cc9ff;animation:hudpulse 2.2s infinite;"></span><span style="font:600 13px 'Chakra Petch';letter-spacing:.18em;color:#d4ecff;">NEWS MONITOR</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#5fe0a8;">● 5/5 SOURCES LIVE</span></div>
+      <div style="display:flex;gap:20px;align-items:center;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 22px;font:11px 'Share Tech Mono';flex:0 0 auto;">
+          <div style="display:flex;justify-content:space-between;gap:14px;color:#8ea6c2;"><span>Active sources</span><span style="color:#5fe0a8;">5 / 5</span></div>
+          <div style="display:flex;justify-content:space-between;gap:14px;color:#8ea6c2;"><span>Articles stored</span><span style="color:#e8f1ff;">499</span></div>
+          <div style="display:flex;justify-content:space-between;gap:14px;color:#8ea6c2;"><span>Last ingest</span><span style="color:#e8f1ff;">18m ago</span></div>
+          <div style="display:flex;justify-content:space-between;gap:14px;color:#8ea6c2;"><span>Feeds erroring</span><span style="color:#5fe0a8;">0</span></div>
+        </div>
+        <svg viewBox="0 0 240 44" style="flex:1;height:44px;"><polyline fill="none" stroke="#5cc9ff" stroke-width="1.4" points="0,32 16,28 32,34 48,18 64,26 80,12 96,22 112,16 128,30 144,14 160,24 176,10 192,20 208,15 224,26 240,18"/><polyline fill="none" stroke="rgba(92,201,255,.18)" stroke-width="6" points="0,32 16,28 32,34 48,18 64,26 80,12 96,22 112,16 128,30 144,14 160,24 176,10 192,20 208,15 224,26 240,18"/></svg>
+      </div>
+      <div data-more style="display:none;font:10px 'Share Tech Mono';color:#7e93ab;margin-top:10px;border-top:1px solid rgba(120,160,200,.1);padding-top:8px;line-height:1.5;">Auto-ingested every 30 min · classified by free OpenRouter models (falls back to source defaults if throttled) · paller articles auto-prune after 60 days. Pulse feeds · auto-ingest health.</div>
+    </div>
+
+    <!-- ============ CENTER — PIPELINE STRIP ============ -->
+    <div style="position:absolute;left:600px;top:628px;width:560px;height:56px;z-index:5;display:flex;align-items:center;justify-content:space-between;padding:0 22px;">
+      <div style="position:absolute;left:42px;right:42px;top:16px;height:1px;background:linear-gradient(90deg,transparent,rgba(255,154,77,.45),rgba(92,201,255,.45),transparent);"></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:5px;z-index:1;"><span style="width:24px;height:24px;border-radius:50%;border:1px solid rgba(255,154,77,.6);background:#0a131f;display:flex;align-items:center;justify-content:center;font:10px 'Share Tech Mono';color:#ff9a4d;box-shadow:0 0 12px rgba(255,140,60,.3);">◎</span><span style="font:8px 'Chakra Petch';letter-spacing:.14em;color:#9fb4cc;">INGEST</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:5px;z-index:1;"><span style="width:24px;height:24px;border-radius:50%;border:1px solid rgba(255,154,77,.6);background:#0a131f;display:flex;align-items:center;justify-content:center;font:10px 'Share Tech Mono';color:#ff9a4d;box-shadow:0 0 12px rgba(255,140,60,.3);">⊹</span><span style="font:8px 'Chakra Petch';letter-spacing:.14em;color:#9fb4cc;">ANALYZE</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:5px;z-index:1;"><span style="width:24px;height:24px;border-radius:50%;border:1px solid rgba(92,201,255,.6);background:#0a131f;display:flex;align-items:center;justify-content:center;font:10px 'Share Tech Mono';color:#5cc9ff;box-shadow:0 0 12px rgba(60,150,230,.3);">✦</span><span style="font:8px 'Chakra Petch';letter-spacing:.14em;color:#9fb4cc;">GENERATE</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:5px;z-index:1;"><span style="width:24px;height:24px;border-radius:50%;border:1px solid rgba(92,201,255,.6);background:#0a131f;display:flex;align-items:center;justify-content:center;font:10px 'Share Tech Mono';color:#5cc9ff;box-shadow:0 0 12px rgba(60,150,230,.3);">⇡</span><span style="font:8px 'Chakra Petch';letter-spacing:.14em;color:#9fb4cc;">PUBLISH</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:5px;z-index:1;"><span style="width:24px;height:24px;border-radius:50%;border:1px solid rgba(95,224,168,.6);background:#0a131f;display:flex;align-items:center;justify-content:center;font:10px 'Share Tech Mono';color:#5fe0a8;box-shadow:0 0 12px rgba(60,210,150,.3);">◈</span><span style="font:8px 'Chakra Petch';letter-spacing:.14em;color:#9fb4cc;">MONITOR</span></div>
+    </div>
+
+    <!-- ============ CENTER CORE — FREE LLM GATES ============ -->
+    <div data-card style="position:absolute;left:720px;top:700px;width:320px;height:272px;z-index:6;transform:translateZ(-60px);box-sizing:border-box;padding:14px 16px;background:linear-gradient(158deg,rgba(15,23,35,.96),rgba(8,13,21,.97));border:1px solid rgba(255,154,77,.3);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 30px rgba(60,40,20,.3),0 0 26px rgba(255,140,60,.13);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:translateZ(200px) scale(1.03);box-shadow:0 26px 54px rgba(0,0,0,.6),0 0 32px rgba(255,154,77,.3);border-color:rgba(255,170,90,.7);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,154,77,.7),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:14px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><span style="width:8px;height:8px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 11px #5fe0a8;"></span><span style="font:600 12px 'Chakra Petch';letter-spacing:.16em;color:#ffd4ab;">FREE LLM GATES</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#5fe0a8;">5 / 7 ON</span></div>
+      <div style="display:flex;gap:16px;align-items:center;margin-bottom:12px;">
+        <svg viewBox="0 0 80 80" style="width:78px;height:78px;flex:0 0 auto;"><circle cx="40" cy="40" r="32" fill="none" stroke="rgba(120,160,200,.14)" stroke-width="7"/><circle cx="40" cy="40" r="32" fill="none" stroke="#ff9a4d" stroke-width="7" stroke-linecap="round" stroke-dasharray="0 201" transform="rotate(-90 40 40)"/><text x="40" y="38" text-anchor="middle" fill="#e8f1ff" font-size="20" font-family="Share Tech Mono">0</text><text x="40" y="52" text-anchor="middle" fill="#6f88a4" font-size="7" font-family="Share Tech Mono">CALLS TODAY</text></svg>
+        <div style="flex:1;font:10px 'Share Tech Mono';">
+          <div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span data-toggle data-on="1" style="display:inline-flex;width:30px;height:16px;border-radius:8px;background:rgba(95,224,168,.5);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transform:translateX(14px);transition:transform .2s;"></span></span><span style="color:#cfe0f2;">Reel DNA</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span data-toggle data-on="0" style="display:inline-flex;width:30px;height:16px;border-radius:8px;background:rgba(120,160,200,.2);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transform:translateX(0);transition:transform .2s;"></span></span><span style="color:#cfe0f2;">Content Forge</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span data-toggle data-on="1" style="display:inline-flex;width:30px;height:16px;border-radius:8px;background:rgba(95,224,168,.5);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transform:translateX(14px);transition:transform .2s;"></span></span><span style="color:#cfe0f2;">Pulse ingest</span></div>
+        </div>
+      </div>
+      <div data-more style="display:none;font:10px 'Share Tech Mono';">
+        <div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span data-toggle data-on="1" style="display:inline-flex;width:30px;height:16px;border-radius:8px;background:rgba(95,224,168,.5);position:relative;flex:0 0 auto;"><span data-knob style="position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transform:translateX(14px);"></span></span><span style="color:#cfe0f2;">Footage Vision Tagging</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span data-toggle data-on="1" style="display:inline-flex;width:30px;height:16px;border-radius:8px;background:rgba(95,224,168,.5);position:relative;flex:0 0 auto;"><span data-knob style="position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transform:translateX(14px);"></span></span><span style="color:#cfe0f2;">Workflow Insights</span></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:3px 0;"><span data-toggle data-on="0" style="display:inline-flex;width:30px;height:16px;border-radius:8px;background:rgba(120,160,200,.2);position:relative;flex:0 0 auto;"><span data-knob style="position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transform:translateX(0);"></span></span><span style="color:#cfe0f2;">Idea Generator</span></div>
+        <div style="color:#7e93ab;margin-top:6px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">Donut counts free-LLM calls made from THIS browser since tracking began (no backfill). Blocked features show a notice in-page.</div>
+      </div>
+      <div style="font:8px 'Chakra Petch';letter-spacing:.16em;color:#7e93ab;text-align:center;margin-top:2px;">24 / 7 · CONTINUOUS PROTECTION</div>
+    </div>
+
+    <!-- ============ INNER RIGHT COLUMN ============ -->
+    <!-- SCOUT -->
+    <div data-card style="position:absolute;left:1186px;top:20px;width:250px;height:300px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(24px) translateZ(2px) rotateY(-24deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(255,154,77,.2);border-color:rgba(255,170,90,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,154,77,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#ffd4ab;">SCOUT</span></div>
+      <div style="display:flex;justify-content:space-between;font:10px 'Share Tech Mono';color:#8ea6c2;margin-bottom:3px;"><span>AI dossiers today · 45 / 50</span><span style="color:#ff9a4d;">90%</span></div>
+      <div style="height:6px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:11px;"><div style="width:90%;height:100%;background:linear-gradient(90deg,#ff9a4d,#ff6b3d);"></div></div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Dossiers this month</span><span style="color:#e8f1ff;">338</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Products tracked</span><span style="color:#e8f1ff;">338</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>New this week</span><span style="color:#e8f1ff;">338</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Last scrape</span><span style="color:#5fe0a8;">18h ago +29</span></div>
+        <div data-more style="display:none;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Hacker News</span><span style="color:#e8f1ff;">unlimited</span></div>
+        <div data-more style="display:none;justify-content:space-between;color:#8ea6c2;padding:2px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>GitHub Search</span><span style="color:#e8f1ff;">30 req/min</span></div>
+        <div data-more style="display:none;justify-content:space-between;color:#8ea6c2;padding:2px 0;"><span>Product Hunt</span><span style="color:#e8f1ff;">6,250 pts · 15 min</span></div>
+      </div>
+      <div data-more style="display:none;font:10px 'Share Tech Mono';color:#7e93ab;margin-top:8px;line-height:1.5;">AI dossier step is the binding limit — 1 OpenRouter free-model call each. Free tier 50 pulls/day. Auto-scrape 08:00 UTC; manual Refresh anytime.</div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;">OpenRouter tier · free pulls /60 · 20/min fail cap</div>
+    </div>
+
+    <!-- AI CREDITS -->
+    <div data-card style="position:absolute;left:1186px;top:332px;width:250px;height:240px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(24px) translateZ(2px) rotateY(-24deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(255,154,77,.2);border-color:rgba(255,170,90,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,154,77,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#ffd4ab;">AI CREDITS</span></div>
+      <div style="display:flex;justify-content:space-between;font:10px 'Share Tech Mono';color:#8ea6c2;margin-bottom:3px;"><span>Cohere API · 15 / 1000</span><span style="color:#5cc9ff;">2%</span></div>
+      <div style="height:6px;background:rgba(120,160,200,.15);border-radius:3px;overflow:hidden;margin-bottom:11px;"><div style="width:2%;height:100%;background:#5cc9ff;"></div></div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>FAQ embeddings</span><span style="color:#e8f1ff;">15</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Bot questions (June)</span><span style="color:#e8f1ff;">0</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>FAQ approvals (June)</span><span style="color:#e8f1ff;">15</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;"><span>Total bot conversations</span><span style="color:#e8f1ff;">0</span></div>
+      </div>
+      <div data-more style="display:none;font:10px 'Share Tech Mono';color:#7e93ab;margin-top:8px;line-height:1.5;">Cohere free tier · 1,000 API calls/month. Each FAQ approval = each bot question = 1 call. Resets 1st of each month.</div>
+    </div>
+
+    <!-- ANTHROPIC -->
+    <div data-card style="position:absolute;left:1186px;top:584px;width:250px;height:200px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(24px) translateZ(2px) rotateY(-24deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(255,154,77,.2);border-color:rgba(255,170,90,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,154,77,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#ff9a4d;box-shadow:0 0 9px #ff9a4d;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#ffd4ab;">ANTHROPIC (CLAUDE)</span></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:11px;padding:9px 11px;background:rgba(120,160,200,.06);border:1px solid rgba(120,160,200,.12);border-radius:3px;"><span data-toggle data-on="0" style="display:inline-flex;width:34px;height:18px;border-radius:9px;background:rgba(120,160,200,.2);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transform:translateX(0);transition:transform .2s;"></span></span><div style="font:10px 'Share Tech Mono';"><div style="color:#cfe0f2;">Claude API</div><div style="color:#ff7a4d;font-size:9px;">Paused — features disabled</div></div></div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Model</span><span style="color:#e8f1ff;">claude-sonnet-4-5</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Used by</span><span style="color:#e8f1ff;">Generate · AI Brain · FAQ</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;"><span>Status</span><span style="color:#ff7a4d;">Paused</span></div>
+      </div>
+    </div>
+
+    <!-- ============ FAR RIGHT COLUMN ============ -->
+    <!-- VERCEL -->
+    <div data-card style="position:absolute;left:1448px;top:20px;width:292px;height:178px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(92,201,255,.18);border-color:rgba(120,200,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(95,224,168,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#bfe6d6;">VERCEL</span></div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Project</span><span style="color:#e8f1ff;">ziflow-project-final</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>Domain</span><span style="color:#e8f1ff;">footagebrain.com</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:3px 0;"><span>Runtime</span><span style="color:#e8f1ff;">Serverless · Node 18</span></div>
+      </div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-top:10px;line-height:1.5;">Vercel does not expose usage metrics via API — function invocations, bandwidth & build minutes are only visible in dashboard.</div>
+    </div>
+
+    <!-- EDITOR USAGE -->
+    <div data-card style="position:absolute;left:1448px;top:210px;width:292px;height:206px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(92,201,255,.18);border-color:rgba(120,200,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(92,201,255,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5cc9ff;box-shadow:0 0 9px #5cc9ff;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#bcd6f2;">EDITOR USAGE</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#7e93ab;">14d</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 14px;font:10px 'Share Tech Mono';margin-bottom:9px;">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;"><span>editing now</span><span style="color:#e8f1ff;">nobody</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;"><span>sessions</span><span style="color:#e8f1ff;">15</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;"><span>edit time</span><span style="color:#e8f1ff;">47m</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;"><span>people</span><span style="color:#e8f1ff;">2</span></div>
+      </div>
+      <svg viewBox="0 0 260 30" style="width:100%;height:26px;margin-bottom:8px;"><polyline fill="none" stroke="#7e93ab" stroke-width="1.3" points="0,24 40,20 80,8 120,4 160,10 200,18 240,22 260,24"/></svg>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;"><span>Paul Victor</span><span style="color:#e8f1ff;">10 sessions · 49m</span></div>
+        <div style="display:flex;justify-content:space-between;color:#8ea6c2;padding:2px 0;"><span>Leroy Crosby</span><span style="color:#e8f1ff;">6 sessions · 7m</span></div>
+      </div>
+    </div>
+
+    <!-- FRONTEND PERFORMANCE -->
+    <div data-card style="position:absolute;left:1448px;top:428px;width:292px;height:166px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(92,201,255,.18);border-color:rgba(120,200,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(92,201,255,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#bcd6f2;">FRONTEND PERFORMANCE</span></div>
+      <div style="display:flex;justify-content:space-between;font:10px 'Share Tech Mono';color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>p75 load</span><span style="color:#ff9a4d;">2042 ms</span></div>
+      <div style="display:flex;justify-content:space-between;font:10px 'Share Tech Mono';color:#8ea6c2;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span>INP lag (p75)</span><span style="color:#7e93ab;">—</span></div>
+      <div style="display:flex;justify-content:space-between;font:10px 'Share Tech Mono';color:#8ea6c2;padding:3px 0;margin-bottom:7px;"><span>samples</span><span style="color:#e8f1ff;">144</span></div>
+      <svg viewBox="0 0 260 22" style="width:100%;height:20px;"><polyline fill="none" stroke="#5fe0a8" stroke-width="1.4" points="0,16 50,14 100,17 150,11 200,15 260,13"/></svg>
+    </div>
+
+    <!-- CAPCUT TRACKER -->
+    <div data-card style="position:absolute;left:1448px;top:606px;width:292px;height:150px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(92,201,255,.18);border-color:rgba(120,200,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(92,201,255,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#bcd6f2;">CAPCUT TRACKER INSTALLS</span></div>
+      <div style="display:flex;justify-content:space-between;font:11px 'Share Tech Mono';color:#8ea6c2;margin-bottom:9px;"><span>activity (24h)</span><span style="color:#7e93ab;">none</span></div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;line-height:1.5;">No install activity yet — someone must download & run the tracker (migration 0100 / capcut_install_events may not be live).</div>
+    </div>
+
+    <!-- GAMIFY -->
+    <div data-card style="position:absolute;left:1448px;top:768px;width:292px;height:216px;z-index:5;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.94),rgba(7,11,18,.96));border:1px solid rgba(110,150,200,.16);border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.25);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.04);box-shadow:0 24px 50px rgba(0,0,0,.6),0 0 26px rgba(201,139,255,.2);border-color:rgba(201,139,255,.5);">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(201,139,255,.6),transparent);"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:#c98bff;box-shadow:0 0 9px #c98bff;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.14em;color:#e3ccff;">GAMIFY</span></div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-bottom:10px;line-height:1.5;">Turn skill development into a game — XP, spider charts, medals & rubric grading.</div>
+      <div style="font:10px 'Share Tech Mono';">
+        <div style="display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span data-toggle data-on="1" style="display:inline-flex;width:34px;height:18px;border-radius:9px;background:rgba(95,224,168,.5);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transform:translateX(16px);transition:transform .2s;"></span></span><span style="flex:1;color:#cfe0f2;">Gamify system</span><span style="color:#5fe0a8;">On</span></div>
+        <div style="display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span data-toggle data-on="0" style="display:inline-flex;width:34px;height:18px;border-radius:9px;background:rgba(120,160,200,.2);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transform:translateX(0);transition:transform .2s;"></span></span><span style="flex:1;color:#cfe0f2;">Grading mode</span><span style="color:#7e93ab;">Reviewer</span></div>
+        <div style="display:flex;align-items:center;gap:9px;padding:5px 0;"><span data-toggle data-on="1" style="display:inline-flex;width:34px;height:18px;border-radius:9px;background:rgba(95,224,168,.5);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transform:translateX(16px);transition:transform .2s;"></span></span><span style="flex:1;color:#cfe0f2;">Grade descriptions</span><span style="color:#5fe0a8;">All</span></div>
+      </div>
+      <div data-more style="display:none;font:10px 'Share Tech Mono';color:#7e93ab;margin-top:8px;line-height:1.5;">Skill XP · Spider charts · Rubrics. Reviewer-only: editors don't self-assess; you fill the rubric.</div>
+    </div>
+
+    </div>
+    <!-- ============ PEDESTAL + SERVER RACKS (orbit decor) ============ -->
+    <div style="position:absolute;left:430px;top:560px;width:260px;height:130px;transform:translateZ(-18px) rotateY(24deg);pointer-events:none;display:flex;gap:9px;align-items:flex-end;opacity:.9;">
+      <div style="flex:1;height:108px;background:linear-gradient(180deg,rgba(18,26,40,.95),rgba(8,12,20,.97));border:1px solid rgba(120,170,230,.18);border-radius:2px;padding:5px;display:flex;flex-direction:column;gap:4px;"><div style="height:3px;background:linear-gradient(90deg,#5fe0a8,transparent);"></div><div style="height:2px;background:rgba(41,182,255,.45);"></div><div style="height:2px;background:rgba(255,140,60,.45);"></div><div style="height:2px;background:rgba(95,224,168,.45);"></div><div style="height:2px;background:rgba(120,160,200,.3);"></div><div style="height:2px;background:rgba(41,182,255,.3);"></div></div>
+      <div style="flex:1;height:86px;background:linear-gradient(180deg,rgba(18,26,40,.95),rgba(8,12,20,.97));border:1px solid rgba(120,170,230,.18);border-radius:2px;padding:5px;display:flex;flex-direction:column;gap:4px;"><div style="height:3px;background:linear-gradient(90deg,#ff8a3d,transparent);"></div><div style="height:2px;background:rgba(255,140,60,.45);"></div><div style="height:2px;background:rgba(41,182,255,.45);"></div><div style="height:2px;background:rgba(95,224,168,.45);"></div><div style="height:2px;background:rgba(120,160,200,.3);"></div></div>
+      <div style="flex:1;height:98px;background:linear-gradient(180deg,rgba(18,26,40,.95),rgba(8,12,20,.97));border:1px solid rgba(120,170,230,.18);border-radius:2px;padding:5px;display:flex;flex-direction:column;gap:4px;"><div style="height:3px;background:linear-gradient(90deg,#29b6ff,transparent);"></div><div style="height:2px;background:rgba(41,182,255,.45);"></div><div style="height:2px;background:rgba(255,140,60,.45);"></div><div style="height:2px;background:rgba(95,224,168,.45);"></div><div style="height:2px;background:rgba(120,160,200,.3);"></div><div style="height:2px;background:rgba(41,182,255,.3);"></div></div>
+    </div>
+    <div style="position:absolute;left:1070px;top:560px;width:260px;height:130px;transform:translateZ(-18px) rotateY(-24deg);pointer-events:none;display:flex;gap:9px;align-items:flex-end;opacity:.9;">
+      <div style="flex:1;height:98px;background:linear-gradient(180deg,rgba(18,26,40,.95),rgba(8,12,20,.97));border:1px solid rgba(120,170,230,.18);border-radius:2px;padding:5px;display:flex;flex-direction:column;gap:4px;"><div style="height:3px;background:linear-gradient(90deg,#29b6ff,transparent);"></div><div style="height:2px;background:rgba(41,182,255,.45);"></div><div style="height:2px;background:rgba(255,140,60,.45);"></div><div style="height:2px;background:rgba(95,224,168,.45);"></div><div style="height:2px;background:rgba(120,160,200,.3);"></div></div>
+      <div style="flex:1;height:86px;background:linear-gradient(180deg,rgba(18,26,40,.95),rgba(8,12,20,.97));border:1px solid rgba(120,170,230,.18);border-radius:2px;padding:5px;display:flex;flex-direction:column;gap:4px;"><div style="height:3px;background:linear-gradient(90deg,#5fe0a8,transparent);"></div><div style="height:2px;background:rgba(95,224,168,.45);"></div><div style="height:2px;background:rgba(41,182,255,.45);"></div><div style="height:2px;background:rgba(255,140,60,.45);"></div><div style="height:2px;background:rgba(120,160,200,.3);"></div></div>
+      <div style="flex:1;height:108px;background:linear-gradient(180deg,rgba(18,26,40,.95),rgba(8,12,20,.97));border:1px solid rgba(120,170,230,.18);border-radius:2px;padding:5px;display:flex;flex-direction:column;gap:4px;"><div style="height:3px;background:linear-gradient(90deg,#ff8a3d,transparent);"></div><div style="height:2px;background:rgba(255,140,60,.45);"></div><div style="height:2px;background:rgba(41,182,255,.45);"></div><div style="height:2px;background:rgba(95,224,168,.45);"></div><div style="height:2px;background:rgba(120,160,200,.3);"></div><div style="height:2px;background:rgba(41,182,255,.3);"></div></div>
+    </div>
+    <div style="position:absolute;left:792px;top:600px;width:176px;height:120px;transform:translateZ(-26px);pointer-events:none;">
+      <div style="position:absolute;left:50%;top:0;width:176px;height:30px;transform:translateX(-50%);border-radius:50%;background:linear-gradient(180deg,rgba(44,66,98,.92),rgba(12,20,32,.95));border:1px solid rgba(120,180,240,.34);box-shadow:0 0 24px rgba(60,140,220,.3);"></div>
+      <div style="position:absolute;left:50%;top:15px;width:176px;height:86px;transform:translateX(-50%);background:linear-gradient(180deg,rgba(16,24,38,.96),rgba(8,12,20,.98));border-left:1px solid rgba(120,180,240,.14);border-right:1px solid rgba(120,180,240,.14);overflow:hidden;display:flex;flex-direction:column;justify-content:center;gap:7px;padding:0 14px;">
+        <div style="height:2px;background:linear-gradient(90deg,transparent,rgba(41,182,255,.5),transparent);"></div>
+        <div style="height:2px;background:linear-gradient(90deg,transparent,rgba(255,140,60,.5),transparent);"></div>
+        <div style="height:2px;background:linear-gradient(90deg,transparent,rgba(95,224,168,.5),transparent);"></div>
+        <div style="position:absolute;bottom:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#ff8a3d,#29b6ff,transparent);"></div>
+      </div>
+      <div style="position:absolute;left:50%;top:92px;width:176px;height:28px;transform:translateX(-50%);border-radius:50%;background:rgba(8,12,20,.98);border:1px solid rgba(255,140,60,.3);box-shadow:0 0 20px rgba(255,120,50,.2);"></div>
+    </div>
+    <!-- ================= BACK FACE — SITE PAGES & TABS ================= -->
+    <div ref="{{ setBack }}" style="position:absolute;inset:0;transform-style:preserve-3d;transform:rotateY(180deg) translateZ(150px);transform-origin:880px 412px;transition:opacity .25s ease;opacity:0;">
+    <div data-card style="position:absolute;left:20px;top:20px;width:292px;height:520px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #ff7a1a;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-86px) translateZ(76px) rotateY(44deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #ff7a1a55;border-color:#ff7a1a;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#ff7a1a,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#ff7a1a;box-shadow:0 0 9px #ff7a1a;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">PIPELINE</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#ff7a1a;">28·10·3</span></div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-bottom:9px;">Rows = who owns it · Columns = where it is</div>
+   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;font:8px 'Chakra Petch';letter-spacing:.08em;"><div style="color:#9fb4cc;">NOT STARTED <span style="color:#ff7a1a;">28</span></div><div style="color:#9fb4cc;">IN PROGRESS <span style="color:#29b6ff;">10</span></div><div style="color:#9fb4cc;">REVIEW <span style="color:#5fe0a8;">3</span></div></div>
+   <div style="background:rgba(20,28,42,.8);border-left:3px solid #ff5a5a;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">BOOMERANG - Rishikesh (Paul V)</div><div style="background:rgba(20,28,42,.8);border-left:3px solid #ff8a3d;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">Johnny Harris Capcut Edit (Paul V)</div><div style="background:rgba(20,28,42,.8);border-left:3px solid #29b6ff;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">still picture - sunset bg · in progress</div><div style="background:rgba(20,28,42,.8);border-left:3px solid #5fe0a8;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">Naruto jutsu— food appears · review</div><div style="background:rgba(20,28,42,.8);border-left:3px solid #ff5a5a;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">2 scenes changing (Jay)</div><div style="background:rgba(20,28,42,.8);border-left:3px solid #5fe0a8;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">Viral Minimal Reel Edits (Jay)</div>
+   <div style="display:flex;gap:12px;margin-top:8px;font:9px 'Share Tech Mono';color:#7e93ab;"><span>Paul · <span style="color:#e8f1ff;">7</span></span><span>Amere · <span style="color:#e8f1ff;">11</span></span><span>Jay · <span style="color:#e8f1ff;">12</span></span></div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">Drag cards between columns to move them. 5 lanes hidden · group by series · 2 columns hidden.</div>
+    </div>
+    <div data-card style="position:absolute;left:20px;top:552px;width:292px;height:200px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #5fe0a8;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-86px) translateZ(76px) rotateY(44deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #5fe0a855;border-color:#5fe0a8;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#5fe0a8,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">REVIEW QUEUE</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#5fe0a8;">3 waiting</span></div>
+      <div style="background:rgba(20,28,42,.8);border:1px solid rgba(120,160,200,.14);border-radius:3px;padding:8px;margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font:9px 'Share Tech Mono';margin-bottom:6px;"><span style="color:#e8f1ff;">REEL-339 · Naruto jutsu (A)</span><span style="color:#ff8a3d;">3d</span></div><div style="display:flex;gap:6px;"><span style="font:8px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.3);border-radius:11px;padding:3px 10px;">Send back</span><span style="font:8px 'Share Tech Mono';color:#5fe0a8;border:1px solid rgba(95,224,168,.5);border-radius:11px;padding:3px 12px;">Accept</span></div></div>
+   <div style="font:9px 'Share Tech Mono';color:#aebfd2;">A · skilled · 1 reel &nbsp;·&nbsp; Jay · variant · 2 reels</div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">REEL-297 walking across scene masking text · in review 11d · REEL-298 Naruto jutsu food appears · 11d</div>
+    </div>
+    <div data-card style="position:absolute;left:20px;top:766px;width:292px;height:218px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #29b6ff;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-86px) translateZ(76px) rotateY(44deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #29b6ff55;border-color:#29b6ff;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#29b6ff,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#29b6ff;box-shadow:0 0 9px #29b6ff;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">TASKS & COMMS</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#29b6ff;">13 open</span></div>
+      <div style="font:9px 'Share Tech Mono';color:#aebfd2;display:flex;flex-direction:column;gap:5px;">
+    <div style="display:flex;gap:7px;align-items:center;"><span style="width:6px;height:6px;border-radius:50%;background:#29b6ff;flex:0 0 auto;"></span>download all button doesn't work…</div>
+    <div style="display:flex;gap:7px;align-items:center;"><span style="width:6px;height:6px;border-radius:50%;background:#ff8a3d;flex:0 0 auto;"></span>TEAMS: card move → RocketChat webhook</div>
+    <div style="display:flex;gap:7px;align-items:center;"><span style="width:6px;height:6px;border-radius:50%;background:#5fe0a8;flex:0 0 auto;"></span>connect comments → reels feedback</div>
+    <div style="display:flex;gap:7px;align-items:center;"><span style="width:6px;height:6px;border-radius:50%;background:#c98bff;flex:0 0 auto;"></span>audio not working uploading mp4 to card</div>
+   </div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">cant attach more than 10 clips to a card · add functioning Contact Us page · attached reel assets auto-collapse + blinking neon number icon.</div>
+    </div>
+    <div data-card style="position:absolute;left:326px;top:20px;width:250px;height:300px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #29b6ff;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-24px) translateZ(2px) rotateY(24deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #29b6ff55;border-color:#29b6ff;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#29b6ff,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#29b6ff;box-shadow:0 0 9px #29b6ff;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">REEL DNA</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#29b6ff;">387</span></div>
+      <div style="display:flex;gap:6px;margin-bottom:9px;align-items:center;"><div style="flex:1;font:9px 'Share Tech Mono';color:#5f7790;border:1px solid rgba(120,160,200,.18);border-radius:3px;padding:5px 8px;">Paste a reel URL…</div><span style="font:8px 'Share Tech Mono';color:#29b6ff;border:1px dashed rgba(41,182,255,.5);border-radius:10px;padding:3px 8px;">IG</span></div>
+   <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#29b6ff;"><span>/reel/DZs8h… · india</span><span style="color:#e8f1ff;">framing</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>/reel/DZ8_N…</span><span style="color:#e8f1ff;">M. Jackson</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#ff7a1a;"><span>/fb/1761… · meme</span><span style="color:#e8f1ff;">Bad Boss</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>/reel/DX9c… · hook</span><span style="color:#e8f1ff;">cow piss</span></div>
+   <div style="display:flex;gap:5px;margin-top:9px;"><span style="font:9px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.2);border-radius:10px;padding:2px 8px;">Music</span><span style="font:9px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.2);border-radius:10px;padding:2px 8px;">Font</span><span style="font:9px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.2);border-radius:10px;padding:2px 8px;">Hook</span><span style="font:9px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.2);border-radius:10px;padding:2px 8px;">SFX</span></div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">384 of 384 reels · realtime live · IG sync health: click Check IG Sync.</div>
+    </div>
+    <div data-card style="position:absolute;left:326px;top:332px;width:250px;height:250px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #ff7a1a;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-24px) translateZ(2px) rotateY(24deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #ff7a1a55;border-color:#ff7a1a;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#ff7a1a,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#ff7a1a;box-shadow:0 0 9px #ff7a1a;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">THUMBNAIL DNA</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#ff7a1a;">31</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;"><div style="aspect-ratio:16/10;border-radius:2px;background:linear-gradient(135deg,#2a2118,#0e0a06);border:1px solid rgba(255,140,60,.25);position:relative;overflow:hidden;"><span style="position:absolute;left:4px;bottom:3px;font:700 7px 'Chakra Petch';color:#fff;text-shadow:0 1px 2px #000;">SCAMMERS</span></div><div style="aspect-ratio:16/10;border-radius:2px;background:linear-gradient(135deg,#1c2430,#0a0e14);border:1px solid rgba(120,160,200,.25);position:relative;overflow:hidden;"><span style="position:absolute;left:4px;bottom:3px;font:700 7px 'Chakra Petch';color:#fff;text-shadow:0 1px 2px #000;">JOHNNY H</span></div><div style="aspect-ratio:16/10;border-radius:2px;background:linear-gradient(135deg,#302018,#100a06);border:1px solid rgba(255,140,60,.3);position:relative;overflow:hidden;"><span style="position:absolute;left:4px;bottom:3px;font:700 7px 'Chakra Petch';color:#fff;text-shadow:0 1px 2px #000;">KASHMIR</span></div><div style="aspect-ratio:16/10;border-radius:2px;background:linear-gradient(135deg,#2c2410,#0e0a04);border:1px solid rgba(255,200,60,.25);position:relative;overflow:hidden;"><span style="position:absolute;left:4px;bottom:3px;font:700 7px 'Chakra Petch';color:#fff;text-shadow:0 1px 2px #000;">DILJIT</span></div><div style="aspect-ratio:16/10;border-radius:2px;background:linear-gradient(135deg,#162430,#060e14);border:1px solid rgba(41,182,255,.25);position:relative;overflow:hidden;"><span style="position:absolute;left:4px;bottom:3px;font:700 7px 'Chakra Petch';color:#fff;text-shadow:0 1px 2px #000;">ANTARCT.</span></div><div style="aspect-ratio:16/10;border-radius:2px;background:linear-gradient(135deg,#1e3018,#0a1006);border:1px solid rgba(95,224,168,.25);position:relative;overflow:hidden;"><span style="position:absolute;left:4px;bottom:3px;font:700 7px 'Chakra Petch';color:#fff;text-shadow:0 1px 2px #000;">MEGHALAYA</span></div></div>
+   <div style="display:flex;gap:5px;margin-top:9px;"><span style="font:9px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.2);border-radius:10px;padding:2px 8px;">Color</span><span style="font:9px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.2);border-radius:10px;padding:2px 8px;">Type</span><span style="font:9px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.2);border-radius:10px;padding:2px 8px;">Face</span><span style="font:9px 'Share Tech Mono';color:#9fb4cc;border:1px solid rgba(120,160,200,.2);border-radius:10px;padding:2px 8px;">Mood</span></div>
+    </div>
+    <div data-card style="position:absolute;left:326px;top:594px;width:250px;height:390px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #29b6ff;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(-24px) translateZ(2px) rotateY(24deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #29b6ff55;border-color:#29b6ff;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#29b6ff,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#29b6ff;box-shadow:0 0 9px #29b6ff;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">RESOURCES</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#29b6ff;">links</span></div>
+      <div style="font:9px 'Share Tech Mono';">
+   <div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#29b6ff;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">Canva Thumbnail Editor</span><span style="color:#5f7790;">canva</span></div><div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#5fe0a8;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">epidemic sound</span><span style="color:#5f7790;">music+VO</span></div><div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#c98bff;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">youtube to mp3</span><span style="color:#5f7790;">y2mate</span></div><div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#ff8a3d;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">Instagram Reel DL</span><span style="color:#5f7790;">sssinsta</span></div><div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#5fe0a8;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">Chat GPT - images</span><span style="color:#5f7790;">chatgpt</span></div><div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#29b6ff;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">Vid IQ</span><span style="color:#5f7790;">yt analytics</span></div><div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#ff8a3d;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">Sound Library Sheet</span><span style="color:#5f7790;">gsheet</span></div><div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#29b6ff;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">Editor Playbook</span><span style="color:#5f7790;">gdoc</span></div><div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span style="width:8px;height:8px;border-radius:1px;background:#5fe0a8;flex:0 0 auto;"></span><span style="flex:1;color:#cfe0f2;">100 New Scripts</span><span style="color:#5f7790;">gdoc</span></div>
+   </div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">Double-click any cell to edit · +Add column · +Add row.</div>
+    </div>
+    <div data-card style="position:absolute;left:640px;top:20px;width:480px;height:142px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #5fe0a8;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateZ(-34px);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #5fe0a855;border-color:#5fe0a8;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#5fe0a8,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">TEAM CHAT</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#5fe0a8;">Rocket.Chat</span></div>
+      <div style="display:flex;gap:12px;">
+    <div style="flex:0 0 110px;font:9px 'Share Tech Mono';display:flex;flex-direction:column;gap:4px;border-right:1px solid rgba(120,160,200,.1);padding-right:8px;"><div style="color:#9fb4cc;">＃contentJay</div><div style="color:#e8f1ff;background:rgba(95,224,168,.12);border-radius:2px;padding:2px 4px;">＃contentAmere <span style="color:#5fe0a8;">2</span></div><div style="color:#9fb4cc;">＃Main-Team</div><div style="color:#9fb4cc;">＃pipeline</div></div>
+    <div style="flex:1;font:9px 'Share Tech Mono';display:flex;flex-direction:column;gap:6px;"><div><span style="color:#5fe0a8;">samuelvictor</span> <span style="color:#5f7790;">10:45</span><div style="color:#cfe0f2;">how's the longform going?</div></div><div><span style="color:#29b6ff;">Amere</span> <span style="color:#5f7790;">11:34</span><div style="color:#cfe0f2;">this video dont play smoothly on my system</div></div></div>
+   </div>
+    </div>
+    <div data-card style="position:absolute;left:720px;top:700px;width:320px;height:272px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #ff7a1a;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateZ(-86px);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #ff7a1a55;border-color:#ff7a1a;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#ff7a1a,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#ff7a1a;box-shadow:0 0 9px #ff7a1a;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">DASHBOARD · HOME</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#ff7a1a;">footagebrain</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+    <div style="background:rgba(20,28,42,.7);border-radius:3px;padding:9px;"><div style="font:600 20px 'Chakra Petch';color:#ff9a4d;">499</div><div style="font:8px 'Share Tech Mono';color:#7e93ab;">ARTICLES STORED</div></div>
+    <div style="background:rgba(20,28,42,.7);border-radius:3px;padding:9px;"><div style="font:600 20px 'Chakra Petch';color:#29b6ff;">387</div><div style="font:8px 'Share Tech Mono';color:#7e93ab;">REELS CAPTURED</div></div>
+    <div style="background:rgba(20,28,42,.7);border-radius:3px;padding:9px;"><div style="font:600 20px 'Chakra Petch';color:#5fe0a8;">41</div><div style="font:8px 'Share Tech Mono';color:#7e93ab;">REELS IN PIPELINE</div></div>
+    <div style="background:rgba(20,28,42,.7);border-radius:3px;padding:9px;"><div style="font:600 20px 'Chakra Petch';color:#c98bff;">338</div><div style="font:8px 'Share Tech Mono';color:#7e93ab;">PRODUCTS TRACKED</div></div>
+   </div>
+   <div style="font:8px 'Chakra Petch';letter-spacing:.14em;color:#7e93ab;text-align:center;">FOOTAGEBRAIN · CONTENT OPS HUB</div>
+    </div>
+    <div data-card style="position:absolute;left:1186px;top:20px;width:250px;height:300px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #29b6ff;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(24px) translateZ(2px) rotateY(-24deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #29b6ff55;border-color:#29b6ff;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#29b6ff,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#29b6ff;box-shadow:0 0 9px #29b6ff;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">NEWS · PULSE</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#29b6ff;">5/5</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Active sources</span><span style="color:#5fe0a8;">5 / 5</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Articles stored</span><span style="color:#e8f1ff;">499</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Last ingest</span><span style="color:#e8f1ff;">18m ago</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Feeds erroring</span><span style="color:#5fe0a8;">0</span></div>
+   <div style="font:8px 'Chakra Petch';letter-spacing:.1em;color:#7e93ab;margin:9px 0 5px;">LATEST</div>
+   <div style="background:rgba(20,28,42,.8);border-left:3px solid #29b6ff;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">AI video tools roundup — June</div><div style="background:rgba(20,28,42,.8);border-left:3px solid #ff8a3d;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">Reels algorithm shift reported</div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">Auto-ingested every 30 min · classified by free OpenRouter models · prune after 60 days.</div>
+    </div>
+    <div data-card style="position:absolute;left:1186px;top:332px;width:250px;height:240px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #ff7a1a;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(24px) translateZ(2px) rotateY(-24deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #ff7a1a55;border-color:#ff7a1a;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#ff7a1a,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#ff7a1a;box-shadow:0 0 9px #ff7a1a;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">SCOUT RADAR</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#ff7a1a;">90%</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Dossiers today</span><span style="color:#ff9a4d;">45 / 50</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>This month</span><span style="color:#e8f1ff;">338</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>New this week</span><span style="color:#e8f1ff;">338</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Last scrape</span><span style="color:#5fe0a8;">18h +29</span></div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">AI dossier = 1 OpenRouter free-model call each. Auto-scrape 08:00 UTC · manual Refresh anytime.</div>
+    </div>
+    <div data-card style="position:absolute;left:1186px;top:584px;width:250px;height:200px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #c98bff;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(24px) translateZ(2px) rotateY(-24deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #c98bff55;border-color:#c98bff;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#c98bff,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#c98bff;box-shadow:0 0 9px #c98bff;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">IDEA GENERATOR</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#c98bff;">free</span></div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-bottom:8px;">OpenRouter draft · /api/generate</div>
+   <div style="background:rgba(20,28,42,.8);border-left:3px solid #c98bff;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">8 Countries Where Kindness Finds You</div><div style="background:rgba(20,28,42,.8);border-left:3px solid #c98bff;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">5 Foods You Must Try Abroad</div><div style="background:rgba(20,28,42,.8);border-left:3px solid #c98bff;border-radius:2px;padding:5px 8px;color:#cfe0f2;font:9px 'Share Tech Mono';margin-bottom:5px;">Regretting You Never Traveled</div>
+    </div>
+    <div data-card style="position:absolute;left:1448px;top:20px;width:292px;height:178px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #5fe0a8;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #5fe0a855;border-color:#5fe0a8;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#5fe0a8,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">DAILY TASKS</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#5fe0a8;">today</span></div>
+      <div style="font:10px 'Share Tech Mono';display:flex;flex-direction:column;gap:6px;">
+    <div style="display:flex;gap:8px;align-items:center;color:#cfe0f2;"><span style="width:12px;height:12px;border:1px solid #5fe0a8;border-radius:2px;flex:0 0 auto;"></span>Use $300 Google credit / open bank acct</div>
+    <div style="display:flex;gap:8px;align-items:center;color:#7e93ab;text-decoration:line-through;"><span style="width:12px;height:12px;border:1px solid #5fe0a8;border-radius:2px;background:#5fe0a8;flex:0 0 auto;"></span>Attach manual news links → hyperlink</div>
+    <div style="display:flex;gap:8px;align-items:center;color:#cfe0f2;"><span style="width:12px;height:12px;border:1px solid #5fe0a8;border-radius:2px;flex:0 0 auto;"></span>Add functioning message system</div>
+   </div>
+    </div>
+    <div data-card style="position:absolute;left:1448px;top:210px;width:292px;height:206px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #ff7a1a;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #ff7a1a55;border-color:#ff7a1a;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#ff7a1a,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#ff7a1a;box-shadow:0 0 9px #ff7a1a;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">CONTENT FORGE</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#ff7a1a;">hooks</span></div>
+      <div style="font:9px 'Share Tech Mono';color:#7e93ab;margin-bottom:8px;">Discover + expand hooks · Hetzner backend</div>
+   <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Hooks generated</span><span style="color:#e8f1ff;">24</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Saved to pipeline</span><span style="color:#e8f1ff;">7</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Series tracked</span><span style="color:#5fe0a8;">5</span></div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">Reel DNA → narrative pass → hook expansion. Paused features show an in-page notice.</div>
+    </div>
+    <div data-card style="position:absolute;left:1448px;top:428px;width:292px;height:166px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #29b6ff;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #29b6ff55;border-color:#29b6ff;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#29b6ff,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#29b6ff;box-shadow:0 0 9px #29b6ff;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">WORKFLOW INSIGHTS</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#29b6ff;">7d</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Avg time in pipeline</span><span style="color:#e8f1ff;">3.4 d</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Reels shipped (7d)</span><span style="color:#5fe0a8;">9</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Bottleneck</span><span style="color:#ff8a3d;">Review</span></div>
+    </div>
+    <div data-card style="position:absolute;left:1448px;top:606px;width:292px;height:150px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #5fe0a8;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #5fe0a855;border-color:#5fe0a8;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#5fe0a8,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#5fe0a8;box-shadow:0 0 9px #5fe0a8;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">FAQ BOT · AI BRAIN</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#5fe0a8;">Cohere</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>FAQ embeddings</span><span style="color:#e8f1ff;">15</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Approvals (June)</span><span style="color:#e8f1ff;">15</span></div><div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(120,160,200,.07);font:10px 'Share Tech Mono';color:#8ea6c2;"><span>Bot conversations</span><span style="color:#e8f1ff;">0</span></div>
+    </div>
+    <div data-card style="position:absolute;left:1448px;top:768px;width:292px;height:216px;box-sizing:border-box;padding:13px 14px;background:linear-gradient(158deg,rgba(13,20,30,.95),rgba(7,11,18,.97));border:1px solid rgba(110,150,200,.18);border-left:3px solid #ff7a1a;border-radius:3px;backdrop-filter:blur(3px);box-shadow:inset 0 0 24px rgba(20,40,70,.28),0 14px 34px rgba(0,0,0,.42);cursor:pointer;overflow:hidden;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%);transform:translateX(86px) translateZ(76px) rotateY(-44deg);transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .35s,border-color .35s;" style-hover="transform:rotateY(0deg) translateZ(200px) scale(1.03);box-shadow:0 30px 60px rgba(0,0,0,.72),0 0 30px #ff7a1a55;border-color:#ff7a1a;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#ff7a1a,transparent);opacity:.6;"></div>
+      <div data-expand style="position:absolute;bottom:9px;right:12px;font:10px 'Share Tech Mono';color:rgba(150,190,230,.5);">⤢ EXPAND</div>
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;"><span style="width:7px;height:7px;border-radius:50%;background:#ff7a1a;box-shadow:0 0 9px #ff7a1a;"></span><span style="font:600 11px 'Chakra Petch';letter-spacing:.13em;color:#dce8f5;">FEATURE GATES</span><span style="margin-left:auto;font:9px 'Share Tech Mono';color:#ff7a1a;">5/7 on</span></div>
+      <div style="font:10px 'Share Tech Mono';">
+    <div style="display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span data-toggle data-on="1" style="display:inline-flex;width:34px;height:18px;border-radius:9px;background:rgba(95,224,168,.5);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transform:translateX(16px);transition:transform .2s;"></span></span><span style="flex:1;color:#cfe0f2;">Reel DNA</span></div>
+    <div style="display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid rgba(120,160,200,.07);"><span data-toggle data-on="0" style="display:inline-flex;width:34px;height:18px;border-radius:9px;background:rgba(120,160,200,.2);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transform:translateX(0);transition:transform .2s;"></span></span><span style="flex:1;color:#cfe0f2;">Content Forge</span></div>
+    <div style="display:flex;align-items:center;gap:9px;padding:5px 0;"><span data-toggle data-on="1" style="display:inline-flex;width:34px;height:18px;border-radius:9px;background:rgba(95,224,168,.5);position:relative;flex:0 0 auto;transition:background .2s;"><span data-knob style="position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transform:translateX(16px);transition:transform .2s;"></span></span><span style="flex:1;color:#cfe0f2;">Pulse — News ingest</span></div>
+   </div>
+   <div data-more style="display:none;font:9px 'Share Tech Mono';color:#7e93ab;margin-top:8px;border-top:1px solid rgba(120,160,200,.1);padding-top:7px;line-height:1.5;">Kill ALL free LLM calls · counts free-LLM calls from this browser since tracking began.</div>
+    </div>
+    </div>
+    </div>
+  </div>
+
+  <!-- ============ MODAL ============ -->
+  <div ref="{{ setModal }}" data-open="0" style="position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:48px;background:radial-gradient(circle at 50% 50%,rgba(4,8,14,.35),rgba(2,4,8,.74));opacity:0;pointer-events:none;transition:opacity .3s;">
+    <div ref="{{ setModalWrap }}" style="position:relative;width:min(640px,92vw);opacity:0;transform:translateY(20px) scale(.97);transition:opacity .35s,transform .35s;">
+      <div data-close style="position:absolute;top:-15px;right:-15px;z-index:3;width:32px;height:32px;border-radius:50%;background:#0c1420;border:1px solid rgba(255,154,77,.55);color:#ff9a4d;display:flex;align-items:center;justify-content:center;cursor:pointer;font:14px 'Share Tech Mono';box-shadow:0 0 16px rgba(0,0,0,.6);">✕</div>
+      <div ref="{{ setModalBody }}" style="max-height:84vh;overflow:auto;border-radius:4px;"></div>
+      <div style="position:absolute;bottom:-24px;left:2px;font:10px 'Share Tech Mono';color:rgba(150,185,225,.55);letter-spacing:.14em;">ESC · CLICK OUTSIDE TO CLOSE · TOGGLES & SCROLL ARE LIVE</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  yaw = 0; pitch = 9; zoom = 1;
+  setStage = (el) => { this.stage = el; this.fit(); };
+  setGlobe = (el) => { this.canvas = el; };
+  setRoot = (el) => { this.root = el; };
+  setWorld = (el) => { this.world = el; this.applyCam(); };
+  setBill = (el) => { this.bill = el; this.applyCam(); };
+  setFront = (el) => { this.front = el; this.applyCam(); };
+  setBack = (el) => { this.back = el; this.applyCam(); };
+  setModal = (el) => { this.modal = el; };
+  setModalWrap = (el) => { this.modalWrap = el; };
+  setModalBody = (el) => { this.modalBody = el; };
+
+  componentDidMount() {
+    this.fit();
+    this._onResize = () => this.fit();
+    window.addEventListener('resize', this._onResize);
+    this._onClick = (e) => this.handleClick(e);
+    document.addEventListener('click', this._onClick);
+    this._onKey = (e) => { if (e.key === 'Escape') this.closeCard(); };
+    document.addEventListener('keydown', this._onKey);
+    this.initGlobe();
+    this.applyCam();
+    this._camDown = (e) => {
+      if (e.target.closest('[data-card]') || e.target.tagName === 'CANVAS') return;
+      if (this.modal && this.modal.getAttribute('data-open') === '1') return;
+      this._orb = true; this._oX = e.clientX; this._oY = e.clientY; this._oVel = 0;
+      if (this.root) this.root.style.cursor = 'grabbing';
+    };
+    this._camMove = (e) => {
+      if (!this._orb) return;
+      const dx = e.clientX - this._oX, dy = e.clientY - this._oY;
+      this.yaw += dx * 0.26; this._oVel = dx * 0.26;
+      this.pitch = Math.max(-34, Math.min(36, this.pitch - dy * 0.18));
+      this._oX = e.clientX; this._oY = e.clientY;
+      this.applyCam();
+    };
+    this._camUp = () => { if (!this._orb) return; this._orb = false; if (this.root) this.root.style.cursor = 'grab'; this._coast(); };
+    this._coast = () => {
+      if (this._orb) return;
+      if (Math.abs(this._oVel) < 0.015) { this._oVel = 0; return; }
+      this.yaw += this._oVel; this._oVel *= 0.92; this.applyCam();
+      this._coastRaf = requestAnimationFrame(this._coast);
+    };
+    this._onWheel = (e) => { e.preventDefault(); this.zoom = Math.max(0.5, Math.min(2.6, this.zoom * (1 - e.deltaY * 0.0012))); this.fit(); };
+    const cr = this.root || document;
+    cr.addEventListener('pointerdown', this._camDown);
+    window.addEventListener('pointermove', this._camMove);
+    window.addEventListener('pointerup', this._camUp);
+    cr.addEventListener('wheel', this._onWheel, { passive: false });
+    if (this.root) this.root.style.cursor = 'grab';
+  }
+  componentWillUnmount() {
+    window.removeEventListener('resize', this._onResize);
+    document.removeEventListener('click', this._onClick);
+    document.removeEventListener('keydown', this._onKey);
+    if (this._raf) cancelAnimationFrame(this._raf);
+    if (this._coastRaf) cancelAnimationFrame(this._coastRaf);
+    const cr = this.root || document;
+    if (this._camDown) cr.removeEventListener('pointerdown', this._camDown);
+    if (this._camMove) window.removeEventListener('pointermove', this._camMove);
+    if (this._camUp) window.removeEventListener('pointerup', this._camUp);
+    if (this._onWheel) cr.removeEventListener('wheel', this._onWheel);
+  }
+
+  applyCam() {
+    if (this.world) this.world.style.transform = 'rotateY(' + this.yaw + 'deg) rotateX(' + this.pitch + 'deg)';
+    if (this.bill) this.bill.style.transform = 'rotateX(' + (-this.pitch) + 'deg) rotateY(' + (-this.yaw) + 'deg)';
+    const cf = Math.cos(this.yaw * Math.PI / 180);
+    const cl = (v) => Math.max(0, Math.min(1, v));
+    const fO = cl((cf + 0.12) / 0.4), bO = cl((-cf + 0.12) / 0.4);
+    if (this.front) { this.front.style.opacity = fO; this.front.style.pointerEvents = fO > 0.5 ? 'auto' : 'none'; }
+    if (this.back) { this.back.style.opacity = bO; this.back.style.pointerEvents = bO > 0.5 ? 'auto' : 'none'; }
+  }
+
+  fit() {
+    if (!this.stage) return;
+    const s = Math.min(window.innerWidth / 1760, window.innerHeight / 1000) * 0.82 * (this.zoom || 1);
+    this.stage.style.transform = `translate(-50%,-50%) scale(${s})`;
+  }
+
+  flip(el) {
+    const on = el.getAttribute('data-on') === '1';
+    el.setAttribute('data-on', on ? '0' : '1');
+    el.style.background = on ? 'rgba(120,160,200,.2)' : 'rgba(95,224,168,.5)';
+    const knob = el.querySelector('[data-knob]');
+    if (knob) knob.style.transform = on ? 'translateX(0)' : (el.offsetWidth >= 32 ? 'translateX(16px)' : 'translateX(14px)');
+  }
+
+  handleClick(e) {
+    const tog = e.target.closest('[data-toggle]');
+    if (tog) { this.flip(tog); return; }
+    if (e.target.closest('[data-close]')) { this.closeCard(); return; }
+    const open = this.modal && this.modal.getAttribute('data-open') === '1';
+    if (open) {
+      if (e.target === this.modal) this.closeCard();
+      return;
+    }
+    const card = e.target.closest('[data-card]');
+    if (card && this.stage && this.stage.contains(card)) this.openCard(card);
+  }
+
+  openCard(card) {
+    if (!this.modalBody) return;
+    const clone = card.cloneNode(true);
+    clone.removeAttribute('data-card');
+    clone.style.position = 'static';
+    clone.style.left = clone.style.top = clone.style.right = clone.style.bottom = 'auto';
+    clone.style.width = '100%';
+    clone.style.height = 'auto';
+    clone.style.transform = 'none';
+    clone.style.cursor = 'default';
+    clone.style.clipPath = 'none';
+    clone.style.filter = 'none';
+    clone.style.opacity = '1';
+    clone.style.padding = '22px 26px';
+    clone.querySelectorAll('[data-more]').forEach((n) => { n.style.display = (n.tagName === 'DIV' && n.style.display === 'none' && n.getAttribute('style').includes('justify-content')) ? 'flex' : 'block'; });
+    clone.querySelectorAll('[data-expand]').forEach((n) => n.remove());
+    this.modalBody.innerHTML = '';
+    this.modalBody.appendChild(clone);
+    this.modal.setAttribute('data-open', '1');
+    this.modal.style.opacity = '1';
+    this.modal.style.pointerEvents = 'auto';
+    if (this.stage) this.stage.style.filter = 'blur(7px) brightness(.42) saturate(.85)';
+    requestAnimationFrame(() => {
+      if (this.modalWrap) { this.modalWrap.style.opacity = '1'; this.modalWrap.style.transform = 'translateY(0) scale(1)'; }
+    });
+  }
+
+  closeCard() {
+    if (!this.modal || this.modal.getAttribute('data-open') !== '1') return;
+    this.modal.setAttribute('data-open', '0');
+    this.modal.style.opacity = '0';
+    this.modal.style.pointerEvents = 'none';
+    if (this.modalWrap) { this.modalWrap.style.opacity = '0'; this.modalWrap.style.transform = 'translateY(20px) scale(.97)'; }
+    if (this.stage) this.stage.style.filter = 'none';
+    setTimeout(() => { if (this.modal.getAttribute('data-open') === '0' && this.modalBody) this.modalBody.innerHTML = ''; }, 320);
+  }
+
+  initGlobe() {
+    const cv = this.canvas;
+    if (!cv) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const CSS = 360;
+    cv.width = CSS * dpr; cv.height = CSS * dpr;
+    const ctx = cv.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const cx = 180, cy = 180, R = 150, N = 920;
+    const D2R = Math.PI / 180;
+    const land = [
+      [8,18,30],[2,22,24],[16,6,15],[-6,24,20],[-26,24,16],[12,-2,12],
+      [50,12,15],[58,30,16],[44,-2,9],
+      [46,86,32],[30,78,22],[56,98,26],[22,100,15],[60,140,22],[40,55,16],
+      [44,-100,28],[60,-108,24],[31,-92,15],[64,-150,16],[52,-122,12],
+      [-12,-60,22],[-30,-64,15],[2,-66,13],[-44,-70,9],
+      [-25,134,17],[-32,147,8],
+      [72,-42,12],[-80,0,42]
+    ];
+    const isLand = (latR, lonR) => {
+      for (let k = 0; k < land.length; k++) {
+        const la = land[k][0]*D2R, lo = land[k][1]*D2R, rr = land[k][2]*D2R;
+        const d = Math.acos(Math.max(-1, Math.min(1, Math.sin(latR)*Math.sin(la) + Math.cos(latR)*Math.cos(la)*Math.cos(lonR-lo))));
+        if (d < rr) return true;
+      }
+      return false;
+    };
+    const pts = [];
+    for (let i = 0; i < N; i++) {
+      const y = 1 - (i / (N - 1)) * 2;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const phi = i * 2.399963;
+      const x = Math.cos(phi) * r, z = Math.sin(phi) * r;
+      pts.push({ x, y, z, land: isLand(Math.asin(Math.max(-1, Math.min(1, y))), Math.atan2(z, x)) });
+    }
+    const landPts = pts.filter(p => p.land);
+    const hot = [];
+    for (let i = 0; i < 28 && landPts.length; i++) hot.push(landPts[Math.floor((i * 53 + 11) % landPts.length)]);
+
+    this.gA = 0; this.gTilt = 0.42; this.gVel = 0; this.gDrag = false;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    cv.addEventListener('pointerdown', (e) => {
+      this.gDrag = true; this.gLX = e.clientX; this.gLY = e.clientY; this.gVel = 0;
+      cv.style.cursor = 'grabbing';
+      try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    cv.addEventListener('pointermove', (e) => {
+      if (!this.gDrag) return;
+      const dx = e.clientX - this.gLX, dy = e.clientY - this.gLY;
+      this.gA += dx * 0.0065;
+      this.gTilt = clamp(this.gTilt - dy * 0.006, -1.05, 1.05);
+      this.gVel = dx * 0.0065;
+      this.gLX = e.clientX; this.gLY = e.clientY;
+    });
+    const end = () => { this.gDrag = false; cv.style.cursor = 'grab'; };
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+    cv.addEventListener('pointerleave', () => { if (this.gDrag) end(); });
+
+    const proj = (p, ca, sa, ct, st) => {
+      const xr = p.x * ca + p.z * sa;
+      const zr = -p.x * sa + p.z * ca;
+      const yt = p.y * ct - zr * st;
+      const zt = p.y * st + zr * ct;
+      return { sx: cx + xr * R, sy: cy + yt * R, z: zt };
+    };
+    const draw = () => {
+      ctx.clearRect(0, 0, CSS, CSS);
+      if (!this.gDrag) { this.gA += 0.0019 + this.gVel; this.gVel *= 0.93; }
+      const ca = Math.cos(this.gA), sa = Math.sin(this.gA);
+      const ct = Math.cos(this.gTilt), st = Math.sin(this.gTilt);
+      // translucent ocean sphere
+      const g = ctx.createRadialGradient(cx - 46, cy - 54, 14, cx, cy, R + 14);
+      g.addColorStop(0, 'rgba(42,112,172,.34)');
+      g.addColorStop(0.55, 'rgba(18,52,92,.24)');
+      g.addColorStop(1, 'rgba(6,16,30,.05)');
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fillStyle = g; ctx.fill();
+      // graticule (faint lat/long lines)
+      ctx.strokeStyle = 'rgba(120,190,235,.07)'; ctx.lineWidth = 0.7;
+      for (let m = 0; m < 6; m++) {
+        const lon = m * Math.PI / 6; ctx.beginPath(); let pen = false;
+        for (let j = 0; j <= 44; j++) {
+          const lat = -Math.PI/2 + Math.PI * j / 44;
+          const q = proj({ x: Math.cos(lat)*Math.cos(lon), y: Math.sin(lat), z: Math.cos(lat)*Math.sin(lon) }, ca, sa, ct, st);
+          if (q.z < -0.02) { pen = false; continue; }
+          pen ? ctx.lineTo(q.sx, q.sy) : ctx.moveTo(q.sx, q.sy); pen = true;
+        }
+        ctx.stroke();
+      }
+      for (let p2 = 1; p2 < 4; p2++) {
+        const lat = (p2 - 2) * Math.PI / 6; ctx.beginPath(); let pen = false;
+        for (let j = 0; j <= 60; j++) {
+          const lon = -Math.PI + 2*Math.PI * j / 60;
+          const q = proj({ x: Math.cos(lat)*Math.cos(lon), y: Math.sin(lat), z: Math.cos(lat)*Math.sin(lon) }, ca, sa, ct, st);
+          if (q.z < -0.02) { pen = false; continue; }
+          pen ? ctx.lineTo(q.sx, q.sy) : ctx.moveTo(q.sx, q.sy); pen = true;
+        }
+        ctx.stroke();
+      }
+      // surface: land = teal-green, ocean = faint blue (see-through)
+      for (const p of pts) {
+        const q = proj(p, ca, sa, ct, st);
+        const al = (q.z + 1) / 2;
+        if (al < 0.1) continue;
+        if (p.land) {
+          ctx.beginPath();
+          ctx.arc(q.sx, q.sy, 1.0 + al * 1.5, 0, 7);
+          ctx.fillStyle = 'rgba(74,205,150,' + (0.2 + al * 0.5) + ')';
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.arc(q.sx, q.sy, 0.5 + al * 0.7, 0, 7);
+          ctx.fillStyle = 'rgba(92,162,228,' + (0.05 + al * 0.2) + ')';
+          ctx.fill();
+        }
+      }
+      // network arcs
+      ctx.lineWidth = 0.8;
+      for (let i = 0; i < hot.length; i += 2) {
+        const q1 = proj(hot[i], ca, sa, ct, st);
+        const q2 = proj(hot[(i + 3) % hot.length], ca, sa, ct, st);
+        if (q1.z > -0.1 && q2.z > -0.1) {
+          const mx = (q1.sx + q2.sx) / 2, my = (q1.sy + q2.sy) / 2;
+          ctx.beginPath();
+          ctx.moveTo(q1.sx, q1.sy);
+          ctx.quadraticCurveTo(mx + (mx - cx) * 0.28, my + (my - cy) * 0.28, q2.sx, q2.sy);
+          ctx.strokeStyle = 'rgba(255,150,70,.18)';
+          ctx.stroke();
+        }
+      }
+      // ORANGE LIGHT COLUMNS radiating from the surface (additive)
+      const pulse = 0.6 + 0.4 * Math.sin(this.gA * 3.4);
+      ctx.globalCompositeOperation = 'lighter';
+      for (const h of hot) {
+        const q = proj(h, ca, sa, ct, st);
+        if (q.z < -0.05) continue;
+        const al = (q.z + 1) / 2;
+        const dx = q.sx - cx, dy = q.sy - cy, len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len, px = -uy, py = ux;
+        const L = 14 + al * 48 * (0.7 + 0.3 * pulse);
+        const bw = 1.5 + al * 1.7;
+        const tx = q.sx + ux * L, ty = q.sy + uy * L;
+        const grad = ctx.createLinearGradient(q.sx, q.sy, tx, ty);
+        grad.addColorStop(0, 'rgba(255,150,50,' + (0.55 * al) + ')');
+        grad.addColorStop(0.5, 'rgba(255,120,40,' + (0.28 * al) + ')');
+        grad.addColorStop(1, 'rgba(255,90,30,0)');
+        ctx.beginPath();
+        ctx.moveTo(q.sx + px * bw, q.sy + py * bw);
+        ctx.lineTo(q.sx - px * bw, q.sy - py * bw);
+        ctx.lineTo(tx, ty);
+        ctx.closePath();
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(q.sx, q.sy);
+        ctx.lineTo(q.sx + ux * L * 0.66, q.sy + uy * L * 0.66);
+        ctx.strokeStyle = 'rgba(255,195,115,' + (0.7 * al) + ')';
+        ctx.lineWidth = 1.1;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(q.sx, q.sy, 1.8 + al * 1.8, 0, 7);
+        ctx.fillStyle = 'rgba(255,185,95,' + (0.7 + 0.3 * al) + ')';
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      // atmosphere rim
+      ctx.beginPath(); ctx.arc(cx, cy, R + 1, 0, 7);
+      ctx.strokeStyle = 'rgba(90,180,255,.24)'; ctx.lineWidth = 1.5; ctx.stroke();
+      this._raf = requestAnimationFrame(draw);
+    };
+    draw();
+  }
+
+  renderVals() {
+    return {
+      setStage: this.setStage,
+      setGlobe: this.setGlobe,
+      setRoot: this.setRoot,
+      setWorld: this.setWorld,
+      setBill: this.setBill,
+      setFront: this.setFront,
+      setBack: this.setBack,
+      setModal: this.setModal,
+      setModalWrap: this.setModalWrap,
+      setModalBody: this.setModalBody,
+    };
+  }
+}
+</script>
+</body>
+</html>
