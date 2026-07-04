@@ -11,51 +11,73 @@
 import React, {
   useEffect, useRef, useState, useCallback, useMemo
 } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "../auth.jsx";
 import { useWorkflow } from "../store/store.jsx";
+import { useRoster } from "../lib/roster.jsx";
+import { STAGES, STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
+import { useMonitorStatus } from "../lib/use-monitor-status.js";
+import { MONITOR_CARDS } from "./monitor.jsx";
+import { supabase } from "../lib/supabase-client.js";
 import "./hud-space.css";
 
 /* ── Default layout preferences ───────────────────── */
-const PREFS_KEY = "hud_layout_prefs";
+const PREFS_KEY = "hud_layout_prefs";          // legacy prefs (migrated forward)
+const LAYOUT_KEY = "hud_layout_v2";            // { version, prefs, slots }
+const STAGE_W = 1760, FACE_W = 1760;           // face plane width
 const DEFAULT_PREFS = {
   perspective: 1700,
   zoom: 1.0,            // kept for the mouse-wheel gesture (no menu slider)
-  colAngles: [-44, -24, 0, 24, 44],
   cardDepth: 200,
-  colTighten: 0,        // px to pull outer columns toward center (window effect)
-  topTilt: 0,           // rotateX deg for cards above the globe midline
-  bottomTilt: 0,        // rotateX deg for cards below the midline
+  swing: 44,            // convenience: writes colAngles symmetrically
+  colAngles: [-44, -24, 0, 24, 44],  // per-column rotateY
+  tighten: 0,           // px to pull side columns inward (window effect)
+  topTilt: 0,           // rotateX deg for the TOP card of each column
+  bottomTilt: 0,        // rotateX deg for the BOTTOM card of each column
   globeSpin: 1.0,       // globe spin-speed multiplier (0 = frozen)
   rayHeight: 1.0,       // hot-point ray length multiplier
   mapOpacity: 0,        // 0 = dotted globe · 1 = filled world-map overlay
 };
+const GRID = 20;        // invisible snap grid (hold Alt to bypass)
+function snap(v, free) { return free ? Math.round(v) : Math.round(v / GRID) * GRID; }
 function loadPrefs() {
   try { return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") }; }
   catch { return { ...DEFAULT_PREFS }; }
 }
 
-/* ── Column base transforms (fixed X/Z offsets from mockup) ── */
-const COL_BASE = [
-  { tx: -86, tz: 76  },   // 0 = far left
-  { tx: -24, tz: 2   },   // 1 = inner left
-  { tx:   0, tz: 0   },   // 2 = center
-  { tx:  24, tz: 2   },   // 3 = inner right
-  { tx:  86, tz: 76  },   // 4 = far right
-];
+/* ── Column geometry (5 inward-curving bands) ──────────────
+   A card's column is DERIVED from its horizontal centre, so dragging a card
+   sideways re-buckets it into the nearest column and it inherits that column's
+   inward swing automatically (keeps the cockpit curve under freeform editing). */
+const COL_X          = [-86, -24, 0, 24, 86];   // per-column X nudge (on top of pos.left)
+const COL_DEPTH      = [ 76,   2, 0,  2, 76];   // per-column forward translateZ (outer cols curve in)
+const COL_TIGHTEN_DIR = [1, 0.5, 0, -0.5, -1];  // inward direction for "tighten" (pull side cols in)
 
-/* Per-column inward direction for the "tighten" control (pull side cols toward center) */
-const COL_TIGHTEN_DIR = [1, 0.5, 0, -0.5, -1];
+function colOf(pos) {
+  const cx = (pos.left + pos.width / 2) / FACE_W;       // 0..1 across the face
+  return Math.max(0, Math.min(4, Math.floor(cx * 5)));
+}
+/* Mirrored swing → symmetric per-column angles (used by the convenience slider) */
+function swingToAngles(swing) {
+  const s = swing || 0;
+  return [-s, -s / 2, 0, s / 2, s];
+}
 
-/* Full per-card transform: column offset + tighten + column rotateY + row tilt */
-function cardTransform(card, prefs) {
-  const center = card.pos.top + card.pos.height / 2;
-  const tilt   = center < 412 ? (prefs.topTilt || 0) : (prefs.bottomTilt || 0);
+/* Per-card transform. Per-card overrides (slot.turn/tilt/z) beat the column
+   defaults. In edit mode cards render FLAT so pos maps 1:1 to the screen
+   (true WYSIWYG grid editing). tiltRow ∈ {"top","bottom",null} picks which
+   column-default rotateX tilt applies (top-/bottom-most card only). */
+function cardTransformFor(slot, col, prefs, tiltRow, editMode) {
+  if (editMode) return "translateZ(0px)";
+  const turn = slot.turn != null ? slot.turn : (prefs.colAngles?.[col] ?? 0);
+  const tilt = slot.tilt != null ? slot.tilt
+             : tiltRow === "top" ? (prefs.topTilt || 0)
+             : tiltRow === "bottom" ? (prefs.bottomTilt || 0)
+             : 0;
   const tiltStr = tilt ? ` rotateX(${tilt}deg)` : "";
-  if (card.colTransformOverride) return card.colTransformOverride + tiltStr;
-  const { tx, tz } = COL_BASE[card.col];
-  const a       = prefs.colAngles[card.col] ?? 0;
-  const tighten = (prefs.colTighten || 0) * COL_TIGHTEN_DIR[card.col];
-  return `translateX(${tx + tighten}px) translateZ(${tz}px) rotateY(${a}deg)${tiltStr}`;
+  const z = slot.z != null ? slot.z : COL_DEPTH[col];
+  const tighten = (prefs.tighten || 0) * COL_TIGHTEN_DIR[col];
+  return `translateX(${COL_X[col] + tighten}px) translateZ(${z}px) rotateY(${turn}deg)${tiltStr}`;
 }
 
 /* ─────────────────────────────────────────────────────
@@ -83,6 +105,239 @@ function Row({ label, value, valueStyle }) {
     <div className="hud-metric-row">
       <span>{label}</span>
       <span className="hud-metric-val" style={valueStyle}>{value}</span>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   NAVIGATION — "Open full tab" transport. Mirrors the Back-to-My-Work
+   pattern: stash the target view (+ optional Monitor sub-mode / Reel-DNA
+   deep-link) then hard-navigate to the SPA shell at /app.
+─────────────────────────────────────────────────────── */
+/* Compact "3m ago" / "2h ago" relative-time label for freshness chrome. */
+function relAgo(when) {
+  if (!when) return "";
+  const t = when instanceof Date ? when.getTime() : new Date(when).getTime();
+  if (!t || Number.isNaN(t)) return "";
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+function goToTab(target) {
+  if (!target) return;
+  try {
+    localStorage.setItem("wb_view", target.view);
+    if (target.mode)  localStorage.setItem("wb_monitor_mode", target.mode);
+    if (target.tab)   localStorage.setItem("wb_open_reeldna_tab", target.tab);
+    if (target.openId) localStorage.setItem("wb_open_reeldna_id", target.openId);
+  } catch (_) {}
+  window.location.assign("/app");
+}
+
+/* Per-content open-tab target. Delegated infra + mon-* cards → Monitor; pipe-*
+   → Pipeline; the rest from an explicit map. */
+const OPEN_TAB_BY_ID = {
+  "tasks-comms":   { view: "mywork",        label: "Open My Work" },
+  "daily-tasks":   { view: "mywork",        label: "Open My Work" },
+  "reel-dna":      { view: "reeldna",       label: "Open Reel DNA" },
+  "thumbnail-dna": { view: "reeldna", tab: "thumbnails", label: "Open Thumbnails" },
+  "pipeline":      { view: "pipeline",      label: "Open Pipeline" },
+  "review-queue":  { view: "pipeline",      label: "Open Pipeline" },
+  "content-forge": { view: "content-forge", label: "Open Content Forge" },
+  "resources":     { view: "resources",     label: "Open Resources" },
+  "team-chat":     { view: "team",          label: "Open Team Chat" },
+  "gamify-back":   { view: "monitor", mode: "infra", label: "Open Monitor" },
+};
+function openTabFor(contentId) {
+  if (!contentId) return null;
+  if (OPEN_TAB_BY_ID[contentId]) return OPEN_TAB_BY_ID[contentId];
+  if (contentId.startsWith("mon-") || STATIC_TO_MON[contentId])
+    return { view: "monitor", mode: "infra", label: "Open Monitor" };
+  if (contentId.startsWith("pipe-")) return { view: "pipeline", label: "Open Pipeline" };
+  return null;
+}
+
+function HudOpenTabButton({ target }) {
+  if (!target) return null;
+  return (
+    <button className="hud-opentab-btn"
+      onClick={(e) => { e.stopPropagation(); goToTab(target); }}>
+      {target.label} →
+    </button>
+  );
+}
+
+/* Cheap stand-in for a heavy self-fetching Monitor card while it sits on the
+   3D face — the real component only mounts when the card is expanded (throttle). */
+function HudHeavyPlaceholder({ title }) {
+  return (
+    <div className="hud-heavy-ph">
+      <span className="hud-status-dot hud-status-dot--pulse"
+        style={{ background:"#5cc9ff", boxShadow:"0 0 9px #5cc9ff" }} />
+      <div>
+        <div className="hud-heavy-ph-title">{title}</div>
+        <div className="hud-heavy-ph-sub">Live · expand to load</div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   INTERACTIVE EXPANDED PANELS — only mounted inside the modal (Decision 1:
+   manipulation lives in the expanded view; the 3D face stays a read summary).
+─────────────────────────────────────────────────────── */
+
+/* To-do list = the DAILY-TASKS list from My Work (checkable, persisted). */
+function TodoPanel({ ctx }) {
+  const wf = ctx.wf;
+  const a = wf.actions || {};
+  const personId = ctx.person?.id || null;
+  const today = new Date().toISOString().slice(0, 10);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const tasks = (wf.dailyTasks || [])
+    .filter(t => t.assignedTo === personId)
+    .filter(t => !t.completed || t.taskDate === today)
+    .sort((x, y) => {
+      if (x.completed !== y.completed) return x.completed ? 1 : -1;
+      const sx = x.sortOrder ?? Infinity, sy = y.sortOrder ?? Infinity;
+      if (sx !== sy) return sx - sy;
+      return (x.created_at || "").localeCompare(y.created_at || "");
+    });
+
+  const add = async () => {
+    const v = text.trim();
+    if (!v || busy || !personId) return;
+    setBusy(true);
+    try {
+      await a.createDailyTask?.({ assignedTo: personId, createdBy: personId, taskText: v, taskDate: today });
+      setText("");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="hud-todo">
+      <div className="hud-section-label">
+        TO-DO · {tasks.filter(t => !t.completed).length} open
+      </div>
+      {tasks.length === 0 && <div className="hud-muted" style={{ padding:"6px 0" }}>No tasks for today.</div>}
+      {tasks.map(t => (
+        <div key={t.id} className={`hud-todo-row${t.completed ? " hud-todo-row--done" : ""}`}>
+          <button className="hud-todo-check" title={t.completed ? "Mark open" : "Complete"}
+            onClick={() => a.completeDailyTask?.(t.id, !t.completed)}>
+            {t.completed ? "✓" : "○"}
+          </button>
+          <span className="hud-todo-text">{t.taskText}</span>
+          <button className="hud-todo-del" title="Delete"
+            onClick={() => a.deleteDailyTask?.(t.id)}>✕</button>
+        </div>
+      ))}
+      <div className="hud-todo-add">
+        <input value={text} onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") add(); }}
+          placeholder={personId ? "Add a task for today…" : "Sign in to add tasks"} />
+        <button className="hud-todo-addbtn" onClick={add} disabled={!text.trim() || busy || !personId}>Add</button>
+      </div>
+    </div>
+  );
+}
+
+/* Recent Reel DNA captures — highlights IG-DM imports; row click deep-links
+   straight to that reel in the Reel DNA tab. */
+function ReelDnaRecentPanel({ ctx }) {
+  const items = (ctx.wf.reelDna || []).filter(i => !i.deletedAt && !i.archivedAt);
+  const [dmOnly, setDmOnly] = useState(false);
+  const shown = (dmOnly ? items.filter(i => i.source === "ig_dm") : items).slice(0, 20);
+  const dmCount = items.filter(i => i.source === "ig_dm").length;
+  return (
+    <div className="hud-recent">
+      <div className="hud-recent-head">
+        <span className="hud-section-label">RECENT CAPTURES · {items.length}</span>
+        <button className={`hud-recent-filter${dmOnly ? " is-on" : ""}`} onClick={() => setDmOnly(v => !v)}>
+          DM imports · {dmCount}
+        </button>
+      </div>
+      {shown.length === 0 && <div className="hud-muted" style={{ padding:"6px 0" }}>Nothing captured yet.</div>}
+      {shown.map(it => (
+        <button key={it.id} className="hud-recent-row"
+          onClick={() => goToTab({ view: "reeldna", openId: it.id })}>
+          <span className="hud-recent-main">
+            {it.source === "ig_dm" && <span className="hud-recent-badge">DM</span>}
+            {(it.handle || it.author || it.title || it.reelUrl || "Untitled").toString().slice(0, 40)}
+          </span>
+          <span className="hud-recent-meta">{(it.platform || "—")} · {it.status || "captured"}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* Recent thumbnail captures — grid of images; click deep-links to the
+   Thumbnails sub-tab. */
+function ThumbnailRecentPanel({ ctx }) {
+  const items = (ctx.wf.thumbnailDna || []).filter(i => !i.deletedAt && !i.archivedAt).slice(0, 24);
+  return (
+    <div className="hud-recent">
+      <div className="hud-section-label">RECENT THUMBNAILS · {(ctx.wf.thumbnailDna || []).length}</div>
+      {items.length === 0 && <div className="hud-muted" style={{ padding:"6px 0" }}>No thumbnails captured yet.</div>}
+      <div className="hud-thumb-grid">
+        {items.map(it => (
+          <button key={it.id} className="hud-thumb"
+            title={it.title || it.channel || ""}
+            onClick={() => goToTab({ view: "reeldna", tab: "thumbnails", openId: it.id })}>
+            {it.thumbnailUrl
+              ? <img src={it.thumbnailUrl} alt={it.title || "thumbnail"} loading="lazy" />
+              : <div className="hud-thumb-blank">{(it.title || "?").slice(0, 12)}</div>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* Live pipeline overview — stage counts + recent reels (view-only, Decision 3). */
+function PipelineExpanded({ ctx }) {
+  const items = pipeItems(ctx.wf);
+  return (
+    <div className="hud-pipe-expanded">
+      <div className="hud-pipe-counts">
+        {STAGES.map(s => (
+          <div key={s} className="hud-pipe-count">
+            <span style={{ color: TONE_HEX[STAGE_TONE[s]] ?? "#5cc9ff" }}>
+              {items.filter(r => r.stage === s).length}
+            </span>
+            <em>{STAGE_LABEL[s] ?? s}</em>
+          </div>
+        ))}
+      </div>
+      <div className="hud-section-label">RECENT REELS</div>
+      {items.slice(0, 14).map(r => (
+        <div key={r.id} className="hud-pipeline-item"
+          style={{ borderLeftColor: TONE_HEX[STAGE_TONE[r.stage]] ?? "#5cc9ff" }}>
+          {r.title || r.name || "Untitled reel"}
+          <span className="hud-muted" style={{ marginLeft:6, fontSize:9 }}>· {STAGE_LABEL[r.stage] ?? r.stage}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Review queue — reels awaiting sign-off. */
+function ReviewQueueExpanded({ ctx }) {
+  const queue = (ctx.wf.reviewLaneCards || []).filter(c => !c.archivedAt);
+  return (
+    <div className="hud-recent">
+      <div className="hud-section-label">AWAITING REVIEW · {queue.length}</div>
+      {queue.length === 0 && <div className="hud-muted" style={{ padding:"6px 0" }}>Nothing in the review lane.</div>}
+      {queue.map(c => (
+        <Row key={c.id} label={(c.title || c.reelTitle || "Reel").slice(0, 34)} value={c.reviewer || "unassigned"} />
+      ))}
     </div>
   );
 }
@@ -395,30 +650,23 @@ function GamifyFrontCard({ wf }) {
 /* ── Back face card bodies ──────────────────────────── */
 
 function PipelineCard({ wf }) {
-  const tasks = wf.tasks ?? [];
-  const notStarted  = tasks.filter(t => t.stage === "not_started").length;
-  const inProgress  = tasks.filter(t => t.stage === "in_progress").length;
-  const inReview    = tasks.filter(t => t.stage === "review").length;
-  const reels = wf.reels ?? [];
+  const items = pipeItems(wf);
+  const count = (s) => items.filter(r => r.stage === s).length;
   return (
     <>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6,
         marginBottom:10, font:"8px 'Chakra Petch'", letterSpacing:".08em" }}>
-        <div style={{ color:"#9fb4cc" }}>NOT STARTED <span style={{ color:"#ff7a1a" }}>{notStarted || 28}</span></div>
-        <div style={{ color:"#9fb4cc" }}>IN PROGRESS <span style={{ color:"#29b6ff" }}>{inProgress || 10}</span></div>
-        <div style={{ color:"#9fb4cc" }}>REVIEW <span style={{ color:"#5fe0a8" }}>{inReview || 3}</span></div>
+        <div style={{ color:"#9fb4cc" }}>NOT STARTED <span style={{ color:"#ff7a1a" }}>{count("not_started")}</span></div>
+        <div style={{ color:"#9fb4cc" }}>IN PROGRESS <span style={{ color:"#29b6ff" }}>{count("in_progress")}</span></div>
+        <div style={{ color:"#9fb4cc" }}>REVIEW <span style={{ color:"#5fe0a8" }}>{count("review")}</span></div>
       </div>
-      {reels.slice(0,5).map(r => (
-        <div key={r.id} className="hud-pipeline-item" style={{ borderLeftColor: "#ff8a3d" }}>
+      {items.slice(0,5).map(r => (
+        <div key={r.id} className="hud-pipeline-item"
+          style={{ borderLeftColor: TONE_HEX[STAGE_TONE[r.stage]] ?? "#ff8a3d" }}>
           {r.title || r.name || "Untitled reel"}
         </div>
       ))}
-      {!reels.length && <>
-        <div className="hud-pipeline-item" style={{ borderLeftColor:"#ff5a5a" }}>BOOMERANG - Rishikesh (Paul V)</div>
-        <div className="hud-pipeline-item" style={{ borderLeftColor:"#ff8a3d" }}>Johnny Harris Capcut Edit (Paul V)</div>
-        <div className="hud-pipeline-item" style={{ borderLeftColor:"#29b6ff" }}>still picture - sunset bg · in progress</div>
-        <div className="hud-pipeline-item" style={{ borderLeftColor:"#5fe0a8" }}>Naruto jutsu · food appears · review</div>
-      </>}
+      {!items.length && <div className="hud-muted" style={{ font:"10px 'Share Tech Mono'", marginTop:6 }}>No reels in the pipeline.</div>}
     </>
   );
 }
@@ -432,32 +680,29 @@ function ReviewQueueCard({ wf }) {
         <span className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>awaiting review</span>
       </div>
       {queue.slice(0,4).map(c => (
-        <Row key={c.id} label={c.title || c.reelTitle || "Reel"} value={c.reviewer || "unassigned"} />
+        <Row key={c.id} label={(c.title || c.reelTitle || "Reel").slice(0,28)} value={c.reviewer || "unassigned"} />
       ))}
-      {!queue.length && <>
-        <Row label="Naruto jutsu series" value="paul" />
-        <Row label="Sunset minimal edit" value="leroy" />
-        <Row label="Kashmir travel edit" value="paul" />
-      </>}
+      {!queue.length && <div className="hud-muted" style={{ font:"10px 'Share Tech Mono'", marginTop:6 }}>Nothing awaiting review.</div>}
     </>
   );
 }
 
 function TasksCommsCard({ wf }) {
-  const tasks = wf.tasks ?? [];
   const daily = wf.dailyTasks ?? [];
+  const open = daily.filter(t => !t.completed);
   return (
     <>
-      <div className="hud-section-label">TASKS</div>
-      {tasks.slice(0,3).map(t => (
-        <Row key={t.id} label={t.title?.slice(0,28) ?? "Task"} value={t.state ?? "open"} />
+      <div className="hud-section-label">DAILY TO-DO</div>
+      <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:8 }}>
+        <span style={{ font:"600 26px 'Chakra Petch'", color:"#29b6ff" }}>{open.length}</span>
+        <span className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>open tasks</span>
+      </div>
+      {open.slice(0,4).map(t => (
+        <div key={t.id} className="hud-metric-row">
+          <span style={{ color:"#cfe0f2" }}>○ {(t.taskText || "").slice(0,30)}</span>
+        </div>
       ))}
-      {!tasks.length && <>
-        <Row label="Edit B-roll cutdown" value="in progress" valueStyle={{ color:"#29b6ff" }} />
-        <Row label="Audio cleanup Reel 7" value="open" />
-      </>}
-      <div className="hud-section-label" style={{ marginTop:8 }}>DAILY</div>
-      <Row label="Daily tasks active" value={daily.filter(t => !t.done).length || 5} />
+      {!open.length && <div className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>All clear — no open tasks.</div>}
     </>
   );
 }
@@ -470,9 +715,9 @@ function ReelDnaCard({ wf }) {
         <span style={{ font:"600 28px 'Chakra Petch'", color:"#5cc9ff" }}>{items.length}</span>
         <span className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>captured reels</span>
       </div>
-      <Row label="With platform data" value={items.filter(i => i.platform).length || items.length} />
-      <Row label="Analyzed"           value={items.filter(i => i.analyzed).length || 0} />
-      <Row label="Platforms tracked"  value="IG · TikTok · YT" />
+      <Row label="With platform data" value={items.filter(i => i.platform).length} />
+      <Row label="Analyzed"           value={items.filter(i => i.analyzed).length} />
+      <Row label="DM imports"         value={items.filter(i => i.source === "ig_dm").length} />
       <div className="hud-muted" style={{ font:"9px 'Share Tech Mono'", marginTop:8 }}>
         Auto-ingest via IG sync · YT sync every 2hr
       </div>
@@ -490,15 +735,9 @@ function ThumbnailDnaCard({ wf }) {
       </div>
       <div className="hud-section-label">RECENT CONCEPTS</div>
       {items.slice(0,5).map(t => (
-        <Row key={t.id} label={t.title?.slice(0,24) ?? "Template"} value={t.platform ?? "—"} />
+        <Row key={t.id} label={(t.title || t.channel || "Template").slice(0,24)} value={t.platform ?? "—"} />
       ))}
-      {!items.length && <>
-        <Row label="SCAMMERS"  value="IG" />
-        <Row label="JOHNNY H"  value="YT" />
-        <Row label="KASHMIR"   value="YT" />
-        <Row label="DILJIT"    value="IG" />
-        <Row label="ANTARCT."  value="YT" />
-      </>}
+      {!items.length && <div className="hud-muted" style={{ font:"10px 'Share Tech Mono'", marginTop:6 }}>No thumbnails captured yet.</div>}
     </>
   );
 }
@@ -518,16 +757,13 @@ function TeamChatCard() {
 }
 
 function ContentForgeCard({ wf }) {
-  const reels  = wf.reels ?? [];
-  const events = wf.monitorEvents ?? [];
+  const reels = wf.reels ?? [];
   return (
     <>
-      <Row label="Hooks in pipeline" value={events.filter(e => e.type === "hook").length || 18} />
-      <Row label="Vet stage"         value={events.filter(e => e.status === "vet").length  || 8}  />
-      <Row label="Elevate stage"     value={events.filter(e => e.status === "elevate").length || 3} />
-      <Row label="Reels linked"      value={reels.length} />
+      <div className="hud-section-label">CONTENT FORGE</div>
+      <Row label="Reels linked" value={reels.length} />
       <div className="hud-muted" style={{ font:"9px 'Share Tech Mono'", marginTop:8 }}>
-        Solarin skin · token-bleed controls active
+        Vet → Elevate → Expound hook pipeline. Open the tab for live spend &amp; opportunities.
       </div>
     </>
   );
@@ -774,22 +1010,18 @@ const BACK_CARDS = [
     pos: { left:1186, top:20, width:250, height:300 },
     render: (wf) => {
       const daily = wf.dailyTasks ?? [];
+      const open = daily.filter(t => !t.completed);
       return <>
         <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:10 }}>
-          <span style={{ font:"600 28px 'Chakra Petch'", color:"#5fe0a8" }}>{daily.filter(t=>!t.done).length || 5}</span>
+          <span style={{ font:"600 28px 'Chakra Petch'", color:"#5fe0a8" }}>{open.length}</span>
           <span className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>pending today</span>
         </div>
         {daily.slice(0,5).map(t => (
           <div key={t.id} className="hud-metric-row">
-            <span style={{ color: t.done ? "#5fe0a8" : "#cfe0f2" }}>{t.done ? "✓" : "○"} {t.title?.slice(0,28)}</span>
+            <span style={{ color: t.completed ? "#5fe0a8" : "#cfe0f2" }}>{t.completed ? "✓" : "○"} {(t.taskText || "").slice(0,28)}</span>
           </div>
         ))}
-        {!daily.length && <>
-          <Row label="○ Review Reel DNA batch" value="—" />
-          <Row label="○ Content Forge run"      value="—" />
-          <Row label="○ Check IG sync"           value="—" />
-          <Row label="✓ Deploy monitor fix"      value="done" valueStyle={{ color:"#5fe0a8" }} />
-        </>}
+        {!daily.length && <div className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>No tasks yet — expand to add.</div>}
       </>;
     },
     detailTitle: "Daily Tasks — Full List",
@@ -827,47 +1059,308 @@ const BACK_CARDS = [
 ];
 
 /* ─────────────────────────────────────────────────────
+   PIPELINE slot widgets — pick a stage column or a person lane
+─────────────────────────────────────────────────────── */
+const TONE_HEX = { cyan: "#5cc9ff", warn: "#ff9a4d", block: "#c98bff", ok: "#5fe0a8" };
+
+/* Board items = canonical reels + reviewer shadow cards; lane derives from
+   owner unless the record carries an explicit lane (mirrors pipeline.jsx). */
+function pipeItems(wf) {
+  return [...(wf.reels ?? []), ...(wf.reviewLaneCards ?? [])]
+    .filter(r => !r.archivedAt)
+    .map(r => ({ ...r, lane: r.lane || r.owner }));
+}
+
+function PipelineStageWidget({ wf, stageKey }) {
+  const label = STAGE_LABEL[stageKey] ?? stageKey;
+  const tone  = TONE_HEX[STAGE_TONE[stageKey]] ?? "#5cc9ff";
+  const items = pipeItems(wf).filter(r => r.stage === stageKey);
+  return (
+    <>
+      <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:10 }}>
+        <span style={{ font:"600 28px 'Chakra Petch'", color: tone }}>{items.length}</span>
+        <span className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>in {label.toLowerCase()}</span>
+      </div>
+      {items.slice(0, 9).map(r => (
+        <div key={r.id} className="hud-pipeline-item" style={{ borderLeftColor: tone }}>
+          {r.title || r.name || "Untitled reel"}
+        </div>
+      ))}
+      {!items.length && <div className="hud-muted" style={{ font:"10px 'Share Tech Mono'", marginTop:6 }}>No reels in this stage.</div>}
+    </>
+  );
+}
+
+function PipelineLaneWidget({ wf, laneId, roster }) {
+  const name = laneId === "review"
+    ? "Review"
+    : (roster?.peopleById?.[laneId]?.name || roster?.peopleById?.[laneId]?.displayName || laneId);
+  const items = pipeItems(wf).filter(r => r.lane === laneId);
+  return (
+    <>
+      <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:10 }}>
+        <span style={{ font:"600 28px 'Chakra Petch'", color:"#5cc9ff" }}>{items.length}</span>
+        <span className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>{name}'s reels</span>
+      </div>
+      {items.slice(0, 9).map(r => (
+        <div key={r.id} className="hud-pipeline-item" style={{ borderLeftColor: TONE_HEX[STAGE_TONE[r.stage]] ?? "#5cc9ff" }}>
+          {r.title || r.name || "Untitled reel"}
+          <span className="hud-muted" style={{ marginLeft:6, fontSize:8 }}>· {STAGE_LABEL[r.stage] ?? r.stage}</span>
+        </div>
+      ))}
+      {!items.length && <div className="hud-muted" style={{ font:"10px 'Share Tech Mono'", marginTop:6 }}>No reels in this lane.</div>}
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   CONTENT CATALOG — every pickable content source, grouped.
+   ctx = { wf, monitor, roster }. Each render(ctx) returns the card body.
+─────────────────────────────────────────────────────── */
+/* Lookup of the live Monitor cards by id (for the static-card delegation). */
+const MON_BY_ID = Object.fromEntries(MONITOR_CARDS.map(m => [m.id, m]));
+
+/* Static Infra/HUD cards that have a fully-live Monitor twin → delegate to it
+   (one source of truth; no drifting duplicate logic). The static body fns for
+   these ids become dead code, kept only for git history. */
+const STATIC_TO_MON = {
+  "server-host":  "mon-server",
+  "social-token": "mon-social-tokens",
+  "api-budgets":  "mon-budgets",
+  "supabase":     "mon-supabase",
+  "storage":      "mon-storage",
+  "gcp":          "mon-gcp",
+  "news-monitor": "mon-news",
+  "llm-gates":    "mon-free-llm",
+  "scout":        "mon-scout",
+  "ai-credits":   "mon-ai-credits",
+  "anthropic":    "mon-anthropic",
+  "vercel":       "mon-vercel",
+  "editor-usage": "mon-editor-usage",
+  "gamify-front": "mon-gamify",
+};
+
+/* Monitor cards that self-fetch on a timer — only mount them when EXPANDED so
+   a wall of them doesn't pile up background fetches (throttle). */
+const HEAVY_MON = new Set(["mon-budgets", "mon-editor-usage", "mon-capcut-installs", "mon-frontend-perf"]);
+
+/* A slot is "monitor-backed" (drives the live poll) if it's a mon-* card OR a
+   static infra card that delegates to a mon-* twin. */
+const MONITOR_BACKED = new Set(Object.keys(STATIC_TO_MON));
+function isMonitorBacked(contentId) {
+  return !!contentId && (contentId.startsWith("mon-") || MONITOR_BACKED.has(contentId));
+}
+
+/* Infra/HUD = the existing compact HUD widgets. Delegated ids render their live
+   Monitor twin (bare); the rest keep their own compact body. */
+const HUD_CATALOG = [...FRONT_CARDS, ...BACK_CARDS].map(c => {
+  const monId = STATIC_TO_MON[c.id];
+  const twin  = monId ? MON_BY_ID[monId] : null;
+  return {
+    id: c.id,
+    group: "Infra / HUD",
+    label: c.title,
+    bare: !!twin,
+    title: c.title,
+    accentColor: c.accentColor, statusColor: c.statusColor, status: c.status,
+    shineColor: c.shineColor, cssClass: c.cssClass,
+    detailTitle: c.detailTitle, detailText: c.detailText,
+    render: twin
+      ? (ctx, expanded) => (HEAVY_MON.has(monId) && !expanded)
+          ? <HudHeavyPlaceholder title={c.title} />
+          : twin.render(ctx.monitor)
+      : (ctx) => c.render(ctx.wf),
+  };
+});
+
+/* Monitor (live) = the REAL Monitor tab cards (own .card chrome → rendered bare) */
+const MONITOR_CATALOG = MONITOR_CARDS.map(m => ({
+  id: m.id,
+  group: "Monitor (live)",
+  label: m.label,
+  bare: true,
+  title: m.label,
+  accentColor: "#5cc9ff",
+  detailTitle: m.label + " — live",
+  detailText: "Live Monitor card, mirrored from the Monitor tab (polls /api/monitor/status).",
+  render: (ctx, expanded) => (HEAVY_MON.has(m.id) && !expanded)
+    ? <HudHeavyPlaceholder title={m.label} />
+    : m.render(ctx.monitor),
+}));
+
+/* Pipeline stages (static 5). Lanes are added per-roster at runtime. */
+const PIPELINE_STAGE_CATALOG = STAGES.map(s => ({
+  id: `pipe-stage-${s}`,
+  group: "Pipeline",
+  label: `Stage · ${STAGE_LABEL[s] ?? s}`,
+  bare: false,
+  title: `PIPELINE · ${(STAGE_LABEL[s] ?? s).toUpperCase()}`,
+  accentColor: TONE_HEX[STAGE_TONE[s]] ?? "#5cc9ff",
+  statusColor: TONE_HEX[STAGE_TONE[s]] ?? "#5cc9ff",
+  shineColor: TONE_HEX[STAGE_TONE[s]] ?? "#5cc9ff",
+  detailTitle: `Pipeline — ${STAGE_LABEL[s] ?? s}`,
+  detailText: "Reels currently in this pipeline stage, live from the board.",
+  render: (ctx) => <PipelineStageWidget wf={ctx.wf} stageKey={s} />,
+}));
+
+/* Static catalog parts (lanes resolved by id prefix at render time). */
+const STATIC_CATALOG = [...PIPELINE_STAGE_CATALOG, ...MONITOR_CATALOG, ...HUD_CATALOG];
+const CATALOG_BY_ID = Object.fromEntries(STATIC_CATALOG.map(e => [e.id, e]));
+
+/* Presentation meta for a slot's content (frame title/accent/chrome). Handles
+   the dynamic person-lane ids that aren't in the static catalog. */
+function metaFor(contentId, roster) {
+  if (!contentId) return { bare: false, title: "", accentColor: "#5cc9ff" };
+  if (contentId.startsWith("pipe-lane-")) {
+    const laneId = contentId.slice("pipe-lane-".length);
+    const name = laneId === "review" ? "Review"
+      : (roster?.peopleById?.[laneId]?.name || roster?.peopleById?.[laneId]?.displayName || laneId);
+    return {
+      bare: false, title: `PIPELINE · ${String(name).toUpperCase()}`,
+      accentColor: "#5cc9ff", statusColor: "#5cc9ff", shineColor: "#5cc9ff",
+      detailTitle: `Pipeline — ${name}`,
+      detailText: "Reels in this person's lane across all stages, live from the board.",
+    };
+  }
+  return CATALOG_BY_ID[contentId] || { bare: false, title: contentId, accentColor: "#5cc9ff" };
+}
+
+/* When EXPANDED, these content ids swap their read-only compact body for a
+   directly-manipulable / richer panel (Decision 1: edit lives in the modal). */
+const EXPANDED_PANEL = {
+  "tasks-comms":   (ctx) => <TodoPanel ctx={ctx} />,
+  "daily-tasks":   (ctx) => <TodoPanel ctx={ctx} />,
+  "reel-dna":      (ctx) => <ReelDnaRecentPanel ctx={ctx} />,
+  "thumbnail-dna": (ctx) => <ThumbnailRecentPanel ctx={ctx} />,
+  "pipeline":      (ctx) => <PipelineExpanded ctx={ctx} />,
+  "review-queue":  (ctx) => <ReviewQueueExpanded ctx={ctx} />,
+};
+
+/* Resolve a slot's content to a React node. `expanded` picks the rich/editable
+   variant (modal) over the compact read-only summary (3D face). */
+function resolveContentNode(contentId, ctx, expanded = false) {
+  if (!contentId) return null;
+  if (contentId.startsWith("pipe-lane-")) {
+    return <PipelineLaneWidget wf={ctx.wf} laneId={contentId.slice("pipe-lane-".length)} roster={ctx.roster} />;
+  }
+  if (expanded && EXPANDED_PANEL[contentId]) return EXPANDED_PANEL[contentId](ctx);
+  const entry = CATALOG_BY_ID[contentId];
+  return entry ? entry.render(ctx, expanded) : null;
+}
+
+/* ─────────────────────────────────────────────────────
+   Layout (slots) — persisted, with one-time migration from the
+   hardcoded card arrays + legacy prefs.
+─────────────────────────────────────────────────────── */
+let _uidSeq = 0;
+function nextUid() { return `s_${Date.now().toString(36)}_${(_uidSeq++).toString(36)}`; }
+
+function buildDefaultSlots() {
+  const fromArr = (arr, face) => arr.map(c => ({
+    uid: nextUid(),
+    face,
+    contentId: c.id,
+    pos: { ...c.pos },
+    // two center cards used translateZ(-60) overrides — preserve their depth
+    z: c.colTransformOverride ? -60 : undefined,
+  }));
+  return [...fromArr(FRONT_CARDS, "front"), ...fromArr(BACK_CARDS, "back")];
+}
+
+function loadLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.slots)) {
+        return { prefs: { ...DEFAULT_PREFS, ...(parsed.prefs || {}) }, slots: parsed.slots };
+      }
+    }
+  } catch (_) {}
+  // first run: seed from the hardcoded layout + legacy prefs
+  return { prefs: loadPrefs(), slots: buildDefaultSlots() };
+}
+
+function saveLayout(prefs, slots) {
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ version: 2, prefs, slots })); } catch (_) {}
+}
+
+/* ─────────────────────────────────────────────────────
    HudCard — renders one card on a face
 ─────────────────────────────────────────────────────── */
-function HudCard({ card, prefs, wf, onOpen }) {
-  const baseTransform = cardTransform(card, prefs);
+function HudCard({ slot, col, tiltRow, prefs, ctx, meta, node, editMode, selected,
+                  onOpen, onPick, onDelete, onMoveStart, onResizeStart }) {
+  const baseTransform = cardTransformFor(slot, col, prefs, tiltRow, editMode);
+  const empty = !slot.contentId;
+  const titleColor = meta.accentColor === "#5fe0a8" ? "#bfe6d6"
+    : meta.accentColor === "#5cc9ff" ? "#bcd6f2"
+    : meta.accentColor === "#ff9a4d" ? "#ffd4ab"
+    : meta.accentColor === "#c98bff" ? "#e0ccff"
+    : "#bfe6d6";
 
   return (
     <div
-      className={`hud-card ${card.cssClass || ""}`}
+      className={`hud-card ${meta.cssClass || ""}${meta.bare ? " hud-card--bare" : ""}`
+        + `${editMode ? " hud-card--editing" : ""}${empty ? " hud-card--empty" : ""}`
+        + `${selected ? " hud-card--selected" : ""}`}
       style={{
         position: "absolute",
-        left:   card.pos.left,
-        top:    card.pos.top,
-        width:  card.pos.width,
-        height: card.pos.height,
+        left:   slot.pos.left,
+        top:    slot.pos.top,
+        width:  slot.pos.width,
+        height: slot.pos.height,
         "--card-base-transform": baseTransform,
-        "--card-shine": card.shineColor,
-        "--card-accent": card.accentColor,
-        zIndex: 5,
+        "--card-shine": meta.shineColor || meta.accentColor,
+        "--card-accent": meta.accentColor,
+        zIndex: selected ? 7 : 5,
       }}
-      onClick={() => onOpen(card.id)}
+      onClick={editMode ? undefined : (() => !empty && onOpen(slot))}
+      onPointerDown={editMode ? (e) => onMoveStart(e, slot) : undefined}
     >
-      <div className="hud-card-header">
-        <span
-          className={`hud-status-dot${card.statusColor === card.accentColor ? " hud-status-dot--pulse" : ""}`}
-          style={{ background: card.statusColor || card.accentColor,
-            boxShadow: `0 0 9px ${card.statusColor || card.accentColor}` }}
-        />
-        <span className="hud-card-title" style={{ color: card.accentColor === "#5fe0a8" ? "#bfe6d6"
-          : card.accentColor === "#5cc9ff" ? "#bcd6f2"
-          : card.accentColor === "#ff9a4d" ? "#ffd4ab"
-          : card.accentColor === "#c98bff" ? "#e0ccff"
-          : "#bfe6d6" }}>{card.title}</span>
-        {card.status && (
-          <span className="hud-card-badge"
-            style={{ color: card.accentColor, borderColor: `${card.accentColor}66` }}>
-            {card.status}
-          </span>
-        )}
-      </div>
-      {card.render(wf)}
-      <div className="hud-card-expand">⤢ EXPAND</div>
+      {editMode ? (
+        /* Reconfigure mode — show the card as an editable outline: just its
+           current label (if any) + the centered ＋/change button. */
+        <div className="hud-card-editlabel">{slot.contentId ? meta.title : ""}</div>
+      ) : empty ? (
+        <div className="hud-card-emptyhint">empty slot</div>
+      ) : meta.bare ? (
+        <div className="hud-card-bare-body">{node}</div>
+      ) : (
+        <>
+          <div className="hud-card-header">
+            <span
+              className={`hud-status-dot${meta.statusColor === meta.accentColor ? " hud-status-dot--pulse" : ""}`}
+              style={{ background: meta.statusColor || meta.accentColor,
+                boxShadow: `0 0 9px ${meta.statusColor || meta.accentColor}` }}
+            />
+            <span className="hud-card-title" style={{ color: titleColor }}>{meta.title}</span>
+            {meta.status && (
+              <span className="hud-card-badge"
+                style={{ color: meta.accentColor, borderColor: `${meta.accentColor}66` }}>
+                {meta.status}
+              </span>
+            )}
+          </div>
+          {node}
+          {!editMode && <div className="hud-card-expand">⤢ EXPAND</div>}
+        </>
+      )}
+
+      {editMode && (
+        <>
+          <button className="hud-edit-pick"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onPick(slot); }}>
+            {empty ? "＋ add content" : "⟲ change"}
+          </button>
+          <button className="hud-edit-del" title="Remove card"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDelete(slot); }}>×</button>
+          <div className="hud-rz hud-rz--r"  onPointerDown={(e) => { e.stopPropagation(); onResizeStart(e, slot, "r"); }} />
+          <div className="hud-rz hud-rz--b"  onPointerDown={(e) => { e.stopPropagation(); onResizeStart(e, slot, "b"); }} />
+          <div className="hud-rz hud-rz--br" onPointerDown={(e) => { e.stopPropagation(); onResizeStart(e, slot, "br"); }} />
+        </>
+      )}
     </div>
   );
 }
@@ -875,9 +1368,10 @@ function HudCard({ card, prefs, wf, onOpen }) {
 /* ─────────────────────────────────────────────────────
    HudModal — full-screen card detail
 ─────────────────────────────────────────────────────── */
-function HudModal({ cardId, wf, onClose, stageRef }) {
-  const all   = [...FRONT_CARDS, ...BACK_CARDS];
-  const card  = useMemo(() => all.find(c => c.id === cardId), [cardId]);
+function HudModal({ contentId, ctx, onClose, stageRef, onPin }) {
+  const meta = useMemo(() => metaFor(contentId, ctx.roster), [contentId, ctx.roster]);
+  const node = resolveContentNode(contentId, ctx, true);   // expanded = manipulable variant
+  const openTab = openTabFor(contentId);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -889,26 +1383,35 @@ function HudModal({ cardId, wf, onClose, stageRef }) {
     };
   }, [onClose, stageRef]);
 
-  if (!card) return null;
+  if (!contentId) return null;
 
   return (
     <div className="hud-modal hud-modal--open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="hud-modal-wrap">
         <div className="hud-modal-header">
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-            <span className="hud-status-dot" style={{ background: card.accentColor,
-              boxShadow:`0 0 9px ${card.accentColor}`, width:9, height:9 }} />
+            <span className="hud-status-dot" style={{ background: meta.accentColor,
+              boxShadow:`0 0 9px ${meta.accentColor}`, width:9, height:9 }} />
             <span style={{ font:"600 14px 'Chakra Petch'", letterSpacing:".16em",
-              color: card.accentColor }}>{card.detailTitle ?? card.title}</span>
+              color: meta.accentColor }}>{meta.detailTitle ?? meta.title}</span>
           </div>
-          <div style={{ font:"10px 'Share Tech Mono'", color:"#7e93ab" }}>
-            {card.detailText}
-          </div>
+          {meta.detailText && (
+            <div style={{ font:"10px 'Share Tech Mono'", color:"#7e93ab" }}>
+              {meta.detailText}
+            </div>
+          )}
         </div>
         <div className="hud-modal-body">
           <div style={{ font:"10px 'Share Tech Mono'" }}>
-            {card.render(wf)}
+            {node}
           </div>
+        </div>
+        <div className="hud-modal-actions">
+          <HudOpenTabButton target={openTab} />
+          {onPin && (
+            <button className="hud-pin-btn" title="Keep this open as a side dock"
+              onClick={() => { onPin(contentId); onClose(); }}>📌 Pin</button>
+          )}
         </div>
         <div className="hud-modal-hint">CLICK OUTSIDE OR PRESS ESC TO CLOSE</div>
         <button className="hud-modal-close" onClick={onClose}>×</button>
@@ -917,16 +1420,150 @@ function HudModal({ cardId, wf, onClose, stageRef }) {
   );
 }
 
+/* Pinned side-dock — a single expanded panel kept open while navigating the
+   3D wall (Decision E). Renders the same expanded node as the modal. */
+function HudDock({ contentId, ctx, onClose }) {
+  const meta = useMemo(() => metaFor(contentId, ctx.roster), [contentId, ctx.roster]);
+  const node = resolveContentNode(contentId, ctx, true);
+  const openTab = openTabFor(contentId);
+  if (!contentId) return null;
+  return (
+    <div className="hud-dock">
+      <div className="hud-dock-head">
+        <span className="hud-status-dot" style={{ background: meta.accentColor,
+          boxShadow:`0 0 9px ${meta.accentColor}`, width:8, height:8 }} />
+        <span className="hud-dock-title">{meta.title}</span>
+        <button className="hud-dock-close" title="Unpin" onClick={onClose}>×</button>
+      </div>
+      <div className="hud-dock-body"><div style={{ font:"10px 'Share Tech Mono'" }}>{node}</div></div>
+      <div className="hud-dock-actions"><HudOpenTabButton target={openTab} /></div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   HudContentPicker — categorized popover (portaled to body) to assign
+   a content source to a slot.
+─────────────────────────────────────────────────────── */
+function HudContentPicker({ roster, onPick, onClear, onClose }) {
+  const [q, setQ] = useState("");
+
+  const groups = useMemo(() => {
+    const laneEntries = [
+      ...(roster?.peopleList ?? [])
+        .filter(p => p.role !== "reviewer")
+        .map(p => ({ id: `pipe-lane-${p.id}`, label: `Lane · ${p.name || p.displayName || p.id}` })),
+      { id: "pipe-lane-review", label: "Lane · Review" },
+    ];
+    return [
+      { group: "Pipeline",       items: [...PIPELINE_STAGE_CATALOG.map(e => ({ id: e.id, label: e.label })), ...laneEntries] },
+      { group: "Monitor (live)", items: MONITOR_CATALOG.map(e => ({ id: e.id, label: e.label })) },
+      // De-dupe (Decision B): delegated infra ids now render their Monitor twin,
+      // so the Monitor (live) group already covers them — hide the duplicates.
+      { group: "Infra / HUD",    items: HUD_CATALOG.filter(e => !STATIC_TO_MON[e.id]).map(e => ({ id: e.id, label: e.label })) },
+    ];
+  }, [roster]);
+
+  const needle = q.trim().toLowerCase();
+  const filtered = needle
+    ? groups.map(g => ({ ...g, items: g.items.filter(it => it.label.toLowerCase().includes(needle)) }))
+            .filter(g => g.items.length)
+    : groups;
+
+  return createPortal(
+    <div className="hud-picker-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="hud-picker">
+        <div className="hud-picker-head">
+          <span>ASSIGN CONTENT</span>
+          <button className="hud-picker-close" onClick={onClose}>×</button>
+        </div>
+        <input className="hud-picker-search" autoFocus placeholder="Search…"
+          value={q} onChange={e => setQ(e.target.value)} />
+        <div className="hud-picker-body">
+          <button className="hud-picker-item hud-picker-item--clear" onClick={onClear}>⌫ Leave empty</button>
+          {filtered.map(g => (
+            <div key={g.group} className="hud-picker-group">
+              <div className="hud-picker-group-label">{g.group}</div>
+              {g.items.map(it => (
+                <button key={it.id} className="hud-picker-item" onClick={() => onPick(it.id)}>
+                  {it.label}
+                </button>
+              ))}
+            </div>
+          ))}
+          {!filtered.length && <div className="hud-picker-empty">No matches.</div>}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 /* ─────────────────────────────────────────────────────
    HudLayoutMenu — spatial customization panel
 ─────────────────────────────────────────────────────── */
-const COL_LABELS = ["Far Left", "Inner Left", "Center", "Inner Right", "Far Right"];
-
-function HudLayoutMenu({ prefs, onUpdate, onUpdateCol, onReset, onClose }) {
+function HudLayoutMenu({ prefs, onUpdate, onReset, onClose,
+                         editMode, onToggleEdit, onAddCard, onFlipFace,
+                         onSwing, onColAngle, selectedSlot, onUpdateSlot, onDeselect }) {
+  const colAngles = prefs.colAngles || DEFAULT_PREFS.colAngles;
+  const COL_NAMES = ["Far left", "Inner left", "Center", "Inner right", "Far right"];
   return (
     <div className="hud-layout-menu">
       <button className="hud-menu-close-btn" onClick={onClose}>×</button>
       <h3>⚙ LAYOUT CONTROLS</h3>
+
+      <h4>RECONFIGURE</h4>
+      <button className={`hud-edit-toggle${editMode ? " is-on" : ""}`} onClick={onToggleEdit}>
+        {editMode ? "✓ Done reconfiguring" : "⤢ Reconfigure cards"}
+      </button>
+      {editMode && (
+        <>
+          <button className="hud-addcard-btn" onClick={onAddCard}>＋ Add card → drag to place</button>
+          <button className="hud-addcard-btn" onClick={onFlipFace}>⟲ Flip to other face</button>
+          <div className="hud-edit-hint">
+            Add drops a card in the next free cell + follows your cursor — click to place (Esc cancels).
+            Drag a card to move · drag its right/bottom edge to resize · ＋ assigns content · × removes it.
+            Snaps to a grid — hold <b>Alt</b> for free placement. Click a card to tweak its own orientation below.
+          </div>
+        </>
+      )}
+
+      {/* Per-card orientation (when a card is selected in edit mode) */}
+      {editMode && selectedSlot && (
+        <>
+          <h4>THIS CARD <span className="hud-h4-note">{selectedSlot.contentId ? metaFor(selectedSlot.contentId, null).title : "(empty)"}</span></h4>
+          <div className="hud-slider-row">
+            <label>Tilt</label>
+            <input type="range" min="-80" max="80" step="1"
+              value={selectedSlot.tilt ?? 0}
+              onChange={e => onUpdateSlot(selectedSlot.uid, { tilt: Number(e.target.value) })} />
+            <span>{selectedSlot.tilt ?? 0}°</span>
+          </div>
+          <div className="hud-slider-row">
+            <label>Turn</label>
+            <input type="range" min="-80" max="80" step="1"
+              value={selectedSlot.turn ?? 0}
+              onChange={e => onUpdateSlot(selectedSlot.uid, { turn: Number(e.target.value) })} />
+            <span>{selectedSlot.turn ?? 0}°</span>
+          </div>
+          <div className="hud-slider-row">
+            <label>Depth</label>
+            <input type="range" min="-200" max="200" step="5"
+              value={selectedSlot.z ?? 0}
+              onChange={e => onUpdateSlot(selectedSlot.uid, { z: Number(e.target.value) })} />
+            <span>{selectedSlot.z ?? 0}px</span>
+          </div>
+          <button className="hud-addcard-btn"
+            onClick={() => onUpdateSlot(selectedSlot.uid, { tilt: undefined, turn: undefined, z: undefined })}>
+            ↺ Reset card to column
+          </button>
+          <button className="hud-addcard-btn"
+            onClick={() => onUpdateSlot(selectedSlot.uid, { face: selectedSlot.face === "front" ? "back" : "front" })}>
+            ⇄ Send to other face
+          </button>
+          <button className="hud-addcard-btn" onClick={onDeselect}>Deselect</button>
+        </>
+      )}
 
       <h4>GLOBAL</h4>
       <div className="hud-slider-row">
@@ -944,14 +1581,32 @@ function HudLayoutMenu({ prefs, onUpdate, onUpdateCol, onReset, onClose }) {
         <span>{prefs.cardDepth}px</span>
       </div>
       <div className="hud-slider-row">
-        <label>Column tighten</label>
+        <label>Tighten</label>
         <input type="range" min="0" max="400" step="10"
-          value={prefs.colTighten}
-          onChange={e => onUpdate("colTighten", Number(e.target.value))} />
-        <span>{prefs.colTighten}px</span>
+          value={prefs.tighten ?? 0}
+          onChange={e => onUpdate("tighten", Number(e.target.value))} />
+        <span>{prefs.tighten ?? 0}px</span>
       </div>
 
-      <h4>CARD TILT</h4>
+      <h4>COLUMN ANGLES <span className="hud-h4-note">(Swing sets all)</span></h4>
+      <div className="hud-slider-row">
+        <label>Swing</label>
+        <input type="range" min="0" max="60" step="1"
+          value={prefs.swing}
+          onChange={e => onSwing(Number(e.target.value))} />
+        <span>{prefs.swing}°</span>
+      </div>
+      {COL_NAMES.map((nm, i) => (
+        <div className="hud-slider-row" key={i}>
+          <label>{nm}</label>
+          <input type="range" min="-70" max="70" step="1"
+            value={colAngles[i] ?? 0}
+            onChange={e => onColAngle(i, Number(e.target.value))} />
+          <span>{colAngles[i] ?? 0}°</span>
+        </div>
+      ))}
+
+      <h4>CARD TILT <span className="hud-h4-note">(top & bottom cards only)</span></h4>
       <div className="hud-slider-row">
         <label>Top tilt</label>
         <input type="range" min="-45" max="45" step="1"
@@ -990,18 +1645,7 @@ function HudLayoutMenu({ prefs, onUpdate, onUpdateCol, onReset, onClose }) {
         <span>{Math.round(prefs.mapOpacity * 100)}%</span>
       </div>
 
-      <h4>COLUMN ANGLES</h4>
-      {COL_LABELS.map((lbl, i) => (
-        <div key={i} className="hud-slider-row">
-          <label>{lbl}</label>
-          <input type="range" min="-60" max="60" step="1"
-            value={prefs.colAngles[i]}
-            onChange={e => onUpdateCol(i, Number(e.target.value))} />
-          <span>{prefs.colAngles[i]}°</span>
-        </div>
-      ))}
-
-      <button className="hud-reset-btn" onClick={onReset}>RESET DEFAULTS</button>
+      <button className="hud-reset-btn" onClick={onReset}>RESET LAYOUT &amp; DEFAULTS</button>
     </div>
   );
 }
@@ -1178,6 +1822,8 @@ export function HudSpace() {
 
 function HudSpaceInner() {
   const wf = useWorkflow();
+  const roster = useRoster();
+  const { person } = useAuth();
 
   /* ── Refs ─────────────────────────────────────────── */
   const rootRef   = useRef(null);
@@ -1187,11 +1833,89 @@ function HudSpaceInner() {
   const backRef   = useRef(null);
   const billRef   = useRef(null);
   const canvasRef = useRef(null);
+  const dragRef   = useRef({ active: false });
+  const faceRef   = useRef("front");
+  const editRef   = useRef(false);
+  const placingRef = useRef(null);   // { uid, ox, oy, startPos } during drag-to-place
+  const camSaved  = useRef(null);    // { yaw, pitch } saved on entering edit
+  const applyCamRef = useRef(null);  // late-bound handle to applyCam (for flip/flatten)
 
   /* ── State ────────────────────────────────────────── */
-  const [prefs, setPrefs] = useState(loadPrefs);
-  const [menuOpen,    setMenuOpen]    = useState(false);
-  const [activeCard,  setActiveCard]  = useState(null);
+  const initial = useMemo(() => loadLayout(), []);
+  const [prefs, setPrefs]   = useState(initial.prefs);
+  const [slots, setSlots]   = useState(initial.slots);
+  const [menuOpen,   setMenuOpen]   = useState(false);
+  const [editMode,   setEditMode]   = useState(false);
+  const [activeCard, setActiveCard] = useState(null);   // { contentId } for the modal
+  const [picker,     setPicker]     = useState(null);   // slot uid being assigned
+  const [selected,   setSelected]   = useState(null);   // slot uid selected for per-card orientation
+  const [dockedId,   setDockedId]   = useState(null);   // pinned content id (side dock)
+  const [refreshing, setRefreshing] = useState(false);
+
+  const prefsRef = useRef(prefs); prefsRef.current = prefs;
+  const slotsRef = useRef(slots); slotsRef.current = slots;
+  editRef.current = editMode;
+
+  // Poll the live Monitor status when a Monitor-backed card is placed (mon-* OR
+  // a static infra card that delegates to a Monitor twin).
+  const hasMonitorCard = useMemo(
+    () => slots.some(s => isMonitorBacked(s.contentId)), [slots]);
+  const monitor = useMonitorStatus({ enabled: hasMonitorCard });
+
+  const ctx = useMemo(() => ({ wf, monitor, roster, person }), [wf, monitor, roster, person]);
+
+  /* Refresh ALL live data on the wall at once (Decision C). */
+  const refreshAll = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.allSettled([
+        monitor?.refresh?.(),
+        wf.actions?.reloadReelDna?.(),
+        wf.actions?.reloadThumbnailDna?.(),
+      ]);
+    } finally { setRefreshing(false); }
+  }, [refreshing, monitor, wf.actions]);
+
+  /* ── Cross-device layout sync (Decision D) — hydrate hud_layout_v2 from
+     user_preferences (existing table 0070) on a separate effect keyed on the
+     auth person id, then debounce-write subsequent edits back. localStorage
+     stays the instant/offline fallback. ── */
+  const remoteHydratedRef = useRef(false);
+  const syncTimerRef = useRef(null);
+  useEffect(() => {
+    const pid = person?.id;
+    if (!pid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("user_preferences").select("value")
+          .eq("person_id", pid).eq("key", LAYOUT_KEY).maybeSingle();
+        if (!cancelled && !error && data?.value && Array.isArray(data.value.slots)) {
+          const remotePrefs = { ...DEFAULT_PREFS, ...(data.value.prefs || {}) };
+          setPrefs(remotePrefs);
+          setSlots(data.value.slots);
+          saveLayout(remotePrefs, data.value.slots);
+        }
+      } catch (_) {}
+      finally { if (!cancelled) remoteHydratedRef.current = true; }
+    })();
+    return () => { cancelled = true; };
+  }, [person?.id]);
+
+  useEffect(() => {
+    const pid = person?.id;
+    if (!pid || !remoteHydratedRef.current) return;
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      supabase.from("user_preferences").upsert(
+        { person_id: pid, key: LAYOUT_KEY, value: { version: 2, prefs, slots } },
+        { onConflict: "person_id,key" }
+      ).then(() => {}, () => {});
+    }, 1200);
+    return () => { if (syncTimerRef.current) clearTimeout(syncTimerRef.current); };
+  }, [prefs, slots, person?.id]);
 
   /* ── Starfield (generated once) ───────────────────── */
   const starShadow = useMemo(() => {
@@ -1217,33 +1941,201 @@ function HudSpaceInner() {
     if (stageRef.current) stageRef.current.style.transform = `translate(-50%,-50%) scale(${s})`;
   }, [prefs]);
 
+  /* ── Prefs / layout persistence ───────────────────── */
   const updatePref = useCallback((key, val) => {
     setPrefs(p => {
       const next = { ...p, [key]: val };
-      localStorage.setItem(PREFS_KEY, JSON.stringify(next));
+      saveLayout(next, slotsRef.current);
       return next;
     });
   }, []);
 
-  const updateColAngle = useCallback((i, val) => {
+  const resetLayout = useCallback(() => {
+    try { localStorage.removeItem(LAYOUT_KEY); localStorage.removeItem(PREFS_KEY); } catch {}
+    const fresh = buildDefaultSlots();
+    setPrefs({ ...DEFAULT_PREFS });
+    setSlots(fresh);
+    saveLayout({ ...DEFAULT_PREFS }, fresh);
+  }, []);
+
+  /* ── Slot operations ──────────────────────────────── */
+  const persistSlots = useCallback((next) => { saveLayout(prefsRef.current, next); return next; }, []);
+  const updateSlotLive = useCallback((uid, pos) => {
+    setSlots(prev => prev.map(s => s.uid === uid ? { ...s, pos } : s));
+  }, []);
+  const updateSlot = useCallback((uid, patch) => {
+    setSlots(prev => persistSlots(prev.map(s => s.uid === uid ? { ...s, ...patch } : s)));
+  }, [persistSlots]);
+  const deleteSlot = useCallback((uid) => {
+    setSlots(prev => persistSlots(prev.filter(s => s.uid !== uid)));
+    setSelected(sel => sel === uid ? null : sel);
+  }, [persistSlots]);
+  const assignContent = useCallback((uid, contentId) => {
+    setSlots(prev => persistSlots(prev.map(s => s.uid === uid ? { ...s, contentId } : s)));
+    setPicker(null);
+  }, [persistSlots]);
+
+  /* First free coarse cell (5 cols × 4 rows) on the given face that doesn't
+     overlap an existing card — so a new card lands in a meaningful empty spot. */
+  const firstFreeCell = useCallback((face) => {
+    const COLS = 5, ROWS = 4, M = 16;
+    const cw = FACE_W / COLS, ch = 1000 / ROWS;
+    const here = slotsRef.current.filter(s => s.face === face);
+    const overlaps = (r) => here.some(s =>
+      r.left < s.pos.left + s.pos.width && r.left + r.width > s.pos.left &&
+      r.top  < s.pos.top  + s.pos.height && r.top  + r.height > s.pos.top);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const rect = { left: snap(c * cw + M), top: snap(r * ch + M),
+                     width: snap(cw - 2 * M), height: snap(ch - 2 * M) };
+      if (!overlaps(rect)) return rect;
+    }
+    return { left: 700, top: 380, width: 320, height: 240 };
+  }, []);
+
+  /* Add → drop into the next free cell, then follow the cursor (place mode):
+     mousemove moves it (snapped), click drops, Esc cancels. */
+  const addCard = useCallback(() => {
+    const uid = nextUid();
+    const face = faceRef.current;
+    const pos = firstFreeCell(face);
+    setSlots(prev => persistSlots([...prev, { uid, face, contentId: null, pos }]));
+    setSelected(uid);
+    placingRef.current = { uid, started: false, startPos: pos };
+
+    const scale = curScale() || 1;
+    const move = (ev) => {
+      const p = placingRef.current; if (!p) return;
+      if (!p.started) { p.started = true; p.ox = ev.clientX; p.oy = ev.clientY; }
+      const dx = (ev.clientX - p.ox) / scale, dy = (ev.clientY - p.oy) / scale;
+      updateSlotLive(uid, {
+        ...p.startPos,
+        left: snap(p.startPos.left + dx, ev.altKey),
+        top:  snap(p.startPos.top  + dy, ev.altKey),
+      });
+    };
+    const drop = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();   // don't let the drop-click start a move on whatever card it lands on
+      finishPlace();
+      setPicker(uid);   // assign content right after dropping
+    };
+    const key = (ev) => {
+      if (ev.key === "Escape") { finishPlace(); deleteSlot(uid); }
+    };
+    function finishPlace() {
+      placingRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerdown", drop, true);
+      window.removeEventListener("keydown", key);
+      saveLayout(prefsRef.current, slotsRef.current);
+    }
+    window.addEventListener("pointermove", move);
+    // capture-phase so the drop click isn't swallowed by a card/handle
+    window.addEventListener("pointerdown", drop, true);
+    window.addEventListener("keydown", key);
+  }, [persistSlots, firstFreeCell, updateSlotLive, deleteSlot]);
+
+  /* Flip the flat edit view (and faceRef) to the other side. */
+  const flipFace = useCallback(() => {
+    cam.current.yaw = faceRef.current === "front" ? 180 : 0;
+    cam.current.pitch = 0;
+    applyCamRef.current && applyCamRef.current();
+  }, []);
+
+  /* Swing convenience — writes colAngles symmetrically. */
+  const setSwing = useCallback((val) => {
     setPrefs(p => {
-      const colAngles = [...p.colAngles];
+      const next = { ...p, swing: val, colAngles: swingToAngles(val) };
+      saveLayout(next, slotsRef.current);
+      return next;
+    });
+  }, []);
+  const setColAngle = useCallback((i, val) => {
+    setPrefs(p => {
+      const colAngles = [...(p.colAngles || DEFAULT_PREFS.colAngles)];
       colAngles[i] = val;
       const next = { ...p, colAngles };
-      localStorage.setItem(PREFS_KEY, JSON.stringify(next));
+      saveLayout(next, slotsRef.current);
       return next;
     });
   }, []);
 
-  const resetPrefs = useCallback(() => {
-    localStorage.removeItem(PREFS_KEY);
-    setPrefs({ ...DEFAULT_PREFS });
-  }, []);
+  /* ── Move / resize (scale-corrected, grid-snapped) ──── */
+  /* Editing is always flat & head-on; the face sits at translateZ(150), so it's
+     perspective-magnified by P/(P−150). Fold that in so drags track the cursor. */
+  const curScale = () => {
+    const base = Math.min(window.innerWidth/1760, window.innerHeight/1000) * 0.82 * (prefsRef.current.zoom || 1);
+    const P = prefsRef.current.perspective || 1700;
+    return base * (P / (P - 150));
+  };
+
+  const beginDrag = useCallback((e, slot, mode, dir) => {
+    e.preventDefault();
+    if (placingRef.current) return;   // ignore while placing a fresh card
+    const scale = curScale() || 1;
+    const start = { x: e.clientX, y: e.clientY, pos: { ...slot.pos } };
+    let moved = false;
+    dragRef.current.active = true;
+    const onMove = (ev) => {
+      const dx = (ev.clientX - start.x) / scale;
+      const dy = (ev.clientY - start.y) / scale;
+      if (Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) > 3) moved = true;
+      const free = ev.altKey;
+      if (mode === "move") {
+        updateSlotLive(slot.uid, {
+          ...start.pos,
+          left: snap(start.pos.left + dx, free),
+          top:  snap(start.pos.top  + dy, free),
+        });
+      } else {
+        updateSlotLive(slot.uid, {
+          ...start.pos,
+          width:  (dir || "").includes("r") ? Math.max(140, snap(start.pos.width  + dx, free)) : start.pos.width,
+          height: (dir || "").includes("b") ? Math.max(110, snap(start.pos.height + dy, free)) : start.pos.height,
+        });
+      }
+    };
+    const onUp = () => {
+      dragRef.current.active = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (!moved) setSelected(slot.uid);   // a click (no drag) selects for per-card orientation
+      saveLayout(prefsRef.current, slotsRef.current);   // persist final geometry
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, [updateSlotLive]);
+  const onMoveStart   = useCallback((e, slot) => beginDrag(e, slot, "move"),  [beginDrag]);
+  const onResizeStart = useCallback((e, slot, dir) => beginDrag(e, slot, "resize", dir), [beginDrag]);
+
+  /* ── Per-face slots with derived column + tilt-row ──── */
+  const faceSlots = useMemo(() => {
+    const annotate = (arr) => {
+      const withCol = arr.map(s => ({ slot: s, col: colOf(s.pos) }));
+      const byCol = {};
+      withCol.forEach(({ slot, col }) => { (byCol[col] = byCol[col] || []).push(slot); });
+      const rowOf = {};
+      Object.values(byCol).forEach(list => {
+        if (list.length === 1) { rowOf[list[0].uid] = "top"; return; }
+        let top = list[0], bot = list[0];
+        list.forEach(s => {
+          if (s.pos.top < top.pos.top) top = s;
+          if ((s.pos.top + s.pos.height) > (bot.pos.top + bot.pos.height)) bot = s;
+        });
+        list.forEach(s => {
+          rowOf[s.uid] = s.uid === top.uid ? "top" : s.uid === bot.uid ? "bottom" : null;
+        });
+      });
+      return withCol.map(({ slot, col }) => ({ slot, col, tiltRow: rowOf[slot.uid] ?? null }));
+    };
+    return {
+      front: annotate(slots.filter(s => s.face === "front")),
+      back:  annotate(slots.filter(s => s.face === "back")),
+    };
+  }, [slots]);
 
   /* ── Camera drag-to-rotate ────────────────────────── */
   const cam = useRef({ yaw:0, pitch:0, orb:false, oX:0, oY:0, oVel:0, coastRaf:null });
-  const prefsRef = useRef(prefs);
-  prefsRef.current = prefs;
 
   const applyCam = useCallback(() => {
     const { yaw, pitch } = cam.current;
@@ -1252,6 +2144,7 @@ function HudSpaceInner() {
     const cf = Math.cos(yaw * Math.PI / 180);
     const cl = v => Math.max(0, Math.min(1, v));
     const fO = cl((cf + 0.12) / 0.4), bO = cl((-cf + 0.12) / 0.4);
+    faceRef.current = fO >= bO ? "front" : "back";
     if (frontRef.current) {
       frontRef.current.style.opacity       = fO;
       frontRef.current.style.pointerEvents = fO > 0.5 ? "auto" : "none";
@@ -1261,6 +2154,23 @@ function HudSpaceInner() {
       backRef.current.style.pointerEvents = bO > 0.5 ? "auto" : "none";
     }
   }, []);
+  applyCamRef.current = applyCam;
+
+  /* Flatten the camera head-on when entering edit; restore on exit. */
+  useEffect(() => {
+    if (editMode) {
+      camSaved.current = { yaw: cam.current.yaw, pitch: cam.current.pitch };
+      cam.current.yaw = faceRef.current === "back" ? 180 : 0;
+      cam.current.pitch = 0;
+      cam.current.oVel = 0;
+    } else if (camSaved.current) {
+      cam.current.yaw = camSaved.current.yaw;
+      cam.current.pitch = camSaved.current.pitch;
+      camSaved.current = null;
+      setSelected(null);
+    }
+    applyCam();
+  }, [editMode, applyCam]);
 
   const fitStage = useCallback(() => {
     if (!stageRef.current) return;
@@ -1285,8 +2195,9 @@ function HudSpaceInner() {
     };
 
     const onDown = (e) => {
+      if (editRef.current || placingRef.current) return;   // orbit locked while editing/placing
       if (e.target.closest(".hud-card") || e.target.tagName === "CANVAS") return;
-      if (activeCard) return;
+      if (dragRef.current.active) return;
       cam.current.orb = true;
       cam.current.oX  = e.clientX;
       cam.current.oY  = e.clientY;
@@ -1297,7 +2208,8 @@ function HudSpaceInner() {
       if (!cam.current.orb) return;
       const dx = e.clientX - cam.current.oX, dy = e.clientY - cam.current.oY;
       cam.current.yaw   += dx * 0.26;
-      cam.current.pitch  = Math.max(-34, Math.min(36, cam.current.pitch - dy * 0.18));
+      // drag DOWN → look down (cards face down). Inverted from the original.
+      cam.current.pitch  = Math.max(-34, Math.min(36, cam.current.pitch + dy * 0.18));
       cam.current.oVel   = dx * 0.26;
       cam.current.oX     = e.clientX;
       cam.current.oY     = e.clientY;
@@ -1328,10 +2240,10 @@ function HudSpaceInner() {
       root.removeEventListener("wheel", onWheel);
       if (cam.current.coastRaf) cancelAnimationFrame(cam.current.coastRaf);
     };
-  }, [applyCam, fitStage, updatePref]); // activeCard excluded intentionally
+  }, [applyCam, fitStage, updatePref]);
 
   return (
-    <div ref={rootRef} className="hud-root" id="hud-root">
+    <div ref={rootRef} className={`hud-root${editMode ? " hud-editing" : ""}`} id="hud-root">
       {/* Deep-space backdrop */}
       <div className="hud-sun" />
       <div className="hud-stars" style={{ boxShadow: starShadow }} />
@@ -1371,16 +2283,36 @@ function HudSpaceInner() {
           </div>
 
           {/* ── FRONT FACE ── */}
-          <div ref={frontRef} className="hud-face hud-face--front">
-            {FRONT_CARDS.map(card => (
-              <HudCard key={card.id} card={card} prefs={prefs} wf={wf} onOpen={setActiveCard} />
+          <div ref={frontRef} className="hud-face hud-face--front"
+            onClick={(e) => { if (editMode && e.target === e.currentTarget) setSelected(null); }}>
+            {faceSlots.front.map(({ slot, col, tiltRow }) => (
+              (!editMode && !slot.contentId) ? null :
+              <HudCard key={slot.uid}
+                slot={slot} col={col} tiltRow={tiltRow} prefs={prefs}
+                ctx={ctx} meta={metaFor(slot.contentId, roster)}
+                node={slot.contentId ? resolveContentNode(slot.contentId, ctx) : null}
+                editMode={editMode} selected={selected === slot.uid}
+                onOpen={(s) => setActiveCard({ contentId: s.contentId })}
+                onPick={(s) => setPicker(s.uid)}
+                onDelete={(s) => deleteSlot(s.uid)}
+                onMoveStart={onMoveStart} onResizeStart={onResizeStart} />
             ))}
           </div>
 
           {/* ── BACK FACE ── */}
-          <div ref={backRef} className="hud-face hud-face--back">
-            {BACK_CARDS.map(card => (
-              <HudCard key={card.id} card={card} prefs={prefs} wf={wf} onOpen={setActiveCard} />
+          <div ref={backRef} className="hud-face hud-face--back"
+            onClick={(e) => { if (editMode && e.target === e.currentTarget) setSelected(null); }}>
+            {faceSlots.back.map(({ slot, col, tiltRow }) => (
+              (!editMode && !slot.contentId) ? null :
+              <HudCard key={slot.uid}
+                slot={slot} col={col} tiltRow={tiltRow} prefs={prefs}
+                ctx={ctx} meta={metaFor(slot.contentId, roster)}
+                node={slot.contentId ? resolveContentNode(slot.contentId, ctx) : null}
+                editMode={editMode} selected={selected === slot.uid}
+                onOpen={(s) => setActiveCard({ contentId: s.contentId })}
+                onPick={(s) => setPicker(s.uid)}
+                onDelete={(s) => deleteSlot(s.uid)}
+                onMoveStart={onMoveStart} onResizeStart={onResizeStart} />
             ))}
           </div>
         </div>
@@ -1405,25 +2337,64 @@ function HudSpaceInner() {
         ⚙ LAYOUT
       </button>
 
+      {/* ⟳ Refresh-all + freshness chip (Decision C) */}
+      <div className="hud-fresh">
+        {hasMonitorCard && (
+          <span className="hud-fresh-chip" title="Live Monitor data age">
+            {monitor.loading ? "syncing…"
+              : monitor.lastFetch ? `live · ${relAgo(monitor.lastFetch)}`
+              : monitor.error ? "live · error" : "live"}
+          </span>
+        )}
+        <button className="hud-fresh-btn" onClick={refreshAll} disabled={refreshing}
+          title="Refresh all live data">
+          {refreshing ? "⟳ …" : "⟳ REFRESH"}
+        </button>
+      </div>
+
       {/* Layout menu panel */}
       {menuOpen && (
         <HudLayoutMenu
           prefs={prefs}
           onUpdate={updatePref}
-          onUpdateCol={updateColAngle}
-          onReset={resetPrefs}
+          onReset={resetLayout}
           onClose={() => setMenuOpen(false)}
+          editMode={editMode}
+          onToggleEdit={() => setEditMode(v => !v)}
+          onAddCard={addCard}
+          onFlipFace={flipFace}
+          onSwing={setSwing}
+          onColAngle={setColAngle}
+          selectedSlot={selected ? slotsRef.current.find(s => s.uid === selected) : null}
+          onUpdateSlot={updateSlot}
+          onDeselect={() => setSelected(null)}
         />
       )}
 
-      {/* Modal */}
-      {activeCard && (
+      {/* Content picker (edit mode) */}
+      {picker && (
+        <HudContentPicker
+          roster={roster}
+          onPick={(cid) => assignContent(picker, cid)}
+          onClear={() => assignContent(picker, null)}
+          onClose={() => setPicker(null)}
+        />
+      )}
+
+      {/* Modal (normal mode only) */}
+      {activeCard && !editMode && (
         <HudModal
-          cardId={activeCard}
-          wf={wf}
+          contentId={activeCard.contentId}
+          ctx={ctx}
           stageRef={stageRef}
           onClose={() => setActiveCard(null)}
+          onPin={(cid) => setDockedId(cid)}
         />
+      )}
+
+      {/* Pinned side dock (Decision E) — survives navigation around the wall */}
+      {dockedId && !editMode && (
+        <HudDock contentId={dockedId} ctx={ctx} onClose={() => setDockedId(null)} />
       )}
     </div>
   );

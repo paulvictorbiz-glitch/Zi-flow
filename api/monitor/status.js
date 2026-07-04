@@ -38,6 +38,14 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Content Forge — the whole-library folder catalog (transcribed-file count per folder)
+  // for the "Mine Library" picker. Proxies the Hetzner /content-forge/library-folders
+  // endpoint (CONTENT_FORGE_SECRET stays server-side). Folded in here to stay under the cap.
+  if (req.query?.action === "forge-library-folders") {
+    res.status(200).json(await fetchForgeLibraryFolders());
+    return;
+  }
+
   const [sbResult, hzResult, gcpResult, osResult, wmResult] = await Promise.allSettled([
     fetchSupabaseStats(),
     fetchHetznerStats(),
@@ -176,6 +184,36 @@ async function fetchForgeUsage() {
     return body;
   } catch (e) {
     return { ok: false, configured: false, error: `Couldn't reach the content-forge worker: ${e.message}` };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// ── Content Forge library-folders proxy ────────────────────────────────────────
+// GET /api/monitor/status?action=forge-library-folders
+// Proxies the Hetzner /content-forge/library-folders endpoint so the Content Forge
+// page can populate the "Mine Library" folder picker (transcribed-file count per
+// folder). CONTENT_FORGE_SECRET stays server-side. Walking ~9.7k files takes a beat,
+// so allow up to 30s. Returns { ok:false } on any failure (picker degrades to "All").
+
+async function fetchForgeLibraryFolders() {
+  const forgeSecret = process.env.CONTENT_FORGE_SECRET;
+  if (!forgeSecret) {
+    return { ok: false, error: "CONTENT_FORGE_SECRET not configured" };
+  }
+  const base = process.env.FB_PROXY_TARGET || "https://api.footagebrain.com";
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 30000);
+  try {
+    const r = await fetch(
+      `${base}/api/content-forge/library-folders?secret=${encodeURIComponent(forgeSecret)}`,
+      { signal: controller.signal }
+    );
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: `Hetzner forge-library-folders HTTP ${r.status}`, ...body };
+    return body;
+  } catch (e) {
+    return { ok: false, error: `Couldn't reach the content-forge worker: ${e.message}` };
   } finally {
     clearTimeout(t);
   }

@@ -1043,6 +1043,29 @@ export function ReelDna({ prefill }) {
   // Full-screen Assets page state — resolved from live reelDna by id (like active).
   const [assetsId, setAssetsId] = useState(null);
 
+  // Deep-link from the 3D HUD: land on a sub-tab and/or open a specific capture.
+  // reelDna may still be hydrating on mount, so stash the wanted id and open it
+  // once the row arrives. Keys are consumed (cleared) immediately.
+  const [pendingOpenId, setPendingOpenId] = useState(null);
+  useEffect(() => {
+    let wantTab, wantId;
+    try {
+      wantTab = localStorage.getItem("wb_open_reeldna_tab");
+      wantId  = localStorage.getItem("wb_open_reeldna_id");
+      localStorage.removeItem("wb_open_reeldna_tab");
+      localStorage.removeItem("wb_open_reeldna_id");
+    } catch (_) {}
+    if (wantTab === "thumbnails" || wantTab === "reels") setTab(wantTab);
+    if (wantId && wantTab !== "thumbnails") setPendingOpenId(wantId);
+  }, []);
+  useEffect(() => {
+    if (!pendingOpenId) return;
+    if ((reelDna || []).some(d => d.id === pendingOpenId)) {
+      setActive({ id: pendingOpenId, mode: "view" });
+      setPendingOpenId(null);
+    }
+  }, [pendingOpenId, reelDna]);
+
   const onCapture = (payload) =>
     actions.createReelDnaCapture({ ...payload, capturedBy: me?.id || null });
 

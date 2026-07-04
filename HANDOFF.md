@@ -1,40 +1,39 @@
-# Handoff — last updated 2026-06-27 (session ae)
+# Handoff — last updated 2026-07-03
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- Continued **MapForge** (standalone repo `C:\Users\Mi\Downloads\mapforge`). Committed the parked **premium design tier** (`298e39d`).
-- Built the next slice — the **MapForge owner dashboard**: new `apps/dashboard/` workspace (TS, Node-ESM, no framework), pure tested aggregate/render, a DataSource seam (offline fixture default / env-gated live Supabase PostgREST reader). Committed `1d2509c`.
-- Owner asked to deploy the dashboard + preview gallery and add a Monitor button. Since the pages were localhost-only and MapForge has no live host, built them as **static files hosted inside FootageBrain at `/mapforge/`** via new `scripts/build-static.mjs`.
-- Added an owner-only **"MapForge" sub-tab** to the Monitor hub (opens both pages in new tabs) and **deployed LIVE** (`vercel --prod`, `dpl_FdDnCz5…`, www.footagebrain.com). All pages verified 200.
-- Committed FootageBrain side (`dec6b4e` bundle, `ac20744` monitor-hub), pushed `feat/capcut-replica-v2` to origin, closed the local dev servers.
+- Researched OSS font-detection models + VLM font accuracy → answered feasibility (build ~90% confident; identification accuracy modest, sharpens in Phase 2).
+- Ran `/qa-verified-plan` → plan `golden-roaming-hammock.md`; owner approved + asked to add Gemini usage monitoring.
+- **Built + SHIPPED LIVE: Font ID (Phase 1)** — owner-only "Fonts" tab that identifies the font in a reel frame (screenshot upload/paste OR reel-URL keyframes) → top-3 matches + confidence + legit download links, Gemini-vision only.
+- Deployed the backend to Hetzner (merged into live `content_forge.py`, rebuilt `fb-backend`, verified a real vision call = 200) and the frontend via `vercel --prod` (`dpl_H8RmqVFiFNJYRyRDT2Fgu5BtYiWQ`).
+- Monitoring: font-ID rides the same kill switch / daily cap + logs `kind="font_id"`; added a "Font ID" line item to the Monitor budgets card.
 
 ## Where we left off
-MapForge dashboard + premium tier are LIVE-accessible from footagebrain.com → **Monitor → MapForge** → opens `/mapforge/dashboard.html` (funnel + per-target status) and `/mapforge/index.html` (preview gallery, Standard vs Premium). The deployed dashboard is a **static snapshot** of the synthetic demo fixture; the **live-Supabase reader** in `apps/dashboard` activates only once `0001_init.sql` is applied (human-gated). MapForge repo is local-only (no git remote): HEAD `1d2509c` on `main`. FootageBrain branch `feat/capcut-replica-v2` @ `ac20744`, pushed.
+Font ID Phase 1 is **live in production**. Backend routes (`/content-forge/font-id`, `/font-id-keyframes`) verified end-to-end (HTTP 200 via `vertex_gemini`/`gemini-2.5-flash`, 3 matches, usage logged $0.0013). Frontend + proxy deployed and aliased to www.footagebrain.com. The only unverified link is the authenticated proxy→backend hop, testable only from the owner's logged-in browser.
 
 ## Open blockers
-- **Live `--ai` still unverified** (unchanged from session ad) — Gemini free tier `limit:0` (billing-tainted account; $300 credit excluded from Gemini API) + OpenRouter free tokens exhausted. No code fault. See `reference_gemini-free-tier-billing-taint.md`.
+- None. (One expected non-blocker: `api/ai/suggest.js` returns `401 {"error":"Unauthorized"}` to any unauthenticated call — it needs an owner Bearer JWT or `SUGGEST_CRON_SECRET` (not set in prod). Normal; the browser authenticates.)
 
 ## Pending (written but not yet live)
-- MapForge **owner dashboard live-Supabase mode** — built + tested, but only serves real data once `0001_init.sql` is applied to a live DB (human-gated) and `MAPFORGE_SUPABASE_URL` + `MAPFORGE_SUPABASE_SERVICE_KEY` are set. The deployed `/mapforge/` pages are a static demo snapshot until then.
-- All prior MapForge pending items unchanged (see `project_mapforge-plan.md`): live gosom scrape + R2/DNS go-live, A/B traffic-split+tracking (Worker+DB).
-- FootageBrain tree still has the owner's other uncommitted WIP (app.jsx, content-forge.jsx, scout.jsx, etc.) — untouched this session, owner manages.
+- **Owner in-browser confirm** (10s): open footagebrain.com → Monitor group → **Fonts** tab, drop a reel screenshot, hit "Identify font" → expect top-3 matches.
+- **Uncommitted**: this shipped LIVE but is NOT committed (like Solarin). A future isolated/clean-baseline deploy would revert it — keep it in the working tree. Also still-uncommitted-but-live: whole-library mining, HUD (built-not-deployed), etc.
+- **Phase 2** (not built): self-hosted ONNX classifier (~3k Google Fonts) + Gemini re-rank + optional WhatFontIs paid tier behind a `FONT_ID_MODE` flag; convert the reel-URL path to fire-and-forget (currently synchronous, 55s ceiling).
 
 ## Next session — start here
-1. **Verify live `--ai`** the moment an LLM path frees (clean-account Gemini key via the 3 `MAPFORGE_AI_*` env vars, OR OpenRouter replenish) — run `--ai` on the SLC fixture, confirm `copy: ai` + no fallback.
-2. **Wire the dashboard to live data** if/when ready: apply `0001_init.sql` (human-gated), set `MAPFORGE_SUPABASE_*`, run `npm run dashboard` locally to confirm the Supabase reader, then optionally re-deploy a live-backed dashboard.
-3. **Next LLM-independent slice** otherwise: Astro/AstroWind richer generator, OR A/B traffic-split + conversion tracking (Worker + DB).
+1. Owner confirms the Fonts tab works in-browser (authenticated hop).
+2. If accuracy needs a boost → start Font ID Phase 2 (ONNX + WhatFontIs) per plan `golden-roaming-hammock.md`.
+3. (Carried over) Owner expounds the 2,393 Content Forge seeds; `/space` HUD customization awaits sign-off → commit + deploy.
 
-## Verification commands (to confirm current state on resume)
+## Verification commands (read-only)
 ```bash
-# Live MapForge pages (expect 200):
-curl -s -o /dev/null -w "%{http_code}\n" https://www.footagebrain.com/mapforge/dashboard.html
-curl -s -o /dev/null -w "%{http_code}\n" https://www.footagebrain.com/mapforge/index.html
-
-# MapForge repo state (no remote; expect 1d2509c HEAD):
-cd 'C:/Users/Mi/Downloads/mapforge' && git log --oneline -3 && npm run build && npm test   # 56 tests (15 dashboard + 31 orch + 10 worker)
-
-# Regenerate + redeploy the static bundle after data/template changes:
-node scripts/build-static.mjs --out "C:/Users/Mi/Downloads/ziflow project-final/public/mapforge"
+# Backend routes registered + gated (expect 401 = up, not 404):
+curl -s -o /dev/null -w "%{http_code}\n" -X POST https://api.footagebrain.com/api/content-forge/font-id -d '{}'
+# font_id usage logged (needs the secret; run from a shell that can read it):
+#   docker exec fb-backend printenv CONTENT_FORGE_SECRET  → then GET /api/content-forge/usage?secret=…  (look for by_kind font_id)
+# Vercel proxy deployed (expect 401 Unauthorized JSON = handler reached; browser passes with JWT):
+curl -s -o /dev/null -w "%{http_code}\n" -X POST "https://www.footagebrain.com/api/ai/suggest?action=font-id" -d '{}'
+# Rollback on the box if ever needed:
+#   cp /srv/footagebrain/footage-brain-test/backend/app/api/content_forge.py.bak-fontid  <same path minus .bak-fontid> ; rebuild
 ```

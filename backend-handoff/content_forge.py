@@ -80,9 +80,11 @@ import os
 import re
 import json
 import uuid
+import asyncio
 import logging
 import datetime as _dt
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -453,7 +455,196 @@ def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
     return order[:limit]
 
 
+# Country/trip folder label from an absolute disk path — a Python port of the frontend
+# footageFolderLabel() (src/lib/footage-brain-client.js). MUST stay byte-for-byte
+# equivalent so the Content Forge folder picker's option ("Japan") matches the value
+# stamped on transcript_clips.folder (the discover filter is &folder=eq.<label>).
+_FOLDER_GENERIC = re.compile(r"^(\d+\s*media|dcim|media|clips|videos?|footage|\d+)$", re.I)
+_FOLDER_ORDINAL = re.compile(r"^\s*\d+(?:\.\d+)?\s*[\)\.]\s*")
+
+
+def _folder_label(path: str | None) -> str | None:
+    """e.g. r'D:\\Videos\\2024\\03) Japan\\DCIM\\clip.mp4' -> 'Japan'. None if undeterminable."""
+    if not path:
+        return None
+    parts = [p for p in re.split(r"[\\/]+", str(path)) if p]
+    if len(parts) < 2:
+        return None
+    for i in range(len(parts) - 2, 0, -1):        # walk up from the parent
+        seg = parts[i]
+        if _FOLDER_GENERIC.match(seg):            # skip 101MEDIA / DCIM / numbered dirs
+            continue
+        return _FOLDER_ORDINAL.sub("", seg).strip() or seg   # strip leading "03) "
+    return None
+
+
 # ── service-role Supabase REST helpers ────────────────────────────────────────────────
+async def _fetch_reel_drive_maps(client: httpx.AsyncClient,
+                                 reel_ids: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
+    """For a set of reel ids, read reels.detail.footageDrive (migration 0005) and return
+    {reel_id: {footage_file_id: {drive_url, drive_folder_url}}}. This is where the real
+    Google Drive links live (attached_footage_items has NO drive columns — 0009). Used at
+    ingest to stamp drive_url/drive_folder_url onto each clip. Best-effort: {} on error."""
+    url = _supabase_url()
+    ids = [r for r in {str(x) for x in reel_ids if x}]
+    if not url or not ids:
+        return {}
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    # Chunk the in-list so the URL length stays sane.
+    for i in range(0, len(ids), 100):
+        in_list = ",".join(ids[i:i + 100])
+        try:
+            r = await client.get(
+                f"{url}/rest/v1/reels?select=id,detail&id=in.({in_list})",
+                headers=_supabase_headers(),
+            )
+            if r.status_code != 200:
+                log.warning("content_forge: reel drive-map HTTP %s: %s", r.status_code, r.text[:200])
+                continue
+            for row in (r.json() or []):
+                detail = row.get("detail")
+                fd = detail.get("footageDrive") if isinstance(detail, dict) else None
+                if isinstance(fd, dict):
+                    out[str(row.get("id"))] = fd
+        except Exception as e:  # noqa: BLE001
+            log.warning("content_forge: reel drive-map failed: %s", e)
+    return out
+
+
+# Same-box FootageBrain backend base for the Drive-link fallback. /api/files/<id>
+# returns drive_url/drive_folder_url — the live source the frontend uses when a reel's
+# detail.footageDrive map is empty. Overridable via env for non-prod.
+FB_FILES_BASE = (os.environ.get("FB_FILES_BASE") or "http://localhost:8000").rstrip("/")
+
+
+async def _resolve_drive_via_fb(client: httpx.AsyncClient,
+                                ffids: list[str]) -> dict[str, dict[str, Any]]:
+    """Fallback Drive resolver: for footage_file_ids NOT covered by any reel's
+    detail.footageDrive, ask the FootageBrain backend /api/files/<id> (same box) for the
+    Drive links. Bounded concurrency, best-effort — a miss/null just degrades to None."""
+    out: dict[str, dict[str, Any]] = {}
+    ids = [i for i in {str(x) for x in ffids if x} if i]
+    if not ids:
+        return out
+    sem = asyncio.Semaphore(8)
+
+    async def _one(fid: str) -> None:
+        async with sem:
+            try:
+                r = await client.get(f"{FB_FILES_BASE}/api/files/{fid}", timeout=10.0)
+                if r.status_code == 200:
+                    d = r.json()
+                    if isinstance(d, dict) and (d.get("drive_url") or d.get("drive_folder_url")):
+                        out[fid] = {"drive_url": d.get("drive_url"),
+                                    "drive_folder_url": d.get("drive_folder_url")}
+            except Exception:  # noqa: BLE001 — best-effort enrichment
+                pass
+
+    await asyncio.gather(*[_one(f) for f in ids])
+    return out
+
+
+# ── whole-library ingest source (FootageBrain /api/files catalog) ─────────────────────
+# Beyond the ~12 reel-attached clips, the FootageBrain backend indexes the owner's ENTIRE
+# footage library (~9.7k files, ~8.3k transcribed). These helpers pull that catalog (same
+# box, localhost:8000) so Content Forge can mine the whole library, not just attached reels.
+# For library clips the soft footage_file_id IS the real video-file id, so the Drive link is
+# stamped straight off the file row (no reel→footageDrive lookup) and the modal's Drive
+# resolver already works for them.
+FB_FILES_PAGE = 500   # /api/files pagination size (matches the dashboard's own paging)
+
+
+async def _fetch_library_files(client: httpx.AsyncClient, *, folder: str | None = None,
+                               max_files: int = 0, offset: int = 0) -> list[dict[str, Any]]:
+    """Paginate the FootageBrain /api/files catalog and return TRANSCRIBED file records,
+    optionally restricted to one folder label (_folder_label(abs_path) == folder) and
+    capped at max_files. folder filtering is client-side on abs_path (the API has no folder
+    filter) so the label space exactly matches the picker + transcript_clips.folder.
+    Best-effort: returns what it gathered (and stops) on any HTTP/parse error."""
+    base = f"{FB_FILES_BASE}/api/files"
+    out: list[dict[str, Any]] = []
+    off = max(0, int(offset or 0))
+    while True:
+        try:
+            r = await client.get(f"{base}?limit={FB_FILES_PAGE}&offset={off}", timeout=30.0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("content_forge: library files fetch failed at offset %s: %s", off, e)
+            break
+        if r.status_code != 200:
+            log.warning("content_forge: library files HTTP %s at offset %s", r.status_code, off)
+            break
+        try:
+            batch = r.json()
+        except Exception:  # noqa: BLE001
+            break
+        if not isinstance(batch, list) or not batch:
+            break
+        for f in batch:
+            if not isinstance(f, dict) or not f.get("transcribed"):
+                continue
+            if folder and _folder_label(f.get("abs_path")) != folder:
+                continue
+            out.append(f)
+            if max_files and len(out) >= max_files:
+                return out
+        if len(batch) < FB_FILES_PAGE:
+            break
+        off += len(batch)
+    return out
+
+
+async def _fetch_fb_transcript(client: httpx.AsyncClient, file_id: str) -> list[dict[str, Any]]:
+    """Fetch one library file's transcript from FootageBrain /api/files/<id>/transcript →
+    [{start_time, end_time, text, chunk_index}]. Many transcribed files have NO speech
+    (scenery / b-roll) and return [] — those are skipped by the caller. Best-effort: [] on
+    any error/empty."""
+    try:
+        r = await client.get(f"{FB_FILES_BASE}/api/files/{file_id}/transcript", timeout=20.0)
+        if r.status_code == 200:
+            data = r.json()
+            return data if isinstance(data, list) else []
+        log.info("content_forge: fb transcript HTTP %s (%s)", r.status_code, file_id)
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: fb transcript fetch failed (%s): %s", file_id, e)
+    return []
+
+
+# Cap the existing-id skip-set read so a re-run never pages the whole table unbounded.
+MAX_EXISTING_FFIDS = 60000
+
+
+async def _existing_clip_file_ids(client: httpx.AsyncClient) -> set[str]:
+    """Set of footage_file_ids already present in transcript_clips, so a library ingest
+    re-run skips re-fetching transcripts it already has. Bounded paged read; best-effort —
+    an empty set just means it re-fetches (still idempotent via the upsert key)."""
+    url = _supabase_url()
+    seen: set[str] = set()
+    if not url:
+        return seen
+    page, off = 1000, 0
+    while off < MAX_EXISTING_FFIDS:
+        try:
+            r = await client.get(
+                f"{url}/rest/v1/transcript_clips?select=footage_file_id&limit={page}&offset={off}",
+                headers=_supabase_headers(),
+            )
+            if r.status_code != 200:
+                break
+            rows = r.json()
+            if not isinstance(rows, list) or not rows:
+                break
+            for x in rows:
+                fid = x.get("footage_file_id") if isinstance(x, dict) else None
+                if fid:
+                    seen.add(str(fid))
+            if len(rows) < page:
+                break
+            off += len(rows)
+        except Exception:  # noqa: BLE001
+            break
+    return seen
+
+
 async def _fetch_footage_transcripts(client: httpx.AsyncClient, reel_id: str | None,
                                      footage: str | None) -> list[dict[str, Any]]:
     """Read attached_footage_items rows carrying full_transcript (migration 0024, shape
@@ -464,7 +655,7 @@ async def _fetch_footage_transcripts(client: httpx.AsyncClient, reel_id: str | N
     if not url:
         log.warning("content_forge: SUPABASE_URL unset — cannot read footage transcripts")
         return []
-    q = ("select=id,filename,reel_id,full_transcript"
+    q = ("select=id,filename,reel_id,footage_file_id,source_path,full_transcript"
          "&full_transcript=not.is.null&order=created_at.desc&limit=2000")
     if reel_id:
         q += f"&reel_id=eq.{reel_id}"
@@ -484,12 +675,23 @@ async def _fetch_footage_transcripts(client: httpx.AsyncClient, reel_id: str | N
     return []
 
 
+# Columns added by migration 0108 (folder-scoped discovery + per-clip Drive links). Kept as
+# a set so upsert/select can DEGRADE-SAFE strip them if the migration hasn't run yet — same
+# pattern as the last_discovered_at (0105) fallback below.
+_CLIP_0108_COLS = ("folder", "source_path", "drive_url", "drive_folder_url")
+
+
 async def _upsert_transcript_clips(client: httpx.AsyncClient,
                                    clips: list[dict[str, Any]]) -> int:
     """Upsert transcript_clips rows, deduped on a STABLE composite key
     (footage_file_id, start_time, end_time) so re-running ingest is idempotent. Requires a
     FULL unique index on those columns to act as the on_conflict arbiter (the DB team owns
-    that). PostgREST bulk upsert in chunks; returns the count attempted (best-effort)."""
+    that). PostgREST bulk upsert in chunks; returns the count attempted (best-effort).
+
+    DEGRADE-SAFE for migration 0108: clip dicts may carry folder/source_path/drive_url/
+    drive_folder_url. If those columns don't exist yet, PostgREST 400s the whole chunk — we
+    retry once with those keys stripped so ingest keeps working (columns just stay NULL,
+    backfilled by a future re-ingest) instead of silently writing zero clips."""
     url = _supabase_url()
     if not url or not clips:
         return 0
@@ -507,6 +709,21 @@ async def _upsert_transcript_clips(client: httpx.AsyncClient,
             )
             if r.status_code in (200, 201, 204):
                 written += len(chunk)
+                continue
+            if r.status_code == 400:
+                stripped = [{k: v for k, v in row.items() if k not in _CLIP_0108_COLS}
+                            for row in chunk]
+                r2 = await client.post(
+                    f"{url}/rest/v1/transcript_clips"
+                    "?on_conflict=footage_file_id,start_time,end_time",
+                    headers=headers,
+                    json=stripped,
+                )
+                if r2.status_code in (200, 201, 204):
+                    written += len(stripped)
+                    continue
+                log.warning("content_forge: clip upsert HTTP %s (retry %s): %s",
+                            r.status_code, r2.status_code, r2.text[:300])
             else:
                 log.warning("content_forge: clip upsert HTTP %s: %s",
                             r.status_code, r.text[:300])
@@ -550,7 +767,8 @@ async def _count_clips(client: httpx.AsyncClient, reel_id: str | None) -> int:
 
 async def _read_clips_for_discovery(client: httpx.AsyncClient,
                                     limit: int = MAX_CLIPS_FOR_DISCOVERY,
-                                    only_new: bool = True) -> list[dict[str, Any]]:
+                                    only_new: bool = True,
+                                    folder: str | None = None) -> list[dict[str, Any]]:
     """Read a bounded window of transcript_clips for a discovery pass.
 
     INCREMENTAL by default (only_new=True): feeds only clips not yet analyzed
@@ -559,30 +777,64 @@ async def _read_clips_for_discovery(client: httpx.AsyncClient,
     means "no new clips" (the worker logs + returns). DEGRADE-SAFE: if the
     last_discovered_at column doesn't exist yet (migration 0105 not applied), the filtered
     request 400s → we fall back to the original unfiltered recent window so prod behaviour
-    is unchanged. only_new=False forces the full recent window (a deliberate ?rescan=1)."""
+    is unchanged. only_new=False forces the full recent window (a deliberate ?rescan=1).
+
+    FOLDER-SCOPED (folder set): restrict to clips whose folder column matches (migration
+    0108) and order SEQUENTIALLY by source_path then start_time — so a small `limit`
+    (e.g. 20) walks the folder in order, advancing each pass as clips are marked discovered.
+    Unscoped (folder None): keep the legacy newest-first recent window.
+
+    DEGRADE-SAFE for migration 0108: the extended select (folder/source_path/drive_url/
+    drive_folder_url) and the folder= scope filter both 400 if 0108 hasn't run yet. On any
+    non-200 from the extended query we retry once with the pre-0108 select + the legacy
+    unscoped window, so Discover keeps working (just without folder-scoping) instead of
+    silently returning zero clips."""
     url = _supabase_url()
     if not url:
         return []
-    select = ("select=id,footage_file_id,filename,start_time,end_time,transcript_text,"
-              "keywords,topics")
-    base = f"{url}/rest/v1/transcript_clips?{select}&order=created_at.desc&limit={int(limit)}"
+    select_ext = ("select=id,footage_file_id,filename,start_time,end_time,transcript_text,"
+                  "keywords,topics,folder,source_path,drive_url,drive_folder_url")
+    select_legacy = ("select=id,footage_file_id,filename,start_time,end_time,transcript_text,"
+                     "keywords,topics")
+    scope_ext = ((f"&folder=eq.{quote(folder, safe='')}&order=source_path.asc,start_time.asc")
+                 if folder else "&order=created_at.desc")
+
+    async def _try(select: str, scope: str) -> tuple[bool, list[dict[str, Any]]]:
+        base = f"{url}/rest/v1/transcript_clips?{select}{scope}&limit={int(limit)}"
+        return await _read_clips_window(client, base, only_new)
+
+    ok, data = await _try(select_ext, scope_ext)
+    if ok:
+        return data
+    log.info("content_forge: extended clip select HTTP fail (0108 not applied?) — "
+             "falling back to legacy select/window")
+    ok, data = await _try(select_legacy, "&order=created_at.desc")
+    return data if ok else []
+
+
+async def _read_clips_window(client: httpx.AsyncClient, base: str,
+                             only_new: bool) -> tuple[bool, list[dict[str, Any]]]:
+    """Shared GET+fallback body for _read_clips_for_discovery: tries the incremental
+    last_discovered_at filter first (DEGRADE-SAFE for migration 0105), then the unfiltered
+    window. Returns (ok, rows) — ok=False means both attempts failed (caller decides whether
+    to retry with a different select/scope, or give up)."""
     try:
         if only_new:
             r = await client.get(base + "&last_discovered_at=is.null", headers=_supabase_headers())
             if r.status_code == 200:
                 data = r.json()
-                return data if isinstance(data, list) else []
+                return True, (data if isinstance(data, list) else [])
             # Column missing (pre-0105) or filter rejected → fall back to the full window.
             log.info("content_forge: incremental clip read HTTP %s — falling back to full window",
                      r.status_code)
         r = await client.get(base, headers=_supabase_headers())
         if r.status_code == 200:
             data = r.json()
-            return data if isinstance(data, list) else []
+            return True, (data if isinstance(data, list) else [])
         log.warning("content_forge: clip read HTTP %s: %s", r.status_code, r.text[:300])
     except Exception as e:  # noqa: BLE001
         log.warning("content_forge: clip read failed: %s", e)
-    return []
+    return False, []
 
 
 async def _mark_clips_discovered(client: httpx.AsyncClient, clip_ids: list[str]) -> None:
@@ -1029,6 +1281,11 @@ _SYSTEM_BY_KIND = {
         "opportunity (and optional grounding facts), you write opening hooks engineered to "
         "stop the scroll. You reply with STRICT JSON ONLY: no prose, no code fences."
     ),
+    "script": (
+        "You are a voice-over scriptwriter for short-form video (45-60 seconds, ~150-200 words). "
+        "You write in the exact template structure requested — never skip a beat, never pad. "
+        "You reply with STRICT JSON ONLY: no prose, no code fences."
+    ),
 }
 
 
@@ -1145,6 +1402,12 @@ def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
     ov = (model_override or "").strip() or None
 
     def _rung_gemini_api():
+        # Cost/latency lever: when the AI-Studio Gemini key is card-tainted (every call
+        # 100%-errors before escalating to Vertex), set CONTENT_FORGE_DISABLE_GEMINI_API=1
+        # to skip this rung entirely — the ladder goes straight to Vertex with no wasted
+        # failing round-trip. Keeps GEMINI_API_KEY in place for when the taint clears.
+        if (os.environ.get("CONTENT_FORGE_DISABLE_GEMINI_API") or "").strip().lower() in ("1", "true", "yes"):
+            return None
         if not _gemini_key():
             return None
         model = (ov.split("/")[-1] if ov else None) \
@@ -1502,20 +1765,60 @@ def _grounding_bullets(fact_check: dict[str, Any]) -> list[str]:
 
 
 # ── ingest worker (BackgroundTasks) ───────────────────────────────────────────────────
-async def _ingest_worker(reel_id: str | None, footage: str | None) -> None:
-    """Fire-and-forget worker: (a) read attached_footage_items.full_transcript from
-    Supabase and upsert clips; (b) IF CONTENT_FORGE_TRANSCRIPT_DIR is set, ALSO parse loose
-    disk files there and upsert. Never raises (a background task failure must not crash the
-    event loop). Dedup is on the (footage_file_id, start_time, end_time) upsert key."""
+async def _ingest_worker(reel_id: str | None, footage: str | None,
+                         source: str = "attached", folder: str | None = None,
+                         max_files: int = 0, offset: int = 0) -> None:
+    """Fire-and-forget worker. Pulls already-transcribed footage into transcript_clips from
+    one of two SOURCES (the owner's toggle; attached stays the default so old behaviour is
+    unchanged):
+      • source="attached" (default) — (a) attached_footage_items.full_transcript from
+        Supabase + (b) loose disk files IF CONTENT_FORGE_TRANSCRIPT_DIR is set. The ~12
+        reel-attached clips. Honours reel_id / footage scoping.
+      • source="library" — the WHOLE FootageBrain library via /api/files (paginated):
+        every transcribed file's transcript, optionally scoped to one `folder` and capped
+        at `max_files` (from `offset`). Drive link comes straight off the file row. Files
+        already in transcript_clips are skipped (incremental re-run).
+      • source="both" — attached THEN library.
+    Never raises (a background-task failure must not crash the event loop). Dedup is on the
+    (footage_file_id, start_time, end_time) upsert key."""
     run_id = str(uuid.uuid4())
     clips: list[dict[str, Any]] = []
+    src = (source or "attached").strip().lower()
+    if src not in ("attached", "library", "both"):
+        src = "attached"
+    do_attached = src in ("attached", "both")
+    do_library = src in ("library", "both")
     try:
         async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
-            # (a) Supabase source — full_transcript on attached_footage_items.
-            rows = await _fetch_footage_transcripts(client, reel_id, footage)
+            if not do_attached:
+                rows = []
+            else:
+                # (a) Supabase source — full_transcript on attached_footage_items.
+                rows = await _fetch_footage_transcripts(client, reel_id, footage)
+            # Drive links live on the parent reel's detail.footageDrive, keyed by the
+            # video-file id (attached_footage_items.footage_file_id), NOT the row PK.
+            drive_maps = await _fetch_reel_drive_maps(
+                client, [str(r.get("reel_id") or "") for r in rows])
+            # Fallback: footage with no footageDrive entry → resolve Drive links from the
+            # live FootageBrain /api/files/<id> (the same source the dashboard uses).
+            missing_ffids = []
+            for r in rows:
+                rid0 = str(r.get("reel_id") or "")
+                ffid0 = str(r.get("footage_file_id") or "")
+                if ffid0 and not (drive_maps.get(rid0) or {}).get(ffid0):
+                    missing_ffids.append(ffid0)
+            fb_drive = await _resolve_drive_via_fb(client, missing_ffids)
             for row in rows:
-                fid = str(row.get("id") or "")
+                fid = str(row.get("id") or "")     # row PK → stays the clip's footage_file_id
                 fname = row.get("filename")
+                src_path = row.get("source_path")
+                folder_lbl = _folder_label(src_path)   # NB: not `folder` — that's the lib-scope param
+                # Resolve the Drive links for this footage via reel → footageDrive[video id].
+                rid = str(row.get("reel_id") or "")
+                ffid = str(row.get("footage_file_id") or "")
+                dlink = (drive_maps.get(rid) or {}).get(ffid) or fb_drive.get(ffid) or {}
+                drive_url = dlink.get("drive_url")
+                drive_folder_url = dlink.get("drive_folder_url")
                 segs = row.get("full_transcript") or []
                 if not fid or not isinstance(segs, list):
                     continue
@@ -1542,21 +1845,121 @@ async def _ingest_worker(reel_id: str | None, footage: str | None) -> None:
                         "language": "en",
                         "confidence": (float(conf) if isinstance(conf, (int, float)) else None),
                         "ingest_run_id": run_id,
+                        "folder": folder_lbl,
+                        "source_path": src_path,
+                        "drive_url": drive_url,
+                        "drive_folder_url": drive_folder_url,
                     })
 
             # (b) Disk source — STRICT no-op unless CONTENT_FORGE_TRANSCRIPT_DIR is set.
-            disk = _transcript_dir()
-            if disk:
-                clips.extend(_collect_disk_clips(disk, run_id))
-            else:
-                log.info("content_forge: disk transcript branch skipped "
-                         "(CONTENT_FORGE_TRANSCRIPT_DIR unset)")
+            # Only on the attached/both path (it's the legacy attached-side disk fallback).
+            if do_attached:
+                disk = _transcript_dir()
+                if disk:
+                    clips.extend(_collect_disk_clips(disk, run_id))
+                else:
+                    log.info("content_forge: disk transcript branch skipped "
+                             "(CONTENT_FORGE_TRANSCRIPT_DIR unset)")
 
+            # Attached/disk clips collected above → upsert them as one batch.
             written = await _upsert_transcript_clips(client, clips)
-            log.info("content_forge: ingest run=%s reel=%s footage=%s clips=%d upserted=%d",
-                     run_id, reel_id, footage, len(clips), written)
+
+            # (c) WHOLE-LIBRARY source — every transcribed file in /api/files, optionally
+            # scoped to one folder + capped. Processed in file-chunks with an incremental
+            # upsert per chunk so the clip-count poll rises during a long run.
+            if do_library:
+                written += await _ingest_library(
+                    client, run_id, folder=folder, max_files=max_files, offset=offset)
+
+            log.info("content_forge: ingest run=%s source=%s reel=%s footage=%s folder=%s "
+                     "clips=%d upserted=%d",
+                     run_id, src, reel_id, footage, folder or "-", len(clips), written)
     except Exception as e:  # noqa: BLE001 — never crash the worker
         log.exception("content_forge: ingest worker error: %s", e)
+
+
+# Files processed per upsert chunk during a whole-library ingest. Each chunk fetches its
+# transcripts concurrently (bounded), then upserts — so a long run makes visible progress
+# (the clip-count poll rises) and memory stays bounded.
+LIBRARY_FILE_CHUNK = 80
+LIBRARY_FETCH_CONCURRENCY = 8
+
+
+def _library_clips_for_file(f: dict[str, Any], segs: list[dict[str, Any]],
+                            run_id: str) -> list[dict[str, Any]]:
+    """Build transcript_clips rows for ONE library file from its FB transcript segments.
+    footage_file_id = the real video-file id, so the Drive link comes straight off the file
+    row and the modal's existing /api/files/<id> Drive resolver already covers it."""
+    fid = str(f.get("id") or "")
+    if not fid:
+        return []
+    abs_path = f.get("abs_path")
+    folder_lbl = _folder_label(abs_path)
+    fname = f.get("filename")
+    drive_url = f.get("drive_url")
+    drive_folder_url = f.get("drive_folder_url")
+    out: list[dict[str, Any]] = []
+    for seg in segs:
+        if not isinstance(seg, dict):
+            continue
+        txt = (seg.get("text") or "").strip()
+        if not txt:
+            continue
+        try:
+            st = float(seg.get("start_time") or 0.0)
+            en = float(seg.get("end_time") if seg.get("end_time") is not None else st)
+        except (TypeError, ValueError):
+            continue
+        out.append({
+            "footage_file_id": fid,
+            "filename": fname,
+            "start_time": st,
+            "end_time": en,
+            "transcript_text": txt,
+            "keywords": _extract_keywords(txt),
+            "topics": [],
+            "language": "en",
+            "confidence": None,
+            "ingest_run_id": run_id,
+            "folder": folder_lbl,
+            "source_path": abs_path,
+            "drive_url": drive_url,
+            "drive_folder_url": drive_folder_url,
+        })
+    return out
+
+
+async def _ingest_library(client: httpx.AsyncClient, run_id: str, *,
+                          folder: str | None = None, max_files: int = 0,
+                          offset: int = 0) -> int:
+    """Ingest the WHOLE FootageBrain library (or one folder) into transcript_clips: list
+    transcribed files via /api/files, skip ones already ingested, fetch each transcript
+    (bounded concurrency), and upsert in file-chunks. Returns the count upserted. Files with
+    no speech transcript (scenery/b-roll → []) contribute nothing. Best-effort; never raises."""
+    files = await _fetch_library_files(client, folder=folder, max_files=max_files, offset=offset)
+    if not files:
+        log.info("content_forge: library ingest folder=%s — no transcribed files", folder or "-")
+        return 0
+    skip = await _existing_clip_file_ids(client)
+    todo = [f for f in files if str(f.get("id") or "") not in skip]
+    log.info("content_forge: library ingest folder=%s files=%d todo=%d (skipped %d already-ingested)",
+             folder or "-", len(files), len(todo), len(files) - len(todo))
+    sem = asyncio.Semaphore(LIBRARY_FETCH_CONCURRENCY)
+    written = 0
+    for i in range(0, len(todo), LIBRARY_FILE_CHUNK):
+        group = todo[i:i + LIBRARY_FILE_CHUNK]
+
+        async def _one(f: dict[str, Any]) -> list[dict[str, Any]]:
+            async with sem:
+                segs = await _fetch_fb_transcript(client, str(f.get("id") or ""))
+            return _library_clips_for_file(f, segs, run_id) if segs else []
+
+        results = await asyncio.gather(*[_one(f) for f in group])
+        chunk_clips = [c for rows in results for c in rows]
+        if chunk_clips:
+            written += await _upsert_transcript_clips(client, chunk_clips)
+    log.info("content_forge: library ingest folder=%s done — upserted=%d", folder or "-", written)
+    return written
 
 
 def _collect_disk_clips(base_dir: str, run_id: str) -> list[dict[str, Any]]:
@@ -1590,6 +1993,10 @@ def _collect_disk_clips(base_dir: str, run_id: str) -> list[dict[str, Any]]:
                     "language": "en",
                     "confidence": None,
                     "ingest_run_id": run_id,
+                    "folder": _folder_label(path),
+                    "source_path": path,
+                    "drive_url": None,
+                    "drive_folder_url": None,
                 })
     return out
 
@@ -1649,11 +2056,17 @@ async def _write_last_discover(client: httpx.AsyncClient, stats: dict[str, Any])
 
 async def _discover_worker(batch_id: str, tier: str, country: str | None,
                            only_new: bool = True, max_opportunities: int = 0,
-                           model_override: str | None = None) -> None:
+                           model_override: str | None = None,
+                           folder: str | None = None,
+                           clips_per_pass: int = 0) -> None:
     """Fire-and-forget discovery: read transcript_clips, run ONE batched LLM pass via the
     provider seam, upsert content_opportunities tagged with discovery_run_id=batch_id.
     only_new=True (default) feeds ONLY clips not yet analyzed (token-saver); ?rescan=1 forces
-    the full recent window. Never raises."""
+    the full recent window. Never raises.
+
+    folder set → scope the clip read to that footage folder and walk it sequentially;
+    clips_per_pass caps the INPUT clips per pass (defaults to 20 when a folder is scoped),
+    so each Discover click advances ~20 clips through the folder."""
     try:
         async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
             # Credit guard — kill switch / daily limit. Skip the whole pass (no clip read,
@@ -1662,10 +2075,15 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
             if not allowed:
                 log.info("content_forge: discover batch=%s SKIPPED — %s", batch_id, reason)
                 return
-            clips = await _read_clips_for_discovery(client, only_new=only_new)
+            # Input-clip budget: explicit clips_per_pass wins; else 20 when folder-scoped,
+            # else the legacy full recent window.
+            in_limit = clips_per_pass if clips_per_pass > 0 else (20 if folder else MAX_CLIPS_FOR_DISCOVERY)
+            clips = await _read_clips_for_discovery(
+                client, limit=in_limit, only_new=only_new, folder=folder)
             if not clips:
-                log.info("content_forge: discover batch=%s — no clips to analyze%s",
-                         batch_id, " (no new clips since last pass)" if only_new else "")
+                log.info("content_forge: discover batch=%s folder=%s — no clips to analyze%s",
+                         batch_id, folder or "-",
+                         " (no new clips since last pass)" if only_new else "")
                 return
             existing = await _read_existing_titles(client, country)  # cross-run dedup hint
             transcript = _clips_to_prompt(clips)
@@ -1722,8 +2140,13 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
                 if key in seen_titles:   # within-run dedup (also guarded by the unique idx)
                     continue
                 seen_titles.add(key)
-                src_ids = [str(x) for x in (it.get("source_clip_ids") or [])
-                           if isinstance(x, (str, int))]
+                # De-dup while preserving first-seen order — the LLM sometimes cites the same
+                # clip id for more than one beat/angle within a single opportunity, which would
+                # otherwise show that clip twice in the frontend's "source clips" reference
+                # list and waste a slot in _fetch_clips_for_opp's 20-clip cap on a repeat.
+                src_ids = list(dict.fromkeys(
+                    str(x) for x in (it.get("source_clip_ids") or [])
+                    if isinstance(x, (str, int))))
                 rows.append({
                     "title": title,
                     "angle_summary": it.get("angle_summary"),
@@ -1757,11 +2180,12 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
                 "opportunities": written,
                 "max_opportunities": max_opportunities,
             })
-            log.info("content_forge: discover batch=%s provider=%s model=%s tier=%s clips_read=%d "
-                     "clips_sent=%d truncated=%d(%.1f%%) items=%d upserted=%d avoid=%d only_new=%s",
+            log.info("content_forge: discover batch=%s provider=%s model=%s tier=%s folder=%s "
+                     "clips_read=%d clips_sent=%d truncated=%d(%.1f%%) items=%d upserted=%d "
+                     "avoid=%d only_new=%s",
                      batch_id, meta.get("provider"), meta.get("model"), meta.get("tier_used"),
-                     clips_read, clips_sent, truncated, trunc_pct, len(rows), written,
-                     len(existing), only_new)
+                     folder or "-", clips_read, clips_sent, truncated, trunc_pct, len(rows),
+                     written, len(existing), only_new)
     except Exception as e:  # noqa: BLE001 — never crash the worker
         log.exception("content_forge: discover worker error (batch=%s): %s", batch_id, e)
 
@@ -1842,18 +2266,45 @@ async def ingest_transcript(request: Request, background_tasks: BackgroundTasks)
         return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
     reel_id = request.query_params.get("reel_id") or None
     footage = request.query_params.get("footage") or None
-    # Tolerate JSON body too (the Vercel proxy may POST a body instead of query params).
-    if reel_id is None and footage is None:
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                reel_id = body.get("reel_id") or None
-                footage = body.get("footage") or body.get("footage_file_id") or None
-        except Exception:  # noqa: BLE001
-            pass
-    background_tasks.add_task(_ingest_worker, reel_id, footage)
-    return JSONResponse({"ok": True, "started": True,
-                         "reel_id": reel_id, "footage": footage}, status_code=200)
+    # source: attached (default) | library | both. folder/max_files/offset scope the
+    # library pull. All accepted from query OR the JSON body (the Vercel proxy POSTs a body).
+    source = (request.query_params.get("source") or "").strip().lower() or None
+    folder = (request.query_params.get("folder") or "").strip() or None
+    mf = request.query_params.get("max_files")
+    ofs = request.query_params.get("offset")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if isinstance(body, dict):
+        if reel_id is None:
+            reel_id = body.get("reel_id") or None
+        if footage is None:
+            footage = body.get("footage") or body.get("footage_file_id") or None
+        if source is None:
+            s = body.get("source")
+            source = (str(s).strip().lower() or None) if s else None
+        if folder is None:
+            f = body.get("folder")
+            folder = (str(f).strip() or None) if f else None
+        if mf is None:
+            mf = body.get("max_files")
+        if ofs is None:
+            ofs = body.get("offset")
+    source = source or "attached"
+    try:
+        max_files = max(0, int(mf)) if mf is not None else 0
+    except (TypeError, ValueError):
+        max_files = 0
+    try:
+        offset = max(0, int(ofs)) if ofs is not None else 0
+    except (TypeError, ValueError):
+        offset = 0
+    background_tasks.add_task(_ingest_worker, reel_id, footage, source, folder,
+                             max_files, offset)
+    return JSONResponse({"ok": True, "started": True, "source": source,
+                         "reel_id": reel_id, "footage": footage, "folder": folder,
+                         "max_files": max_files, "offset": offset}, status_code=200)
 
 
 @router.get("/ingest-status/{reel_id}")
@@ -1869,6 +2320,29 @@ async def ingest_status(reel_id: str, request: Request):
     async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
         count = await _count_clips(client, scope)
     return JSONResponse({"ok": True, "reel_id": reel_id, "clip_count": count}, status_code=200)
+
+
+@router.get("/library-folders")
+async def library_folders(request: Request):
+    """GET /api/content-forge/library-folders?secret=… → {folders:[{folder,files,with_drive}]}.
+
+    Secret-gated. Walks the FootageBrain /api/files catalog (same box) and returns the
+    transcribed-file count per folder label (the same _folder_label used at ingest), biggest
+    first. Powers the 'Mine Library' folder picker so the owner can mine one region at a time."""
+    if not _check_secret(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
+    async with httpx.AsyncClient(timeout=90) as client:
+        files = await _fetch_library_files(client)
+    counts: dict[str, dict[str, Any]] = {}
+    for f in files:
+        lbl = _folder_label(f.get("abs_path")) or "(unknown)"
+        c = counts.setdefault(lbl, {"folder": lbl, "files": 0, "with_drive": 0})
+        c["files"] += 1
+        if f.get("drive_url"):
+            c["with_drive"] += 1
+    rows = sorted(counts.values(), key=lambda x: (-x["files"], x["folder"]))
+    return JSONResponse({"ok": True, "folders": rows, "total_files": len(files)},
+                        status_code=200)
 
 
 @router.post("/discover")
@@ -1922,12 +2396,26 @@ async def discover(request: Request, background_tasks: BackgroundTasks):
     # model toggle (validated to the allowlist; "" → env/default). Query or body.
     model = _clean_model(request.query_params.get("model")
                          or (b2.get("model") if isinstance(b2, dict) else None))
+    # folder scope (e.g. "Japan") + clips_per_pass (input-clip budget). Query or body.
+    folder = (request.query_params.get("folder")
+              or (b2.get("folder") if isinstance(b2, dict) else None)) or None
+    if folder:
+        folder = str(folder).strip() or None
+    cpp = (request.query_params.get("clips_per_pass")
+           or request.query_params.get("max_input_clips")
+           or (b2.get("clips_per_pass") if isinstance(b2, dict) else None)
+           or (b2.get("max_input_clips") if isinstance(b2, dict) else None))
+    try:
+        clips_per_pass = max(0, min(400, int(cpp))) if cpp is not None else 0
+    except (TypeError, ValueError):
+        clips_per_pass = 0
     batch_id = str(uuid.uuid4())
     background_tasks.add_task(_discover_worker, batch_id, tier, country, only_new,
-                             max_opps, model or None)
+                             max_opps, model or None, folder, clips_per_pass)
     return JSONResponse({"ok": True, "batch_id": batch_id, "tier": tier,
                          "country": country, "only_new": only_new,
-                         "max_opportunities": max_opps, "model": model}, status_code=200)
+                         "max_opportunities": max_opps, "model": model,
+                         "folder": folder, "clips_per_pass": clips_per_pass}, status_code=200)
 
 
 @router.get("/discover-status/{batch_id}")
@@ -2055,3 +2543,615 @@ def _normalize_hooks(raw: list[Any]) -> list[dict[str, Any]]:
         {"version": i + 1, "style": style, "text": by_style.get(style, "")}
         for i, style in enumerate(HOOK_STYLES)
     ]
+
+
+# ── VO Script helpers ──────────────────────────────────────────────────────────────────
+
+_SCRIPT_TEMPLATE_BEATS: dict[str, list[str]] = {
+    "fact-reveal": ["Hook (scroll-stopper observation)", "Premise (the surprising fact)",
+                    "Pivot ('That's not an accident' moment)", "Reveal (cause / story)",
+                    "Payoff (reflection or takeaway)"],
+    "hot-take":    ["Hook (controversial statement)", "Premise (what most people think)",
+                    "Pivot ('But here's what they miss')", "Reveal (the counterargument)",
+                    "Payoff (drive to comments)"],
+    "question-hook": ["Hook (direct question to viewer)", "Premise (stakes of the question)",
+                      "Tease (answer teaser)", "Reveal (the answer + context)",
+                      "Payoff (viewer challenge / CTA)"],
+    "story-first": ["Hook (start mid-story)", "Scene (scene-setting)",
+                    "Turn (conflict / turn)", "Resolution", "Moral (takeaway)"],
+}
+
+
+async def _fetch_clips_for_opp(client: httpx.AsyncClient,
+                                opp: dict[str, Any]) -> list[dict[str, Any]]:
+    """Fetch transcript_clips rows for the opportunity's source_clip_ids.
+    Returns a list of {id, filename, transcript_text} dicts, capped at 20 clips.
+    Best-effort: returns [] on any error."""
+    clip_ids = [str(x) for x in (opp.get("source_clip_ids") or []) if x]
+    if not clip_ids:
+        return []
+    url = _supabase_url()
+    if not url:
+        return []
+    id_list = ",".join(clip_ids[:20])
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/transcript_clips"
+            f"?select=id,filename,transcript_text,drive_url,drive_folder_url"
+            f"&id=in.({id_list})&limit=20",
+            headers=_supabase_headers(),
+        )
+        if r.status_code == 200:
+            data = r.json()
+            return data if isinstance(data, list) else []
+        log.warning("content_forge: clip fetch HTTP %s", r.status_code)
+    except Exception as e:  # noqa: BLE001
+        log.warning("content_forge: clip fetch failed: %s", e)
+    return []
+
+
+def _script_user_prompt(
+    opp: dict[str, Any],
+    clips: list[dict[str, Any]],
+    template: str,
+    grounding_mode: str,
+    tone: str,
+    grounding_bullets: list[str],
+) -> str:
+    beats = _SCRIPT_TEMPLATE_BEATS.get(template, _SCRIPT_TEMPLATE_BEATS["fact-reveal"])
+    beats_block = "\n".join(f"  {i+1}. {b}" for i, b in enumerate(beats))
+
+    clips_block = ""
+    if clips:
+        lines = []
+        for c in clips[:20]:
+            fn = (c.get("filename") or "").strip() or "clip"
+            txt = (c.get("transcript_text") or "").strip()[:600]
+            if txt:
+                lines.append(f"[clip:{c.get('id','')}] ({fn})\n{txt}")
+        clips_block = "\n\n---\n".join(lines)
+
+    grounding_note = ""
+    if grounding_mode == "footage":
+        grounding_note = (
+            "GROUNDING RULE: use ONLY the footage clips above — no external facts. "
+            "Each beat MUST cite the clip it draws from using [clip:<id>]."
+        )
+    elif grounding_mode == "model":
+        grounding_note = (
+            "You may enrich the script with relevant real-world facts from your training "
+            "knowledge. Do NOT hallucinate specific dates, names, or statistics."
+        )
+    elif grounding_mode == "web":
+        if grounding_bullets:
+            bullet = "\n".join(f"- {g}" for g in grounding_bullets[:6])
+            grounding_note = (
+                f"WEB-GROUNDED FACTS (verified; use only if relevant; do NOT contradict):\n{bullet}"
+            )
+        else:
+            grounding_note = "No web grounding available — use model knowledge as fallback."
+
+    tone_map = {
+        "neutral": "calm, informative, measured",
+        "punchy":  "short punchy sentences, energetic, fast-paced",
+        "educational": "clear, explanatory, teacher-voice",
+        "provocative": "edgy, opinionated, debate-sparking",
+    }
+    tone_desc = tone_map.get(tone, "neutral")
+
+    citations_instruction = ""
+    if grounding_mode == "footage":
+        citations_instruction = (
+            '\n  "citations": [\n'
+            '    {"beat": "<beat name>", "clip_id": "<id>", "quote": "<verbatim phrase>"}\n'
+            '  ]'
+        )
+
+    return (
+        f'OPPORTUNITY\nTitle: {opp.get("title","")}\n'
+        f'Angle: {opp.get("angle_summary","")}\n\n'
+        f'NARRATIVE TEMPLATE: {template}\n'
+        f'Beat structure:\n{beats_block}\n\n'
+        f'TONE: {tone_desc}\n\n'
+        f'TARGET LENGTH: 150-200 words (45-60 seconds)\n\n'
+        f'{grounding_note}\n\n'
+        f'FOOTAGE CLIPS:\n{clips_block or "(no clips available — use model knowledge)"}\n\n'
+        f'Respond with STRICT JSON:\n'
+        f'{{\n'
+        f'  "script": "<full VO script — 150-200 words, {len(beats)} beats structured per template>",\n'
+        f'  "word_count": <integer>,{citations_instruction}\n'
+        f'}}\n'
+        f'No prose outside the JSON. No code fences.'
+    )
+
+
+@router.post("/script")
+async def script(request: Request):
+    """POST /api/content-forge/script?secret=…
+
+    Secret-gated. SYNCHRONOUS. Generates a full ~150-200 word voice-over script for one
+    opportunity using a chosen narrative template (fact-reveal / hot-take / question-hook /
+    story-first) and grounding mode (footage / model / web). Writes script_json JSONB onto
+    the content_opportunities row and returns it. Mirrors the /expand pattern."""
+    if not _check_secret(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
+
+    opp_id: str | None = None
+    template = "fact-reveal"
+    grounding_mode = "footage"
+    tone = "neutral"
+    model_override: str | None = None
+    tier = "free"
+
+    # Accept params from query string or JSON body.
+    opp_id = request.query_params.get("opportunity_id") or request.query_params.get("id")
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            opp_id = opp_id or body.get("opportunity_id") or body.get("id")
+            template = (body.get("template") or template).strip().lower()
+            grounding_mode = (body.get("grounding_mode") or grounding_mode).strip().lower()
+            tone = (body.get("tone") or tone).strip().lower()
+            tier = (body.get("tier") or tier).strip().lower()
+            model_override = _clean_model(body.get("model"))
+    except Exception:  # noqa: BLE001
+        pass
+
+    if template not in _SCRIPT_TEMPLATE_BEATS:
+        template = "fact-reveal"
+    if grounding_mode not in ("footage", "model", "web"):
+        grounding_mode = "footage"
+    if tone not in ("neutral", "punchy", "educational", "provocative"):
+        tone = "neutral"
+    if tier not in ("free", "pro"):
+        tier = "free"
+
+    if not opp_id:
+        return JSONResponse({"ok": False, "error": "opportunity_id required"}, status_code=400)
+
+    async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
+        opp = await _read_opportunity(client, opp_id)
+        if not opp:
+            return JSONResponse({"ok": False, "error": "opportunity not found"}, status_code=404)
+
+        # Credit guard — same kill switch / daily limit as expand.
+        allowed, reason = await _forge_llm_gate(client)
+        if not allowed:
+            return JSONResponse({"ok": False, "blocked": True, "error": reason,
+                                 "opportunity_id": opp_id}, status_code=200)
+
+        # Fetch source clips for footage context.
+        clips = await _fetch_clips_for_opp(client, opp)
+
+        # Web grounding (only when requested; degrades gracefully on no-key/quota).
+        grounding_bullets: list[str] = []
+        fact_check: dict[str, Any] = {"skipped": True, "reason": "not_requested"}
+        if grounding_mode == "web":
+            gq = ((opp.get("title") or "") + " " + (opp.get("angle_summary") or "")).strip()
+            if gq:
+                fact_check = _tavily_ground(gq)
+                grounding_bullets = _grounding_bullets(fact_check)
+
+        messages = [
+            {"role": "system", "content": _SYSTEM_BY_KIND["script"]},
+            {"role": "user", "content": _script_user_prompt(
+                opp, clips, template, grounding_mode, tone, grounding_bullets)},
+        ]
+        try:
+            text, meta = _forge_llm(messages, tier=tier, kind="expansion",
+                                    model_override=model_override or None)
+            await _log_usage(client, kind="expansion", meta=meta, batch_id=None)
+            parsed = _extract_json(text)
+        except Exception as e:  # noqa: BLE001
+            log.warning("content_forge: script LLM failed for %s: %s", opp_id, e)
+            return JSONResponse({"ok": False, "error": f"script generation failed: {e}"},
+                                status_code=502)
+
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        script_text = (parsed.get("script") or "").strip()
+        raw_wc = parsed.get("word_count")
+        word_count = int(raw_wc) if isinstance(raw_wc, int) or (isinstance(raw_wc, str) and raw_wc.isdigit()) \
+            else len(script_text.split())
+        citations = parsed.get("citations") or None
+
+        script_json_row: dict[str, Any] = {
+            "text": script_text,
+            "template": template,
+            "grounding_mode": grounding_mode,
+            "tone": tone,
+            "word_count": word_count,
+            "generated_at": _now_iso(),
+            "provider": meta.get("provider"),
+            "model": meta.get("model"),
+        }
+        if citations:
+            script_json_row["citations"] = citations
+
+        persisted = await _patch_opportunity(client, opp_id, {"script_json": script_json_row})
+        if not persisted:
+            # Most likely migration 0107 (script_json column) not applied yet. Still return
+            # the generated script to the UI — just flag it as unsaved rather than claiming
+            # success and having it silently vanish on reload.
+            log.warning("content_forge: script generated for %s but not persisted "
+                        "(migration 0107 applied?)", opp_id)
+
+    return JSONResponse({
+        "ok": True,
+        "persisted": persisted,
+        "opportunity_id": opp_id,
+        "script_json": script_json_row,
+        "provider": meta.get("provider"),
+        "fell_back": meta.get("fell_back", False),
+    }, status_code=200)
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ── FONT ID — identify the font in a reel frame (owner-only "Fonts" tab) ───────────────
+# ══════════════════════════════════════════════════════════════════════════════════════
+# Phase 1 = Gemini VISION only. Reuses the exact seams the rest of Content Forge uses:
+#   · vision rides a dedicated ladder (_forge_vision): free AI-Studio Gemini → paid Vertex
+#     Gemini (the two OpenAI-compatible rungs that accept image parts; the Anthropic /
+#     OpenRouter text rungs are intentionally skipped — free models reject images).
+#   · the SAME kill switch / daily cap (_forge_llm_gate) blocks a call before any spend.
+#   · the SAME telemetry (_log_usage) logs kind="font_id" so the Monitor "API Budgets &
+#     Limits" card shows font-ID spend by provider alongside discovery/expansion.
+# Phase 2 (not here) swaps in a self-hosted ONNX classifier + optional WhatFontIs behind a
+# FONT_ID_MODE flag — same route, zero frontend change.
+
+# Vision models — 2.5-flash discriminates typography meaningfully (2.0-flash is near-chance
+# on fonts per the FRB benchmark); both env-overridable if a project lacks 2.5 access.
+FONT_VISION_MODEL_GEMINI = (os.environ.get("FONT_ID_MODEL_GEMINI") or "").strip() or "gemini-2.5-flash"
+FONT_VISION_MODEL_VERTEX = (os.environ.get("FONT_ID_MODEL_VERTEX") or "").strip() or "google/gemini-2.5-flash"
+
+# ~30 most-common short-form caption fonts — primes the prompt toward REAL, resolvable
+# (mostly Google Fonts) families instead of open-ended guessing, and powers the honest
+# "likely a CapCut/InShot preset" fallback. Shared source of truth with the frontend copy.
+CAPCUT_PRESET_FONTS = [
+    "Montserrat", "Poppins", "Bebas Neue", "Anton", "Oswald", "Roboto", "Roboto Condensed",
+    "Archivo", "Archivo Black", "Inter", "League Spartan", "Impact", "Barlow", "Barlow Condensed",
+    "Teko", "Rubik", "Nunito", "Nunito Sans", "Work Sans", "DM Sans", "Manrope", "Bebas Kai",
+    "Kanit", "Fjalla One", "Sora", "Space Grotesk", "Libre Franklin", "Prompt", "Outfit",
+    "Alfa Slab One", "Passion One", "Titan One",
+]
+
+_FONT_ID_SYSTEM = (
+    "You are a professional typographer and font-identification expert. You examine an image "
+    "of on-screen text (usually a caption overlay from a short-form social video) and identify "
+    "the most likely typeface. You reason from letterform anatomy — stroke contrast, terminals, "
+    "x-height, aperture, weight, whether it is a system/UI font vs. a display face — NOT from the "
+    "words. Many social captions use bundled EDITOR PRESET fonts (CapCut / InShot / Instagram) or "
+    "hand-set title cards that are NOT installable typefaces; when that is likely, say so honestly "
+    "rather than forcing a match. You reply with STRICT JSON ONLY: no prose, no code fences."
+)
+
+
+def _font_id_user_prompt() -> str:
+    """The strict-JSON font-ID instruction. Primes with the common-caption shortlist so the
+    model biases toward real, resolvable families and Google-Fonts naming."""
+    common = ", ".join(CAPCUT_PRESET_FONTS)
+    return (
+        "Identify the font of the most prominent text in this image. Return the TOP 3 most likely "
+        "typefaces, best first.\n\n"
+        f"Common short-form caption fonts (bias toward these when the letterforms fit, and prefer "
+        f"exact Google Fonts family names): {common}.\n\n"
+        "Reply with STRICT JSON in EXACTLY this shape:\n"
+        "{\n"
+        '  "matches": [\n'
+        '    {"family": "<font family name>", "confidence": <0.0-1.0>, '
+        '"rationale": "<one sentence on the letterform evidence>", '
+        '"is_probably_preset": <true|false>, "google_fonts_guess": "<closest Google Fonts family, or empty>"}\n'
+        "  ],\n"
+        '  "notes": "<optional: e.g. \'text too small/blurry to be certain\' or \'likely a CapCut bundled preset\'>"\n'
+        "}\n"
+        "Rules: confidence is your honest calibrated probability (be conservative on blurry/short "
+        "samples). Set is_probably_preset=true when it reads as a bundled editor caption style rather "
+        "than a standard installable font. Always fill google_fonts_guess with the closest free "
+        "look-alike even when unsure. Return 1-3 matches (fewer only if the text is unreadable)."
+    )
+
+
+def _forge_vision(image_data_url: str, *, model_override: str | None = None
+                  ) -> tuple[str, dict[str, Any]]:
+    """VISION PROVIDER SEAM — the only place the font-ID vision provider is chosen.
+
+    A trimmed multimodal cousin of _forge_llm: free AI-Studio Gemini → paid Vertex Gemini
+    (both OpenAI-compatible, both accept `image_url` content parts). Each rung is skipped
+    when its keys are absent; a RuntimeError escalates. Returns (text, meta) in the SAME meta
+    shape _forge_llm returns (provider/model/tier_used/usage/fell_back/cost_usd) so _log_usage
+    works unchanged. Raises RuntimeError only when every configured vision rung is exhausted."""
+    ov = (model_override or "").strip() or None
+    messages = [
+        {"role": "system", "content": _FONT_ID_SYSTEM},
+        {"role": "user", "content": [
+            {"type": "text", "text": _font_id_user_prompt()},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ]},
+    ]
+
+    def _rung_gemini_api():
+        # Same card-taint kill lever as the text ladder.
+        if (os.environ.get("CONTENT_FORGE_DISABLE_GEMINI_API") or "").strip().lower() in ("1", "true", "yes"):
+            return None
+        if not _gemini_key():
+            return None
+        model = (ov.split("/")[-1] if ov else None) or FONT_VISION_MODEL_GEMINI
+        text, used, usage = _call_gemini_api(messages, model=model)
+        return text, {"provider": "gemini_api", "model": used, "tier_used": "gemini", "usage": usage}
+
+    def _rung_vertex_gemini():
+        if not (_gcp_project() and _gcp_sa_json()):
+            return None
+        model = ov or FONT_VISION_MODEL_VERTEX
+        text, used, usage = _call_vertex_gemini(messages, model=model)
+        return text, {"provider": "vertex_gemini", "model": used, "tier_used": "vertex", "usage": usage}
+
+    fell_back = False
+    last_err = "no vision provider configured"
+    for rung in (_rung_gemini_api, _rung_vertex_gemini):
+        try:
+            result = rung()
+        except RuntimeError as e:
+            last_err = str(e)
+            log.info("content_forge: font-id vision rung failed (%s) — escalating", last_err)
+            fell_back = True
+            continue
+        if result is None:
+            continue
+        text, meta = result
+        meta["fell_back"] = fell_back
+        meta.setdefault("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+        meta["cost_usd"] = _estimate_cost(meta.get("provider", ""), meta.get("model", ""), meta["usage"])
+        return text, meta
+    raise RuntimeError(f"all vision providers exhausted: {last_err}")
+
+
+def _parse_font_matches(text: str) -> tuple[list[dict[str, Any]], str]:
+    """Coerce the model's JSON into (matches[≤3], notes). Tolerant: accepts either the
+    documented object or a bare list; clamps confidence to 0-1; drops nameless rows."""
+    parsed = _extract_json(text)
+    notes = ""
+    raw: Any
+    if isinstance(parsed, dict):
+        raw = parsed.get("matches") or []
+        notes = str(parsed.get("notes") or "")
+    elif isinstance(parsed, list):
+        raw = parsed
+    else:
+        raw = []
+    out: list[dict[str, Any]] = []
+    for m in raw[:3] if isinstance(raw, list) else []:
+        if not isinstance(m, dict):
+            continue
+        family = str(m.get("family") or "").strip()
+        if not family:
+            continue
+        try:
+            conf = float(m.get("confidence"))
+        except (TypeError, ValueError):
+            conf = 0.0
+        conf = max(0.0, min(1.0, conf))
+        out.append({
+            "family": family,
+            "confidence": round(conf, 3),
+            "rationale": str(m.get("rationale") or "").strip(),
+            "is_probably_preset": bool(m.get("is_probably_preset")),
+            "google_fonts_guess": str(m.get("google_fonts_guess") or "").strip(),
+        })
+    return out, notes
+
+
+async def _identify_font(client: httpx.AsyncClient, image_data_url: str,
+                         *, model_override: str | None = None) -> JSONResponse:
+    """Shared tail for both font routes: gate → vision → parse → log usage → respond.
+    Returns a ready JSONResponse (200 ok / 200 blocked / 502 on LLM failure)."""
+    allowed, reason = await _forge_llm_gate(client)
+    if not allowed:
+        return JSONResponse({"ok": False, "blocked": True, "error": reason}, status_code=200)
+    try:
+        text, meta = _forge_vision(image_data_url, model_override=model_override)
+        await _log_usage(client, kind="font_id", meta=meta, batch_id=None)
+    except Exception as e:  # noqa: BLE001
+        log.warning("content_forge: font-id vision failed: %s", e)
+        return JSONResponse({"ok": False, "error": f"font identification failed: {e}"},
+                            status_code=502)
+    matches, notes = _parse_font_matches(text)
+    return JSONResponse({
+        "ok": True,
+        "matches": matches,
+        "notes": notes,
+        "provider": meta.get("provider"),
+        "model": meta.get("model"),
+        "fell_back": meta.get("fell_back", False),
+    }, status_code=200)
+
+
+# yt-dlp/ffmpeg frame extraction for the reel-URL path (toolchain already on the box —
+# mirrors reel_deconstruct's mp4 pull + ffmpeg keyframe grab, but downscaled + base64'd so
+# a handful of frames ride the vision call cheaply). Self-contained on purpose (no coupling
+# to the full deconstruct pipeline / its scene-detect deps).
+FONT_FRAME_TIMEOUT = 90       # per-subprocess seconds (download / ffmpeg)
+FONT_FRAME_COUNT = 5          # evenly-spaced frames sampled from the reel
+FONT_MAX_VIDEO_BYTES = "60M"  # cap the reel download
+
+
+def _extract_reel_frames(url: str) -> list[str]:
+    """Download a reel (yt-dlp mp4, capped) and return up to FONT_FRAME_COUNT evenly-spaced,
+    downscaled frames as base64 PNG data-URLs. Best-effort; raises RuntimeError with a short
+    reason on download failure so the route can surface it. Cleans up its temp dir."""
+    import subprocess, tempfile, base64, glob as _glob, shutil as _shutil
+    work = tempfile.mkdtemp(prefix="fontid_")
+    try:
+        out_tpl = os.path.join(work, "base.%(ext)s")
+        cmd = ["yt-dlp", "-f", "mp4/best[ext=mp4]", "--no-playlist",
+               "--max-filesize", FONT_MAX_VIDEO_BYTES, "--merge-output-format", "mp4",
+               "-o", out_tpl, url]
+        # Inject cookies for login-walled reels when configured (same env yt-dlp uses elsewhere).
+        cookies = (os.environ.get("YTDLP_COOKIES") or os.environ.get("IG_COOKIES_FILE") or "").strip()
+        if cookies and os.path.exists(cookies):
+            cmd = ["yt-dlp", "--cookies", cookies] + cmd[1:]
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=FONT_FRAME_TIMEOUT, check=False)
+        vids = _glob.glob(os.path.join(work, "base.*"))
+        if cp.returncode != 0 or not vids:
+            tail = ((cp.stderr or "") + (cp.stdout or "")).strip()[-200:]
+            raise RuntimeError(f"reel download failed: {tail}")
+        video = vids[0]
+        # Sample FONT_FRAME_COUNT frames across the clip via ffmpeg fps filter, scaled to 640w.
+        # thumbnail-style even sampling: -vf fps=count/duration is fiddly; use select of N frames.
+        pat = os.path.join(work, "f_%02d.png")
+        vf = f"thumbnail,scale=640:-1"
+        # Grab one representative frame per 1/N of the video using the thumbnail filter batched.
+        subprocess.run(["ffmpeg", "-y", "-i", video, "-vf",
+                        f"select='not(mod(n\\,15))',scale=640:-1", "-vsync", "vfr",
+                        "-frames:v", str(FONT_FRAME_COUNT * 4), pat],
+                       capture_output=True, text=True, timeout=FONT_FRAME_TIMEOUT, check=False)
+        files = sorted(_glob.glob(os.path.join(work, "f_*.png")))
+        if not files:
+            # Fallback: single midpoint frame.
+            single = os.path.join(work, "f_00.png")
+            subprocess.run(["ffmpeg", "-y", "-i", video, "-vf", vf, "-frames:v", "1", single],
+                           capture_output=True, text=True, timeout=FONT_FRAME_TIMEOUT, check=False)
+            files = sorted(_glob.glob(os.path.join(work, "f_*.png")))
+        # Evenly subsample down to FONT_FRAME_COUNT.
+        if len(files) > FONT_FRAME_COUNT:
+            step = len(files) / FONT_FRAME_COUNT
+            files = [files[int(i * step)] for i in range(FONT_FRAME_COUNT)]
+        frames: list[str] = []
+        for f in files:
+            try:
+                with open(f, "rb") as fh:
+                    b64 = base64.b64encode(fh.read()).decode("ascii")
+                frames.append(f"data:image/png;base64,{b64}")
+            except Exception:  # noqa: BLE001
+                continue
+        if not frames:
+            raise RuntimeError("no frames could be extracted from the reel")
+        return frames
+    finally:
+        try:
+            import shutil as _sh
+            _sh.rmtree(work, ignore_errors=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@router.post("/font-id")
+async def font_id(request: Request):
+    """POST /api/content-forge/font-id?secret=…  body {image: "data:image/...;base64,..."}
+
+    Secret-gated. SYNCHRONOUS. Identifies the font of the most prominent text in a supplied
+    screenshot via the vision ladder (free Gemini → paid Vertex). Returns top-3 matches with
+    confidence + download hints. Gated by the same kill switch / daily cap as discover/expand;
+    logs kind="font_id" usage to the Monitor budgets card."""
+    if not _check_secret(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        body = {}
+    image = (body.get("image") or "").strip()
+    model_override = _clean_model(body.get("model"))
+    if not image.startswith("data:image/"):
+        return JSONResponse({"ok": False, "error": "image (data URL) required"}, status_code=400)
+
+    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+        return await _identify_font(client, image, model_override=model_override or None)
+
+
+@router.post("/font-id-keyframes")
+async def font_id_keyframes(request: Request):
+    """POST /api/content-forge/font-id-keyframes?secret=…  body {url: "<reel url>"}
+
+    Secret-gated. Downloads the reel, samples a few frames, asks the vision model to identify
+    the font of the most prominent caption across them (one call, frames passed together), and
+    returns top-3 matches + the chosen frame preview. Same gate + telemetry as /font-id."""
+    if not _check_secret(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        body = {}
+    url = (body.get("url") or "").strip()
+    model_override = _clean_model(body.get("model"))
+    if not url.startswith("http"):
+        return JSONResponse({"ok": False, "error": "url required"}, status_code=400)
+
+    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+        # Gate BEFORE the (heavier) download so a killed switch spends nothing.
+        allowed, reason = await _forge_llm_gate(client)
+        if not allowed:
+            return JSONResponse({"ok": False, "blocked": True, "error": reason}, status_code=200)
+        try:
+            frames = _extract_reel_frames(url)
+        except Exception as e:  # noqa: BLE001
+            log.warning("content_forge: font-id keyframe extraction failed: %s", e)
+            return JSONResponse({"ok": False, "error": f"couldn't extract frames: {e}"},
+                                status_code=502)
+
+        # Multi-frame vision: send all sampled frames in one call; the model picks the frame
+        # with the clearest caption and identifies its font.
+        messages = [
+            {"role": "system", "content": _FONT_ID_SYSTEM},
+            {"role": "user", "content": (
+                [{"type": "text", "text":
+                  "These are frames sampled from one short-form video. Find the frame with the "
+                  "clearest, most prominent on-screen caption text and identify ITS font. "
+                  + _font_id_user_prompt()}]
+                + [{"type": "image_url", "image_url": {"url": f}} for f in frames]
+            )},
+        ]
+        try:
+            # Reuse the vision rungs directly with the multi-image message.
+            ov = (model_override or "").strip() or None
+            fell_back = False
+            text = None
+            meta: dict[str, Any] = {}
+            last_err = "no vision provider configured"
+            for provider in ("gemini_api", "vertex_gemini"):
+                try:
+                    if provider == "gemini_api":
+                        if (os.environ.get("CONTENT_FORGE_DISABLE_GEMINI_API") or "").strip().lower() in ("1", "true", "yes"):
+                            continue
+                        if not _gemini_key():
+                            continue
+                        model = (ov.split("/")[-1] if ov else None) or FONT_VISION_MODEL_GEMINI
+                        text, used, usage = _call_gemini_api(messages, model=model)
+                        meta = {"provider": "gemini_api", "model": used, "tier_used": "gemini", "usage": usage}
+                    else:
+                        if not (_gcp_project() and _gcp_sa_json()):
+                            continue
+                        model = ov or FONT_VISION_MODEL_VERTEX
+                        text, used, usage = _call_vertex_gemini(messages, model=model)
+                        meta = {"provider": "vertex_gemini", "model": used, "tier_used": "vertex", "usage": usage}
+                    break
+                except RuntimeError as e:
+                    last_err = str(e)
+                    fell_back = True
+                    text = None
+                    continue
+            if text is None:
+                raise RuntimeError(f"all vision providers exhausted: {last_err}")
+            meta["fell_back"] = fell_back
+            meta.setdefault("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+            meta["cost_usd"] = _estimate_cost(meta.get("provider", ""), meta.get("model", ""), meta["usage"])
+            await _log_usage(client, kind="font_id", meta=meta, batch_id=None)
+        except Exception as e:  # noqa: BLE001
+            log.warning("content_forge: font-id keyframe vision failed: %s", e)
+            return JSONResponse({"ok": False, "error": f"font identification failed: {e}"},
+                                status_code=502)
+
+    matches, notes = _parse_font_matches(text)
+    return JSONResponse({
+        "ok": True,
+        "matches": matches,
+        "notes": notes,
+        "frame_count": len(frames),
+        "provider": meta.get("provider"),
+        "model": meta.get("model"),
+        "fell_back": meta.get("fell_back", False),
+    }, status_code=200)

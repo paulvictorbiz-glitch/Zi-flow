@@ -14,6 +14,7 @@ import { scoutSupabase } from "../lib/scout-supabase.js";
 import { PLATFORMS, CONNECT_URLS, fetchConnections, runHealthChecks, deriveStatus, invalidateConnectionsCache } from "../lib/social-client.js";
 import { useWorkflow } from "../store/store.jsx";
 import { useRoster } from "../lib/roster.jsx";
+import { useMonitorStatus } from "../lib/use-monitor-status.js";
 import SpiderChart from "../components/SpiderChart.jsx";
 import { MEDAL_TIERS } from "../lib/gamify-data.jsx";
 import "../components/gamify.css";
@@ -29,52 +30,12 @@ import {
 /* Distinct overlay colors for the team spider chart (one per person). */
 const GF_SERIES_COLORS = ["#6fd6ff", "#a99bff", "#5ad17a", "#f0c060", "#ff6f91", "#ff9f5a"];
 
-const POLL_MS   = 60 * 60 * 1000;   // 60 min — these provider APIs are rate-limited
 const WARN_PCT  = 80;
 const CRIT_PCT  = 95;
-const CACHE_KEY = "mon.cache.v1";   // last successful /api/monitor/status payload
 
-/* The provider sub-fetches that make up a status payload. Each can fail
-   independently (e.g. the Hetzner OS /api/metrics tick times out) without the
-   others failing — so we merge per-section and keep the last-good value rather
-   than letting one blip blank a whole card. */
-const STATUS_SECTIONS = ["supabase", "hetzner", "gcp", "os", "worldMonitor"];
-
-/* A section is "usable" (worth displaying / caching) when it actually carried
-   data — i.e. it's configured and didn't report an error. An unconfigured or
-   errored section is a failure/blip we'd rather replace with last-good. */
-function sectionUsable(s) {
-  return !!s && s.configured !== false && !s.error;
-}
-
-/* Merge a fresh payload over the previous one, preserving the last-good value
-   for any section that came back unusable this tick (and flagging it _stale so
-   the UI can show it's not live). This is what makes the OS donuts — and every
-   other card — keep showing through a transient provider hiccup. */
-function mergeStatus(prev, next) {
-  if (!next) return prev;
-  const merged = { ...next };
-  for (const k of STATUS_SECTIONS) {
-    if (!sectionUsable(next[k]) && sectionUsable(prev?.[k])) {
-      merged[k] = { ...prev[k], _stale: true };
-    }
-  }
-  return merged;
-}
-
-/* Strip the transient _stale flags before caching so a since-recovered section
-   doesn't render as stale on the next cold mount. */
-function stripStale(d) {
-  if (!d) return d;
-  const out = { ...d };
-  for (const k of STATUS_SECTIONS) {
-    if (out[k]?._stale) {
-      const { _stale, ...rest } = out[k];
-      out[k] = rest;
-    }
-  }
-  return out;
-}
+/* The /api/monitor/status fetch + per-section last-good merge + cache now live
+   in the shared useMonitorStatus hook so the live Monitor cards can also be
+   mounted in the /space HUD off one source of truth. */
 
 /* ── helpers ─────────────────────────────────────────────── */
 function pctTone(p) {
@@ -195,7 +156,7 @@ function fmtAgo(iso) {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
-function NewsMonitorSection() {
+export function NewsMonitorSection() {
   const { monitorSources, monitorEvents } = useWorkflow();
   const sources = Array.isArray(monitorSources) ? monitorSources : [];
   const events  = Array.isArray(monitorEvents) ? monitorEvents : [];
@@ -243,7 +204,7 @@ function NewsMonitorSection() {
    `world_monitor` flags (the ingest engine owns `world_monitor_usage`).
    Writes go straight to app_settings via the "owner write app_settings"
    RLS policy (mirrors AnthropicSection) — no Vercel function burned. */
-function WorldMonitorSection({ data }) {
+export function WorldMonitorSection({ data }) {
   // Local copy of the flags so a toggle is optimistic; seeded from status.
   const [flags, setFlags] = useState(null);
   const [saving, setSaving] = useState(null); // which key is mid-write
@@ -407,26 +368,36 @@ function WorldMonitorSection({ data }) {
 
       {err && <div className="mon-killrow-err">{err}</div>}
 
-      {/* Paid APIs — off for now, rendered disabled */}
-      <div className="mon-table-label" style={{ marginTop: 12 }}>Paid APIs</div>
-      {PAID.map(([key, label]) => (
-        <div key={key} className="mon-killrow">
-          <div className="mon-killrow-text">
-            <div className="mon-killrow-title">{label}</div>
-            <div className="mon-killrow-sub">off — enable later</div>
+      {/* Paid APIs — owner-enabled. ⚠ flipping these on can incur real cost. */}
+      <div className="mon-table-label" style={{ marginTop: 12 }}>
+        Paid APIs <span style={{ color: "#ff9a4d" }}>· $ may bill</span>
+      </div>
+      {PAID.map(([key, label]) => {
+        const on = !!flags?.paid?.[key];
+        return (
+          <div key={key} className="mon-killrow">
+            <div className="mon-killrow-text">
+              <div className="mon-killrow-title">{label} <span style={{ color: "#ff9a4d", fontSize: 10 }}>paid</span></div>
+              <div className="mon-killrow-sub">
+                {flags == null ? "Checking…" : on ? "ON — billable usage active" : "off — may incur cost when on"}
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={on}
+              disabled={flags == null || saving === `paid.${key}`}
+              onClick={() => writeFlags(`paid.${key}`, f => ({
+                ...f, paid: { ...f.paid, [key]: !f?.paid?.[key] },
+              }))}
+              className={`mon-switch${on ? " mon-switch--on" : ""}`}
+              title={on ? `Click to disable ${label} (paid)` : `Click to enable ${label} — paid API, may incur cost`}
+            >
+              <span className="mon-switch-knob" />
+            </button>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={false}
-            disabled
-            className="mon-switch"
-            title="Paid API — disabled for now"
-          >
-            <span className="mon-switch-knob" />
-          </button>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -444,7 +415,7 @@ function Toast({ msg, onDismiss }) {
 }
 
 /* ── Supabase section ────────────────────────────────────── */
-function SupabaseSection({ data }) {
+export function SupabaseSection({ data }) {
   if (!data) return <div className="mon-loading">Loading…</div>;
   if (data.error) return <div className="mon-error">{data.error}</div>;
   if (!data.configured) return (
@@ -588,7 +559,7 @@ function MigrationCheck() {
 }
 
 /* ── Hetzner section ─────────────────────────────────────── */
-function HetznerSection({ data }) {
+export function HetznerSection({ data }) {
   if (!data) return <div className="mon-loading">Loading…</div>;
   if (data.error) return <div className="mon-error">{data.error}</div>;
   if (!data.configured) return (
@@ -793,7 +764,7 @@ function DiskDonut({ breakdown = [], totalGb, usedGb }) {
 }
 
 /* ── OS metrics section ──────────────────────────────────── */
-function OsSection({ data }) {
+export function OsSection({ data }) {
   if (!data) return <div className="mon-loading">Loading…</div>;
   if (!data.configured) return (
     <div className="mon-unconfigured">
@@ -854,7 +825,7 @@ function OsSection({ data }) {
 }
 
 /* ── Google Cloud section ────────────────────────────────── */
-function GcpSection({ data }) {
+export function GcpSection({ data }) {
   if (!data) return <div className="mon-loading">Loading…</div>;
   if (data.error) return <div className="mon-error">{data.error}</div>;
   if (!data.configured) return (
@@ -957,7 +928,7 @@ function fmtExpiry(expiresAt, tokenKind) {
 }
 
 /* ── SocialTokenSection ──────────────────────────────────── */
-function SocialTokenSection() {
+export function SocialTokenSection() {
   const [conns, setConns] = useState([]);
   const [checking, setChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState(null);
@@ -1060,7 +1031,7 @@ function SocialTokenSection() {
    dashboard (like the Vercel card) and add a sliding toggle that pauses all
    server-side Claude calls (generate.js, ai/ask.js, ai/suggest.js) by flipping
    the `anthropic_enabled` flag in app_settings. */
-function AnthropicSection() {
+export function AnthropicSection() {
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
@@ -1180,7 +1151,7 @@ const DESC_MODE_SUB   = {
   all:           "All three — every band's description sits under its column; the active one highlighted",
 };
 
-function GamifySection() {
+export function GamifySection() {
   const { gamifyEnabled, gamifyGradingMode, rubricDescMode, actions } = useWorkflow();
   const { setGamifyEnabled, setGamifyGradingMode, setRubricDescMode } = actions;
 
@@ -1240,7 +1211,7 @@ function GamifySection() {
   );
 }
 
-function AiCreditsSection() {
+export function AiCreditsSection() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -1336,7 +1307,7 @@ function AiCreditsSection() {
    Scout Supabase (a separate project); degrades to limits-only if unreachable. */
 const SCOUT_LLM_DAILY_FREE = 50;     // OpenRouter :free models, <$10 credits ever (fallback)
 
-function ScoutSection() {
+export function ScoutSection() {
   const [s, setS] = useState(null);      // usage counts from the Scout Supabase
   const [q, setQ] = useState(null);      // live OpenRouter quota via fb-scout proxy
   const [failed, setFailed] = useState(false);
@@ -1496,11 +1467,6 @@ function MonSection({ label, children }) {
 }
 
 export function Monitor() {
-  const [data, setData]       = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
-  const [lastFetch, setLastFetch] = useState(null);
-  const [fromCache, setFromCache] = useState(false);
   const [toast, setToast]     = useState(null);
 
   // Stats lifted from the telemetry cards feed the lean status strip (no new query).
@@ -1508,36 +1474,10 @@ export function Monitor() {
   const [usageStats, setUsageStats]   = useState(null);
   const [budgetStats, setBudgetStats] = useState(null);
 
-  // Mirror the latest merged data into a ref so load() can read it as the
-  // "previous" payload without re-creating the callback on every change.
-  const dataRef = React.useRef(null);
-  useEffect(() => { dataRef.current = data; }, [data]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch("/api/monitor/status");
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const d = await r.json();
-      const now = Date.now();
-      // Merge per-section so a transient failure in ONE provider (e.g. the
-      // Hetzner OS metrics tick timing out) doesn't blank that card — we keep
-      // its last-good value and flag it stale instead of wiping it.
-      const merged = mergeStatus(dataRef.current, d);
-      setData(merged);
-      setLastFetch(new Date(now));
-      setFromCache(false);
-      setError(null);
-      // Cache the MERGED (last-good) payload so the next visit renders fully
-      // populated without burning another round of provider-API calls.
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: now, payload: stripStale(merged) })); } catch (_) {}
-      checkThresholds(merged);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Shared infrastructure-status fetch (cache + per-section merge + poll). The
+  // tab raises its in-app threshold toast via onThresholds.
+  const { data, loading, error, lastFetch, fromCache, refresh: load } =
+    useMonitorStatus({ onThresholds: checkThresholds });
 
   function checkThresholds(d) {
     const alerts = [];
@@ -1571,34 +1511,6 @@ export function Monitor() {
       setToast(alerts.join("  ·  "));
     }
   }
-
-  // On mount: render the cached payload immediately, then only hit the
-  // API if the cache is older than POLL_MS (or absent). This keeps the
-  // page useful offline and avoids a provider-API call on every visit.
-  useEffect(() => {
-    let stale = true;
-    try {
-      const raw = localStorage.getItem(CACHE_KEY);
-      if (raw) {
-        const { ts, payload } = JSON.parse(raw);
-        if (payload) {
-          setData(payload);
-          setLastFetch(new Date(ts));
-          setFromCache(true);
-          setLoading(false);
-          stale = Date.now() - ts > POLL_MS;
-        }
-      }
-    } catch (_) {}
-    if (stale) load();
-  // run once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const id = setInterval(load, POLL_MS);
-    return () => clearInterval(id);
-  }, [load]);
 
   // Overall HUD status for the hero band — the worst of server / DB / OS
   // utilisation + staleness. ok → "all systems nominal", amber → "degraded",
@@ -1778,3 +1690,115 @@ export function Monitor() {
     </div>
   );
 }
+
+/* =========================================================
+   MONITOR_CARDS — the live Monitor tab cards, as a pickable registry.
+   Consumed by the /space HUD so a 3D slot can render the REAL Monitor
+   card (live /api/monitor/status data via useMonitorStatus), identical
+   to the Monitor tab. Each render(m) takes the hook result { data }.
+   `needsData` flags the cards that read the shared status payload (vs
+   the self-contained telemetry cards that fetch their own).
+   ========================================================= */
+export const MONITOR_CARDS = [
+  { id: "mon-server", label: "Server / Host", group: "System health", needsData: true,
+    render: (m) => (
+      <Card title="Server / Host" footLeft="api.footagebrain.com · Hetzner provider + OS metrics">
+        {m.data?.hetzner?._stale && <StaleTag />}
+        {m.data?.os?._stale && <StaleTag />}
+        <div className="mon-section-body">
+          <div className="mon-table-label">Provider · Hetzner</div>
+          <HetznerSection data={m.data?.hetzner} />
+          <div className="mon-table-label" style={{ marginTop: 12 }}>Host OS · live metrics</div>
+          <OsSection data={m.data?.os} />
+        </div>
+      </Card>
+    ) },
+  { id: "mon-supabase", label: "Supabase", group: "System health", needsData: true,
+    render: (m) => (
+      <Card title="Supabase" footLeft="Database · Storage · Bandwidth">
+        {m.data?.supabase?._stale && <StaleTag />}
+        <SupabaseSection data={m.data?.supabase} />
+      </Card>
+    ) },
+  { id: "mon-storage", label: "Storage breakdown", group: "System health",
+    render: () => <StorageBreakdownCard /> },
+  { id: "mon-vercel", label: "Vercel", group: "System health",
+    render: () => (
+      <Card title="Vercel" footLeft="Hosting · Functions · Bandwidth">
+        <div className="mon-section-body">
+          <div className="mon-hint" style={{ marginBottom: 10 }}>
+            Vercel does not expose usage metrics via API — function invocations,
+            bandwidth, and build minutes are only visible in their dashboard.
+          </div>
+          <a href="https://vercel.com/dashboard/usage" target="_blank" rel="noreferrer" className="mon-vercel-link">
+            Open Vercel usage dashboard ↗
+          </a>
+          <div className="mon-stats-grid" style={{ marginTop: 14 }}>
+            <StatRow label="Project" value="ziflow-project-final" />
+            <StatRow label="Domain" value="footagebrain.com" />
+            <StatRow label="Runtime" value="Vercel Serverless (Node 18)" />
+          </div>
+        </div>
+      </Card>
+    ) },
+  { id: "mon-budgets", label: "API Budgets & Limits", group: "Cost & quotas",
+    render: () => <ProviderBudgetsCard /> },
+  { id: "mon-gcp", label: "Google Cloud", group: "Cost & quotas", needsData: true,
+    render: (m) => (
+      <Card title="Google Cloud" footLeft="YouTube · Maps · Cloud Billing">
+        {m.data?.gcp?._stale && <StaleTag />}
+        <GcpSection data={m.data?.gcp} />
+      </Card>
+    ) },
+  { id: "mon-ai-credits", label: "AI Credits", group: "Cost & quotas",
+    render: () => (
+      <Card title="AI Credits" footLeft="Cohere free tier · FAQ bot usage">
+        <AiCreditsSection />
+      </Card>
+    ) },
+  { id: "mon-scout", label: "Scout", group: "Cost & quotas",
+    render: () => (
+      <Card title="Scout" footLeft="MicroSaaS radar · free pull limits">
+        <ScoutSection />
+      </Card>
+    ) },
+  { id: "mon-frontend-perf", label: "Frontend performance", group: "Usage & telemetry",
+    render: () => <FrontendPerfCard /> },
+  { id: "mon-editor-usage", label: "Editor usage", group: "Usage & telemetry",
+    render: () => <EditorUsageCard /> },
+  { id: "mon-capcut-installs", label: "CapCut tracker installs", group: "Usage & telemetry",
+    render: () => <CapCutInstallsCard /> },
+  { id: "mon-social-tokens", label: "Social accounts — token health", group: "Usage & telemetry",
+    render: () => (
+      <Card title="Social accounts — token health" footLeft="OAuth expiry · Last health check">
+        <SocialTokenSection />
+      </Card>
+    ) },
+  { id: "mon-free-llm", label: "Free LLM gates", group: "Controls & feature gates",
+    render: () => <FreeLLMControlCard /> },
+  { id: "mon-anthropic", label: "Anthropic (Claude)", group: "Controls & feature gates",
+    render: () => (
+      <Card title="Anthropic (Claude)" footLeft="Generate · AI Brain · FAQ bot">
+        <AnthropicSection />
+      </Card>
+    ) },
+  { id: "mon-gamify", label: "🎮 Gamify", group: "Controls & feature gates",
+    render: () => (
+      <Card title="🎮 Gamify" footLeft="Skill XP · Spider charts · Rubrics">
+        <GamifySection />
+      </Card>
+    ) },
+  { id: "mon-world", label: "World Monitor", group: "Controls & feature gates", needsData: true,
+    render: (m) => (
+      <Card title="World Monitor" footLeft="Free APIs · Limits · Usage">
+        {m.data?.worldMonitor?._stale && <StaleTag />}
+        <WorldMonitorSection data={m.data?.worldMonitor} />
+      </Card>
+    ) },
+  { id: "mon-news", label: "News Monitor", group: "Controls & feature gates",
+    render: () => (
+      <Card title="News Monitor" footLeft="Pulse feeds · auto-ingest health">
+        <NewsMonitorSection />
+      </Card>
+    ) },
+];

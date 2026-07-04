@@ -51,6 +51,7 @@ const importIdeaGenerator= () => import("./pages/idea-generator.jsx");
 const importLocations    = () => import("./pages/locations.jsx");
 const importCoverage     = () => import("./pages/coverage.jsx");
 const importContentForge = () => import("./pages/content-forge.jsx");
+const importFonts        = () => import("./pages/fonts.jsx");
 const importResources    = () => import("./pages/resources.jsx");
 const importActivity     = () => import("./pages/activity.jsx");
 const importRolesAdmin   = () => import("./pages/roles-admin.jsx");
@@ -63,7 +64,7 @@ const importTeamChat     = () => import("./pages/team-chat.jsx");
 const LAZY_IMPORTERS = [
   importMonitorHub, importMusicLibrary, importAnalytics, importInbox, importTraining,
   importVideoEditor, importEditorProjects, importLosslessCut, importIdeaGenerator, importLocations,
-  importCoverage, importContentForge, importResources, importActivity, importRolesAdmin,
+  importCoverage, importContentForge, importFonts, importResources, importActivity, importRolesAdmin,
   importExportView, importArchivedView, importCalendarView, importListView,
   importTeamChat,
 ];
@@ -124,6 +125,7 @@ const IdeaGenerator= lazyPage(importIdeaGenerator,"IdeaGenerator");
 const Locations    = lazyPage(importLocations,    "Locations");
 const Coverage     = lazyPage(importCoverage,     "Coverage");
 const ContentForge = lazyPage(importContentForge, "ContentForge");
+const Fonts        = lazyPage(importFonts,        "Fonts");
 const Resources    = lazyPage(importResources,    "Resources");
 const Activity     = lazyPage(importActivity,     "Activity");
 const RolesAdmin   = lazyPage(importRolesAdmin,   "RolesAdmin");
@@ -162,7 +164,7 @@ const FEEDBACK_FORM_URL =
    (owner-only gear). Kept in landing-usefulness order, not tab order. */
 // "monitor" is the consolidated owner hub (Infra/Pulse/AI Brain sub-tabs); the
 // former standalone "pulse"/"ai" views now live inside it (see monitor-hub.jsx).
-const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "projects", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor", "content-forge"];
+const VIEW_ORDER = ["pipeline", "mywork", "footage", "editor", "projects", "lossless", "coverage", "locations", "analytics", "inbox", "team", "export", "generate", "reeldna", "training", "monitor", "content-forge", "fonts"];
 
 /* Tab strip definition (order shown). `key` matches the `view` string and
    the permission catalog's view keys, so canView() gates each tab. Numbers
@@ -190,6 +192,7 @@ const TABS = [
   { key: "analytics", label: "Analytics" },
   { key: "monitor",   label: "Monitor" },   // consolidated hub: Infra / Pulse / AI Brain sub-tabs
   { key: "content-forge", label: "Content Forge" },   // owner-only — gated in canViewView
+  { key: "fonts",     label: "Fonts" },   // owner-only — gated in canViewView
   { key: "activity",  label: "Activity" },
 ];
 
@@ -204,7 +207,7 @@ const DEFAULT_TAB_GROUPS = [
   { key: "edit_group",    label: "Edit & Ship", tone: "green",  tabs: ["editor", "lossless", "export"] },
   { key: "learn_group",   label: "Learn",       tone: "pink",   tabs: ["training", "resources"] },
   { key: "engage_group",  label: "Engage",      tone: "orange", tabs: ["inbox", "team", "analytics"] },
-  { key: "monitor_group", label: "Monitor",     tone: "blue",   tabs: ["monitor", "content-forge", "activity"] },
+  { key: "monitor_group", label: "Monitor",     tone: "blue",   tabs: ["monitor", "content-forge", "fonts", "activity"] },
 ];
 
 function AppShell() {
@@ -228,12 +231,19 @@ function AppShell() {
       // (not the catalog), so non-owners never see the tab or reach the route.
       : v === "content-forge"
       ? isOwner
+      // Fonts (font ID) is an owner-only tool — same real-owner gate as Content Forge.
+      : v === "fonts"
+      ? isOwner
       : canView(v);
   const [view, setView]                 = useState(() => {
     // "pulse"/"ai" are no longer standalone views — they're sub-tabs of the
     // Monitor hub. Alias any persisted value so an old wb_view doesn't dead-end.
     const v = localStorage.getItem("wb_view") || "mywork";
-    return (v === "pulse" || v === "ai") ? "monitor" : v;
+    if (v === "pulse" || v === "ai") return "monitor";
+    // Fonts is temporarily parked (crashes on render) — never boot into it so a
+    // persisted wb_view=fonts can't dead-end the whole app. Address the feature later.
+    if (v === "fonts") return "mywork";
+    return v;
   });
   const [viewStack, setViewStack]       = useState([]);
   const [pipelineMode, setPipelineMode] = useState(() => localStorage.getItem("wb_pipeline_mode") || "board");   // board | list | calendar
@@ -673,7 +683,7 @@ function AppShell() {
           { key:'edit_group',     label:'Edit & Ship',tone:'#5FB89A', tabs:['editor','lossless','export'] },
           { key:'learn_group',    label:'Learn',      tone:'#E58BA0', tabs:['training','resources'] },
           { key:'engage_group',   label:'Engage',     tone:'#E8884A', tabs:['inbox','team','analytics'] },
-          { key:'monitor_group',  label:'Monitor',    tone:'#5FA8D6', tabs:['monitor','content-forge','activity'] },
+          { key:'monitor_group',  label:'Monitor',    tone:'#5FA8D6', tabs:['monitor','content-forge','fonts','activity'] },
         ];
         const LEFT_CATS  = CATS.slice(0, 3);
         const RIGHT_CATS = CATS.slice(3);
@@ -810,6 +820,7 @@ function AppShell() {
              view === "locations" ? "Locations" :
              view === "export"    ? "Export prep" :
              view === "content-forge" ? "Content Forge" :
+             view === "fonts"     ? "Font ID" :
              view === "monitor"   ? "Monitor" : "Analytics"}
           </span>
           <span className="sep">/</span>
@@ -1064,6 +1075,15 @@ function AppShell() {
         {view === "resources" && <Resources />}
         {view === "monitor"   && canViewView("monitor") && <MonitorHub canView={canView} />}
         {view === "content-forge" && canViewView("content-forge") && <ContentForge />}
+        {view === "fonts" && canViewView("fonts") && (
+          <div style={{ padding: "40px 32px", fontFamily: "var(--f-mono)", color: "var(--fg)" }}>
+            <h2 style={{ marginBottom: 12 }}>Fonts — temporarily unavailable</h2>
+            <p style={{ color: "var(--fg-dim)" }}>
+              The Font ID tool is parked while we sort out a rendering issue. It'll be back another day.
+            </p>
+          </div>
+        )}
+        {/* {view === "fonts" && canViewView("fonts") && <Fonts />} */}
         {view === "settings"  && isOwner && <RolesAdmin onBack={goBack} />}
 
         {/* Always-mounted — CSS-hidden when inactive so iframe keeps its WS connection */}
@@ -1092,7 +1112,13 @@ class AppErrorBoundary extends React.Component {
         <h2 style={{ color: "var(--c-red)", marginBottom: 12 }}>Something went wrong</h2>
         <p style={{ color: "var(--fg-dim)", marginBottom: 20 }}>{this.state.error.message}</p>
         <button
-          onClick={() => { this.setState({ error: null }); window.location.reload(); }}
+          onClick={() => {
+            // Reset the persisted tab so a page that crashes on render can't trap
+            // the app in a reload→crash loop (the whole tree lives under this boundary).
+            try { localStorage.setItem("wb_view", "mywork"); } catch {}
+            this.setState({ error: null });
+            window.location.reload();
+          }}
           style={{ padding: "6px 14px", border: "1px solid var(--line-hard)", borderRadius: 4, background: "var(--bg-2)", color: "var(--fg)", cursor: "pointer" }}
         >
           Reload dashboard

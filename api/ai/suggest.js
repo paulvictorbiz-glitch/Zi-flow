@@ -1268,7 +1268,35 @@ export default async function handler(req, res) {
   // param ("free" → OpenRouter/Gemini default; "pro" → Claude Haiku/Sonnet) is
   // accepted from req.query or req.body and passed through to the backend.
   // Folded into this route (no new api/* file) to stay under the 12-function cap.
-  if (action === "forge-ingest" || action === "forge-discover" || action === "forge-expand") {
+  // ── Content Forge — re-open a folder for re-mining (service-role write) ────
+  // Clears last_discovered_at on every clip in a footage folder so a NORMAL discover
+  // pass re-mines it. This is how "Re-mine" works WITHOUT a Hetzner backend deploy:
+  // the live backend only re-reads un-mined (last_discovered_at IS NULL) clips, so we
+  // re-open the folder here first, then the caller fires an ordinary folder discover
+  // that walks the re-opened clips. Owner-gated by the top auth gate; the service role
+  // bypasses RLS on transcript_clips (owner has read-only RLS, no write).
+  if (action === "forge-reset-folder") {
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+    const folder = String(body.folder || req.query?.folder || "").trim();
+    if (!folder) { res.status(400).json({ error: "folder required" }); return; }
+    try {
+      const { data, error } = await adminClient()
+        .from("transcript_clips")
+        .update({ last_discovered_at: null })
+        .eq("folder", folder)
+        .not("last_discovered_at", "is", null)
+        .select("id");
+      if (error) { res.status(502).json({ error: error.message }); return; }
+      res.status(200).json({ ok: true, folder, reset: Array.isArray(data) ? data.length : 0 });
+    } catch (e) {
+      res.status(502).json({ error: `Reset failed: ${e.message}` });
+    }
+    return;
+  }
+
+  if (action === "forge-ingest" || action === "forge-discover" || action === "forge-expand" || action === "forge-script") {
     const forgeSecret = process.env.CONTENT_FORGE_SECRET;
     if (!forgeSecret) { res.status(500).json({ error: "CONTENT_FORGE_SECRET not configured" }); return; }
     // Tolerant body parse (mirrors the other proxy branches, e.g. :1228-1230).
@@ -1322,7 +1350,11 @@ export default async function handler(req, res) {
       try {
         const r = await fetch(
           `https://api.footagebrain.com/api/content-forge/discover?secret=${encodeURIComponent(forgeSecret)}` +
-            (tier ? `&tier=${encodeURIComponent(tier)}` : ""),
+            (tier ? `&tier=${encodeURIComponent(tier)}` : "") +
+            // rescan=1 re-mines already-discovered clips (default only_new skips them).
+            // Powers the Content Forge "Re-mine" control so a folder can be swept again
+            // for additional angles. The backend reads this off the query string.
+            (body.rescan ? "&rescan=1" : ""),
           {
             method: "POST",
             signal: ctrl.signal,
@@ -1335,6 +1367,11 @@ export default async function handler(req, res) {
               tier,
               max_opportunities: body.max_opportunities,
               model: body.model, // owner's model toggle (backend validates against allowlist)
+              // folder scope (e.g. "Japan") + clips_per_pass input-clip budget — when set,
+              // the backend filters transcript_clips to that footage folder and walks it
+              // ~clips_per_pass at a time. Absent → legacy all-footage recent window.
+              folder: body.folder,
+              clips_per_pass: body.clips_per_pass,
             }),
           });
         const out = await r.json().catch(() => ({}));
@@ -1391,6 +1428,91 @@ export default async function handler(req, res) {
         clearTimeout(t);
       }
       return;
+    }
+
+    // ── Synchronous VO/script generation (forge-script) ──────────────────────
+    // Generates a full ~150-200 word voice-over script using a chosen template
+    // (fact-reveal / hot-take / question-hook / story-first) and grounding mode
+    // (footage / model / web). Writes script_json onto the opportunity row.
+    // Same abort budget as forge-expand (45s).
+    if (action === "forge-script") {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 45000);
+      try {
+        const r = await fetch(
+          `https://api.footagebrain.com/api/content-forge/script?secret=${encodeURIComponent(forgeSecret)}`,
+          {
+            method: "POST",
+            signal: ctrl.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              opportunity_id: body.opportunity_id,
+              template: body.template,
+              grounding_mode: body.grounding_mode,
+              tone: body.tone,
+              tier,
+              model: body.model,
+            }),
+          });
+        const out = await r.json().catch(() => ({}));
+        if (!r.ok) { res.status(502).json({ error: `Hetzner script HTTP ${r.status}`, ...out }); return; }
+        res.status(200).json(out);
+      } catch (e) {
+        if (e.name === "AbortError") {
+          res.status(504).json({ error: "script generation timed out, retry" });
+          return;
+        }
+        console.error("forge-script error:", e.message);
+        res.status(502).json({ error: `Couldn't reach the content-forge script worker: ${e.message}` });
+      } finally {
+        clearTimeout(t);
+      }
+      return;
+    }
+
+    return;
+  }
+
+  // ── Font ID — proxy the owner-only "Fonts" tab to the Hetzner content-forge worker ──
+  // font-id: identify the font in a supplied screenshot (data-URL) → top-3 matches.
+  // font-id-keyframes: download a reel URL, sample frames server-side, identify the font.
+  // Both ride CONTENT_FORGE_SECRET (server-side only) + the worker's kill switch / daily
+  // cap. Folded here (no new api/* file) to stay under the Vercel Hobby 12-function cap.
+  if (action === "font-id" || action === "font-id-keyframes") {
+    const forgeSecret = process.env.CONTENT_FORGE_SECRET;
+    if (!forgeSecret) { res.status(500).json({ error: "CONTENT_FORGE_SECRET not configured" }); return; }
+    const body = typeof req.body === "string"
+      ? (() => { try { return JSON.parse(req.body); } catch { return {}; } })()
+      : (req.body || {});
+    // Synchronous vision call; the keyframe path also downloads+ffmpegs the reel first, so
+    // give it headroom. maxDuration on this function is 60 — abort at 55s and surface a
+    // retriable timeout rather than a non-JSON 500.
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 55000);
+    try {
+      const r = await fetch(
+        `https://api.footagebrain.com/api/content-forge/${action}?secret=${encodeURIComponent(forgeSecret)}`,
+        {
+          method: "POST",
+          signal: ctrl.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            action === "font-id"
+              ? { image: body.image, model: body.model }
+              : { url: body.url, model: body.model }),
+        });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) { res.status(502).json({ error: `Hetzner ${action} HTTP ${r.status}`, ...out }); return; }
+      res.status(200).json(out);
+    } catch (e) {
+      if (e.name === "AbortError") {
+        res.status(504).json({ error: "font identification timed out, retry" });
+        return;
+      }
+      console.error(`${action} error:`, e.message);
+      res.status(502).json({ error: `Couldn't reach the font-id worker: ${e.message}` });
+    } finally {
+      clearTimeout(t);
     }
     return;
   }

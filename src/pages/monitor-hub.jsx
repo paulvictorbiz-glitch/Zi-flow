@@ -1065,6 +1065,9 @@ const GCP_CREDIT = {
   expiresOn: "2026-09-07",
   appliesTo: "Vertex AI (ladder rung 2) — NOT the Gemini API or Claude/Marketplace",
   href: "https://console.cloud.google.com/billing",   // Billing → Credits to see live balance
+  // Project-scoped GCP consoles for the live FootageBrain project (footage-brain-database).
+  apiUsageHref: "https://console.cloud.google.com/apis/dashboard?project=footage-brain-database",
+  creditBalanceHref: "https://console.cloud.google.com/billing/01EAC9-2F4336-38590E/credits/all?project=footage-brain-database",
 };
 
 // The escalating ladder rungs (matches _forge_llm in content_forge.py)
@@ -1379,6 +1382,11 @@ export function ProviderBudgetsCard({ onStats }) {
           <div className="mono dim" style={{ fontSize: 10, marginTop: 3 }}>
             applies to: {GCP_CREDIT.appliesTo}
           </div>
+          {/* Project-scoped GCP console links (footage-brain-database) */}
+          <div className="mono" style={{ fontSize: 10, marginTop: 6, display: "flex", flexWrap: "wrap", gap: 12 }}>
+            <ExtUsageLink href={GCP_CREDIT.apiUsageHref}>API usage</ExtUsageLink>
+            <ExtUsageLink href={GCP_CREDIT.creditBalanceHref}>Credit balance</ExtUsageLink>
+          </div>
         </div>
 
         {/* Daily limit + KILL SWITCH — backend-enforced credit guard (app_settings) */}
@@ -1542,6 +1550,19 @@ export function ProviderBudgetsCard({ onStats }) {
                       </span>
                       <span className="mono dim" style={{ fontSize: 9.5 }}>{bp.calls} call{bp.calls === 1 ? "" : "s"}</span>
                       <span className="mono" style={{ fontSize: 9.5, minWidth: 56, textAlign: "right" }}>{fmtUsd(bp.cost_usd)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(cfu.by_kind || []).length > 0 && (
+                <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", gap: 2 }}>
+                  {cfu.by_kind.map(bk => (
+                    <div key={bk.kind} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span className="mono dim" style={{ fontSize: 9.5, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {bk.kind === "font_id" ? "Font ID" : bk.kind === "discovery" ? "Discovery" : bk.kind === "expansion" ? "Hooks / Script" : bk.kind}
+                      </span>
+                      <span className="mono dim" style={{ fontSize: 9.5 }}>{bk.calls} call{bk.calls === 1 ? "" : "s"}</span>
+                      <span className="mono" style={{ fontSize: 9.5, minWidth: 56, textAlign: "right" }}>{fmtUsd(bk.cost_usd)}</span>
                     </div>
                   ))}
                 </div>

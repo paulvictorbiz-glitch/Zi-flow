@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-27T10:12:48.368Z",
+  "generated": "2026-07-04T17:26:48.827Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -412,6 +412,26 @@
     {
       "version": "0104_content_opps_vet_state.sql",
       "checksum": "4a90a1bebf90ae30754e5a40f4c64dea6dbbf40e7990bb0c38611731e2a9553d"
+    },
+    {
+      "version": "0105_clip_last_discovered.sql",
+      "checksum": "38ab6ad3904f431c31858525ce93ea18a537de87263d5428b1481430874f2935"
+    },
+    {
+      "version": "0106_content_forge_usage.sql",
+      "checksum": "05b0444dbfe4f8e5e3fd0369609539f26b7c66875b8de88ffae3fde104b35187"
+    },
+    {
+      "version": "0107_content_opp_script.sql",
+      "checksum": "3fd65277ae796f30a72f8ed59d8529a94a690c675cf837a1030254d788a7f34f"
+    },
+    {
+      "version": "0108_transcript_clips_folder_drive.sql",
+      "checksum": "91d6a3381b7cf0bdef109b6eb456a03d36e3cb8b29144d848a51f34fdd8d45a0"
+    },
+    {
+      "version": "0109_content_opps_favorite_color.sql",
+      "checksum": "1cf8c6ba5f74145858920c613999d2a5e406f1b2de9db8f808fdb374e3698399"
     }
   ]
 }

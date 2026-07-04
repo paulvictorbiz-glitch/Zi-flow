@@ -1,0 +1,35 @@
+# DRAFT — slim, CPU-only replacement for backend/Dockerfile.hosting on the Hetzner box.
+# NOT yet applied. Apply path is HUMAN-GATED: copy onto the box, rebuild behind a build-gate,
+# smoke-test, then swap the live container. See README.md in this folder for the full sequence.
+#
+# Goal: ~10 GB -> ~3 GB. Two wins:
+#   1) CPU-only torch (see requirements-hosting.txt here) drops the ~4.6 GB CUDA stack the
+#      GPU-less box can never use.
+#   2) Multi-stage venv build leaves pip/build intermediates in the builder stage, so the
+#      runtime image carries only the installed packages + runtime libs (kills ~3 GB of layer churn).
+
+# syntax=docker/dockerfile:1
+
+# ---- Stage 1: build into an isolated venv ----
+FROM python:3.11-slim AS builder
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY requirements-hosting.txt .
+RUN pip install -r requirements-hosting.txt
+
+# ---- Stage 2: lean runtime ----
+FROM python:3.11-slim AS runtime
+# Runtime system libs only (ffmpeg + the two libs OpenCV needs at import). No build tools.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+WORKDIR /app
+COPY . .
+RUN mkdir -p data/thumbnails data/keyframes
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

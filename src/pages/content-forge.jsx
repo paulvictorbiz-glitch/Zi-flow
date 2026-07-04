@@ -15,15 +15,30 @@
 
    Owner-only: useIsOwner() (NOT useWorkflow().isOwner — that returns undefined). */
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase-client.js";
 import { useIsOwner } from "../lib/permissions.jsx";
 import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
+import { footageFolderLabel } from "../lib/footage-brain-client.js";
 import "../content-forge.css";
 
 /* Virality tiers, best → worst. Order drives the filter pills + sort. */
 const TIERS = ["S", "A", "B", "C"];
+
+/* Row-tag palette (8 tones) for the favorite/color tagging — `key` is what's stored
+   in content_opportunities.color; `hex` drives the swatch + row tint. */
+const ROW_COLORS = [
+  { key: "red",    hex: "#ef4444" },
+  { key: "orange", hex: "#f59e0b" },
+  { key: "yellow", hex: "#eab308" },
+  { key: "green",  hex: "#22c55e" },
+  { key: "teal",   hex: "#14b8a6" },
+  { key: "blue",   hex: "#3b82f6" },
+  { key: "purple", hex: "#a855f7" },
+  { key: "pink",   hex: "#ec4899" },
+];
+const COLOR_HEX = Object.fromEntries(ROW_COLORS.map((c) => [c.key, c.hex]));
 
 /* The 3 hook angles ForgeModal expands into. `key` matches the backend's
    hook_versions[].style; `version` is the 1-based slot the row stores. */
@@ -38,6 +53,29 @@ const STYLE_LABEL = {
   controversy: "Controversy",
   personal_stakes: "Personal Stakes",
 };
+
+/* VO/Script tab constants */
+const SCRIPT_TEMPLATES = [
+  { key: "fact-reveal",    label: "Fact-Reveal",    desc: "Surprising fact → cause/story → reflection" },
+  { key: "hot-take",       label: "Hot Take",        desc: "Controversial premise → what people miss → debate" },
+  { key: "question-hook",  label: "Question-Hook",   desc: "Direct question → stakes → answer" },
+  { key: "story-first",    label: "Story-First",     desc: "Mid-story open → conflict → moral" },
+];
+const GROUNDING_MODES = [
+  { key: "footage", label: "Footage-only",    title: "Strict: only uses your clip transcripts. No hallucination risk." },
+  { key: "model",   label: "Model knowledge", title: "Model adds real-world facts from training. Faster, richer, some hallucination risk." },
+  { key: "web",     label: "Web-grounded",    title: "Tavily search adds verified facts before scripting. Best quality, slowest, small extra cost." },
+];
+const TONES_LIST = [
+  { key: "neutral",      label: "Neutral" },
+  { key: "punchy",       label: "Punchy" },
+  { key: "educational",  label: "Educational" },
+  { key: "provocative",  label: "Provocative" },
+];
+
+function wordCount(text) {
+  return text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+}
 
 /* Vetting segments — the triage workflow. The owner vets discovered opportunities
    on title+angle (no LLM spend); only 'shortlisted' ones can be elevated/expounded.
@@ -70,6 +108,9 @@ const DISCOVERY_TARGETS = [
 /* How long the post-Discover poll waits for the background batch to write rows. */
 const FORGE_POLL_TRIES = 14;
 const FORGE_POLL_MS = 2500;
+/* Whole-library ingest runs for minutes server-side, so its progress poll runs longer.
+   It's only a feedback loop — the fire-and-forget worker keeps going regardless. */
+const FORGE_LIB_POLL_TRIES = 40;
 
 /* Google Drive share-URL → permanent file ID. Store the ID, never the raw URL.
    Falls through to the input unchanged if no ID pattern is found (lets a bare
@@ -122,6 +163,7 @@ function hookCount(o) {
 }
 
 const COLUMNS = [
+  { key: null, label: "★", cls: "cf-c-tag" },
   { key: "virality", label: "Tier", cls: "cf-c-tier" },
   { key: null, label: "Opportunity" },
   { key: null, label: "Topics" },
@@ -133,6 +175,7 @@ const COLUMNS = [
 
 /* =========================================================================
    ForgeModal — expand one opportunity into 3 hooks, pick one, send to a reel.
+   Also generates full VO scripts (3rd tab) and shows source clip attribution.
    Portaled to document.body so an overflow/transform ancestor never clips it
    (ref: reference_portal-escape-overflow-clip.md).
    ========================================================================= */
@@ -152,8 +195,6 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
   );
 
   const [hookText, setHookText] = useState(() => seed(opportunity.hook_versions));
-  // Which versions the backend actually returned (drives the per-column
-  // skeleton/error when fewer than 3 come back — never assume 3).
   const [returnedVersions, setReturnedVersions] = useState(() => {
     const got = new Set();
     for (const s of HOOK_STYLES) {
@@ -161,18 +202,83 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
     }
     return got;
   });
-  const [selectedHook, setSelectedHook] = useState(null); // 1|2|3|null
+  const [selectedHook, setSelectedHook] = useState(null);
   const [targetReelId, setTargetReelId] = useState(null);
   const [expanding, setExpanding] = useState(false);
   const [expandErr, setExpandErr] = useState(null);
   const [sending, setSending] = useState(false);
-
-  // Expansion is now an EXPLICIT, deliberate action (no auto-spend on open).
-  // hasRun flips once the owner clicks Expound, or immediately if the row already
-  // carries hooks (cached → render with zero network calls).
-  const [hasRun, setHasRun] = useState(() => returnedVersions.size > 0);
-  // Only vetted (shortlisted) opportunities may be expounded — the token gate.
+  const [hasRun, setHasRun] = useState(() => {
+    const got = new Set();
+    for (const s of HOOK_STYLES) {
+      if (hookForVersion(opportunity.hook_versions, s.version)?.text) got.add(s.version);
+    }
+    return got.size > 0;
+  });
   const isVetted = vetOf(opportunity) === "shortlisted";
+
+  // Tab navigation: "hooks" | "script"
+  const [activeTab, setActiveTab] = useState("hooks");
+
+  // Script tab state
+  const [scriptTemplate, setScriptTemplate] = useState("fact-reveal");
+  const [scriptGrounding, setScriptGrounding] = useState("footage");
+  const [scriptTone, setScriptTone] = useState("neutral");
+  const [scriptJson, setScriptJson] = useState(() => opportunity.script_json || null);
+  const [generating, setGenerating] = useState(false);
+  const [generateErr, setGenerateErr] = useState(null);
+
+  // Source clips: null = not loaded yet, [] = none found, [{id, filename, drive_url, ...}]
+  const [sourceClips, setSourceClips] = useState(null);
+
+  // Fetch source clip attribution on mount.
+  useEffect(() => {
+    const clipIds = Array.isArray(opportunity.source_clip_ids)
+      ? opportunity.source_clip_ids.filter(Boolean)
+      : [];
+    if (!clipIds.length) { setSourceClips([]); return; }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        // Drive links are stamped straight onto transcript_clips at ingest (migration
+        // 0108, from the parent reel's detail.footageDrive), so read them directly — no
+        // attached_footage_items round-trip. Clips ingested before the backfill have
+        // NULL drive_url and degrade to filename-only until the next Ingest.
+        const { data: clips } = await supabase
+          .from("transcript_clips")
+          .select("id,filename,footage_file_id,drive_url,drive_folder_url")
+          .in("id", clipIds.slice(0, 20));
+        if (cancelled || !clips?.length) { setSourceClips([]); return; }
+
+        if (!cancelled) {
+          // Each transcript_clips row is one TIME SEGMENT of a source video — an opportunity
+          // can legitimately cite several segments cut from the same underlying file (they
+          // share footage_file_id + drive_url but have different transcript text/timestamps).
+          // That's fine for grounding context, but as a "reference" list to the user it would
+          // show the same file/Drive link more than once. De-dup by footage_file_id (falling
+          // back to the drive_url, then filename, for older rows ingested pre-0108) so each
+          // underlying clip/file shows up exactly once.
+          const seen = new Set();
+          const deduped = [];
+          for (const c of clips) {
+            const key = c.footage_file_id || c.drive_url || c.filename || c.id;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deduped.push({
+              id: c.id,
+              filename: c.filename || c.footage_file_id || "clip",
+              drive_url: c.drive_url || null,
+              drive_folder_url: c.drive_folder_url || null,
+            });
+          }
+          setSourceClips(deduped);
+        }
+      } catch {
+        if (!cancelled) setSourceClips([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [opportunity.id, opportunity.source_clip_ids]);
 
   const applyHooks = useCallback((hookVersions) => {
     if (!Array.isArray(hookVersions)) return;
@@ -181,17 +287,13 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
       const next = { ...prev };
       for (const s of HOOK_STYLES) {
         const h = hookForVersion(hookVersions, s.version);
-        if (h?.text) {
-          next[s.version] = h.text;
-          got.add(s.version);
-        }
+        if (h?.text) { next[s.version] = h.text; got.add(s.version); }
       }
       return next;
     });
     setReturnedVersions((prev) => new Set([...prev, ...got]));
   }, []);
 
-  // Expand on open (and whenever the tier toggle changes while open).
   const runExpand = useCallback(async () => {
     if (isBlockedSync("content_forge")) {
       setExpandErr("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
@@ -206,35 +308,19 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
       if (!session) { setExpandErr("Not signed in."); return; }
       const r = await fetch("/api/ai/suggest?action=forge-expand", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ opportunity_id: opportunity.id, tier, model }),
       });
       const body = await r.json().catch(() => ({}));
-      // Kill-switch / daily-limit: the backend returns HTTP 200 { ok:false, blocked:true }
-      // (a deliberate non-error) — surface the reason instead of leaving empty hook columns.
-      if (body && body.blocked) {
-        setExpandErr(
-          body.error ||
-          "Content Forge LLM is paused (kill switch / daily limit). Re-enable it in Monitor → API Budgets & Limits."
-        );
+      if (body?.blocked) {
+        setExpandErr(body.error || "Content Forge LLM is paused — re-enable in Monitor → API Budgets & Limits.");
         return;
       }
-      if (!r.ok && r.status !== 202) {
-        setExpandErr(body.error || `Expansion failed (${r.status}).`);
-      }
-      // Accept either {hooks:[...]} or {hook_versions:[...]} from the proxy.
+      if (!r.ok && r.status !== 202) { setExpandErr(body.error || `Expansion failed (${r.status}).`); }
       const hooks = body.hooks || body.hook_versions;
       if (Array.isArray(hooks) && hooks.length) applyHooks(hooks);
-      // Always re-read the row — the backend writes hook_versions there, so
-      // this covers both the sync-return shape and a pending/async write.
       const { data: fresh } = await supabase
-        .from("content_opportunities")
-        .select("hook_versions")
-        .eq("id", opportunity.id)
-        .maybeSingle();
+        .from("content_opportunities").select("hook_versions").eq("id", opportunity.id).maybeSingle();
       if (fresh?.hook_versions) applyHooks(fresh.hook_versions);
     } catch (e) {
       setExpandErr(e.message || "Could not reach the hook generator.");
@@ -243,19 +329,53 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
     }
   }, [opportunity.id, tier, model, applyHooks]);
 
-  // NO auto-expand on open — expansion is deliberate (the owner clicks Expound).
-  // Opening a row never spends tokens; cached hooks (if any) render from state.
-
-  // Re-run hook generation, confirm-gated when it would overwrite existing hooks.
   const handleRegenerate = useCallback(() => {
-    if (
-      returnedVersions.size > 0 &&
-      !window.confirm("Re-generate hooks? This spends tokens and replaces the current hooks.")
-    ) return;
+    if (returnedVersions.size > 0 &&
+      !window.confirm("Re-generate hooks? This spends tokens and replaces the current hooks.")) return;
     runExpand();
   }, [returnedVersions, runExpand]);
 
-  // Close on Escape.
+  // VO script generation
+  const runScript = useCallback(async () => {
+    if (isBlockedSync("content_forge")) {
+      setGenerateErr("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
+      return;
+    }
+    recordUsage("content_forge");
+    setGenerating(true);
+    setGenerateErr(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setGenerateErr("Not signed in."); return; }
+      const r = await fetch("/api/ai/suggest?action=forge-script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          opportunity_id: opportunity.id,
+          template: scriptTemplate,
+          grounding_mode: scriptGrounding,
+          tone: scriptTone,
+          tier,
+          model,
+        }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (body?.blocked) {
+        setGenerateErr(body.error || "Content Forge LLM is paused — re-enable in Monitor → API Budgets & Limits.");
+        return;
+      }
+      if (!r.ok) { setGenerateErr(body.error || `Script generation failed (${r.status}).`); return; }
+      if (body.script_json) setScriptJson(body.script_json);
+      if (body.persisted === false) {
+        setGenerateErr("Script generated but couldn't be saved (DB migration pending) — copy it now, it won't survive a reload.");
+      }
+    } catch (e) {
+      setGenerateErr(e.message || "Could not reach the script generator.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [opportunity.id, scriptTemplate, scriptGrounding, scriptTone, tier, model]);
+
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
@@ -269,8 +389,7 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
     setSending(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const styleKey =
-        HOOK_STYLES.find((s) => s.version === selectedHook)?.key || "curiosity";
+      const styleKey = HOOK_STYLES.find((s) => s.version === selectedHook)?.key || "curiosity";
       const brief = {
         opportunity_id: opportunity.id,
         selected_hook_version: selectedHook,
@@ -279,25 +398,14 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
         forged_by: user?.id ?? null,
         forged_at: new Date().toISOString(),
       };
-
-      const { error: reelErr } = await supabase
-        .from("reels")
-        .update({ creative_brief: brief })
-        .eq("id", targetReelId);
+      const { error: reelErr } = await supabase.from("reels").update({ creative_brief: brief }).eq("id", targetReelId);
       if (reelErr) throw reelErr;
-
-      // Mark the opportunity attached (best-effort — the brief is the source of
-      // truth; don't fail the whole send if this update is blocked by RLS).
-      await supabase
-        .from("content_opportunities")
-        .update({
-          selected_hook_version: selectedHook,
-          reel_id: targetReelId,
-          status: "attached",
-          sent_to_pipeline_at: new Date().toISOString(),
-        })
-        .eq("id", opportunity.id);
-
+      await supabase.from("content_opportunities").update({
+        selected_hook_version: selectedHook,
+        reel_id: targetReelId,
+        status: "attached",
+        sent_to_pipeline_at: new Date().toISOString(),
+      }).eq("id", opportunity.id);
       showToast("Hook sent to the pipeline.");
       onSent?.();
       onClose();
@@ -308,9 +416,13 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
     }
   }, [selectedHook, targetReelId, hookText, opportunity.id, onClose, onSent, showToast]);
 
+  const wc = scriptJson?.text ? wordCount(scriptJson.text) : 0;
+  const showTabs = isVetted || hasRun || !!scriptJson;
+
   return createPortal(
     <div className="cf-modal-overlay" onMouseDown={onClose}>
       <div className="cf-modal" onMouseDown={(e) => e.stopPropagation()}>
+        {/* ── Header ── */}
         <div className="cf-modal-head">
           <span className={`cf-tier-badge t-${String(opportunity.virality_tier || "C").toUpperCase()}`}>
             {String(opportunity.virality_tier || "C").toUpperCase()}
@@ -322,122 +434,267 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
           <p className="cf-modal-angle">{opportunity.angle_summary}</p>
         )}
 
-        {!hasRun && returnedVersions.size === 0 ? (
-          /* Pre-expand state: no tokens spent yet. Expounding is deliberate and
-             gated on a vetted (shortlisted) opportunity. */
-          <div className="cf-expound-cta">
-            <p className="cf-expound-blurb">
-              {isVetted
-                ? "Expound this vetted opportunity into 3 hook angles (Curiosity · Controversy · Personal Stakes). This spends an LLM call."
-                : "Shortlist this opportunity first — only vetted opportunities can be expounded into hooks."}
-            </p>
+        {/* ── Tab nav ── */}
+        {showTabs && (
+          <div className="cf-modal-tabs">
+            <button
+              className={"cf-tab-btn" + (activeTab === "hooks" ? " active" : "")}
+              onClick={() => setActiveTab("hooks")}
+            >Hooks</button>
+            <button
+              className={"cf-tab-btn" + (activeTab === "script" ? " active" : "")}
+              onClick={() => setActiveTab("script")}
+            >Script{scriptJson ? " ✦" : ""}</button>
+          </div>
+        )}
+
+        {/* ── HOOKS TAB ── */}
+        {(activeTab === "hooks" || !showTabs) && (
+          <>
+            {!hasRun && returnedVersions.size === 0 ? (
+              <div className="cf-expound-cta">
+                <p className="cf-expound-blurb">
+                  {isVetted
+                    ? "Expound this vetted opportunity into 3 hook angles (Curiosity · Controversy · Personal Stakes). This spends an LLM call."
+                    : "Shortlist this opportunity first — only vetted opportunities can be expounded into hooks."}
+                </p>
+                <button
+                  type="button"
+                  className="cf-btn primary cf-expound-btn"
+                  onClick={runExpand}
+                  disabled={!isVetted || expanding}
+                  title={isVetted ? "Generate 3 hook versions" : "Shortlist this opportunity to enable expounding"}
+                >
+                  {expanding ? "Generating…" : "✦ Expound into 3 hooks"}
+                </button>
+                {expandErr && <div className="cf-col-skeleton err">{expandErr}</div>}
+              </div>
+            ) : (
+              <div className="cf-cols">
+                {HOOK_STYLES.map((s) => {
+                  const has = returnedVersions.has(s.version);
+                  const isSel = selectedHook === s.version;
+                  return (
+                    <div key={s.version} className={"cf-col" + (isSel ? " selected" : "")}>
+                      <span className="cf-col-title">{s.label}</span>
+                      {has ? (
+                        <>
+                          <textarea
+                            className="cf-col-ta"
+                            value={hookText[s.version] ?? ""}
+                            onChange={(e) => setHookText((prev) => ({ ...prev, [s.version]: e.target.value }))}
+                            placeholder={`${s.label} hook…`}
+                          />
+                          <button
+                            type="button"
+                            className={"cf-btn" + (isSel ? " primary" : "")}
+                            onClick={() => setSelectedHook(isSel ? null : s.version)}
+                          >
+                            {isSel ? "✓ Selected" : "Select"}
+                          </button>
+                        </>
+                      ) : expanding ? (
+                        <div className="cf-col-skeleton">Generating…</div>
+                      ) : (
+                        <div className="cf-col-skeleton err">
+                          {expandErr || "No hook returned. Edit manually or re-run Discover."}
+                          <textarea
+                            className="cf-col-ta"
+                            style={{ marginTop: 8 }}
+                            value={hookText[s.version] ?? ""}
+                            onChange={(e) => {
+                              setHookText((prev) => ({ ...prev, [s.version]: e.target.value }));
+                              setReturnedVersions((prev) => new Set([...prev, s.version]));
+                            }}
+                            placeholder="Write a hook…"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── SCRIPT TAB ── */}
+        {activeTab === "script" && showTabs && (
+          <div className="cf-script-tab">
+            {/* Template picker */}
+            <div className="cf-script-section">
+              <span className="cf-script-label">Narrative template</span>
+              <div className="cf-template-grid">
+                {SCRIPT_TEMPLATES.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className={"cf-template-card" + (scriptTemplate === t.key ? " selected" : "")}
+                    onClick={() => setScriptTemplate(t.key)}
+                  >
+                    <span className="cf-tpl-name">{t.label}</span>
+                    <span className="cf-tpl-desc">{t.desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Grounding + Tone */}
+            <div className="cf-script-controls">
+              <span className="cf-script-control-group">
+                <span className="cf-script-label">Grounding</span>
+                <span className="cf-tier" role="group">
+                  {GROUNDING_MODES.map((m) => (
+                    <button
+                      key={m.key}
+                      type="button"
+                      className={scriptGrounding === m.key ? "on" : ""}
+                      title={m.title}
+                      onClick={() => setScriptGrounding(m.key)}
+                    >{m.label}</button>
+                  ))}
+                </span>
+              </span>
+              <span className="cf-script-control-group">
+                <span className="cf-script-label">Tone</span>
+                <span className="cf-tier" role="group">
+                  {TONES_LIST.map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      className={scriptTone === t.key ? "on" : ""}
+                      onClick={() => setScriptTone(t.key)}
+                    >{t.label}</button>
+                  ))}
+                </span>
+              </span>
+            </div>
+
+            {/* Generate button */}
+            {!isVetted && !scriptJson && (
+              <p className="cf-expound-blurb" style={{ textAlign: "left", marginTop: "0.5rem" }}>
+                Shortlist this opportunity first to enable script generation.
+              </p>
+            )}
             <button
               type="button"
               className="cf-btn primary cf-expound-btn"
-              onClick={runExpand}
-              disabled={!isVetted || expanding}
-              title={
-                isVetted
-                  ? "Generate 3 hook versions"
-                  : "Shortlist this opportunity to enable expounding"
-              }
+              style={{ alignSelf: "flex-start" }}
+              onClick={() => {
+                if (scriptJson && !window.confirm("Re-generate script? This spends tokens.")) return;
+                runScript();
+              }}
+              disabled={(!isVetted && !scriptJson) || generating}
             >
-              {expanding ? "Generating…" : "✦ Expound into 3 hooks"}
+              {generating ? "Generating…" : scriptJson ? "↻ Re-generate Script" : "✦ Generate VO Script"}
             </button>
-            {expandErr && <div className="cf-col-skeleton err">{expandErr}</div>}
-          </div>
-        ) : (
-        <div className="cf-cols">
-          {HOOK_STYLES.map((s) => {
-            const has = returnedVersions.has(s.version);
-            const isSel = selectedHook === s.version;
-            return (
-              <div key={s.version} className={"cf-col" + (isSel ? " selected" : "")}>
-                <span className="cf-col-title">{s.label}</span>
-                {has ? (
-                  <>
-                    <textarea
-                      className="cf-col-ta"
-                      value={hookText[s.version] ?? ""}
-                      onChange={(e) =>
-                        setHookText((prev) => ({ ...prev, [s.version]: e.target.value }))
-                      }
-                      placeholder={`${s.label} hook…`}
-                    />
-                    <button
-                      type="button"
-                      className={"cf-btn" + (isSel ? " primary" : "")}
-                      onClick={() => setSelectedHook(isSel ? null : s.version)}
-                    >
-                      {isSel ? "✓ Selected" : "Select"}
-                    </button>
-                  </>
-                ) : expanding ? (
-                  <div className="cf-col-skeleton">Generating…</div>
-                ) : (
-                  <div className="cf-col-skeleton err">
-                    {expandErr || "No hook returned. Edit manually or re-run Discover."}
-                    <textarea
-                      className="cf-col-ta"
-                      style={{ marginTop: 8 }}
-                      value={hookText[s.version] ?? ""}
-                      onChange={(e) => {
-                        setHookText((prev) => ({ ...prev, [s.version]: e.target.value }));
-                        setReturnedVersions((prev) => new Set([...prev, s.version]));
-                      }}
-                      placeholder="Write a hook…"
-                    />
-                  </div>
+            {generateErr && <div className="cf-col-skeleton err" style={{ marginTop: "0.5rem" }}>{generateErr}</div>}
+
+            {/* Script output */}
+            {scriptJson?.text && (
+              <div className="cf-script-output">
+                <textarea
+                  className="cf-script-ta"
+                  value={scriptJson.text}
+                  onChange={(e) => setScriptJson((prev) => ({ ...prev, text: e.target.value }))}
+                />
+                <div className="cf-word-count">
+                  {wc} word{wc !== 1 ? "s" : ""} · ~{Math.round(wc / 3)}s read
+                  {scriptJson.template && <span className="cf-script-meta"> · {scriptJson.template}</span>}
+                  {scriptJson.grounding_mode && <span className="cf-script-meta"> · {scriptJson.grounding_mode}</span>}
+                </div>
+                {Array.isArray(scriptJson.citations) && scriptJson.citations.length > 0 && (
+                  <details className="cf-citations-details">
+                    <summary className="cf-script-label">
+                      {scriptJson.citations.length} clip citation{scriptJson.citations.length !== 1 ? "s" : ""}
+                    </summary>
+                    <ul className="cf-citations-list">
+                      {scriptJson.citations.map((c, i) => (
+                        <li key={i}>
+                          <span className="cf-citation-beat">{c.beat}</span>
+                          {c.quote && <span className="cf-citation-quote">"{c.quote}"</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
               </div>
-            );
-          })}
-        </div>
+            )}
+          </div>
         )}
 
-        <div className="cf-modal-foot">
-          {(hasRun || returnedVersions.size > 0) && (
+        {/* ── Source clips attribution ── */}
+        {Array.isArray(sourceClips) && sourceClips.length > 0 && (
+          <details className="cf-source-clips">
+            <summary>
+              ↗ {sourceClips.length} source clip{sourceClips.length !== 1 ? "s" : ""}
+            </summary>
+            <ul className="cf-clip-list">
+              {sourceClips.map((c) => (
+                <li key={c.id}>
+                  {(c.drive_url || c.drive_folder_url) ? (
+                    <a
+                      className="cf-clip-link"
+                      href={c.drive_url || c.drive_folder_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={c.drive_url ? "Open this clip on Google Drive" : "Open this clip's Drive folder"}
+                    >
+                      ↗ {c.filename}
+                    </a>
+                  ) : (
+                    <span className="cf-clip-name">{c.filename}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+
+        {/* ── Footer (hooks tab only) ── */}
+        {(activeTab === "hooks" || !showTabs) && (
+          <div className="cf-modal-foot">
+            {(hasRun || returnedVersions.size > 0) && (
+              <button
+                type="button"
+                className="cf-btn"
+                onClick={handleRegenerate}
+                disabled={expanding}
+                title="Re-run hook generation (spends tokens)"
+              >
+                {expanding ? "Generating…" : "↻ Regenerate"}
+              </button>
+            )}
+            <span className="cf-foot-spacer" />
+            <label htmlFor="cf-reel-target">Target reel</label>
+            <select
+              id="cf-reel-target"
+              className="cf-select"
+              value={targetReelId ?? ""}
+              onChange={(e) => setTargetReelId(e.target.value || null)}
+            >
+              <option value="">Pick a reel…</option>
+              {reels.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.id}{r.title ? ` · ${r.title}` : ""}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
-              className="cf-btn"
-              onClick={handleRegenerate}
-              disabled={expanding}
-              title="Re-run hook generation (spends tokens)"
+              className="cf-btn primary"
+              disabled={!canSend}
+              onClick={handleSend}
+              title={
+                selectedHook === null ? "Select a hook first"
+                  : targetReelId === null ? "Pick a target reel first"
+                  : "Attach this hook to the reel"
+              }
             >
-              {expanding ? "Generating…" : "↻ Regenerate"}
+              {sending ? "Sending…" : "Send to Pipeline →"}
             </button>
-          )}
-          <span className="cf-foot-spacer" />
-          <label htmlFor="cf-reel-target">Target reel</label>
-          <select
-            id="cf-reel-target"
-            className="cf-select"
-            value={targetReelId ?? ""}
-            onChange={(e) => setTargetReelId(e.target.value || null)}
-          >
-            <option value="">Pick a reel…</option>
-            {reels.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.id}{r.title ? ` · ${r.title}` : ""}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="cf-btn primary"
-            disabled={!canSend}
-            onClick={handleSend}
-            title={
-              selectedHook === null
-                ? "Select a hook first"
-                : targetReelId === null
-                ? "Pick a target reel first"
-                : "Attach this hook to the reel"
-            }
-          >
-            {sending ? "Sending…" : "Send to Pipeline →"}
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>,
     document.body
@@ -453,6 +710,7 @@ export function ContentForge() {
   const [opps, setOpps] = useState([]);
   const [reels, setReels] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false); // paging past the first 1000
   const [error, setError] = useState(null);
 
   const [tier, setTier] = useState("free"); // "free" | "pro"
@@ -460,10 +718,21 @@ export function ContentForge() {
   const [country, setCountry] = useState("all");
   const [sort, setSort] = useState(DEFAULT_SORT);
   const [vetView, setVetView] = useState("new"); // triage queue front-and-center
+  const [favOnly, setFavOnly] = useState(false);            // ★ filter — favorites only
+  const [colorSel, setColorSel] = useState(() => new Set()); // empty = all colors
+  const [q, setQ] = useState("");                           // free-text title/hook search
+
+  // Library coverage tracker — per-folder discovery progress + yield (titles/hooks).
+  // Loaded on demand (paginates transcript_clips, 13k+ rows) so the main list isn't slowed.
+  const [showCoverage, setShowCoverage] = useState(false);
+  const [coverage, setCoverage] = useState(null);   // [{folder, clips, discovered, pct, files, opps, hooks}]
+  const [coverageLoading, setCoverageLoading] = useState(false);
+  const [remining, setRemining] = useState("");     // folder currently being re-mined ("" = none)
 
   const [discovering, setDiscovering] = useState(false);
   const [openOpp, setOpenOpp] = useState(null);
   const [toast, setToast] = useState(null);
+  const [colorPickFor, setColorPickFor] = useState(null); // opp id whose color popover is open
 
   // Country "folders" view — group the (filtered/sorted) opportunities into
   // collapsible per-country buckets. Off = the flat table. `collapsed` holds the
@@ -486,6 +755,19 @@ export function ContentForge() {
   const [progress, setProgress] = useState(null);      // live discovery status line
   const [maxOpps, setMaxOpps] = useState(0);           // 0 = auto (backend default 8-20); else cap per pass
   const [model, setModel] = useState("google/gemini-2.5-flash"); // model toggle (compare 2.5 vs cheaper 2.0)
+  // Footage-folder scope (e.g. "Japan") + how many INPUT clips per Discover pass.
+  // folder "" = all footage (legacy behavior). folderOptions are derived from the
+  // disk paths on attached_footage_items (footageFolderLabel) so labels match what
+  // the backend stamps on transcript_clips.folder.
+  const [folder, setFolder] = useState("");
+  const [clipsPerPass, setClipsPerPass] = useState(20);
+  const [folderOptions, setFolderOptions] = useState([]);
+  // Whole-library mining: the FootageBrain /api/files catalog has ~8k transcribed files
+  // (vs the ~12 reel-attached ones). libFolders = [{folder, files, with_drive}] per region;
+  // libFolder "" = mine the whole library. Mining is a $0 transcript copy (no LLM).
+  const [libFolders, setLibFolders] = useState([]);
+  const [libFolder, setLibFolder] = useState("");
+  const [mining, setMining] = useState(false);
 
   // Backend kill-switch / daily-limit state (the authoritative verdict computed
   // server-side, mirrored from the Monitor budgets card). Drives the page banner
@@ -500,19 +782,160 @@ export function ContentForge() {
 
   const loadOpps = useCallback(async () => {
     setError(null);
+    // Page through ALL rows — PostgREST caps a single unpaginated read at ~1000, so
+    // without this loop the newest 1000 opportunities would hide every older one
+    // (and the client-side ★/color/search filters, which run over loaded rows only,
+    // could never surface a tagged clip beyond that window). Accumulate newest-first
+    // until a short page signals the end.
+    const PAGE = 1000;
     try {
-      const { data, error: err } = await supabase
-        .from("content_opportunities")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (err) throw err;
-      setOpps(data || []);
+      const all = [];
+      for (let off = 0; ; off += PAGE) {
+        const { data, error: err } = await supabase
+          .from("content_opportunities")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .range(off, off + PAGE - 1);
+        if (err) throw err;
+        const rows = data || [];
+        all.push(...rows);
+        setLoadingMore(off > 0 && rows.length === PAGE); // a 2nd+ full page is still coming
+        if (rows.length < PAGE) break;
+      }
+      setOpps(all);
     } catch (e) {
       setError(e.message || "Failed to load opportunities.");
     } finally {
+      setLoadingMore(false);
       setLoading(false);
     }
   }, []);
+
+  // Library coverage — paginate transcript_clips and aggregate per folder: total clips,
+  // discovered clips (last_discovered_at set = mined at least once), distinct source files,
+  // and — by mapping each opportunity's source_clip_ids back to its clip's folder — how many
+  // titles + hooks that folder yielded. On demand (13k+ rows). Best-effort; a read blip just
+  // toasts and leaves the last snapshot. Depends on `opps` (the full set, loaded by loadOpps).
+  const loadCoverage = useCallback(async () => {
+    setCoverageLoading(true);
+    try {
+      const PAGE = 1000;
+      const stats = new Map();          // folder -> {folder, clips, discovered, files:Set, opps, hooks}
+      const clipFolder = new Map();     // clip id -> folder (for opportunity attribution)
+      for (let off = 0; ; off += PAGE) {
+        const { data, error: err } = await supabase
+          .from("transcript_clips")
+          .select("id, folder, last_discovered_at, footage_file_id")
+          .range(off, off + PAGE - 1);
+        if (err) throw err;
+        const rows = data || [];
+        for (const c of rows) {
+          const f = c.folder || "(unlabeled)";
+          let s = stats.get(f);
+          if (!s) { s = { folder: f, clips: 0, discovered: 0, files: new Set(), opps: 0, hooks: 0 }; stats.set(f, s); }
+          s.clips += 1;
+          if (c.last_discovered_at) s.discovered += 1;
+          if (c.footage_file_id) s.files.add(c.footage_file_id);
+          clipFolder.set(c.id, f);
+        }
+        if (rows.length < PAGE) break;
+      }
+      // Attribute each opportunity (+ its hooks) to the dominant folder among its source clips.
+      for (const o of opps) {
+        const ids = Array.isArray(o.source_clip_ids) ? o.source_clip_ids : [];
+        const tally = {};
+        for (const id of ids) { const f = clipFolder.get(id); if (f) tally[f] = (tally[f] || 0) + 1; }
+        let best = null, bestN = 0;
+        for (const [f, n] of Object.entries(tally)) if (n > bestN) { best = f; bestN = n; }
+        if (best && stats.has(best)) {
+          const s = stats.get(best);
+          s.opps += 1;
+          s.hooks += Array.isArray(o.hook_versions) ? o.hook_versions.filter((h) => h?.text).length : 0;
+        }
+      }
+      const out = Array.from(stats.values())
+        .map((s) => ({ ...s, files: s.files.size, pct: s.clips ? Math.round((s.discovered / s.clips) * 100) : 0 }))
+        .sort((a, b) => b.clips - a.clips);
+      setCoverage(out);
+    } catch (e) {
+      showToast(`Coverage failed: ${e.message || "read error"}`);
+    } finally {
+      setCoverageLoading(false);
+    }
+  }, [opps, showToast]);
+
+  const toggleCoverage = useCallback(() => {
+    setShowCoverage((v) => {
+      const next = !v;
+      if (next && !coverage) loadCoverage(); // lazy first load
+      return next;
+    });
+  }, [coverage, loadCoverage]);
+
+  // Re-mine ONE folder for additional angles. The live backend only re-reads UN-mined
+  // clips, so a fully-mined folder is first re-OPENED server-side (forge-reset-folder
+  // clears last_discovered_at via the service role); then a NORMAL folder discover walks
+  // the next `clipsPerPass` clips (advancing each click, exactly like first-time mining).
+  // A partially re-mined folder skips the reset and just advances. Uses the current
+  // Model / Max settings; gated by the same kill-switch / daily-limit as Discover.
+  const remineFolder = useCallback(async (row) => {
+    const f = row.folder;
+    if (isBlockedSync("content_forge")) {
+      showToast("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
+      return;
+    }
+    if (cfBudget && (cfBudget.enabled === false || cfBudget.blocked)) {
+      showToast(cfBudget.enabled === false
+        ? "Content Forge LLM is OFF (kill switch) — re-enable it in Monitor → API Budgets & Limits."
+        : "Daily limit reached — raise it in Monitor → API Budgets & Limits.");
+      return;
+    }
+    const fullyMined = row.discovered >= row.clips;
+    const remaining = Math.max(0, row.clips - row.discovered);
+    if (!window.confirm(
+      fullyMined
+        ? `Re-mine "${f}"?\n\nRe-opens the folder (${row.clips} clips) and mines the next ${clipsPerPass} for fresh angles. Click Re-mine again to keep advancing. Spends tokens.`
+        : `Continue re-mining "${f}"?\n\n${remaining} clip${remaining === 1 ? "" : "s"} still un-mined — this processes the next ${clipsPerPass}. Spends tokens.`
+    )) return;
+    recordUsage("content_forge");
+    setRemining(f);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { showToast("Not signed in — re-mine skipped."); return; }
+      const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` };
+      // Fully mined → re-open the folder so normal discovery has un-mined clips to read.
+      if (fullyMined) {
+        showToast(`Re-opening "${f}"…`);
+        const rr = await fetch("/api/ai/suggest?action=forge-reset-folder", {
+          method: "POST", headers: authHeaders, body: JSON.stringify({ folder: f }),
+        });
+        if (!rr.ok) {
+          const e = await rr.json().catch(() => ({}));
+          showToast(`Re-open failed (${rr.status}): ${e.error || "unknown error"}`);
+          return;
+        }
+      }
+      showToast(`Mining "${f}"…`);
+      const body = { tier, folder: f, clips_per_pass: clipsPerPass }; // normal only_new pass
+      if (model) body.model = model;
+      if (maxOpps > 0) body.max_opportunities = maxOpps;
+      const r = await fetch("/api/ai/suggest?action=forge-discover", {
+        method: "POST", headers: authHeaders, body: JSON.stringify(body),
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok && r.status !== 202) {
+        showToast(`Re-mine failed (${r.status}): ${out.error || "unknown error"}`);
+        return;
+      }
+      showToast(`Re-mine of "${f}" started — new angles will land shortly.`);
+      // The pass runs in the background on Hetzner; refresh once it's had a beat to write.
+      setTimeout(() => { loadOpps(); loadCoverage(); loadBudgetState(); }, 12000);
+    } catch (e) {
+      showToast(`Re-mine error: ${e.message}`);
+    } finally {
+      setRemining("");
+    }
+  }, [tier, clipsPerPass, model, maxOpps, cfBudget, loadOpps, loadCoverage, loadBudgetState, showToast]);
 
   // Vet an opportunity (Shortlist / Reject / clear back to New). Optimistic with
   // rollback. Vetting is free (no LLM) — it just sets the gate for elevation.
@@ -526,6 +949,28 @@ export function ContentForge() {
       showToast(`Vet failed: ${err.message}`);
       loadOpps(); // rollback to truth
     }
+  }, [showToast, loadOpps]);
+
+  // Toggle the ★ favorite on a row. Optimistic with rollback (mirrors setVet).
+  const toggleFavorite = useCallback(async (o) => {
+    const next = !o.favorite;
+    setOpps((prev) => prev.map((x) => (x.id === o.id ? { ...x, favorite: next } : x)));
+    const { error: err } = await supabase
+      .from("content_opportunities")
+      .update({ favorite: next })
+      .eq("id", o.id);
+    if (err) { showToast(`Favorite failed: ${err.message}`); loadOpps(); }
+  }, [showToast, loadOpps]);
+
+  // Set (or clear) a row's color tag. Passing the same color clears it.
+  const setColor = useCallback(async (o, colorKey) => {
+    const next = o.color === colorKey ? null : colorKey;
+    setOpps((prev) => prev.map((x) => (x.id === o.id ? { ...x, color: next } : x)));
+    const { error: err } = await supabase
+      .from("content_opportunities")
+      .update({ color: next })
+      .eq("id", o.id);
+    if (err) { showToast(`Color failed: ${err.message}`); loadOpps(); }
   }, [showToast, loadOpps]);
 
   const loadReels = useCallback(async () => {
@@ -571,6 +1016,40 @@ export function ContentForge() {
     }
   }, []);
 
+  // Derive the footage-folder list from attached_footage_items.source_path using the
+  // SAME footageFolderLabel() the backend mirrors — so a picked label matches the value
+  // stamped on transcript_clips.folder. Best-effort; the picker just stays "All footage".
+  const loadFolders = useCallback(async () => {
+    try {
+      const { data } = await supabase
+        .from("attached_footage_items")
+        .select("source_path")
+        .limit(5000);
+      const set = new Set();
+      for (const r of data || []) {
+        const lbl = footageFolderLabel(r.source_path);
+        if (lbl) set.add(lbl);
+      }
+      setFolderOptions(Array.from(set).sort((a, b) => a.localeCompare(b)));
+    } catch {
+      /* non-fatal — folder picker stays "All footage" */
+    }
+  }, []);
+
+  // Pull the whole-library folder catalog (transcribed-file count per region) so the
+  // "Mine Library" picker can offer Philippines (1075), India (801), … Best-effort;
+  // the picker degrades to "Whole library" only on any failure.
+  const loadLibraryFolders = useCallback(async () => {
+    try {
+      const r = await fetch("/api/monitor/status?action=forge-library-folders");
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.ok && Array.isArray(d.folders)) setLibFolders(d.folders);
+    } catch {
+      /* non-fatal — Mine Library picker stays "Whole library" only */
+    }
+  }, []);
+
   // Owner-only: skip all data wiring entirely for non-owners.
   useEffect(() => {
     if (!isOwner) return;
@@ -578,7 +1057,19 @@ export function ContentForge() {
     loadReels();
     loadClipCount();
     loadBudgetState();
-  }, [isOwner, loadOpps, loadReels, loadClipCount, loadBudgetState]);
+    loadFolders();
+    loadLibraryFolders();
+  }, [isOwner, loadOpps, loadReels, loadClipCount, loadBudgetState, loadFolders, loadLibraryFolders]);
+
+  // Debounced reload — now that loadOpps pages the whole table, a live discovery
+  // run (dozens of realtime inserts) or rapid focus flaps would each fire a full
+  // multi-page fetch. Collapse bursts into one trailing reload (~800ms).
+  const reloadTimer = useRef(null);
+  const debouncedLoadOpps = useCallback(() => {
+    if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    reloadTimer.current = setTimeout(() => { reloadTimer.current = null; loadOpps(); }, 800);
+  }, [loadOpps]);
+  useEffect(() => () => { if (reloadTimer.current) clearTimeout(reloadTimer.current); }, []);
 
   // Realtime — live discovery updates on content_opportunities (preferred over
   // pure polling). Falls back gracefully: if the channel never connects, the
@@ -590,29 +1081,40 @@ export function ContentForge() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "content_opportunities" },
-        () => loadOpps()
+        () => debouncedLoadOpps()
       )
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [isOwner, loadOpps]);
+  }, [isOwner, debouncedLoadOpps]);
 
   // Refresh on tab focus / visibility (catches rows written while away).
   useEffect(() => {
     if (!isOwner) return;
-    const onFocus = () => { if (document.visibilityState === "visible") loadOpps(); };
+    const onFocus = () => { if (document.visibilityState === "visible") debouncedLoadOpps(); };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
     return () => {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [isOwner, loadOpps]);
+  }, [isOwner, debouncedLoadOpps]);
 
   const countryOptions = useMemo(() => {
     const set = new Set();
     for (const o of opps) if (o.country) set.add(o.country);
     return Array.from(set).sort();
   }, [opps]);
+
+  // Discover's Folder picker = attached-footage folders ∪ whole-library folders, so once a
+  // library region is mined you can scope Discover to it (e.g. "Philippines"). Same label
+  // space (_folder_label) as transcript_clips.folder, so &folder=eq.<label> matches.
+  const allFolderOptions = useMemo(() => {
+    const set = new Set(folderOptions);
+    for (const f of libFolders) {
+      if (f && f.folder && f.folder !== "(unknown)") set.add(f.folder);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [folderOptions, libFolders]);
 
   const toggleTierSel = useCallback((t) => {
     setTierSel((prev) => {
@@ -622,14 +1124,33 @@ export function ContentForge() {
     });
   }, []);
 
+  const toggleColorSel = useCallback((c) => {
+    setColorSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c); else next.add(c);
+      return next;
+    });
+  }, []);
+
   const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
     return opps.filter((o) => {
       if (vetView !== "all" && vetOf(o) !== vetView) return false;
       if (tierSel.size > 0 && !tierSel.has(String(o.virality_tier || "C").toUpperCase())) return false;
       if (country !== "all" && o.country !== country) return false;
+      if (favOnly && !o.favorite) return false;
+      if (colorSel.size > 0 && !colorSel.has(o.color)) return false;
+      if (needle) {
+        // Match the visible row text (title + angle) plus any generated hook text.
+        const hooks = Array.isArray(o.hook_versions)
+          ? o.hook_versions.map((h) => h?.text || "").join(" ")
+          : "";
+        const hay = `${o.title || ""} ${o.angle_summary || ""} ${hooks}`.toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
       return true;
     });
-  }, [opps, vetView, tierSel, country]);
+  }, [opps, vetView, tierSel, country, favOnly, colorSel, q]);
 
   // Counts for the segmented control + header (cheap; over already-loaded rows).
   const vetCounts = useMemo(() => {
@@ -695,8 +1216,55 @@ export function ContentForge() {
       <tr
         key={o.id}
         className={"cf-tr" + (vet === "rejected" ? " rejected" : "")}
+        style={o.color ? { boxShadow: `inset 4px 0 0 ${COLOR_HEX[o.color] || "transparent"}` } : undefined}
         onClick={() => setOpenOpp(o)}
       >
+        <td className="cf-c-tag" onClick={(e) => e.stopPropagation()}>
+          <div className="cf-tag-cell">
+            <button
+              type="button"
+              className={"cf-fav" + (o.favorite ? " on" : "")}
+              onClick={() => toggleFavorite(o)}
+              title={o.favorite ? "Unfavorite" : "Favorite"}
+              aria-pressed={!!o.favorite}
+            >
+              {o.favorite ? "★" : "☆"}
+            </button>
+            <div className="cf-color-wrap">
+              <button
+                type="button"
+                className="cf-color-swatch"
+                style={{ "--swatch": o.color ? (COLOR_HEX[o.color] || "transparent") : "transparent" }}
+                onClick={() => setColorPickFor((id) => (id === o.id ? null : o.id))}
+                title={o.color ? `Color: ${o.color} — click to change` : "Set a color tag"}
+              >
+                {o.color ? "" : "○"}
+              </button>
+              {colorPickFor === o.id && (
+                <div className="cf-color-pop" onClick={(e) => e.stopPropagation()}>
+                  {ROW_COLORS.map((c) => (
+                    <button
+                      key={c.key}
+                      type="button"
+                      className={"cf-color-dot" + (o.color === c.key ? " on" : "")}
+                      style={{ "--dot": c.hex }}
+                      onClick={() => { setColor(o, c.key); setColorPickFor(null); }}
+                      title={c.key}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    className="cf-color-clear"
+                    onClick={() => { setColor(o, o.color); setColorPickFor(null); }}
+                    title="Clear color"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </td>
         <td className="cf-c-tier">
           <span className={`cf-tier-badge t-${t}`}>{t}</span>
         </td>
@@ -745,7 +1313,7 @@ export function ContentForge() {
         </td>
       </tr>
     );
-  }, [setVet]);
+  }, [setVet, toggleFavorite, setColor, colorPickFor]);
 
   // Column header row — shared markup for the flat + folder tables.
   const headRow = (
@@ -810,6 +1378,64 @@ export function ContentForge() {
     }
   }, [clipCount, loadClipCount, showToast]);
 
+  // Whole-library mining: ingest EVERY transcribed file in the FootageBrain library (or one
+  // region) into transcript_clips — not just the ~12 reel-attached clips. This is a $0
+  // transcript copy (no LLM); cost only happens later when you Discover the ingested clips.
+  // Fire-and-forget on the backend; we poll the clip count for feedback while it runs.
+  const handleMineLibrary = useCallback(async () => {
+    const picked = libFolders.find((f) => f.folder === libFolder);
+    const scope = libFolder
+      ? `the "${libFolder}" folder${picked ? ` (~${picked.files} files)` : ""}`
+      : "your ENTIRE footage library (~8k transcribed files, a few minutes)";
+    if (!window.confirm(
+      `Mine ${scope} into the discovery store?\n\nIngest is FREE — it just copies existing ` +
+      "transcripts (no LLM spend). You then Discover the ingested clips folder-by-folder."
+    )) return;
+    setMining(true);
+    setProgress(`Mining ${libFolder || "library"} transcripts…`);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { showToast("Not signed in — mining skipped."); setProgress(null); return; }
+      const r = await fetch("/api/ai/suggest?action=forge-ingest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ source: "library", folder: libFolder || undefined }),
+      });
+      if (!r.ok && r.status !== 202) {
+        const b = await r.json().catch(() => ({}));
+        showToast(`Library mining failed (${r.status}): ${b.error || "unknown error"}`);
+        setProgress(null);
+        return;
+      }
+      // Poll the clip count while the worker runs (it can take minutes for the whole library).
+      let last = clipCount || 0;
+      for (let i = 0; i < FORGE_LIB_POLL_TRIES; i++) {
+        await new Promise((res) => setTimeout(res, FORGE_POLL_MS));
+        const { count } = await supabase
+          .from("transcript_clips")
+          .select("id", { count: "exact", head: true });
+        const n = typeof count === "number" ? count : last;
+        setProgress(`Mining ${libFolder || "library"}… ${n} clip${n === 1 ? "" : "s"} in store`);
+        last = Math.max(last, n);
+      }
+      await loadClipCount();
+      setProgress(null);
+      showToast(
+        libFolder
+          ? `Mined "${libFolder}". Set Folder → ${libFolder} and click ✦ Discover.`
+          : "Library mining underway — clips are landing. Pick a Folder, then ✦ Discover."
+      );
+    } catch {
+      setProgress(null);
+      showToast("Could not reach the ingest worker. Try again.");
+    } finally {
+      setMining(false);
+    }
+  }, [libFolder, libFolders, clipCount, loadClipCount, showToast]);
+
   const handleDiscover = useCallback(async () => {
     if (isBlockedSync("content_forge")) {
       showToast("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
@@ -854,6 +1480,10 @@ export function ContentForge() {
       if (maxOpps > 0) body.max_opportunities = maxOpps;
       // Model toggle — compare 2.5-flash (sharper) vs 2.0-flash (~6x cheaper output).
       if (model) body.model = model;
+      // Footage-folder scope — when set, the backend filters transcript_clips to this
+      // folder and walks it clipsPerPass at a time (each Discover advances the next
+      // un-analyzed clips in path order). Empty = legacy all-footage window.
+      if (folder) { body.folder = folder; body.clips_per_pass = clipsPerPass; }
       const r = await fetch("/api/ai/suggest?action=forge-discover", {
         method: "POST",
         headers: {
@@ -922,7 +1552,10 @@ export function ContentForge() {
       <div className="cf-header">
         <h2>Content Forge</h2>
         {!loading && (
-          <span className="cf-count">{sorted.length} / {opps.length} opportunities</span>
+          <span className="cf-count">
+            {sorted.length} / {opps.length} opportunities
+            {loadingMore ? " · loading more…" : ""}
+          </span>
         )}
         <span
           className="cf-count"
@@ -951,9 +1584,37 @@ export function ContentForge() {
           className="cf-btn"
           onClick={handleIngest}
           disabled={ingesting}
-          title="Pull your footage transcripts into the discovery store"
+          title="Pull your ~12 reel-attached footage transcripts into the discovery store"
         >
           {ingesting ? "Ingesting…" : "⤓ Ingest"}
+        </button>
+        <span
+          className="cf-target"
+          title="Mine the WHOLE FootageBrain library (~8k transcribed files), not just reel-attached clips. Pick a region or mine everything. Ingest is free (no LLM) — it just copies transcripts."
+        >
+          <label htmlFor="cf-lib-folder">Library</label>
+          <select
+            id="cf-lib-folder"
+            className="cf-select"
+            value={libFolder}
+            onChange={(e) => setLibFolder(e.target.value)}
+            disabled={mining}
+          >
+            <option value="">Whole library</option>
+            {libFolders.map((f) => (
+              <option key={f.folder} value={f.folder}>
+                {f.folder} ({f.files})
+              </option>
+            ))}
+          </select>
+        </span>
+        <button
+          className="cf-btn"
+          onClick={handleMineLibrary}
+          disabled={mining}
+          title="Ingest every transcribed file in the selected library scope into the discovery store ($0 — no LLM)"
+        >
+          {mining ? "Mining…" : "⛏ Mine Library"}
         </button>
         <span className="cf-tier" role="group" aria-label="LLM tier">
           <button
@@ -1026,6 +1687,35 @@ export function ContentForge() {
             <option value={20}>~20</option>
           </select>
         </span>
+        <span className="cf-target" title="Scope Discover to ONE footage folder (e.g. Japan). The pass walks that folder in order, feeding the next un-analyzed clips each click. 'All footage' = the legacy recent window.">
+          <label htmlFor="cf-folder">Folder</label>
+          <select
+            id="cf-folder"
+            className="cf-select"
+            value={folder}
+            onChange={(e) => setFolder(e.target.value)}
+          >
+            <option value="">All footage</option>
+            {allFolderOptions.map((f) => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        </span>
+        {folder && (
+          <span className="cf-target" title="How many footage clips to feed per Discover click when a folder is scoped. Each click advances this many un-analyzed clips through the folder, in order.">
+            <label htmlFor="cf-clips-per-pass">Clips/pass</label>
+            <select
+              id="cf-clips-per-pass"
+              className="cf-select"
+              value={clipsPerPass}
+              onChange={(e) => setClipsPerPass(Number(e.target.value) || 20)}
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={40}>40</option>
+            </select>
+          </span>
+        )}
         <button
           className="cf-btn primary"
           onClick={handleDiscover}
@@ -1035,6 +1725,13 @@ export function ContentForge() {
         </button>
         <button className="cf-btn" onClick={loadOpps} disabled={loading}>
           {loading ? "Loading…" : "⟳ Reload"}
+        </button>
+        <button
+          className={"cf-btn" + (showCoverage ? " on" : "")}
+          onClick={toggleCoverage}
+          title="Library coverage — per-folder discovery progress + how many titles/hooks each folder has produced"
+        >
+          {showCoverage ? "▲ Coverage" : "📊 Coverage"}
         </button>
       </div>
 
@@ -1081,6 +1778,65 @@ export function ContentForge() {
         </div>
       )}
 
+      {showCoverage && (
+        <div className="cf-coverage">
+          <div className="cf-coverage-head">
+            <strong>Library coverage</strong>
+            {coverage && (
+              <span className="cf-count">
+                {coverage.length} folders · {coverage.reduce((a, c) => a + c.opps, 0)} titles
+              </span>
+            )}
+            <button className="cf-btn cf-coverage-refresh" onClick={loadCoverage} disabled={coverageLoading}>
+              {coverageLoading ? "Loading…" : "⟳ Refresh"}
+            </button>
+          </div>
+          {coverageLoading && !coverage ? (
+            <div className="cf-coverage-empty">Reading transcript clips…</div>
+          ) : coverage && coverage.length ? (
+            <div className="cf-coverage-scroll">
+              <table className="cf-coverage-table">
+                <thead>
+                  <tr>
+                    <th>Folder</th><th>Files</th><th>Clips</th>
+                    <th>Discovered</th><th>Titles</th><th>Hooks</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.map((c) => (
+                    <tr key={c.folder}>
+                      <td className="cf-cov-folder" title={c.folder}>{c.folder}</td>
+                      <td className="cf-cov-num">{c.files}</td>
+                      <td className="cf-cov-num">{c.clips}</td>
+                      <td className="cf-cov-bar-cell">
+                        <div className="cf-cov-bar" title={`${c.discovered} / ${c.clips} clips mined`}>
+                          <div className="cf-cov-bar-fill" style={{ width: `${c.pct}%` }} />
+                          <span className="cf-cov-bar-label">{c.pct}%</span>
+                        </div>
+                      </td>
+                      <td className="cf-cov-num">{c.opps}</td>
+                      <td className="cf-cov-num">{c.hooks}</td>
+                      <td>
+                        <button
+                          className="cf-btn cf-cov-remine"
+                          onClick={() => remineFolder(c)}
+                          disabled={!!remining || c.folder === "(unlabeled)"}
+                          title="Re-mine this folder for additional angles (re-opens fully-mined folders, then walks them — spends tokens)"
+                        >
+                          {remining === c.folder ? "Re-mining…" : "⛏ Re-mine"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="cf-coverage-empty">No coverage data.</div>
+          )}
+        </div>
+      )}
+
       <div className="cf-filters">
         <div className="cf-vet-views" role="group" aria-label="Vetting queue">
           {VET_VIEWS.map((v) => (
@@ -1109,12 +1865,51 @@ export function ContentForge() {
             </button>
           ))}
         </div>
+        <input
+          type="search"
+          className="cf-search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search title / hook…"
+          aria-label="Search opportunities by title or hook"
+        />
         <select className="cf-select" value={country} onChange={(e) => setCountry(e.target.value)}>
           <option value="all">All countries</option>
           {countryOptions.map((c) => (
             <option key={c} value={c}>{c}</option>
           ))}
         </select>
+        <button
+          type="button"
+          className={"cf-pill cf-fav-filter" + (favOnly ? " on" : "")}
+          onClick={() => setFavOnly((v) => !v)}
+          title="Show only favorited opportunities"
+          aria-pressed={favOnly}
+        >
+          {favOnly ? "★ Favorites" : "☆ Favorites"}
+        </button>
+        <div className="cf-color-filter" role="group" aria-label="Filter by color">
+          <span className="cf-filter-label">Color</span>
+          {ROW_COLORS.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              className={"cf-color-dot" + (colorSel.has(c.key) ? " on" : "")}
+              style={{ "--dot": c.hex }}
+              onClick={() => toggleColorSel(c.key)}
+              title={`Filter ${c.key}`}
+              aria-pressed={colorSel.has(c.key)}
+            />
+          ))}
+          {colorSel.size > 0 && (
+            <button
+              type="button"
+              className="cf-color-clear-all"
+              onClick={() => setColorSel(new Set())}
+              title="Clear color filters"
+            >✕</button>
+          )}
+        </div>
         <select
           className="cf-select"
           value={sort.key}

@@ -126,6 +126,78 @@
   background: var(--color-surface, #1a1a1a);
   color: inherit;
 }
+.cf-search {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  min-width: 180px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 5px;
+  background: var(--color-surface, #1a1a1a);
+  color: inherit;
+}
+.cf-search::placeholder { color: var(--color-text-muted, #888); }
+
+/* Library coverage tracker — per-folder discovery progress + yield. */
+.cf-coverage {
+  margin: 10px 0;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+  background: var(--color-surface, #1a1a1a);
+}
+.cf-coverage-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border, #333);
+}
+.cf-coverage-refresh { margin-left: auto; }
+.cf-coverage-empty { padding: 16px; font-size: 13px; opacity: 0.7; }
+.cf-coverage-scroll { max-height: 340px; overflow: auto; }
+.cf-coverage-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cf-coverage-table th,
+.cf-coverage-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, #2a2a2a);
+  white-space: nowrap;
+}
+.cf-coverage-table th {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface, #1a1a1a);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+  z-index: 1;
+}
+.cf-cov-folder { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.cf-cov-num { text-align: right; font-variant-numeric: tabular-nums; }
+.cf-cov-bar-cell { min-width: 150px; }
+.cf-cov-bar {
+  position: relative;
+  height: 16px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.18);
+  overflow: hidden;
+}
+.cf-cov-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--c-cyan, #33b1c9);
+  opacity: 0.55;
+}
+.cf-cov-bar-label {
+  position: relative;
+  display: block;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.cf-cov-remine { padding: 0.2rem 0.5rem; font-size: 0.72rem; }
 .cf-tier-pills { display: flex; gap: 0.35rem; }
 .cf-pill {
   padding: 0.22rem 0.6rem;
@@ -520,6 +592,109 @@
 .cf-table tbody tr.cf-tr.rejected { opacity: 0.5; }
 .cf-table tbody tr.cf-tr.rejected:hover { opacity: 0.75; }
 
+/* ---- Row tagging: favorite ★ + color picker ---- */
+.cf-c-tag { width: 1px; white-space: nowrap; }
+.cf-tag-cell { display: inline-flex; align-items: center; gap: 0.3rem; }
+.cf-fav {
+  width: 1.5rem;
+  height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  color: var(--color-muted, #888);
+  cursor: pointer;
+  transition: color 0.12s, transform 0.12s;
+}
+.cf-fav:hover { transform: scale(1.15); }
+.cf-fav.on { color: var(--cf-gold, #f5c044); }
+
+.cf-color-wrap { position: relative; display: inline-flex; }
+.cf-color-swatch {
+  width: 1.1rem;
+  height: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  line-height: 1;
+  border-radius: 50%;
+  border: 1px solid var(--color-border, #333);
+  background: var(--swatch, transparent);
+  color: var(--color-muted, #888);
+  cursor: pointer;
+}
+.cf-color-swatch:hover { border-color: var(--color-accent, #6bd6e0); }
+.cf-color-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.4rem;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 7px;
+  background: var(--color-surface, #1a1a1a);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.cf-color-dot {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--dot, #888);
+  cursor: pointer;
+  padding: 0;
+}
+.cf-color-dot.on { border-color: var(--color-fg, #fff); }
+.cf-color-clear {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  border: 1px solid var(--color-border, #333);
+  background: transparent;
+  color: var(--color-muted, #888);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Header filter controls (favorite toggle + color dots). */
+.cf-fav-filter {
+  color: var(--color-muted, #888);
+}
+.cf-fav-filter.on {
+  background: var(--cf-gold, #f5c044);
+  border-color: var(--cf-gold, #f5c044);
+  color: var(--color-bg, #0e0e0e);
+}
+.cf-color-filter { display: inline-flex; gap: 0.25rem; align-items: center; }
+.cf-filter-label {
+  font-size: 0.72rem;
+  color: var(--color-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-right: 0.1rem;
+}
+.cf-color-filter .cf-color-dot { opacity: 0.7; transition: opacity 0.12s, border-color 0.12s; }
+.cf-color-filter .cf-color-dot.on { opacity: 1; border-color: var(--color-fg, #fff); }
+.cf-color-clear-all {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.72rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #333);
+  background: transparent;
+  color: var(--color-muted, #888);
+  cursor: pointer;
+  line-height: 1;
+}
+.cf-color-clear-all:hover { color: var(--color-fg, #fff); }
+
 /* Pre-expand CTA inside ForgeModal (deliberate, vet-gated expounding). */
 .cf-expound-cta {
   display: flex;
@@ -591,3 +766,192 @@
 .cf-folder-tiers .cf-tier-badge { font-size: 0.65rem; }
 .cf-folder .cf-table-wrap { border-top: 1px solid var(--color-border, #333); }
 .cf-folder-toggle { white-space: nowrap; }
+
+/* ---- ForgeModal tab nav (Hooks | Script) ---- */
+.cf-modal-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border, #333);
+  margin: 0.6rem 0 0;
+}
+.cf-tab-btn {
+  padding: 0.45rem 1rem;
+  font-size: 0.82rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-muted, #888);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+  margin-bottom: -1px;
+}
+.cf-tab-btn:hover { color: inherit; }
+.cf-tab-btn.active {
+  color: var(--color-accent, #6bd6e0);
+  border-bottom-color: var(--color-accent, #6bd6e0);
+  font-weight: 600;
+}
+
+/* ---- Script tab container ---- */
+.cf-script-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem 0 0.5rem;
+}
+
+/* ---- Section label (shared) ---- */
+.cf-script-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted, #888);
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+/* ---- Template card grid ---- */
+.cf-script-section { display: flex; flex-direction: column; }
+.cf-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+.cf-template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+}
+.cf-template-card:hover { border-color: var(--color-accent, #6bd6e0); }
+.cf-template-card.selected {
+  border-color: var(--color-accent, #6bd6e0);
+  background: rgba(107, 214, 224, 0.07);
+}
+.cf-tpl-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.cf-tpl-desc {
+  font-size: 0.71rem;
+  color: var(--color-muted, #888);
+  line-height: 1.35;
+}
+
+/* ---- Grounding + Tone row ---- */
+.cf-script-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.cf-script-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+/* ---- Script output ---- */
+.cf-script-output {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: var(--color-surface, #1a1d24);
+}
+.cf-script-ta {
+  width: 100%;
+  min-height: 12rem;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  background: transparent;
+  color: inherit;
+  border: none;
+  outline: none;
+  padding: 0;
+}
+.cf-word-count {
+  font-size: 0.72rem;
+  color: var(--color-muted, #888);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+}
+.cf-script-meta {
+  opacity: 0.7;
+}
+
+/* ---- Citations details ---- */
+.cf-citations-details {
+  font-size: 0.78rem;
+}
+.cf-citations-details summary {
+  cursor: pointer;
+  color: var(--color-muted, #888);
+  user-select: none;
+  margin-top: 0.3rem;
+}
+.cf-citations-list {
+  margin: 0.4rem 0 0;
+  padding: 0 0 0 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  list-style: disc;
+}
+.cf-citation-beat {
+  font-weight: 600;
+  margin-right: 0.4rem;
+}
+.cf-citation-quote {
+  color: var(--color-muted, #888);
+  font-style: italic;
+}
+
+/* ---- Source clips attribution ---- */
+.cf-source-clips {
+  border-top: 1px solid var(--color-border, #333);
+  padding-top: 0.6rem;
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+}
+.cf-source-clips summary {
+  cursor: pointer;
+  color: var(--color-muted, #888);
+  user-select: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cf-source-clips summary:hover { color: inherit; }
+.cf-clip-list {
+  margin: 0.45rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.cf-clip-link {
+  color: var(--color-accent, #6bd6e0);
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+.cf-clip-link:hover { text-decoration: underline; }
+.cf-clip-name {
+  color: var(--color-muted, #888);
+  font-size: 0.8rem;
+}
