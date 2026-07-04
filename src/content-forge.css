@@ -554,6 +554,27 @@
   white-space: nowrap;
 }
 
+/* "In pipeline" / "removed — re-send" markers (row + send modal). */
+.cf-sent-badge,
+.cf-resent-badge {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.cf-sent-badge {
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--color-ok, #4ade80);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+}
+.cf-resent-badge {
+  background: rgba(251, 191, 36, 0.14);
+  color: var(--color-warn, #fbbf24);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+
 /* Per-row Shortlist ✓ / Reject ✕ buttons. */
 .cf-vet-btns {
   display: inline-flex;

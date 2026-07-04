@@ -1,0 +1,206 @@
+/* BoxTable — full-screen dense pipeline-box overlay.
+   Component-scoped (src/styles.css is edit-locked). Uses existing theme vars
+   so it reskins with Solarin/base automatically. */
+
+.bxt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 3vh 3vw;
+}
+
+.bxt-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1100px;
+  background: var(--bg-1, #14161c);
+  color: var(--fg, #e8eaf0);
+  border: 1px solid var(--bd, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* Header */
+.bxt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--bd, rgba(255, 255, 255, 0.1));
+  background: var(--bg-2, #191c24);
+}
+.bxt-title { font-size: 15px; }
+.bxt-title strong { font-weight: 700; }
+.bxt-sub { color: var(--fg-dim, #9aa1b2); margin-left: 6px; font-weight: 500; }
+.bxt-x {
+  background: none;
+  border: none;
+  color: var(--fg-dim, #9aa1b2);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.bxt-x:hover { background: var(--bg-3, rgba(255, 255, 255, 0.08)); color: var(--fg, #fff); }
+
+/* Toolbar */
+.bxt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--bd, rgba(255, 255, 255, 0.08));
+  flex-wrap: wrap;
+}
+.bxt-search {
+  flex: 1 1 220px;
+  min-width: 160px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--bd, rgba(255, 255, 255, 0.14));
+  background: var(--bg-0, #0e0f14);
+  color: var(--fg, #e8eaf0);
+  font-size: 13px;
+}
+.bxt-sortlbl, .bxt-bulk-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-dim, #9aa1b2);
+}
+.bxt-select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--bd, rgba(255, 255, 255, 0.14));
+  background: var(--bg-0, #0e0f14);
+  color: var(--fg, #e8eaf0);
+  font-size: 12px;
+}
+.bxt-count { font-size: 12px; color: var(--fg-dim, #9aa1b2); margin-left: auto; }
+
+/* Bulk bar */
+.bxt-bulk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--c-cyan-soft, rgba(45, 212, 191, 0.12));
+  border-bottom: 1px solid var(--bd, rgba(255, 255, 255, 0.08));
+  flex-wrap: wrap;
+}
+.bxt-bulk-count { font-size: 12px; font-weight: 700; color: var(--c-cyan, #2dd4bf); }
+.bxt-btn {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--c-cyan, #2dd4bf);
+  background: var(--c-cyan, #2dd4bf);
+  color: #04211d;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bxt-btn:hover { filter: brightness(1.08); }
+.bxt-btn.ghost {
+  background: transparent;
+  color: var(--fg-dim, #9aa1b2);
+  border-color: var(--bd, rgba(255, 255, 255, 0.18));
+}
+
+/* Table */
+.bxt-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bxt-body {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bxt-row {
+  display: grid;
+  grid-template-columns: 34px 22px 92px minmax(0, 1fr) 120px 250px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--bd, rgba(255, 255, 255, 0.06));
+  font-size: 13px;
+  /* Cheap windowing for hundreds of rows without a virtualization dep. */
+  content-visibility: auto;
+  contain-intrinsic-size: 30px;
+}
+.bxt-row--head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-2, #191c24);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim, #9aa1b2);
+  content-visibility: visible;
+}
+.bxt-row.is-sel { background: var(--c-cyan-soft, rgba(45, 212, 191, 0.1)); }
+.bxt-row:not(.bxt-row--head):hover { background: var(--bg-3, rgba(255, 255, 255, 0.04)); }
+
+.bxt-c-check { display: flex; justify-content: center; }
+.bxt-c-check input { accent-color: var(--c-cyan, #2dd4bf); width: 15px; height: 15px; }
+.bxt-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.bxt-c-id { font-family: var(--f-mono, ui-monospace, monospace); font-size: 12px; }
+.bxt-link {
+  background: none;
+  border: none;
+  color: var(--c-cyan, #2dd4bf);
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+.bxt-link:hover { text-decoration: underline; }
+.bxt-c-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bxt-muted, .bxt-c-title em { color: var(--fg-dim, #9aa1b2); font-style: italic; }
+.bxt-chip {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--bg-3, rgba(255, 255, 255, 0.08));
+  color: var(--fg-dim, #9aa1b2);
+  white-space: nowrap;
+}
+.bxt-c-series { overflow: hidden; }
+.bxt-c-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.bxt-act {
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--bd, rgba(255, 255, 255, 0.16));
+  background: transparent;
+  color: var(--fg, #e8eaf0);
+  font-size: 11px;
+  cursor: pointer;
+}
+.bxt-act:hover { background: var(--bg-3, rgba(255, 255, 255, 0.08)); }
+.bxt-act.danger { color: var(--c-red, #f87171); border-color: var(--c-red, #f87171); }
+.bxt-dup {
+  appearance: auto;
+  color: var(--c-cyan, #2dd4bf);
+  border-color: var(--c-cyan, #2dd4bf);
+  cursor: pointer;
+  max-width: 90px;
+}
+.bxt-empty { padding: 40px 16px; text-align: center; color: var(--fg-dim, #9aa1b2); }
+
+@media (max-width: 640px) {
+  .bxt-row { grid-template-columns: 30px 18px 70px minmax(0, 1fr) 190px; }
+  .bxt-c-series { display: none; }
+}

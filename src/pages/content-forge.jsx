@@ -19,8 +19,11 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase-client.js";
 import { useIsOwner } from "../lib/permissions.jsx";
+import { useWorkflow } from "../store/store.jsx";
+import { useRoster } from "../lib/roster.jsx";
 import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 import { footageFolderLabel } from "../lib/footage-brain-client.js";
+import { ForgeAnalytics } from "./forge-analytics.jsx";
 import "../content-forge.css";
 
 /* Virality tiers, best → worst. Order drives the filter pills + sort. */
@@ -202,8 +205,14 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
     }
     return got;
   });
+  const { actions } = useWorkflow();
+  const { peopleList } = useRoster();
+  // Editors that can own a new reel = non-reviewer, non-archived people.
+  const editors = useMemo(
+    () => (peopleList || []).filter(p => p && !p.archivedAt && p.role !== "reviewer"),
+    [peopleList]);
   const [selectedHook, setSelectedHook] = useState(null);
-  const [targetReelId, setTargetReelId] = useState(null);
+  const [targetOwner, setTargetOwner] = useState("paul");
   const [expanding, setExpanding] = useState(false);
   const [expandErr, setExpandErr] = useState(null);
   const [sending, setSending] = useState(false);
@@ -382,10 +391,16 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const canSend = selectedHook !== null && targetReelId !== null && !sending;
+  // Link state to this opportunity's pipeline reel (if any). A live link = the
+  // reel still exists and isn't archived; anything else means the card was
+  // deleted/archived and this hook can be RE-SENT (mints a fresh reel).
+  const linkedReel = opportunity.reel_id ? (reels || []).find(r => r.id === opportunity.reel_id) : null;
+  const isLinkedLive = !!(linkedReel && !linkedReel.archived_at);
+  const wasSent = !!opportunity.sent_to_pipeline_at;
+  const canSend = selectedHook !== null && !sending;
 
   const handleSend = useCallback(async () => {
-    if (selectedHook === null || targetReelId === null) return;
+    if (selectedHook === null) return;
     setSending(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -398,15 +413,24 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
         forged_by: user?.id ?? null,
         forged_at: new Date().toISOString(),
       };
-      const { error: reelErr } = await supabase.from("reels").update({ creative_brief: brief }).eq("id", targetReelId);
+      // Mint a BRAND-NEW pipeline reel in the chosen editor's Not-Started box.
+      // (Previously this UPDATE'd an existing reel you picked from a dropdown,
+      // which attached the hook instead of creating a new card.)
+      const newId = await actions.mintPipelineReel({
+        title: opportunity.title,
+        owner: targetOwner,
+        detail: { fromOpportunity: opportunity.id },
+      });
+      const { error: reelErr } = await supabase.from("reels").update({ creative_brief: brief }).eq("id", newId);
       if (reelErr) throw reelErr;
       await supabase.from("content_opportunities").update({
         selected_hook_version: selectedHook,
-        reel_id: targetReelId,
-        status: "attached",
+        reel_id: newId,
+        status: "sent",
         sent_to_pipeline_at: new Date().toISOString(),
       }).eq("id", opportunity.id);
-      showToast("Hook sent to the pipeline.");
+      const ownerName = editors.find(e => e.id === targetOwner)?.name || targetOwner;
+      showToast(`Created ${newId} in ${ownerName}'s Not Started.`);
       onSent?.();
       onClose();
     } catch (e) {
@@ -414,7 +438,7 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
     } finally {
       setSending(false);
     }
-  }, [selectedHook, targetReelId, hookText, opportunity.id, onClose, onSent, showToast]);
+  }, [selectedHook, targetOwner, hookText, opportunity.id, opportunity.title, actions, editors, onClose, onSent, showToast]);
 
   const wc = scriptJson?.text ? wordCount(scriptJson.text) : 0;
   const showTabs = isVetted || hasRun || !!scriptJson;
@@ -666,18 +690,24 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
               </button>
             )}
             <span className="cf-foot-spacer" />
-            <label htmlFor="cf-reel-target">Target reel</label>
+            {isLinkedLive ? (
+              <span className="cf-sent-badge" title={"Already in the pipeline as " + opportunity.reel_id}>
+                ✓ In pipeline · {opportunity.reel_id}
+              </span>
+            ) : wasSent ? (
+              <span className="cf-resent-badge" title="The pipeline card was deleted or archived — re-send to create a fresh reel.">
+                ↺ Card removed — re-send
+              </span>
+            ) : null}
+            <label htmlFor="cf-reel-owner">Editor</label>
             <select
-              id="cf-reel-target"
+              id="cf-reel-owner"
               className="cf-select"
-              value={targetReelId ?? ""}
-              onChange={(e) => setTargetReelId(e.target.value || null)}
+              value={targetOwner}
+              onChange={(e) => setTargetOwner(e.target.value)}
             >
-              <option value="">Pick a reel…</option>
-              {reels.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.id}{r.title ? ` · ${r.title}` : ""}
-                </option>
+              {editors.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
             <button
@@ -687,11 +717,13 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
               onClick={handleSend}
               title={
                 selectedHook === null ? "Select a hook first"
-                  : targetReelId === null ? "Pick a target reel first"
-                  : "Attach this hook to the reel"
+                  : `Create a new reel in ${editors.find(e => e.id === targetOwner)?.name || targetOwner}'s Not Started`
               }
             >
-              {sending ? "Sending…" : "Send to Pipeline →"}
+              {sending ? "Creating…"
+                : isLinkedLive ? "Send again →"
+                : wasSent ? "Re-send →"
+                : "Create reel in Not Started →"}
             </button>
           </div>
         )}
@@ -721,6 +753,8 @@ export function ContentForge() {
   const [favOnly, setFavOnly] = useState(false);            // ★ filter — favorites only
   const [colorSel, setColorSel] = useState(() => new Set()); // empty = all colors
   const [q, setQ] = useState("");                           // free-text title/hook search
+  const [showAnalytics, setShowAnalytics] = useState(false); // Opportunities ↔ Analytics view (client-side, no fetch)
+  const [showArchived, setShowArchived] = useState(false);   // archived-only drawer (ingested titles are never deleted)
 
   // Library coverage tracker — per-folder discovery progress + yield (titles/hooks).
   // Loaded on demand (paginates transcript_clips, 13k+ rows) so the main list isn't slowed.
@@ -778,6 +812,22 @@ export function ContentForge() {
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  // Read the Content Forge kill-switch / daily-limit state from the same proxy the
+  // Monitor budgets card uses (the backend computes `blocked` authoritatively).
+  // Best-effort — leaves cfBudget null (banner hidden) on any failure. Declared here,
+  // above remineFolder/handleDiscover, whose dep arrays reference it (a later
+  // declaration would TDZ-crash the whole page on mount).
+  const loadBudgetState = useCallback(async () => {
+    try {
+      const r = await fetch("/api/monitor/status?action=forge-usage");
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.ok && d.budget) setCfBudget(d.budget);
+    } catch {
+      /* non-fatal — the banner just stays hidden */
+    }
   }, []);
 
   const loadOpps = useCallback(async () => {
@@ -973,11 +1023,26 @@ export function ContentForge() {
     if (err) { showToast(`Color failed: ${err.message}`); loadOpps(); }
   }, [showToast, loadOpps]);
 
+  // Archive / restore an opportunity. Archiving NEVER deletes the ingested
+  // title/hook — it just tucks the row into the "Show archived" drawer so the
+  // list stays tidy and the hook can always be recovered + re-sent. Optimistic
+  // with rollback (mirrors setVet).
+  const setArchived = useCallback(async (o, archived) => {
+    const stamp = archived ? new Date().toISOString() : null;
+    setOpps((prev) => prev.map((x) => (x.id === o.id ? { ...x, archived_at: stamp } : x)));
+    const { error: err } = await supabase
+      .from("content_opportunities")
+      .update({ archived_at: stamp })
+      .eq("id", o.id);
+    if (err) { showToast(`${archived ? "Archive" : "Restore"} failed: ${err.message}`); loadOpps(); }
+    else showToast(archived ? "Archived — find it under “Show archived”." : "Restored.");
+  }, [showToast, loadOpps]);
+
   const loadReels = useCallback(async () => {
     try {
       const { data } = await supabase
         .from("reels")
-        .select("id, title")
+        .select("id, title, archived_at")
         .order("created_at", { ascending: false })
         .limit(500);
       setReels(data || []);
@@ -999,20 +1064,6 @@ export function ContentForge() {
       setClipCount(typeof count === "number" ? count : 0);
     } catch {
       /* leave clipCount as-is (unknown) — don't block Discover on a read blip */
-    }
-  }, []);
-
-  // Read the Content Forge kill-switch / daily-limit state from the same proxy the
-  // Monitor budgets card uses (the backend computes `blocked` authoritatively).
-  // Best-effort — leaves cfBudget null (banner hidden) on any failure.
-  const loadBudgetState = useCallback(async () => {
-    try {
-      const r = await fetch("/api/monitor/status?action=forge-usage");
-      if (!r.ok) return;
-      const d = await r.json();
-      if (d && d.ok && d.budget) setCfBudget(d.budget);
-    } catch {
-      /* non-fatal — the banner just stays hidden */
     }
   }, []);
 
@@ -1135,6 +1186,9 @@ export function ContentForge() {
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return opps.filter((o) => {
+      // Archived rows live in their own drawer — ingested titles are never
+      // deleted, only archived, so they stay recoverable via "Show archived".
+      if (showArchived ? !o.archived_at : !!o.archived_at) return false;
       if (vetView !== "all" && vetOf(o) !== vetView) return false;
       if (tierSel.size > 0 && !tierSel.has(String(o.virality_tier || "C").toUpperCase())) return false;
       if (country !== "all" && o.country !== country) return false;
@@ -1150,7 +1204,7 @@ export function ContentForge() {
       }
       return true;
     });
-  }, [opps, vetView, tierSel, country, favOnly, colorSel, q]);
+  }, [opps, showArchived, vetView, tierSel, country, favOnly, colorSel, q]);
 
   // Counts for the segmented control + header (cheap; over already-loaded rows).
   const vetCounts = useMemo(() => {
@@ -1291,6 +1345,12 @@ export function ContentForge() {
                 ✦ {hookCount(o) > 0 ? `${hookCount(o)} hook${hookCount(o) === 1 ? "" : "s"}` : "expanded"}
               </span>
             )}
+            {(() => {
+              const live = o.reel_id && reels.some((r) => r.id === o.reel_id && !r.archived_at);
+              if (live) return <span className="cf-sent-badge" title={"In pipeline as " + o.reel_id}>✓ {o.reel_id}</span>;
+              if (o.sent_to_pipeline_at) return <span className="cf-resent-badge" title="The pipeline card was deleted/archived — open to re-send.">↺ removed</span>;
+              return null;
+            })()}
             <div className="cf-vet-btns" onClick={(e) => e.stopPropagation()}>
               <button
                 type="button"
@@ -1308,12 +1368,31 @@ export function ContentForge() {
               >
                 ✕
               </button>
+              {o.archived_at ? (
+                <button
+                  type="button"
+                  className="cf-vet-btn"
+                  onClick={() => setArchived(o, false)}
+                  title="Restore from archive"
+                >
+                  ↩
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="cf-vet-btn"
+                  onClick={() => setArchived(o, true)}
+                  title="Archive (never deletes the title — recoverable under “Show archived”)"
+                >
+                  ⧉
+                </button>
+              )}
             </div>
           </div>
         </td>
       </tr>
     );
-  }, [setVet, toggleFavorite, setColor, colorPickFor]);
+  }, [setVet, toggleFavorite, setColor, colorPickFor, reels, setArchived]);
 
   // Column header row — shared markup for the flat + folder tables.
   const headRow = (
@@ -1571,6 +1650,23 @@ export function ContentForge() {
             {expandedCount} expanded
           </span>
         )}
+        <div className="cf-view-toggle" role="group" aria-label="View">
+          <button
+            type="button"
+            className={"cf-view-btn" + (!showAnalytics ? " active" : "")}
+            onClick={() => setShowAnalytics(false)}
+          >
+            Opportunities
+          </button>
+          <button
+            type="button"
+            className={"cf-view-btn" + (showAnalytics ? " active" : "")}
+            onClick={() => setShowAnalytics(true)}
+            title="Client-side analytics over the loaded opportunities — tier split, theme→quality, country volume vs quality. No LLM, no extra queries."
+          >
+            📈 Analytics
+          </button>
+        </div>
         {isBlockedSync("content_forge") && (
           <span
             className="cf-gate-warn"
@@ -1778,6 +1874,10 @@ export function ContentForge() {
         </div>
       )}
 
+      {showAnalytics && <ForgeAnalytics opps={opps} loading={loading} />}
+
+      {!showAnalytics && (
+        <>
       {showCoverage && (
         <div className="cf-coverage">
           <div className="cf-coverage-head">
@@ -1887,6 +1987,15 @@ export function ContentForge() {
           aria-pressed={favOnly}
         >
           {favOnly ? "★ Favorites" : "☆ Favorites"}
+        </button>
+        <button
+          type="button"
+          className={"cf-pill" + (showArchived ? " on" : "")}
+          onClick={() => setShowArchived((v) => !v)}
+          title="Archived opportunities are never deleted — toggle to view + restore them"
+          aria-pressed={showArchived}
+        >
+          {showArchived ? "⧉ Archived" : "⧉ Show archived"}
         </button>
         <div className="cf-color-filter" role="group" aria-label="Filter by color">
           <span className="cf-filter-label">Color</span>
@@ -1998,6 +2107,8 @@ export function ContentForge() {
             );
           })}
         </div>
+      )}
+        </>
       )}
 
       {openOpp && (

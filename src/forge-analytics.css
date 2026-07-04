@@ -1,0 +1,257 @@
+/* Content Forge — Analytics view styles.
+
+   Built entirely on the app's existing design tokens (--color-*, --cf-gold) so it
+   inherits light / dark / Solarin automatically. No new literal palette — tier
+   colors reuse the same S/A/B/C hues as the opportunity badges, and the
+   above/below-baseline coloring reuses the S-tier gold vs muted grey. */
+
+/* Header view toggle (Opportunities ↔ Analytics) — lives in the Content Forge
+   header, so styled here since forge-analytics.css is always loaded with it. */
+.cf-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-border, #2a2a2a) 30%, transparent);
+}
+.cf-view-btn {
+  border: 0;
+  background: transparent;
+  color: var(--color-muted, #999);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 3px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.cf-view-btn:hover { color: var(--color-fg, #eee); }
+.cf-view-btn.active {
+  background: var(--color-surface, #161616);
+  color: var(--color-fg, #eee);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.fa-root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.fa-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--color-muted, #888);
+  font-size: 0.95rem;
+}
+.fa-empty.sm { padding: 20px; font-size: 0.85rem; }
+
+/* Thesis banner ------------------------------------------------------------ */
+.fa-thesis {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 18px;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-left: 3px solid var(--cf-gold, #e8b923);
+  border-radius: 12px;
+  background:
+    linear-gradient(100deg,
+      color-mix(in srgb, var(--cf-gold, #e8b923) 12%, var(--color-surface, #161616)) 0%,
+      var(--color-surface, #161616) 62%);
+}
+.fa-thesis-big {
+  font-family: var(--f-mono, ui-monospace, "Cascadia Mono", Menlo, monospace);
+  font-size: clamp(26px, 5vw, 40px);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--cf-gold, #e8b923);
+  white-space: nowrap;
+}
+.fa-thesis-big span { font-size: 0.45em; margin-left: 2px; }
+.fa-thesis-txt { font-size: 0.9rem; color: var(--color-muted, #999); line-height: 1.5; }
+.fa-thesis-txt strong { color: var(--color-fg, #eee); }
+
+/* KPI row ------------------------------------------------------------------ */
+.fa-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+}
+.fa-kpi {
+  padding: 12px 13px;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: 10px;
+  background: var(--color-surface, #161616);
+}
+.fa-k-label {
+  font-family: var(--f-mono, ui-monospace, Menlo, monospace);
+  font-size: 0.62rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-muted, #888);
+}
+.fa-k-val {
+  font-size: clamp(1.15rem, 2.2vw, 1.55rem);
+  font-weight: 700;
+  line-height: 1.05;
+  margin-top: 5px;
+  color: var(--color-fg, #eee);
+  font-variant-numeric: tabular-nums;
+}
+.fa-k-val .fa-unit { font-size: 0.62em; font-weight: 500; color: var(--color-muted, #888); margin-left: 1px; }
+.fa-k-note { font-size: 0.68rem; color: var(--color-muted, #888); margin-top: 4px; }
+
+/* Panels ------------------------------------------------------------------- */
+.fa-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.fa-panel {
+  padding: 16px 18px 18px;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: 12px;
+  background: var(--color-surface, #161616);
+}
+.fa-panel-head { margin-bottom: 14px; }
+.fa-panel-head h3 { margin: 0 0 2px; font-size: 0.98rem; color: var(--color-fg, #eee); }
+.fa-cap { font-size: 0.76rem; color: var(--color-muted, #888); line-height: 1.4; }
+.fa-note {
+  margin-top: 12px;
+  font-size: 0.72rem;
+  color: var(--color-muted, #888);
+  line-height: 1.45;
+  border-top: 1px dashed var(--color-border, #2a2a2a);
+  padding-top: 9px;
+}
+
+/* Bar plot ----------------------------------------------------------------- */
+.fa-plot {
+  --fa-labelw: 116px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fa-row {
+  display: grid;
+  grid-template-columns: var(--fa-labelw) 1fr;
+  align-items: center;
+  gap: 0;
+}
+.fa-name {
+  font-size: 0.8rem;
+  color: var(--color-fg, #eee);
+  text-align: right;
+  padding-right: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.15;
+}
+.fa-name .fa-sub {
+  display: block;
+  font-family: var(--f-mono, ui-monospace, Menlo, monospace);
+  font-size: 0.64rem;
+  color: var(--color-muted, #888);
+}
+.fa-track {
+  position: relative;
+  height: 24px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-border, #2a2a2a) 55%, transparent);
+  overflow: hidden;
+}
+.fa-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 5px;
+  min-width: 3px;
+}
+.fa-fill.up { background: var(--cf-gold, #e8b923); }
+.fa-fill.down { background: var(--color-muted, #8a8a8a); opacity: 0.72; }
+.fa-val {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  font-family: var(--f-mono, ui-monospace, Menlo, monospace);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-fg, #eee);
+  font-variant-numeric: tabular-nums;
+  z-index: 2;
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--color-surface, #161616) 80%, transparent);
+}
+
+/* baseline marker */
+.fa-baseline {
+  position: absolute;
+  top: 14px;
+  bottom: 0;
+  width: 0;
+  border-left: 1.5px dashed var(--color-fg, #ddd);
+  opacity: 0.55;
+  z-index: 3;
+  pointer-events: none;
+}
+.fa-baseline-lab {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--f-mono, ui-monospace, Menlo, monospace);
+  font-size: 0.6rem;
+  color: var(--color-muted, #999);
+  white-space: nowrap;
+}
+
+/* Tier stacked bar --------------------------------------------------------- */
+.fa-tierbar {
+  display: flex;
+  height: 42px;
+  gap: 2px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.fa-seg {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  font-family: var(--f-mono, ui-monospace, Menlo, monospace);
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: #14110022;
+}
+.fa-seg small { position: absolute; bottom: 2px; right: 5px; font-size: 0.56rem; font-weight: 500; opacity: 0.8; }
+.fa-seg-s { background: var(--cf-gold, #e8b923); color: #1a1400; }
+.fa-seg-a { background: var(--color-accent, #6bd6e0); color: var(--color-bg, #0e0e0e); }
+.fa-seg-b { background: var(--color-blue, #5b8def); color: #fff; }
+.fa-seg-c { background: var(--color-muted, #888); color: #fff; }
+
+.fa-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  font-size: 0.74rem;
+  color: var(--color-muted, #999);
+}
+.fa-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.fa-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+@media (max-width: 900px) {
+  .fa-kpis { grid-template-columns: repeat(3, 1fr); }
+  .fa-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .fa-kpis { grid-template-columns: repeat(2, 1fr); }
+  .fa-plot { --fa-labelw: 92px; }
+  .fa-thesis { grid-template-columns: 1fr; gap: 8px; }
+}

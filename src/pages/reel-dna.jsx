@@ -964,18 +964,29 @@ export function DnaTable({ items, now, actions, onView, onDeconstruct, onSend, o
                     {onOpenCard && (
                       <button className="rd-row-btn rd-row-btn--open" title="Open the full card to add assets" onClick={() => onOpenCard(item)}>⤢ Card</button>
                     )}
-                    {item.reelId ? (
-                      <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                        <span className="rd-row-btn rd-row-btn--linked" title={"In pipeline · " + item.reelId}>▸ {item.reelId}</span>
-                        {onBack && (
-                          <button className="rd-row-btn rd-row-btn--back"
-                                  title="Pull everything (assets + notes) back to Reel DNA and free this card to send again"
-                                  onClick={() => onBack(item)}>↩ DNA</button>
-                        )}
-                      </span>
-                    ) : (
-                      <button className="rd-row-btn rd-row-btn--send" title="Create a pipeline reel from this card" onClick={() => onSend(item)}>→ Pipeline</button>
-                    )}
+                    {(() => {
+                      // A live link = the pipeline reel still exists and isn't
+                      // archived. If the card was deleted the FK nulls reelId
+                      // (falls through to "→ Pipeline"); if it was ARCHIVED the
+                      // reelId lingers, so offer "↻ Re-send" (mints a fresh reel).
+                      const linkedLive = item.reelId && (reels || []).some(r => r.id === item.reelId && !r.archivedAt);
+                      if (item.reelId && linkedLive) return (
+                        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                          <span className="rd-row-btn rd-row-btn--linked" title={"In pipeline · " + item.reelId}>▸ {item.reelId}</span>
+                          {onBack && (
+                            <button className="rd-row-btn rd-row-btn--back"
+                                    title="Pull everything (assets + notes) back to Reel DNA and free this card to send again"
+                                    onClick={() => onBack(item)}>↩ DNA</button>
+                          )}
+                        </span>
+                      );
+                      if (item.reelId) return (
+                        <button className="rd-row-btn rd-row-btn--send" title="The pipeline card was archived/removed — re-send to create a fresh reel" onClick={() => onSend(item)}>↻ Re-send</button>
+                      );
+                      return (
+                        <button className="rd-row-btn rd-row-btn--send" title="Create a pipeline reel from this card" onClick={() => onSend(item)}>→ Pipeline</button>
+                      );
+                    })()}
                     {item.archivedAt ? (
                       <button className="rd-row-btn rd-row-btn--restore" title="Restore to Live" onClick={() => actions.restoreReelDna(item.id)}>↩</button>
                     ) : (
@@ -1023,7 +1034,7 @@ function AssetsPageContainer({ item, onBack, isOwner, actions }) {
 
 /* ---------- Page ---------- */
 export function ReelDna({ prefill }) {
-  const { reelDna, reelDnaAssets, actions, error, igSyncRuns, igIngestLog } = useWorkflow();
+  const { reelDna, reelDnaAssets, reels, actions, error, igSyncRuns, igIngestLog } = useWorkflow();
   const { actions: locationActions } = useLocations();
   const { peopleList } = useRoster();
   const { person: me } = useAuth();
@@ -1144,7 +1155,9 @@ export function ReelDna({ prefill }) {
   // migrate the card's location pins onto it (footage + news migrate inside the
   // store action). Returns the new reel id (links the card via reel_id).
   const sendOne = (item, ownerId) => {
-    const newId = actions.sendReelDnaToPipeline(item.id, { owner: ownerId });
+    // force when a stale reelId lingers (card was archived) so we mint a fresh
+    // reel instead of no-opping; fresh cards (no reelId) send normally.
+    const newId = actions.sendReelDnaToPipeline(item.id, { owner: ownerId, force: !!item.reelId });
     if (newId && typeof locationActions?.linkReel === "function") {
       const locLinks = (reelDnaAssets || []).filter(
         a => a && a.reelDnaId === item.id && a.assetType === "location"
@@ -1158,7 +1171,10 @@ export function ReelDna({ prefill }) {
   // straight to `me`). Pre-selects the current user so a one-click Send still
   // sends to self. Already-linked cards short-circuit.
   const openSendPicker = (item) => {
-    if (item.reelId) { setNotice({ tone: "ok", text: `Already in the pipeline as ${item.reelId}.` }); return; }
+    // Block only when the linked reel is still LIVE. If it was archived/deleted
+    // (stale reelId), fall through so the card can be re-sent to a fresh reel.
+    const linkedLive = item.reelId && (reels || []).some(r => r.id === item.reelId && !r.archivedAt);
+    if (linkedLive) { setNotice({ tone: "ok", text: `Already in the pipeline as ${item.reelId}.` }); return; }
     setSendSel(me?.id ? [me.id] : []);
     setSendItem(item);
   };

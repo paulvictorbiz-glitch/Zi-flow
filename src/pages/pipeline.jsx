@@ -4,6 +4,7 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { DPill, ReelCard } from "../components/components.jsx";
+import BoxTable from "../components/box-table.jsx";
 import PipelineGraph from "./pipeline-graph.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
@@ -105,6 +106,9 @@ function Pipeline({ onOpen }) {
   const [lanesMenuOpen, setLanesMenuOpen] = useState(false);
   const lanesMenuRef = useRef(null);
   const [laneCtxMenu, setLaneCtxMenu] = useState(null);
+  /* Full-screen dense-table overlay for one box (lane × stage). Built for
+     boxes with hundreds of reels (bulk triage). { laneId, laneName, stageKey } */
+  const [expandBox, setExpandBox] = useState(null);
 
   useEffect(() => {
     localStorage.setItem("pipeline_hidden_lanes", JSON.stringify([...hiddenLanes]));
@@ -519,6 +523,7 @@ function Pipeline({ onOpen }) {
                     (cardView !== "list" ? " cell--" + cardView : "")
                   }
                   key={stage.key}
+                  style={{ position: "relative" }}
                   onDragOver={e => {
                     if (!dragging) return;
                     /* No move capability → never show a drop target. */
@@ -536,7 +541,31 @@ function Pipeline({ onOpen }) {
                     handleDrop(lane.id, stage.key);
                   }}
                 >
-                  {reels.map((r, idx) => {
+                  {/* A busy box (hundreds of reels) sprawls the cell and stretches
+                      the whole grid row, so collapse it to a single clickable count
+                      tile — the dense table opens on click. Small boxes keep cards. */}
+                  {reels.length >= 6 ? (
+                    <button
+                      type="button"
+                      className="pl-box-collapsed"
+                      title={`Open ${reels.length} reels in a dense table`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandBox({ laneId: lane.id, laneName: lane.name, stageKey: stage.key });
+                      }}
+                      style={{
+                        display: "flex", flexDirection: "column", alignItems: "center",
+                        justifyContent: "center", gap: 2, width: "100%", minHeight: 66,
+                        padding: "10px 8px", cursor: "pointer", borderRadius: 8,
+                        border: "1px dashed var(--bd, rgba(255,255,255,0.2))",
+                        background: "var(--bg-2, rgba(20,22,28,0.6))",
+                        color: "var(--c-cyan, #2dd4bf)",
+                      }}
+                    >
+                      <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{reels.length}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.85 }}>reels · ⤢ open</span>
+                    </button>
+                  ) : reels.map((r, idx) => {
                     const isSelected = selectedIds.has(r.id);
                     const groupActive = isSelected && selectedIds.size > 1;
                     const isThisDrag = dragging && dragging.id === r.id;
@@ -624,6 +653,24 @@ function Pipeline({ onOpen }) {
             Hide this lane
           </button>
         </div>
+      )}
+
+      {/* Dense-table overlay for one box (bulk triage of hundreds of reels).
+          Reels are read live from `cells` so moves/archives update the list. */}
+      {expandBox && (
+        <BoxTable
+          laneName={expandBox.laneName}
+          stageLabel={STAGE_LABEL[expandBox.stageKey] || expandBox.stageKey}
+          stageKey={expandBox.stageKey}
+          reels={cells[expandBox.laneId + "::" + expandBox.stageKey] || []}
+          peopleList={peopleList}
+          actions={actions}
+          canArchive={can("archiveReel")}
+          canDelete={can("deleteReel")}
+          canCreate={can("createReel")}
+          onClose={() => setExpandBox(null)}
+          onOpenReel={(r) => handleCardClick(r, {})}
+        />
       )}
 
       {/* Floating multi-select chip — appears whenever any cards

@@ -3906,11 +3906,13 @@ function WorkflowProvider({ children }) {
          reelDnaToPipelineFields), link it back via reel_id, and flip the card to
          in_progress. Returns the new reel id. Idempotent: a card already linked
          to a reel returns that id without creating a duplicate. */
-      sendReelDnaToPipeline: (id, { owner } = {}) => {
+      sendReelDnaToPipeline: (id, { owner, force } = {}) => {
         const cur = stateRef.current;
         const card = (cur.reelDna || []).find(d => d.id === id);
         if (!card) throw new Error("Reel not found");
-        if (card.reelId) return card.reelId;   // already in the pipeline
+        // Already linked → no-op, UNLESS force (re-send after the linked reel was
+        // deleted/archived): force mints a fresh reel and overwrites card.reelId.
+        if (card.reelId && !force) return card.reelId;
 
         const who = owner || card.capturedBy || "paul";
         const newId = nextReelId(cur.reels);
@@ -4028,6 +4030,39 @@ function WorkflowProvider({ children }) {
 
           // 4) Thumbnails → SKIP (display-only via the pipeline detail boxes, 6b).
         })();
+        return newId;
+      },
+
+      /* Mint a brand-new pipeline reel into an editor's Not-Started box and
+         return its new REEL-NNN id. Used by Content Forge's "Send to Pipeline"
+         so each send CREATES a fresh reel (matching sendReelDnaToPipeline)
+         instead of attaching to an existing one. The caller owns any follow-up
+         writes keyed on the returned id (e.g. reels.creative_brief, which the
+         reelToDb mapper does not carry, and content_opportunities.reel_id). */
+      mintPipelineReel: async ({ title, owner, detail } = {}) => {
+        const cur = stateRef.current;
+        const who = owner || "paul";
+        const newId = nextReelId(cur.reels);
+        const reel = {
+          id: newId,
+          displayNumber: parseInt(newId.slice(5), 10),
+          title: title || "Untitled",
+          stage: "not_started",
+          owner: who,
+          lane: who,
+          state: "ok",
+          age: "just now",
+          due: null,
+          stageEnteredAt: new Date().toISOString(),
+          grouping: "not_started",
+          detail: { ...(detail || {}) },
+        };
+        // Optimistic first, then AWAIT the insert so the row exists before the
+        // caller writes any follow-up column keyed on newId (e.g. creative_brief,
+        // which the reelToDb mapper doesn't carry) — otherwise that UPDATE would
+        // race the INSERT and silently match zero rows.
+        dispatch({ type: "CREATE_REEL", reel });
+        await persistCreateReel(reel);
         return newId;
       },
 
