@@ -1166,6 +1166,9 @@ function App() {
   // Root path "/" is the fully public landing page (no auth). Anything else
   // (e.g. "/app") renders the existing authed tree exactly as before.
   const isLanding = window.location.pathname === "/";
+  // "/landing" is the old Reel DNA marketing landing — kept reachable for the
+  // portfolio's "Book a call" CTA to link back to.
+  const isOldLanding = window.location.pathname === "/landing";
   // "/space" swaps AppShell for the 3D cube inside the same authed tree.
   const isSpace = window.location.pathname === "/space";
 
@@ -1179,6 +1182,17 @@ function App() {
           }
         >
           <PortfolioFront onEnterApp={onEnterApp} />
+        </React.Suspense>
+      </AppErrorBoundary>
+    );
+  }
+
+  if (isOldLanding) {
+    const onEnterApp = () => window.location.assign("/app");
+    return (
+      <AppErrorBoundary>
+        <React.Suspense fallback={<div style={{ minHeight: "100vh" }} />}>
+          <Landing onEnterApp={onEnterApp} />
         </React.Suspense>
       </AppErrorBoundary>
     );
