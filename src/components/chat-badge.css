@@ -1,0 +1,20 @@
+/* Additive only — src/styles.css stays edit-locked. Supersedes the old
+   `.unread-dot` usage in ReelCard (styles.css) for the merged badge. */
+.chat-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--f-mono, monospace);
+  font-size: 10.5px;
+  color: var(--fg-mute);
+}
+.chat-badge__dot {
+  position: absolute;
+  top: -3px;
+  right: -6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c-amber, #f5a524);
+}

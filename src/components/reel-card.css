@@ -1,0 +1,53 @@
+/* Additive-only wrapper classes for the redesigned ReelCard (pipeline board).
+   src/styles.css keeps .reel/.head/.foot/.id/.title/.note authoritative for
+   any other consumer; these are NEW classes only used by ReelCard's new
+   primary/secondary/tertiary grouping in components.jsx. */
+
+.reel-card-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reel-card-primary__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Let the title shrink/wrap inside the flex row instead of forcing the
+   card wider (flex items don't shrink below their content size by default). */
+.reel-card-primary__top .title {
+  min-width: 0;
+  flex: 1;
+}
+
+.reel-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--fg-mute);
+}
+
+.reel-card-id {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--fg-dim, var(--fg-mute));
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.reel-note-flag {
+  cursor: default;
+  opacity: 0.75;
+  font-size: 11px;
+}
+
+/* Compact grid tile: keep the (already minimal) header tight. */
+.reel.reel--compact .reel-card-primary__top {
+  gap: 4px;
+}

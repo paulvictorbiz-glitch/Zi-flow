@@ -8,11 +8,14 @@ import { useNow, formatAge } from "../lib/time.jsx";
 import { useAnchoredPosition } from "../lib/use-anchored-position.js";
 import { useWorkflow, resolveReelDnaAssets } from "../store/store.jsx";
 import { footageBrainThumbnailUrl } from "../lib/footage-brain-client.js";
+import { thumbnailUrlFromId } from "../lib/thumbnail-dna.jsx";
 import { ImagesBadge } from "./images-badge.jsx";
+import { ChatBadge } from "./chat-badge.jsx";
 import { useNotifications } from "./notifications.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
+import "./reel-card.css";
 
 /* ---------- Status pill ---------- */
 function Pill({ tone, dashed, children }) {
@@ -223,7 +226,13 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
       thumbnailDna: thumbnailDna || [],
     });
     for (const t of resolved.thumbnails) {
-      if (t && t.thumbnailUrl) imgs.push({ src: t.thumbnailUrl, alt: t.quickNotes || "thumbnail" });
+      if (t && t.thumbnailUrl) {
+        // YouTube thumbnails cache as hqdefault (480×360) — upgrade to
+        // maxresdefault (1280×720) for a sharp pop-out, falling back to the
+        // stored URL if maxres doesn't exist for that video.
+        const hi = t.videoId ? thumbnailUrlFromId(t.videoId, "maxresdefault") : null;
+        imgs.push({ src: hi || t.thumbnailUrl, fallback: hi ? t.thumbnailUrl : undefined, alt: t.quickNotes || "thumbnail" });
+      }
     }
     return imgs;
   }, [reel.id, reel.reelDnaId, reel.detail, reelDnaAssets, thumbnailDna, attachedFootage]);
@@ -342,27 +351,8 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
          stylesheet rule — styles.css is edit-locked). */
       style={menuOpen && compact ? { ...cardStyle, overflow: "visible", zIndex: 5 } : cardStyle}
     >
-      <div className="head">
-        <div>
-          {!collapsed && !compact && (
-            <div className="id">
-              {reel.id}
-              {unreadCount > 0 && (
-                <span className="unread-dot"
-                      title={unreadCount + " unread comment" + (unreadCount === 1 ? "" : "s")}>
-                  {unreadCount}
-                </span>
-              )}
-              {chatRefs.length > 0 && (
-                <span className="unread-dot"
-                      title={"Discussed in team chat — open the latest conversation"}
-                      style={{ cursor: "pointer" }}
-                      onClick={e => openChatRef(e, chatRefs[0])}>
-                  💬 {chatRefs.length}
-                </span>
-              )}
-            </div>
-          )}
+      <div className="reel-card-primary">
+        <div className="reel-card-primary__top">
           <div className="title">
             {reel.mediaPath && (
               <span
@@ -372,83 +362,97 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
             )}
             {reel.title}
           </div>
-          {!collapsed && !compact && reel.series && (
-            <div className="reel-series" title={"Series: " + reel.series}>
-              ⛓ {reel.series}
-            </div>
+          {!collapsed && !compact && pillText && <Pill tone={pillTone}>{pillText}</Pill>}
+          {showMenu && (
+            <button
+              ref={menuBtnRef}
+              className="reel-menu-btn"
+              onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
+              aria-label="Card actions"
+              /* Hover-reveal is unreliable on dense grid tiles or collapsed cards
+                 (tiny target) — keep the kebab always visible in those cases. */
+              style={(compact || collapsed) ? { opacity: 1 } : undefined}
+            >⋯</button>
           )}
-          {!collapsed && !compact && reel.stage === "posted" && reel.scheduledPostDate && (
-            <div className="mono dim reel-duedate" style={{ fontSize: 10, marginTop: 2 }}
-                 title="Scheduled post date">
-              📅 {reel.scheduledPostDate}
-            </div>
+          {showMenu && menuOpen && menuPos && createPortal(
+            <div
+              ref={menuRef}
+              className="reel-menu"
+              onClick={e => e.stopPropagation()}
+              /* Portaled to <body>; fixed coords from the kebab rect so it
+                 can't be clipped by the card or painted under sibling cards.
+                 z-index 85 keeps it above every card (≤80) but below the
+                 modal backdrop (90) — so the Rocket.Chat recording-picker
+                 modal still covers it cleanly. */
+              style={{
+                position: "fixed",
+                left: menuPos.left,
+                ...(menuPos.top != null ? { top: menuPos.top } : { bottom: menuPos.bottom }),
+                right: "auto",
+                marginTop: 0,
+                maxHeight: menuPos.maxHeight,
+                overflowY: "auto",
+                zIndex: 85,
+              }}
+            >
+              {showDupePicker ? (<>
+                <div style={{ padding:"5px 10px 3px", fontFamily:"var(--f-mono)", fontSize:10, color:"var(--fg-dim,#888)", textTransform:"uppercase", letterSpacing:".06em" }}>Duplicate for:</div>
+                {(peopleList || []).filter(p => !p.archivedAt).map(p => (
+                  <div key={p.id} className="reel-menu-opt" onClick={() => onDuplicateFor(p)}>
+                    {p.short || (p.name || "").split(" ")[0] || p.id}
+                  </div>
+                ))}
+                <div className="reel-menu-opt" style={{ opacity:.6, fontSize:11 }} onClick={() => setShowDupePicker(false)}>← Back</div>
+              </>) : (<>
+                {canArchive && <div className="reel-menu-opt" onClick={onArchive}>Archive</div>}
+                {canDelete && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
+                {canCreate && <div className="reel-menu-opt" onClick={() => setShowDupePicker(true)}>Duplicate →</div>}
+              </>)}
+            </div>,
+            document.body
           )}
         </div>
-        {!collapsed && !compact && pillText && <Pill tone={pillTone}>{pillText}</Pill>}
-        {showMenu && (
-          <button
-            ref={menuBtnRef}
-            className="reel-menu-btn"
-            onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
-            aria-label="Card actions"
-            /* Hover-reveal is unreliable on dense grid tiles or collapsed cards
-               (tiny target) — keep the kebab always visible in those cases. */
-            style={(compact || collapsed) ? { opacity: 1 } : undefined}
-          >⋯</button>
-        )}
-        {showMenu && menuOpen && menuPos && createPortal(
-          <div
-            ref={menuRef}
-            className="reel-menu"
-            onClick={e => e.stopPropagation()}
-            /* Portaled to <body>; fixed coords from the kebab rect so it
-               can't be clipped by the card or painted under sibling cards.
-               z-index 85 keeps it above every card (≤80) but below the
-               modal backdrop (90) — so the Rocket.Chat recording-picker
-               modal still covers it cleanly. */
-            style={{
-              position: "fixed",
-              left: menuPos.left,
-              ...(menuPos.top != null ? { top: menuPos.top } : { bottom: menuPos.bottom }),
-              right: "auto",
-              marginTop: 0,
-              maxHeight: menuPos.maxHeight,
-              overflowY: "auto",
-              zIndex: 85,
-            }}
-          >
-            {showDupePicker ? (<>
-              <div style={{ padding:"5px 10px 3px", fontFamily:"var(--f-mono)", fontSize:10, color:"var(--fg-dim,#888)", textTransform:"uppercase", letterSpacing:".06em" }}>Duplicate for:</div>
-              {(peopleList || []).filter(p => !p.archivedAt).map(p => (
-                <div key={p.id} className="reel-menu-opt" onClick={() => onDuplicateFor(p)}>
-                  {p.short || (p.name || "").split(" ")[0] || p.id}
-                </div>
-              ))}
-              <div className="reel-menu-opt" style={{ opacity:.6, fontSize:11 }} onClick={() => setShowDupePicker(false)}>← Back</div>
-            </>) : (<>
-              {canArchive && <div className="reel-menu-opt" onClick={onArchive}>Archive</div>}
-              {canDelete && <div className="reel-menu-opt danger" onClick={onDelete}>Delete</div>}
-              {canCreate && <div className="reel-menu-opt" onClick={() => setShowDupePicker(true)}>Duplicate →</div>}
-            </>)}
-          </div>,
-          document.body
+        {!collapsed && !compact && badgeImages.length > 0 && (
+          <ImagesBadge
+            images={badgeImages}
+            label={`${badgeImages.length} asset${badgeImages.length === 1 ? "" : "s"}`}
+            max={10}
+            imgW={42}
+            imgH={27}
+            hoverScale={3}
+          />
         )}
       </div>
-      {!collapsed && !compact && reel.note && <div className="note">{reel.note}</div>}
+      {!collapsed && !compact && (
+        <div className="reel-card-meta">
+          <ChatBadge
+            count={chatRefs.length}
+            unread={unreadCount}
+            onClick={chatRefs.length > 0 ? (e => openChatRef(e, chatRefs[0])) : undefined}
+            title={
+              chatRefs.length > 0
+                ? "Discussed in team chat — open the latest conversation" + (unreadCount > 0 ? ` (${unreadCount} unread)` : "")
+                : (unreadCount > 0 ? unreadCount + " unread comment" + (unreadCount === 1 ? "" : "s") : undefined)
+            }
+          />
+          {reel.series && (
+            <span className="reel-series" title={"Series: " + reel.series}>⛓ {reel.series}</span>
+          )}
+          {reel.stage === "posted" && reel.scheduledPostDate && (
+            <span className="mono dim reel-duedate" style={{ fontSize: 10 }} title="Scheduled post date">
+              📅 {reel.scheduledPostDate}
+            </span>
+          )}
+          {reel.note && <span className="reel-note-flag" title="Has a note — open to view">📝</span>}
+        </div>
+      )}
+      {!collapsed && !compact && <div className="reel-card-id">{reel.id}</div>}
       {!collapsed && !compact && reel.links && reel.links.length > 0 && (
         <div className="links" onClick={e => e.stopPropagation()}>
           {reel.links.map((l, i) => (
             <a key={i} className="link" href="#"
                onClick={e => { e.preventDefault(); e.stopPropagation(); }}>{l}</a>
           ))}
-        </div>
-      )}
-      {!collapsed && !compact && badgeImages.length > 0 && (
-        <div style={{ margin: "8px 0 2px" }}>
-          <ImagesBadge
-            images={badgeImages}
-            label={`${badgeImages.length} asset${badgeImages.length === 1 ? "" : "s"}`}
-          />
         </div>
       )}
       {!compact && (

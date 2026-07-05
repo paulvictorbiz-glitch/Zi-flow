@@ -32,6 +32,7 @@ import { extractYouTubeId, thumbnailUrlFromId } from "../lib/thumbnail-dna.jsx";
 import { SKILLS } from "../lib/training-curriculum.jsx";
 import GamifyRubricSheet from "../components/GamifyRubricSheet.jsx";
 import { FileUpload } from "../components/file-upload.jsx";
+import "./detail-cards.css";
 
 const SOL_DETAIL_CSS = `
 [data-theme="solarin"] .det-wrap {
@@ -248,7 +249,7 @@ function LocationPicker({ reelId }) {
   }, [addOpen]);
 
   return (
-    <Card title="Filming location" footLeft="Pin this reel to a place on the map">
+    <Card title="Filming location" footLeft="Pin this reel to a place on the map" defaultOpen={false}>
       {!loaded ? (
         <div className="mono dim" style={{ fontSize: 11 }}>loading places…</div>
       ) : locations.length === 0 ? (
@@ -1370,8 +1371,9 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
         <div className="detail-col">
           <Card
             title="Attached Footage"
-            right={<span className="count-tag cyan">{reelAttachedFootage.length}</span>}
+            right={<span className={"count-tag cyan" + (reelAttachedFootage.length > 0 ? " has-count" : "")}>{reelAttachedFootage.length}</span>}
             footLeft="Footage items linked to this reel"
+            defaultOpen={false}
           >
             {/* Download-all — bulk-pull every attached clip's Drive video. */}
             {reelAttachedFootage.length > 0 && (
@@ -1450,8 +1452,9 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           {/* ===== Attached Music — mirrors the Footage card above ===== */}
           <Card
             title="Attached Music"
-            right={<span className="count-tag cyan">{attachedMusic.length}</span>}
+            right={<span className={"count-tag cyan" + (attachedMusic.length > 0 ? " has-count" : "")}>{attachedMusic.length}</span>}
             footLeft="Licensed tracks linked to this reel"
+            defaultOpen={false}
           >
             {attachedMusic.length === 0 && (
               <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "4px 0 8px" }}>
@@ -1600,8 +1603,9 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           {/* ===== Attached Thumbnails — restored attach control ===== */}
           <Card
             title="Attached Thumbnails"
-            right={<span className="count-tag">{attachedThumbnails.length}</span>}
+            right={<span className={"count-tag" + (attachedThumbnails.length > 0 ? " has-count" : "")}>{attachedThumbnails.length}</span>}
             footLeft="Reference thumbnails from the Thumbnails tab"
+            defaultOpen={false}
           >
             {attachedThumbnails.length === 0 && (
               <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "4px 0 8px" }}>
@@ -1670,8 +1674,9 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           {/* ===== Attached News (from Pulse) — restored attach control ===== */}
           <Card
             title="Attached News"
-            right={<span className="count-tag">{attachedNews.length}</span>}
+            right={<span className={"count-tag" + (attachedNews.length > 0 ? " has-count" : "")}>{attachedNews.length}</span>}
             footLeft="News articles from Pulse linked to this reel"
+            defaultOpen={false}
           >
             {attachedNews.length === 0 && (
               <div style={{ fontSize: 12, color: "var(--fg-mute)", padding: "4px 0 8px" }}>

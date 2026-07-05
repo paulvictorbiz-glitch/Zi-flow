@@ -1,0 +1,9 @@
+/* Additive only — src/styles.css stays edit-locked.
+   Base rules: .count-tag / .count-tag.cyan at styles.css:1639-1646;
+   .card.collapsed hides .card-body/.card-foot .left at styles.css:729-730,
+   but NOT .card-head .right, so this descendant selector can target the
+   badge while the card is collapsed without lifting Card's open state up. */
+.card.collapsed .card-head .right .count-tag.has-count {
+  color: var(--c-orange, #f97316);
+  border-color: var(--c-orange-soft, rgba(249, 115, 22, 0.5));
+}
