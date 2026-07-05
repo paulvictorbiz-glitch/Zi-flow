@@ -17,7 +17,7 @@
    ========================================================= */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import DEMO_REEL, { genes } from "../lib/reel-dna-demo.jsx";
-import { TEAM, MISSION, ABOUT, PRODUCT, NAV } from "../lib/site-content.jsx";
+import { TEAM, MISSION, ABOUT, PRODUCT, NAV, TESTIMONIALS } from "../lib/site-content.jsx";
 import { HelixFlat } from "../components/helix-flat.jsx";
 import { AssetFan } from "../components/asset-fan.jsx";
 import { TimelineView } from "../components/timeline-view.jsx";
@@ -28,6 +28,7 @@ import { ProductPage } from "../components/product-page.jsx";
 import { ContentStudio } from "../components/content-studio.jsx";
 import { CreditsModal } from "../components/credits-modal.jsx";
 import { PlatformShowcase } from "../components/platform-showcase.jsx";
+import { TestimonialsMarquee } from "../components/testimonials-marquee.jsx";
 import "./landing.css";
 
 /* The 3D spinning helix is lazy-loaded so three.js / R3F never lands in the
@@ -84,6 +85,39 @@ function HomeView({ onEnterApp }) {
   const [hoveredGene, setHoveredGene] = useState(null);
   const [reelUrl, setReelUrl] = useState(DEMO_REEL.sampleReel.sourceUrl);
 
+  // ── Parallax hero: two decorative layers drift at different depths on
+  // scroll. rAF-throttled + passive listener so the one public route stays
+  // smooth; skipped entirely under prefers-reduced-motion (static layers).
+  const parallaxARef = useRef(null);
+  const parallaxBRef = useRef(null);
+  useEffect(() => {
+    const a = parallaxARef.current;
+    const b = parallaxBRef.current;
+    if (!a || !b) return;
+    let reduce = false;
+    try {
+      reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch (_) {}
+    if (reduce) return; // honor reduced-motion — layers render static
+
+    let rafId = null;
+    const apply = () => {
+      rafId = null;
+      const y = window.scrollY || window.pageYOffset || 0;
+      a.style.transform = `translate3d(0, ${y * 0.15}px, 0)`;
+      b.style.transform = `translate3d(0, ${y * 0.3}px, 0)`;
+    };
+    const onScroll = () => {
+      if (rafId == null) rafId = window.requestAnimationFrame(apply);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    apply(); // set initial offset (in case the page loads pre-scrolled)
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (rafId != null) window.cancelAnimationFrame(rafId);
+    };
+  }, []);
+
   // WebGL-capable visitors get the 3D spinning helix by default; anyone can
   // toggle back to the classic flat-SVG view. The choice persists across
   // reloads. Non-WebGL visitors only ever see the classic view (no toggle).
@@ -130,6 +164,8 @@ function HomeView({ onEnterApp }) {
       {/* ── Hero ── */}
       <section className="lp-hero">
         <div className="lp-hero-glow" aria-hidden="true" />
+        <div className="lp-hero-parallax-a" aria-hidden="true" ref={parallaxARef} />
+        <div className="lp-hero-parallax-b" aria-hidden="true" ref={parallaxBRef} />
         <div className="lp-hero-inner">
           <p className="lp-eyebrow">Reverse-engineer any reel</p>
           <h1 className="lp-hero-title">
@@ -288,6 +324,9 @@ function HomeView({ onEnterApp }) {
 
       {/* ── Founding team (also lives at bottom of Home) ── */}
       <TeamSection team={TEAM} mission={MISSION} compact />
+
+      {/* ── Testimonials 3D marquee ── */}
+      <TestimonialsMarquee testimonials={TESTIMONIALS} />
     </>
   );
 }

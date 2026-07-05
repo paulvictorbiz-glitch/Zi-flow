@@ -216,6 +216,11 @@
   border-radius: 4px; padding: 1px 7px;
 }
 
+/* ── Expanded overlay body (ExpandableCard) ────────────── */
+.td-expanded { display: flex; flex-direction: column; gap: 12px; }
+.td-expanded .td-status-pick { flex-wrap: wrap; }
+.td-expanded .td-editor { border-top: none; padding-top: 0; }
+
 /* ── Per-gene editor (card) ────────────────────────────── */
 .td-editor {
   display: flex; flex-direction: column; gap: 8px;
@@ -323,3 +328,59 @@
 .td-row-btn--archive:hover { color: var(--c-red); border-color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }
 .td-row-btn--delete { color: var(--fg-dim); border-color: var(--line-soft); }
 .td-row-btn--delete:hover { color: var(--c-red); border-color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, transparent); }
+
+/* ── Focus-hover grid (G1) ─────────────────────────────────
+   Mouse-only progressive enhancement: hovering any card in the grid dims +
+   blurs its siblings and lifts the hovered card. Pure CSS — no JS, so it
+   can't interfere with tap-to-open on the ExpandableCard on touch devices.
+   Scoped to .td-grid--focus so it never touches the carousel cards. */
+.td-grid--focus .td-card { transition: transform .22s ease, filter .22s ease, opacity .22s ease; }
+.td-grid--focus:hover .td-card:not(:hover) { filter: blur(2px) saturate(.85); opacity: .55; }
+.td-grid--focus .td-card:hover { transform: scale(1.02); z-index: 2; }
+
+/* ── Recent-thumbnails carousel (G1) ───────────────────────
+   A 3-row auto-scrolling wall of ALL ingested thumbnails (rAF-driven in the
+   JSX, ping-pong). The middle row counter-scrolls. Pauses on hover/focus for
+   clicking. Scrollbars hidden. Tile width is driven by --td-carousel-w (set
+   inline from the Size control); tiles are thumbnail-only (body hidden). */
+.td-carousel {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-bottom: 10px;
+}
+.td-carousel-controls {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.td-carousel-ctl-label {
+  font-family: var(--f-mono); font-size: 10.5px;
+  color: var(--fg-dim); text-transform: uppercase; letter-spacing: .08em;
+}
+.td-carousel-ctl-group { display: flex; gap: 6px; }
+.td-carousel-ctl {
+  padding: 3px 9px;
+  background: var(--bg-2); color: var(--fg-dim);
+  border: 1px solid var(--line); border-radius: 6px;
+  font-family: var(--f-mono); font-size: 10px; letter-spacing: .04em;
+  text-transform: uppercase; cursor: pointer; white-space: nowrap;
+  transition: border-color .12s ease, color .12s ease;
+}
+.td-carousel-ctl:hover { border-color: var(--c-cyan); color: var(--c-cyan); }
+
+/* Clipped window; the track (two identical segments) is translated by rAF. */
+.td-carousel-viewport { overflow: hidden; }
+.td-carousel-track {
+  display: flex; width: max-content;
+  will-change: transform;                /* own compositor layer → smooth */
+}
+.td-carousel-seg { display: flex; }
+.td-carousel-item {
+  flex: 0 0 var(--td-carousel-w, 164px);
+  margin-right: 10px;                     /* gap lives on the tile so the A→B
+                                             seam spacing matches (seamless) */
+}
+/* Collapse each carousel tile down to just its thumbnail: hide the full card
+   body (title/status/category/genes/foot) so the wall stays short. Clicking
+   the thumbnail still opens the SAME expandable overlay with all controls. */
+.td-carousel-item .td-card-body { display: none; }
+.td-carousel-item .td-card { border-left-width: 2px; border-radius: 6px; }
+.td-carousel-item .td-card-thumb { cursor: pointer; }
+@media (max-width: 720px) { .td-carousel-item { flex-basis: 46%; } }

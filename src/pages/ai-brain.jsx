@@ -1,8 +1,9 @@
 /* AI Brain — owner-only dashboard for message monitoring, FAQ bot, and improvement suggestions. */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import "./ai-brain.css";
 import { DPill } from "../components/components.jsx";
+import { VanishInput } from "../components/vanish-input.jsx";
 import { useAuth } from "../auth.jsx";
 
 import { supabase as _sb } from "../lib/supabase-client.js";
@@ -705,6 +706,7 @@ function AskWidget({ session }) {
   const [answer, setAnswer]     = useState(null);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
+  const askRef = useRef(null); // guarded submit exposed by VanishInput (button path)
 
   const ask = async () => {
     if (!question.trim()) return;
@@ -731,12 +733,30 @@ function AskWidget({ session }) {
     <div className="aib-ask-widget">
       <div className="aib-ask-label">Test the bot</div>
       <div className="aib-ask-row">
-        <input className="aib-input"
-               placeholder="Ask a question as a team member would…"
-               value={question}
-               onChange={e => setQuestion(e.target.value)}
-               onKeyDown={e => e.key === "Enter" && ask()} />
-        <button className="aib-save-btn" onClick={ask} disabled={loading || !question.trim()}>
+        <VanishInput
+          as="input"
+          className="aib-input"
+          vanishOnSubmit
+          value={question}
+          onChange={e => setQuestion(e.target.value)}
+          onVanishComplete={ask}
+          submitRef={askRef}
+          disabled={loading}
+          placeholders={[
+            "How do I submit a reel for review?",
+            "What's our turnaround time on edits?",
+            "Where do I upload the final export?",
+            "Who approves thumbnails before posting?",
+            "What aspect ratio do we use for Reels?",
+            "How do I request footage from the library?",
+          ]}
+          placeholder="Ask a question as a team member would…"
+        />
+        <button
+          className="aib-save-btn"
+          onClick={() => askRef.current?.()}
+          disabled={loading || !question.trim()}
+        >
           {loading ? "…" : "Ask"}
         </button>
       </div>

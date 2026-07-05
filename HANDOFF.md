@@ -1,39 +1,31 @@
-# Handoff — last updated 2026-07-03
+# Handoff — last updated 2026-07-05
 
 > Read this first when resuming. Then skim the top of CHANGELOG.md for change details,
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- Researched OSS font-detection models + VLM font accuracy → answered feasibility (build ~90% confident; identification accuracy modest, sharpens in Phase 2).
-- Ran `/qa-verified-plan` → plan `golden-roaming-hammock.md`; owner approved + asked to add Gemini usage monitoring.
-- **Built + SHIPPED LIVE: Font ID (Phase 1)** — owner-only "Fonts" tab that identifies the font in a reel frame (screenshot upload/paste OR reel-URL keyframes) → top-3 matches + confidence + legit download links, Gemini-vision only.
-- Deployed the backend to Hetzner (merged into live `content_forge.py`, rebuilt `fb-backend`, verified a real vision call = 200) and the frontend via `vercel --prod` (`dpl_H8RmqVFiFNJYRyRDT2Fgu5BtYiWQ`).
-- Monitoring: font-ID rides the same kill switch / daily cap + logs `kind="font_id"`; added a "Font ID" line item to the Monitor budgets card.
+- Built + **SHIPPED LIVE** the **Pipeline card → full ReelDetail popup overlay**: clicking a pipeline card now expands the complete, fully-editable reel detail (all columns) in a wide centered popup, replacing the old 6-field quick-editor + separate page swap.
+- New `src/components/reel-detail-overlay.jsx` + `.css`; edits to `src/app.jsx` + `src/components/components.jsx` (`ReelCard` reverted to plain click-to-open).
+- Solved three visual issues from owner screenshots: portal-loses-theme (mirror `data-theme` onto the backdrop), top/bottom clipping (scroll the whole backdrop, top-aligned), squished columns (lift the `.det-wrap` 1280px cap inside the overlay).
+- Committed `9cffe3a` → pushed `feat/capcut-replica-v2` → full-tree `vercel --prod` = `dpl_DzcaVjXeqBdsYzZch6YNvATmq5dN`, aliased to **www.footagebrain.com**. Owner-verified live.
 
 ## Where we left off
-Font ID Phase 1 is **live in production**. Backend routes (`/content-forge/font-id`, `/font-id-keyframes`) verified end-to-end (HTTP 200 via `vertex_gemini`/`gemini-2.5-flash`, 3 matches, usage logged $0.0013). Frontend + proxy deployed and aliased to www.footagebrain.com. The only unverified link is the authenticated proxy→backend hop, testable only from the owner's logged-in browser.
+Feature is live and verified. The overlay reuses `ReelDetail` verbatim (prop-driven), sits at z-index 88 (below ReelDetail's own z-90 modals so MusicPicker/Compare still layer on top), and closes via side-gap click / Esc / the ‹ Back button.
 
 ## Open blockers
-- None. (One expected non-blocker: `api/ai/suggest.js` returns `401 {"error":"Unauthorized"}` to any unauthenticated call — it needs an owner Bearer JWT or `SUGGEST_CRON_SECRET` (not set in prod). Normal; the browser authenticates.)
+- None.
 
-## Pending (written but not yet live)
-- **Owner in-browser confirm** (10s): open footagebrain.com → Monitor group → **Fonts** tab, drop a reel screenshot, hit "Identify font" → expect top-3 matches.
-- **Uncommitted**: this shipped LIVE but is NOT committed (like Solarin). A future isolated/clean-baseline deploy would revert it — keep it in the working tree. Also still-uncommitted-but-live: whole-library mining, HUD (built-not-deployed), etc.
-- **Phase 2** (not built): self-hosted ONNX classifier (~3k Google Fonts) + Gemini re-rank + optional WhatFontIs paid tier behind a `FONT_ID_MODE` flag; convert the reel-URL path to fire-and-forget (currently synchronous, 55s ceiling).
+## Pending (written but not yet live) / carried-live-but-uncommitted
+- **The full-tree deploy also shipped the OTHER uncommitted working-tree work LIVE** — Aceternity **G1–G5** effects (`thumbnail-dna`, `footage-library`, `vanish-input`, `tracing-beam`, `landing`/`testimonials-marquee`) and the **expandable-card** thumbnail/music wiring. These are now on prod but remain **UNCOMMITTED** and **not yet owner-verified on prod**. G5 testimonials still use **placeholder copy** (needs real quotes before public emphasis).
+- `ReelEditPanel` / `EditText` / `EditArea` in `components.jsx` are now **dead code** (retired for pipeline) — left in place; candidate for a DEADWEIGHT sweep.
+- (Pre-existing, unchanged) backend `content_forge.py` improvements await a Hetzner rebuild.
 
 ## Next session — start here
-1. Owner confirms the Fonts tab works in-browser (authenticated hop).
-2. If accuracy needs a boost → start Font ID Phase 2 (ONNX + WhatFontIs) per plan `golden-roaming-hammock.md`.
-3. (Carried over) Owner expounds the 2,393 Content Forge seeds; `/space` HUD customization awaits sign-off → commit + deploy.
+1. Owner **eyeball the now-live Aceternity G1–G5 + expandable-card** on prod (they shipped via full-tree deploy but weren't individually verified). Decide G5 testimonials real copy.
+2. Decide whether to **commit the rest of the dirty tree** (G1–G5, expandable-card, landing/hud tweaks) so git matches prod, or keep iterating.
+3. Optional cleanup: remove the retired `ReelEditPanel`/`EditText`/`EditArea` from `components.jsx`.
 
-## Verification commands (read-only)
-```bash
-# Backend routes registered + gated (expect 401 = up, not 404):
-curl -s -o /dev/null -w "%{http_code}\n" -X POST https://api.footagebrain.com/api/content-forge/font-id -d '{}'
-# font_id usage logged (needs the secret; run from a shell that can read it):
-#   docker exec fb-backend printenv CONTENT_FORGE_SECRET  → then GET /api/content-forge/usage?secret=…  (look for by_kind font_id)
-# Vercel proxy deployed (expect 401 Unauthorized JSON = handler reached; browser passes with JWT):
-curl -s -o /dev/null -w "%{http_code}\n" -X POST "https://www.footagebrain.com/api/ai/suggest?action=font-id" -d '{}'
-# Rollback on the box if ever needed:
-#   cp /srv/footagebrain/footage-brain-test/backend/app/api/content_forge.py.bak-fontid  <same path minus .bak-fontid> ; rebuild
-```
+## Verification commands (to confirm current state on resume)
+- `git log --oneline -3` → expect `9cffe3a feat(pipeline): click card → full reel detail …` on `feat/capcut-replica-v2`.
+- `git status --short` → still a dirty tree (G1–G5 + expandable-card + page tweaks uncommitted; that's expected/live).
+- Live check: open **www.footagebrain.com** → Pipeline → click a card → wide full-detail popup opens (Solarin-themed, scrollable, columns not squished).

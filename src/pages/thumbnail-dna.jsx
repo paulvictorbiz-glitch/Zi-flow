@@ -21,9 +21,10 @@
    reel-dna.jsx can `import { ThumbnailDna } from "./thumbnail-dna.jsx"`.
    ========================================================= */
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import "./thumbnail-dna.css";
 import { Card, DPill } from "../components/components.jsx";
+import { ExpandableCard } from "../components/expandable-card.jsx";
 import { useWorkflow } from "../store/store.jsx";
 import { useAuth } from "../auth.jsx";
 import { supabase } from "../lib/supabase-client.js";
@@ -195,8 +196,32 @@ function EditableCell({ value, placeholder, onSave }) {
   );
 }
 
-/* ---------- A captured thumbnail card ---------- */
-function DnaCard({ item, now, actions, onDelete }) {
+/* ---------- The six-gene editor (shared by inline + expanded overlay) ---------- */
+function GeneEditor({ item, saveGene }) {
+  return (
+    <div className="td-editor">
+      {GENE_KEYS.map(g => (
+        <div key={g} className="td-editor-block">
+          <div className="td-editor-label">{geneLabel(g)}</div>
+          <EditableCell
+            value={item[g]}
+            placeholder={GENES.find(x => x.key === g)?.hint || "—"}
+            onSave={(val) => saveGene(g, val)}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- A captured thumbnail card ----------
+   `idScope` disambiguates the ExpandableCard layoutId when the SAME item is
+   rendered in more than one place at once (e.g. the main grid AND the overview
+   carousel). Without a distinct scope, two tiles share `exc-thumb-<id>` and
+   framer-motion's shared-layout morph fights over three nodes → the tile
+   vanishes and reappears. A per-context scope makes each morph a clean 2-way
+   tile↔overlay. */
+function DnaCard({ item, now, actions, onDelete, idScope }) {
   const [open, setOpen] = useState(false);
   const genes = item.genesOfInterest || [];
   const title = item.title || item.videoUrl;
@@ -204,10 +229,44 @@ function DnaCard({ item, now, actions, onDelete }) {
   const saveGene = (geneKey, val) => actions.updateThumbnailDna(item.id, { [geneKey]: val || null });
   const setStatus = (s) => actions.updateThumbnailDna(item.id, { status: s });
 
+  // Zero-key thumbnail image for the expand overlay's shared morph.
+  const thumb = item.videoId
+    ? { url: thumbnailUrlFromId(item.videoId), fallbackUrl: thumbnailFallbackUrlFromId(item.videoId) }
+    : (item.thumbnailUrl ? { url: item.thumbnailUrl, fallbackUrl: null } : null);
+
   return (
-    <div className={"td-card td-status--" + item.status}>
-      <a className="td-card-thumb" href={item.videoUrl} target="_blank" rel="noreferrer"
-         title={item.videoUrl}>
+    <ExpandableCard
+      id={`${idScope ? idScope + "-" : ""}thumb-${item.id}`}
+      tone="cyan"
+      thumbnail={thumb}
+      header={{ title, subtitle: [item.channel, sourceBadge(item.source)].filter(Boolean).join(" · ") }}
+      onOpenFull={item.videoUrl ? () => window.open(item.videoUrl, "_blank", "noopener") : undefined}
+      openFullLabel="Watch on YouTube ↗"
+      renderExpanded={() => (
+        <div className="td-expanded">
+          <div className="td-status-pick">
+            {STATUSES.map(s => (
+              <button key={s.key} type="button"
+                      className={"td-status-chip" + (item.status === s.key ? " is-on" : "")}
+                      onClick={() => setStatus(s.key)}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <div className="td-card-category">
+            <span className="td-card-category-label" title="Your custom category — used by Group → Subject">🏷</span>
+            <EditableCell value={item.subject} placeholder="Add a category to group by…"
+                          onSave={(val) => saveGene("subject", val)} />
+          </div>
+          <GeneEditor item={item} saveGene={saveGene} />
+        </div>
+      )}
+    >
+      {({ open: expand, Tile }) => (
+    <Tile className={"td-card exc-tile td-status--" + item.status}>
+      <a className="td-card-thumb" onClick={(e) => { e.preventDefault(); expand(); }}
+         href={item.videoUrl} target="_blank" rel="noreferrer"
+         title="Click to expand · open link in new tab from the overlay">
         <ThumbPreview videoId={item.videoId} alt={title} />
       </a>
 
@@ -257,32 +316,21 @@ function DnaCard({ item, now, actions, onDelete }) {
           </div>
         )}
 
-        {open && (
-          <div className="td-editor">
-            {GENE_KEYS.map(g => (
-              <div key={g} className="td-editor-block">
-                <div className="td-editor-label">{geneLabel(g)}</div>
-                <EditableCell
-                  value={item[g]}
-                  placeholder={GENES.find(x => x.key === g)?.hint || "—"}
-                  onSave={(val) => saveGene(g, val)}
-                />
-              </div>
-            ))}
-          </div>
-        )}
+        {open && <GeneEditor item={item} saveGene={saveGene} />}
 
         <div className="td-card-foot">
-          <span className="td-collapse" onClick={() => setOpen(o => !o)}>
+          <span className="td-collapse" onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}>
             {open ? "Hide genes" : "Edit genes"}
           </span>
           <div className="td-card-foot-right">
-            <span className="td-archive" onClick={() => actions.archiveThumbnailDna(item.id)}>Archive</span>
-            <span className="td-delete" onClick={() => onDelete(item)}>Delete</span>
+            <span className="td-archive" onClick={(e) => { e.stopPropagation(); actions.archiveThumbnailDna(item.id); }}>Archive</span>
+            <span className="td-delete" onClick={(e) => { e.stopPropagation(); onDelete(item); }}>Delete</span>
           </div>
         </div>
       </div>
-    </div>
+    </Tile>
+      )}
+    </ExpandableCard>
   );
 }
 
@@ -336,6 +384,149 @@ function DnaTable({ items, now, actions, onDelete }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/* ---------- Recent-thumbnails carousel (G1) ----------
+   A 3-row auto-scrolling wall of ALL ingested thumbnails, shown ONLY in the
+   ungrouped Cards view — a quick glance strip above the main grid, NOT the main
+   view. The middle row scrolls opposite to the top and bottom rows. Each row
+   continuously drifts and PING-PONGS at its edges (no jump/reset). Hovering or
+   focusing the wall pauses every row so you can click a thumbnail to open its
+   full expandable overlay. A small control cluster cycles the drift SPEED and
+   the tile SIZE (persisted to localStorage). Respects prefers-reduced-motion
+   (rows render static, no auto-scroll). Tiles reuse DnaCard (body hidden via
+   CSS → thumbnail-only) so a click still opens the same overlay with controls. */
+const TD_CAROUSEL_SIZES = { sm: 120, md: 164, lg: 224 };   // tile width (px)
+const TD_CAROUSEL_SPEEDS = { slow: 0.2, med: 0.45, fast: 0.95 }; // px/frame
+const TD_SIZE_ORDER = ["sm", "md", "lg"];
+const TD_SPEED_ORDER = ["slow", "med", "fast"];
+const TD_SIZE_LABEL = { sm: "S", md: "M", lg: "L" };
+const TD_SPEED_LABEL = { slow: "Slow", med: "Med", fast: "Fast" };
+
+/* One CONTINUOUSLY-scrolling row (seamless marquee — no edge, no stall).
+   The row's items are rendered TWICE back-to-back (segment A + an identical
+   segment B). A rAF loop translates the track and, once it has moved by exactly
+   one segment's width, wraps by that width — because B is identical to A the
+   wrap is invisible, so it loops forever. `dir` = -1 scrolls content left, +1
+   right; `startFrac` (0..1) offsets the phase so same-direction rows are
+   staggered. Live drift speed from `speedRef`, shared pause flag from
+   `pausedRef`. Each segment uses a distinct idScope so the duplicated tiles
+   never share a framer-motion layoutId (which would glitch click-to-expand).
+   A ResizeObserver keeps the segment width current as the Size control changes
+   or as newly-ingested thumbnails grow the list. */
+function CarouselRow({ items, dir, startFrac = 0, speedRef, pausedRef, now, actions, onDelete }) {
+  const trackRef = useRef(null);
+  const segRef = useRef(null);
+
+  useEffect(() => {
+    const track = trackRef.current;
+    const seg = segRef.current;
+    if (!track || !seg) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    let raf = 0;
+    let segW = seg.offsetWidth || 1;
+    let offset = -segW * startFrac;                 // start phase (stagger)
+    track.style.transform = `translate3d(${offset}px,0,0)`;
+
+    // Segment width changes when tiles resize (Size control) or the list grows
+    // (new thumbnails ingested) — measure off the layout, not per frame.
+    const ro = new ResizeObserver(() => {
+      const w = seg.offsetWidth;
+      if (w > 1) segW = w;
+    });
+    ro.observe(seg);
+
+    const tick = () => {
+      if (!pausedRef.current && segW > 1) {
+        offset += dir * speedRef.current;
+        // Keep offset within (-segW, 0]; both copies are identical → seamless.
+        if (offset <= -segW) offset += segW;
+        else if (offset > 0) offset -= segW;
+        track.style.transform = `translate3d(${offset}px,0,0)`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [items.length, dir, startFrac, speedRef, pausedRef]);
+
+  const seg = (scope, hidden) => (
+    <div className="td-carousel-seg" ref={hidden ? undefined : segRef} aria-hidden={hidden || undefined}>
+      {items.map(item => (
+        // scope-prefixed key + idScope so the two copies (and the main grid)
+        // never share a React key or a framer-motion layoutId.
+        <div key={`${scope}-${item.id}`} className="td-carousel-item">
+          <DnaCard item={item} now={now} actions={actions} onDelete={onDelete} idScope={scope} />
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="td-carousel-viewport">
+      <div className="td-carousel-track" ref={trackRef}>
+        {seg("carousel-a", false)}
+        {seg("carousel-b", true)}
+      </div>
+    </div>
+  );
+}
+
+function RecentThumbCarousel({ items, now, actions, onDelete }) {
+  const pausedRef = useRef(false);
+  const [size, setSize] = useState(() => {
+    try { return localStorage.getItem("td_carousel_size") || "md"; } catch { return "md"; }
+  });
+  const [speed, setSpeed] = useState(() => {
+    try { return localStorage.getItem("td_carousel_speed") || "med"; } catch { return "med"; }
+  });
+
+  // Live drift speed in a ref so changing it never re-subscribes the rAF loops.
+  const speedRef = useRef(TD_CAROUSEL_SPEEDS[speed] || TD_CAROUSEL_SPEEDS.med);
+  useEffect(() => { speedRef.current = TD_CAROUSEL_SPEEDS[speed] || TD_CAROUSEL_SPEEDS.med; }, [speed]);
+  useEffect(() => { try { localStorage.setItem("td_carousel_size", size); } catch {} }, [size]);
+  useEffect(() => { try { localStorage.setItem("td_carousel_speed", speed); } catch {} }, [speed]);
+
+  // Interleave ALL thumbnails across 3 rows (i % 3) → even length + spread.
+  const rows = useMemo(() => {
+    const r = [[], [], []];
+    items.forEach((it, i) => r[i % 3].push(it));
+    return r;
+  }, [items]);
+
+  const cycleSize = () => setSize(s => TD_SIZE_ORDER[(TD_SIZE_ORDER.indexOf(s) + 1) % 3]);
+  const cycleSpeed = () => setSpeed(s => TD_SPEED_ORDER[(TD_SPEED_ORDER.indexOf(s) + 1) % 3]);
+
+  const pause = () => { pausedRef.current = true; };
+  const resume = () => { pausedRef.current = false; };
+  const rowProps = { speedRef, pausedRef, now, actions, onDelete };
+
+  return (
+    <div
+      className="td-carousel"
+      style={{ "--td-carousel-w": (TD_CAROUSEL_SIZES[size] || 164) + "px" }}
+      onMouseEnter={pause}
+      onMouseLeave={resume}
+      onFocusCapture={pause}
+      onBlurCapture={resume}
+    >
+      <div className="td-carousel-controls">
+        <span className="td-carousel-ctl-label">Overview · {items.length}</span>
+        <div className="td-carousel-ctl-group">
+          <button type="button" className="td-carousel-ctl" onClick={cycleSpeed}
+                  title="Cycle scroll speed">Speed: {TD_SPEED_LABEL[speed]}</button>
+          <button type="button" className="td-carousel-ctl" onClick={cycleSize}
+                  title="Cycle tile size">Size: {TD_SIZE_LABEL[size]}</button>
+        </div>
+      </div>
+      {/* Rows 1 & 3 scroll left; the middle scrolls right. Different startFracs
+          stagger the same-direction rows so they don't move in lockstep. */}
+      <CarouselRow items={rows[0]} dir={-1} startFrac={0}    {...rowProps} />
+      <CarouselRow items={rows[1]} dir={1}  startFrac={0.5}  {...rowProps} />
+      <CarouselRow items={rows[2]} dir={-1} startFrac={0.5}  {...rowProps} />
     </div>
   );
 }
@@ -474,7 +665,7 @@ export function ThumbnailDna() {
     viewMode === "table" ? (
       <DnaTable items={items} now={now} actions={actions} onDelete={handleDelete} />
     ) : (
-      <div className="td-grid">
+      <div className="td-grid td-grid--focus">
         {items.map(item => (
           <DnaCard key={item.id} item={item} now={now} actions={actions} onDelete={handleDelete} />
         ))}
@@ -567,7 +758,13 @@ export function ThumbnailDna() {
             })}
           </div>
         ) : (
-          renderItems(visible)
+          <>
+            {/* G1 carousel — ungrouped Cards view only; never in table/grouped. */}
+            {viewMode === "cards" && groupBy === "none" && visible.length > 0 && (
+              <RecentThumbCarousel items={visible} now={now} actions={actions} onDelete={handleDelete} />
+            )}
+            {renderItems(visible)}
+          </>
         )}
       </div>
     </div>

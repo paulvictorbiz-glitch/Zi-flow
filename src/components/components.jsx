@@ -6,7 +6,9 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useNow, formatAge } from "../lib/time.jsx";
 import { useAnchoredPosition } from "../lib/use-anchored-position.js";
-import { useWorkflow } from "../store/store.jsx";
+import { useWorkflow, resolveReelDnaAssets } from "../store/store.jsx";
+import { footageBrainThumbnailUrl } from "../lib/footage-brain-client.js";
+import { ImagesBadge } from "./images-badge.jsx";
 import { useNotifications } from "./notifications.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
 import { useRoster } from "../lib/roster.jsx";
@@ -200,8 +202,31 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
   /* Per-card action menu (archive / delete) — gated by role permissions.
      Pulled up here because `collapsed` (derived from store) is read by `cls`
      below; declaring it later would hit the const TDZ. */
-  const { actions, reelChatRefs, collapsedReelIds } = useWorkflow();
+  const { actions, reelChatRefs, collapsedReelIds, reelDnaAssets, thumbnailDna, attachedFootage } = useWorkflow();
   const collapsed = (collapsedReelIds || []).includes(reel.id);
+
+  /* Images Badge (Aceternity) — a peek of the reel's attached visuals that
+     fans out on hover. Footage is attached DIRECTLY by reel_id (the footage-
+     library path — the same match detail.jsx uses: attachedFootage.reel_id ===
+     reel.id, which is what the FB · N chip counts), while Thumbnails ride the
+     reel_dna_assets join. Footage first, then thumbnails. */
+  const badgeImages = useMemo(() => {
+    const imgs = [];
+    for (const f of attachedFootage || []) {
+      if (f && f.reel_id === reel.id && f.thumbnail_url) {
+        imgs.push({ src: footageBrainThumbnailUrl(f.thumbnail_url), alt: f.file_name || "footage" });
+      }
+    }
+    const dnaId = reel.reelDnaId || reel.detail?.fromReelDna || reel.id;
+    const resolved = resolveReelDnaAssets(dnaId, {
+      reelDnaAssets: reelDnaAssets || [],
+      thumbnailDna: thumbnailDna || [],
+    });
+    for (const t of resolved.thumbnails) {
+      if (t && t.thumbnailUrl) imgs.push({ src: t.thumbnailUrl, alt: t.quickNotes || "thumbnail" });
+    }
+    return imgs;
+  }, [reel.id, reel.reelDnaId, reel.detail, reelDnaAssets, thumbnailDna, attachedFootage]);
   const cls = [
     "reel",
     compact ? "reel--compact" : "",
@@ -416,6 +441,14 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
             <a key={i} className="link" href="#"
                onClick={e => { e.preventDefault(); e.stopPropagation(); }}>{l}</a>
           ))}
+        </div>
+      )}
+      {!collapsed && !compact && badgeImages.length > 0 && (
+        <div style={{ margin: "8px 0 2px" }}>
+          <ImagesBadge
+            images={badgeImages}
+            label={`${badgeImages.length} asset${badgeImages.length === 1 ? "" : "s"}`}
+          />
         </div>
       )}
       {!compact && (

@@ -6,6 +6,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { DPill } from "../components/components.jsx";
+import { VanishInput } from "../components/vanish-input.jsx";
 import { footageBrainThumbnailUrl, getFootageBrainCoverageTree } from "../lib/footage-brain-client.js";
 import { useWorkflow, nextReelId } from "../store/store.jsx";
 import { useRoster } from "../lib/roster.jsx";
@@ -626,10 +627,19 @@ export function IdeaGenerator() {
 
       {/* Input */}
       <div className="gen-input-panel">
-        <textarea
+        <VanishInput
+          as="textarea"
+          vanishOnSubmit={false}
           ref={textareaRef}
           className="gen-textarea"
           placeholder="Describe your reel idea — location, mood, moment…"
+          placeholders={[
+            "Describe your reel idea — location, mood, moment…",
+            "Sunrise over a fishing village — nets, boats, gold light",
+            "Bustling night market — neon, steam, quick faces",
+            "Quiet monastery at dawn — incense, chanting, stillness",
+            "Rooftop city timelapse — traffic trails, skyline, dusk",
+          ]}
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate(); }}

@@ -6,7 +6,9 @@
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { DPill } from "../components/components.jsx";
-import { useWorkflow } from "../store/store.jsx";
+import { useWorkflow, resolveReelDnaAssets } from "../store/store.jsx";
+import { footageBrainThumbnailUrl } from "../lib/footage-brain-client.js";
+import { ImagesBadge } from "../components/images-badge.jsx";
 import { useNow, formatAge, formatDue } from "../lib/time.jsx";
 import { ROLES, STAGES, STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
@@ -393,10 +395,42 @@ function BulkBar({ count, onClear, onApply, peopleList }) {
 /*   Main component                                        */
 /* ======================================================= */
 function ListView({ role, onOpen }) {
-  const { reels, actions } = useWorkflow();
+  const { reels, actions, reelDnaAssets, thumbnailDna, attachedFootage } = useWorkflow();
   const { peopleById, peopleList } = useRoster();
   const { can } = usePermissions();
   const now = useNow();
+
+  /* Images Badge (Aceternity) — a per-reel fan-out preview in the Assets
+     column. Footage is attached DIRECTLY by reel_id (the footage-library
+     path — same match the detail page uses: attachedFootage.reel_id ===
+     reel.id), while Thumbnails ride the reel_dna_assets join. We surface both,
+     footage first (that's what the FB · N chip counts). Indexed once so the
+     map build is O(footage + reels), not O(footage × reels). */
+  const imagesByReelId = useMemo(() => {
+    const footByReel = new Map();
+    for (const f of attachedFootage || []) {
+      if (!f || f.reel_id == null || !f.thumbnail_url) continue;
+      if (!footByReel.has(f.reel_id)) footByReel.set(f.reel_id, []);
+      footByReel.get(f.reel_id).push(f);
+    }
+    const map = new Map();
+    for (const reel of reels || []) {
+      const imgs = [];
+      for (const f of footByReel.get(reel.id) || []) {
+        imgs.push({ src: footageBrainThumbnailUrl(f.thumbnail_url), alt: f.file_name || "footage" });
+      }
+      const dnaId = reel.reelDnaId || reel.detail?.fromReelDna || reel.id;
+      const resolved = resolveReelDnaAssets(dnaId, {
+        reelDnaAssets: reelDnaAssets || [],
+        thumbnailDna: thumbnailDna || [],
+      });
+      for (const t of resolved.thumbnails) {
+        if (t && t.thumbnailUrl) imgs.push({ src: t.thumbnailUrl, alt: t.quickNotes || "thumbnail" });
+      }
+      if (imgs.length) map.set(reel.id, imgs);
+    }
+    return map;
+  }, [reels, reelDnaAssets, thumbnailDna, attachedFootage]);
 
   /* -- sort -- */
   const [sort, setSort] = useState("stage");
@@ -622,7 +656,6 @@ function ListView({ role, onOpen }) {
               <th>Reel</th>
               <th style={{ width: 120 }}>Stage</th>
               <th style={{ width: 130 }}>Assignee</th>
-              <th>Blocker / waiting on</th>
               <th style={{ width: 110 }}>
                 <button
                   className={"sort-th" + (sort === "due" ? " active" : "")}
@@ -689,15 +722,6 @@ function ListView({ role, onOpen }) {
                     <option key={p.id} value={p.id}>{p.short || p.name}</option>
                   ))}
                 </select>
-              </th>
-              <th style={{ padding: "3px 6px" }}>
-                <input
-                  type="text"
-                  placeholder="Blocker…"
-                  value={colFilters.blocker}
-                  onChange={e => setFilter("blocker", e.target.value)}
-                  style={filterInputStyle}
-                />
               </th>
               <th style={{ padding: "3px 6px" }}>
                 <input
@@ -823,18 +847,6 @@ function ListView({ role, onOpen }) {
                   </select>
                 </td>
 
-                {/* Blocker */}
-                <td>
-                  {reel.blocker
-                    ? <span style={{ color: reel.state === "block" ? "var(--c-red)" : "var(--c-amber)" }}>{reel.blocker}</span>
-                    : <span className="dim">—</span>}
-                  {reel.blockerRole && (
-                    <div className="mono dim" style={{ marginTop: 3 }}>
-                      role-locked · {reel.blockerRole}
-                    </div>
-                  )}
-                </td>
-
                 {/* Due — posted reels show their scheduled post date instead
                     (set by the Move-to-Posted modal; dueAt is the older field) */}
                 <td className="mono">
@@ -848,13 +860,22 @@ function ListView({ role, onOpen }) {
                   {formatAge(reel, now)}
                 </td>
 
-                {/* Assets */}
-                <td>
+                {/* Assets — count chips, plus an Aceternity fan-out preview of
+                    the reel's attached thumbnails/footage (hover to fan). */}
+                <td style={{ overflow: "visible" }}>
                   <div className="asset-chips">
                     {reel.fb   > 0 && <span className="ac cyan">FB · {reel.fb}</span>}
                     {reel.refs > 0 && <span className="ac">REF · {reel.refs}</span>}
-                    {!reel.fb && !reel.refs && <span className="dim mono">—</span>}
+                    {!reel.fb && !reel.refs && !imagesByReelId.has(reel.id) && <span className="dim mono">—</span>}
                   </div>
+                  {imagesByReelId.has(reel.id) && (
+                    <div style={{ marginTop: 5 }}>
+                      <ImagesBadge
+                        images={imagesByReelId.get(reel.id)}
+                        label={String(imagesByReelId.get(reel.id).length)}
+                      />
+                    </div>
+                  )}
                 </td>
 
                 {/* Next action */}

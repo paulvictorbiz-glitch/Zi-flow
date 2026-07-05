@@ -1,0 +1,119 @@
+/* =========================================================
+   TestimonialsMarquee — scoped under .tmq-*. Self-contained so it
+   renders identically on the unauthenticated landing page.
+
+   Motion is pure CSS: two rows scroll in opposite directions on an
+   infinite -50% loop (the DOM duplicates each row's cards). A gentle
+   perspective/rotateX gives the wall a subtle 3D read. Animation
+   pauses on hover and is fully disabled under prefers-reduced-motion.
+   ========================================================= */
+.tmq {
+  --tmq-cyan: #56e6ff;
+  --tmq-violet: #9b8cff;
+  --tmq-fg: #eef1f8;
+  --tmq-mute: rgba(238, 241, 248, 0.6);
+  --tmq-dim: rgba(238, 241, 248, 0.38);
+  --tmq-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  position: relative;
+  padding: 56px 0 64px;
+  overflow: hidden;
+  /* Isolate the infinite marquee from the document: `contain` stops its
+     internal layout/paint from ever growing the page's scroll area, and
+     `overflow-anchor: none` excludes it from scroll-anchoring — together they
+     fix the "loop restart yanks the page back to the top" jump. */
+  contain: layout paint style;
+  overflow-anchor: none;
+}
+.tmq-stage,
+.tmq-row,
+.tmq-track { overflow-anchor: none; }
+
+.tmq-head { text-align: center; max-width: 720px; margin: 0 auto 34px; padding: 0 22px; }
+.tmq-eyebrow {
+  font-family: var(--tmq-mono);
+  font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--tmq-cyan); margin: 0 0 8px;
+}
+.tmq-h2 {
+  font-size: clamp(24px, 4vw, 38px); line-height: 1.1; font-weight: 800;
+  letter-spacing: -0.02em; margin: 0; color: var(--tmq-fg);
+}
+
+/* Perspective wrapper — tilts the rows for the 3D read. */
+.tmq-stage {
+  display: flex; flex-direction: column; gap: 20px;
+  perspective: 1400px;
+  /* fade the horizontal edges so cards enter/exit smoothly */
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+.tmq-row { overflow: hidden; }
+
+/* The moving track. rotateX gives a slight forward lean. */
+.tmq-track {
+  display: flex; gap: 18px; width: max-content;
+  transform: rotateX(9deg);
+  transform-style: preserve-3d;
+  will-change: transform;      /* keep it on its own compositor layer */
+  animation: tmq-scroll 46s linear infinite;
+}
+.tmq-track--reverse { animation-direction: reverse; }
+
+/* Pause when the visitor hovers the wall. */
+.tmq-stage:hover .tmq-track { animation-play-state: paused; }
+
+@keyframes tmq-scroll {
+  from { transform: rotateX(9deg) translate3d(0, 0, 0); }
+  to   { transform: rotateX(9deg) translate3d(-50%, 0, 0); }
+}
+
+/* ── Card ── */
+.tmq-card {
+  flex: 0 0 auto;
+  width: 320px; max-width: 78vw;
+  margin: 0;
+  display: flex; flex-direction: column; gap: 16px;
+  padding: 22px 22px 20px;
+  background: rgba(13, 16, 32, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 18px 40px -24px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(6px);
+}
+.tmq-quote {
+  margin: 0; font-size: 14.5px; line-height: 1.55;
+  color: var(--tmq-fg);
+}
+.tmq-who { display: flex; align-items: center; gap: 12px; margin: 0; }
+.tmq-avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  object-fit: cover; flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.tmq-avatar--fallback {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--tmq-mono); font-weight: 700; font-size: 13px;
+  color: #05101a;
+  background: linear-gradient(135deg, var(--tmq-cyan), var(--tmq-violet));
+}
+.tmq-meta { display: flex; flex-direction: column; min-width: 0; }
+.tmq-name { font-weight: 700; font-size: 13.5px; color: var(--tmq-fg); }
+.tmq-role {
+  font-family: var(--tmq-mono); font-size: 11px; letter-spacing: 0.04em;
+  color: var(--tmq-dim);
+}
+
+/* ── Reduced motion: no scroll, no tilt — static readable wall ── */
+@media (prefers-reduced-motion: reduce) {
+  .tmq-track,
+  .tmq-track--reverse {
+    animation: none !important;
+    transform: none !important;
+  }
+  .tmq-row { overflow-x: auto; }
+}
+
+@media (max-width: 560px) {
+  .tmq-track { animation-duration: 34s; }
+}

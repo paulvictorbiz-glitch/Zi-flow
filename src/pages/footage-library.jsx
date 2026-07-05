@@ -20,6 +20,7 @@ import { useWorkflow } from "../store/store.jsx";
 import { footageBrainThumbnailUrl, footageBrainFileUrl, tagFootage } from "../lib/footage-brain-client.js";
 import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 import { VisionTagChips, flattenVisionTags } from "../components/AttachedFootageList.jsx";
+import "./footage-library.css";
 
 /* Group all attached_footage_items rows by clip identity. Each
    resulting record carries the clip's metadata (taken from the
@@ -488,7 +489,7 @@ function FootageLibrary({ onOpen }) {
       )}
 
       <div className="exp-scroll">
-        <table className="exp-table">
+        <table className="exp-table lib-focus-table">
           <thead>
             <tr>
               <th style={{ width: 100 }}></th>

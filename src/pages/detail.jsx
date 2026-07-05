@@ -31,6 +31,7 @@ import { ThumbPreview } from "./thumbnail-dna.jsx";
 import { extractYouTubeId, thumbnailUrlFromId } from "../lib/thumbnail-dna.jsx";
 import { SKILLS } from "../lib/training-curriculum.jsx";
 import GamifyRubricSheet from "../components/GamifyRubricSheet.jsx";
+import { FileUpload } from "../components/file-upload.jsx";
 
 const SOL_DETAIL_CSS = `
 [data-theme="solarin"] .det-wrap {
@@ -854,15 +855,17 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   // null | 'uploading' | 'done' | 'error'  (mirrors the locations 'uploading' pattern)
   const [videoUploadState, setVideoUploadState] = useState(null);
   const [videoUploadMsg, setVideoUploadMsg] = useState("");
+  // Aceternity file-upload popup for the owner-only "Final video" drop/browse.
+  const [finalVideoModalOpen, setFinalVideoModalOpen] = useState(false);
   // "Pick from Chat" — attach an editor's screen recording from Rocket.Chat.
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
   // Signed URL for the hosted "Current reel state" recording, for the inline
   // embed below the inspiration reel (reel-videos is private → must be signed).
   const [currentStateVideoUrl, setCurrentStateVideoUrl] = useState("");
 
-  const handleFinalVideoUpload = async (e) => {
-    const file = (e.target.files || [])[0];
-    e.target.value = ""; // allow re-picking the same file
+  // Core upload — shared by the native <input> path and the FileUpload
+  // dropzone (which hands us File objects directly, no synthetic event).
+  const uploadFinalVideoFile = async (file) => {
     if (!file) return;
     setVideoUploadState("uploading");
     setVideoUploadMsg("");
@@ -941,6 +944,22 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
     setVideoUploadMsg("");
     if (old) supabase.storage.from("reel-videos").remove([old]).catch(() => {});
   };
+
+  // Auto-close the upload popup once the file has landed (mediaPath persisted).
+  useEffect(() => {
+    if (finalVideoModalOpen && mediaPath) {
+      const t = setTimeout(() => setFinalVideoModalOpen(false), 650);
+      return () => clearTimeout(t);
+    }
+  }, [finalVideoModalOpen, mediaPath]);
+
+  // Esc closes the upload popup (the footer advertises it).
+  useEffect(() => {
+    if (!finalVideoModalOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setFinalVideoModalOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [finalVideoModalOpen]);
 
   /* Open the "Current reel state". A hosted recording (mediaPath in the private
      reel-videos bucket) takes precedence — mint a short-lived signed URL so it
@@ -1190,23 +1209,12 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
                   </DPill>
                 </>
               ) : (
-                <label
-                  className="dpill"
-                  style={{
-                    cursor: videoUploadState === "uploading" ? "wait" : "pointer",
-                    opacity: videoUploadState === "uploading" ? 0.6 : 1,
-                  }}
+                <DPill
+                  onClick={() => setFinalVideoModalOpen(true)}
                   title="Upload the final MP4 for this reel (owner only)"
                 >
                   {videoUploadState === "uploading" ? "Uploading…" : "⬆ Final video"}
-                  <input
-                    type="file"
-                    accept="video/mp4,video/quicktime"
-                    style={{ display: "none" }}
-                    disabled={videoUploadState === "uploading"}
-                    onChange={handleFinalVideoUpload}
-                  />
-                </label>
+                </DPill>
               )}
               {videoUploadState === "done" && !mediaPath ? (
                 <span style={{ fontSize: 12, color: "var(--ok, #2e7d32)" }}>Uploaded ✓</span>
@@ -1226,6 +1234,56 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           )}
         </div>
       </div>
+
+      {/* Aceternity file-upload popup — owner-only "Final video" drop/browse.
+          Rendered inside #root (NOT portaled) so it keeps the active theme.
+          Upload runs on drop/pick via uploadFinalVideoFile; the popup
+          auto-closes once mediaPath is persisted (see effect above). */}
+      {isOwner && finalVideoModalOpen && (
+        <div className="m-backdrop" onClick={() => setFinalVideoModalOpen(false)}>
+          <div
+            className="m-shell"
+            style={{ maxWidth: 520 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="m-head">
+              <div>
+                <div className="m-eyebrow">Owner</div>
+                <div className="m-title">Attach final video</div>
+                <div className="m-sub">Drop the finished MP4 for {current.title || current.id}, or click to browse.</div>
+              </div>
+              <button className="m-x" onClick={() => setFinalVideoModalOpen(false)}>✕</button>
+            </div>
+            <div className="m-body">
+              <FileUpload
+                accept="video/mp4,video/quicktime"
+                busy={videoUploadState === "uploading"}
+                disabled={videoUploadState === "uploading"}
+                onChange={(files) => uploadFinalVideoFile(files[0])}
+                title="Drag & drop your final video, or click to browse"
+                hint="MP4 or MOV · uploads to the private reel-videos store"
+              />
+              {videoUploadState === "done" && mediaPath ? (
+                <div style={{ marginTop: 12, fontSize: 12, color: "var(--ok, #2e7d32)" }}>
+                  ✓ Uploaded — closing…
+                </div>
+              ) : null}
+              {videoUploadState === "error" ? (
+                <div
+                  title={videoUploadMsg}
+                  style={{ marginTop: 12, fontSize: 12, color: "var(--danger, #c62828)" }}
+                >
+                  Failed{videoUploadMsg ? `: ${videoUploadMsg}` : ""}
+                </div>
+              ) : null}
+            </div>
+            <div className="m-foot">
+              <span className="mono dim">Esc to close</span>
+              <DPill onClick={() => setFinalVideoModalOpen(false)}>Close</DPill>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Content Forge — the hook this reel was forged from (reels.creative_brief).
           Renders only when an opportunity hook has been sent to this reel. Inline

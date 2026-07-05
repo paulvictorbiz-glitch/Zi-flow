@@ -57,3 +57,12 @@ scripts/qa-nonpass.txt
 
 # Design handoff drop (external reference material, not app code)
 Website redesign request/
+
+# Playwright MCP verification scratch
+.playwright-mcp/
+/after-login.png
+/listview-check.png
+/listview-fan-fixed.png
+/reel-detail-check.png
+/reel348-detail.png
+/fan-hover.png

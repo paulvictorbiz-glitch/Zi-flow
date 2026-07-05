@@ -24,6 +24,7 @@
 
 import React, { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { useWorkflow } from "../store/store.jsx";
+import { ExpandableCard } from "../components/expandable-card.jsx";
 import "./music-library.css";
 
 const SEARCH_DEBOUNCE_MS = 350;
@@ -86,8 +87,43 @@ function TrackCard({
   const [newName, setNewName] = useState("");
 
   return (
-    <article className="ml-card">
-      <div className="ml-cover">
+    <ExpandableCard
+      id={`track-${track.id}`}
+      tone="violet"
+      thumbnail={track.coverUrl ? { url: track.coverUrl } : null}
+      header={{ title: track.title, subtitle: track.artist || undefined }}
+      renderExpanded={() => (
+        <div className="ml-expanded">
+          <div className="ml-expanded-stats">
+            <span className="ml-stat">{formatLength(track.lengthSec)}</span>
+            {track.bpm != null && <span className="ml-stat">{track.bpm} BPM</span>}
+          </div>
+          {(track.genres.length > 0 || track.moods.length > 0) && (
+            <div className="ml-tags">
+              {track.genres.map((g) => <span key={`g-${g}`} className="ml-tag ml-tag--genre">{g}</span>)}
+              {track.moods.map((m) => <span key={`m-${m}`} className="ml-tag ml-tag--mood">{m}</span>)}
+            </div>
+          )}
+          <div className="ml-expanded-actions">
+            {track.previewUrl && (
+              <button type="button" className="ml-btn ml-btn--ghost" onClick={() => onTogglePreview(track)}>
+                {isPlaying ? "❚❚ Pause" : "▶ Preview"}
+              </button>
+            )}
+            <button type="button" className={`ml-btn ml-btn--ghost${isFavorite ? " is-fav" : ""}`}
+                    onClick={() => onToggleFavorite(track)}>
+              {isFavorite ? "♥ Favorited" : "♡ Favorite"}
+            </button>
+            <button type="button" className="ml-btn ml-btn--primary" onClick={() => onDownload(track)} disabled={downloading}>
+              {downloading ? "…" : "Download"}
+            </button>
+          </div>
+        </div>
+      )}
+    >
+      {({ open: expand, Tile }) => (
+    <Tile className="ml-card">
+      <div className="ml-cover exc-tile" onClick={expand} title="Click for details">
         {track.coverUrl ? (
           <img src={track.coverUrl} alt="" loading="lazy" />
         ) : (
@@ -97,7 +133,7 @@ function TrackCard({
           <button
             type="button"
             className={`ml-play${isPlaying ? " is-playing" : ""}`}
-            onClick={() => onTogglePreview(track)}
+            onClick={(e) => { e.stopPropagation(); onTogglePreview(track); }}
             aria-label={isPlaying ? "Pause preview" : "Play preview"}
             title={isPlaying ? "Pause preview" : "Play preview"}
           >
@@ -107,7 +143,7 @@ function TrackCard({
         <button
           type="button"
           className={`ml-fav${isFavorite ? " is-fav" : ""}`}
-          onClick={() => onToggleFavorite(track)}
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite(track); }}
           aria-pressed={isFavorite}
           aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
           title={isFavorite ? "Remove from favorites" : "Add to favorites"}
@@ -231,7 +267,9 @@ function TrackCard({
           </div>
         )}
       </div>
-    </article>
+    </Tile>
+      )}
+    </ExpandableCard>
   );
 }
 

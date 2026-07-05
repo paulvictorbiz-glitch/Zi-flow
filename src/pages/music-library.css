@@ -427,3 +427,10 @@
 }
 .ml-playlist-title-input:hover { border-color: var(--line, #34373d); }
 .ml-playlist-title-input:focus { border-color: var(--c-accent, #6aa9ff); outline: none; background: var(--bg-1, #0e1013); }
+
+/* ── Expanded overlay body (ExpandableCard) ─────────────────────────── */
+.ml-expanded { display: flex; flex-direction: column; gap: 12px; }
+.ml-expanded-stats { display: flex; gap: 8px; flex-wrap: wrap; }
+.ml-expanded-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.ml-expanded-actions .ml-btn { flex: none; }
+.ml-btn--ghost.is-fav { color: var(--c-pink, #e6739f); border-color: var(--c-pink, #e6739f); }

@@ -36,6 +36,7 @@ import { Quiz } from "../components/training/Quiz.jsx";
 import { QuizEditor } from "../components/training/QuizEditor.jsx";
 import { FlashcardDeck } from "../components/training/FlashcardDeck.jsx";
 import { ModuleChapters } from "../components/training/ModuleChapters.jsx";
+import { TracingBeam } from "../components/tracing-beam.jsx";
 import "./training.css";
 import "../components/training/training-blocks.css";
 
@@ -344,6 +345,9 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusModule, loading]);
 
+  // Scroll-progress "tracing beam" that tracks position through the module list.
+  const beamWrapRef = useRef(null);
+
   if (loading) return <div style={{ padding: 32, color: "var(--fg-dim)" }}>Loading training…</div>;
 
   return (
@@ -404,7 +408,10 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
         </div>
       </div>
 
-      {/* Core pillars */}
+      {/* Core pillars — wrapped so the scroll-progress tracing beam can
+          anchor absolutely to the full (expand/collapse-aware) height. */}
+      <div className="tr-beam-wrap" ref={beamWrapRef}>
+      <TracingBeam targetRef={beamWrapRef} />
       <section className="tr-month" id="tr-section-core">
         <div className="tr-month-head tr-section-divider">
           <span className="tr-month-title">Core Pillars</span>
@@ -440,6 +447,7 @@ export function Training({ onOpen, personId, focusModule, onFocusConsumed }) {
           />
         ))}
       </section>
+      </div>
 
       {/* Collapsible rubric reference (replaces the old flat RUBRIC table) */}
       <RubricQuickRef onJumpToModule={jumpTo} />

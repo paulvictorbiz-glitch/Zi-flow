@@ -19,6 +19,7 @@ import { STAGES, STAGE_LABEL, STAGE_TONE } from "../lib/shared-data.jsx";
 import { useMonitorStatus } from "../lib/use-monitor-status.js";
 import { MONITOR_CARDS } from "./monitor.jsx";
 import { supabase } from "../lib/supabase-client.js";
+import { HudGlobe3D } from "./hud-globe-webgl.jsx";
 import "./hud-space.css";
 
 /* ── Default layout preferences ───────────────────── */
@@ -34,9 +35,11 @@ const DEFAULT_PREFS = {
   tighten: 0,           // px to pull side columns inward (window effect)
   topTilt: 0,           // rotateX deg for the TOP card of each column
   bottomTilt: 0,        // rotateX deg for the BOTTOM card of each column
-  globeSpin: 1.0,       // globe spin-speed multiplier (0 = frozen)
-  rayHeight: 1.0,       // hot-point ray length multiplier
-  mapOpacity: 0,        // 0 = dotted globe · 1 = filled world-map overlay
+  globeSpin: 0.6,       // WebGL globe auto-rotate speed (0 = frozen)
+  globeZoom: 1.0,       // WebGL globe camera zoom (0.5 far … 1.8 close)
+  globeDots: 1.0,       // glowing point/ring size multiplier
+  globeArc: 1.0,        // arc travel-speed multiplier
+  globeAtmo: 1.0,       // atmosphere glow (0 = off)
 };
 const GRID = 20;        // invisible snap grid (hold Alt to bypass)
 function snap(v, free) { return free ? Math.round(v) : Math.round(v / GRID) * GRID; }
@@ -1622,27 +1625,41 @@ function HudLayoutMenu({ prefs, onUpdate, onReset, onClose,
         <span>{prefs.bottomTilt}°</span>
       </div>
 
-      <h4>GLOBE</h4>
+      <h4>GLOBE <span className="hud-h4-note">(drag globe to rotate)</span></h4>
       <div className="hud-slider-row">
         <label>Spin</label>
         <input type="range" min="0" max="3" step="0.1"
-          value={prefs.globeSpin}
+          value={prefs.globeSpin ?? 0.6}
           onChange={e => onUpdate("globeSpin", Number(e.target.value))} />
-        <span>{prefs.globeSpin.toFixed(1)}×</span>
+        <span>{(prefs.globeSpin ?? 0.6).toFixed(1)}×</span>
       </div>
       <div className="hud-slider-row">
-        <label>Ray height</label>
+        <label>Zoom</label>
+        <input type="range" min="0.5" max="1.8" step="0.05"
+          value={prefs.globeZoom ?? 1}
+          onChange={e => onUpdate("globeZoom", Number(e.target.value))} />
+        <span>{(prefs.globeZoom ?? 1).toFixed(2)}×</span>
+      </div>
+      <div className="hud-slider-row">
+        <label>Glow dots</label>
         <input type="range" min="0" max="3" step="0.1"
-          value={prefs.rayHeight}
-          onChange={e => onUpdate("rayHeight", Number(e.target.value))} />
-        <span>{prefs.rayHeight.toFixed(1)}×</span>
+          value={prefs.globeDots ?? 1}
+          onChange={e => onUpdate("globeDots", Number(e.target.value))} />
+        <span>{(prefs.globeDots ?? 1).toFixed(1)}×</span>
       </div>
       <div className="hud-slider-row">
-        <label>World map</label>
-        <input type="range" min="0" max="1" step="0.05"
-          value={prefs.mapOpacity}
-          onChange={e => onUpdate("mapOpacity", Number(e.target.value))} />
-        <span>{Math.round(prefs.mapOpacity * 100)}%</span>
+        <label>Arc speed</label>
+        <input type="range" min="0.3" max="3" step="0.1"
+          value={prefs.globeArc ?? 1}
+          onChange={e => onUpdate("globeArc", Number(e.target.value))} />
+        <span>{(prefs.globeArc ?? 1).toFixed(1)}×</span>
+      </div>
+      <div className="hud-slider-row">
+        <label>Atmosphere</label>
+        <input type="range" min="0" max="2" step="0.1"
+          value={prefs.globeAtmo ?? 1}
+          onChange={e => onUpdate("globeAtmo", Number(e.target.value))} />
+        <span>{(prefs.globeAtmo ?? 1).toFixed(1)}×</span>
       </div>
 
       <button className="hud-reset-btn" onClick={onReset}>RESET LAYOUT &amp; DEFAULTS</button>
@@ -1851,6 +1868,15 @@ function HudSpaceInner() {
   const [selected,   setSelected]   = useState(null);   // slot uid selected for per-card orientation
   const [dockedId,   setDockedId]   = useState(null);   // pinned content id (side dock)
   const [refreshing, setRefreshing] = useState(false);
+  const [globeFocus, setGlobeFocus] = useState(false);  // double-click globe → full-screen interactive focus
+
+  /* Esc exits globe-focus mode */
+  useEffect(() => {
+    if (!globeFocus) return;
+    const onKey = (e) => { if (e.key === "Escape") setGlobeFocus(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [globeFocus]);
 
   const prefsRef = useRef(prefs); prefsRef.current = prefs;
   const slotsRef = useRef(slots); slotsRef.current = slots;
@@ -2264,10 +2290,16 @@ function HudSpaceInner() {
             <div className="hud-pedestal-spin-2"><div /></div>
           </div>
 
-          {/* Globe (billboard — counter-rotates with world to stay flat) */}
+          {/* Globe (billboard — counter-rotates with world to stay flat).
+              Double-click → pops into full-screen interactive focus mode. */}
           <div ref={billRef} className="hud-bill">
             <div className="hud-globe-glow" />
-            <canvas ref={canvasRef} className="hud-globe-canvas" />
+            <div ref={canvasRef} className="hud-globe-canvas"
+              title="Double-click to interact"
+              onDoubleClick={() => { if (!editMode) setGlobeFocus(true); }}>
+              {!globeFocus && <HudGlobe3D prefsRef={prefsRef} interactive={false} />}
+              <div className="hud-globe-hint">⤢ double-click to interact</div>
+            </div>
           </div>
 
           {/* Pipeline process strip (center decoration) */}
@@ -2318,8 +2350,7 @@ function HudSpaceInner() {
         </div>
       </div>
 
-      {/* Globe drawing hook (no DOM output) */}
-      <HudGlobe canvasRef={canvasRef} prefsRef={prefsRef} />
+      {/* Old 2D-canvas globe retired — now rendered inline via <HudGlobe3D> above */}
 
       {/* ← Back to My Work */}
       <button
@@ -2336,6 +2367,13 @@ function HudSpaceInner() {
       <button className="hud-menu-btn" onClick={() => setMenuOpen(o => !o)}>
         ⚙ LAYOUT
       </button>
+
+      {/* 🌐 Globe focus — reliable entry (double-clicking the globe also works) */}
+      {!editMode && !globeFocus && (
+        <button className="hud-globe-btn" onClick={() => setGlobeFocus(true)}>
+          🌐 GLOBE
+        </button>
+      )}
 
       {/* ⟳ Refresh-all + freshness chip (Decision C) */}
       <div className="hud-fresh">
@@ -2396,6 +2434,60 @@ function HudSpaceInner() {
       {dockedId && !editMode && (
         <HudDock contentId={dockedId} ctx={ctx} onClose={() => setDockedId(null)} />
       )}
+
+      {/* ── Globe FOCUS overlay ──────────────────────────────
+          Full-screen, flat (non-3D) stacking context where the WebGL globe
+          is fully interactive — drag to rotate, live-customize via the panel.
+          Cards fade into the dimmed backdrop behind. */}
+      {globeFocus && (
+        <div className="hud-globe-focus">
+          <div className="hud-globe-focus-backdrop" onClick={() => setGlobeFocus(false)} />
+          <div className="hud-globe-focus-stage" onDoubleClick={() => setGlobeFocus(false)}>
+            <HudGlobe3D prefsRef={prefsRef} />
+          </div>
+          <button className="hud-globe-focus-close" onClick={() => setGlobeFocus(false)}>✕ EXIT</button>
+          <div className="hud-globe-focus-hint">drag to rotate · double-click / Esc to exit</div>
+          <HudGlobeControls prefs={prefs} onUpdate={updatePref} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   HudGlobeControls — compact live effect panel shown in
+   the globe-focus overlay (mirrors the LayoutMenu GLOBE
+   sliders, same prefs / updatePref).
+─────────────────────────────────────────────────────── */
+function HudGlobeControls({ prefs, onUpdate }) {
+  const [open, setOpen] = useState(true);
+  const rows = [
+    ["Spin",       "globeSpin", 0,   3,   0.1, 0.6, (v) => `${v.toFixed(1)}×`],
+    ["Zoom",       "globeZoom", 0.5, 1.8, 0.05, 1,  (v) => `${v.toFixed(2)}×`],
+    ["Glow dots",  "globeDots", 0,   3,   0.1, 1,   (v) => `${v.toFixed(1)}×`],
+    ["Arc speed",  "globeArc",  0.3, 3,   0.1, 1,   (v) => `${v.toFixed(1)}×`],
+    ["Atmosphere", "globeAtmo", 0,   2,   0.1, 1,   (v) => `${v.toFixed(1)}×`],
+  ];
+  return (
+    <div className={`hud-globe-focus-panel${open ? "" : " hud-globe-focus-panel--collapsed"}`}
+      onDoubleClick={(e) => e.stopPropagation()}>
+      <button className="hud-globe-focus-panel-toggle" onClick={() => setOpen(o => !o)}
+        title={open ? "Collapse" : "Expand"}>
+        <span>GLOBE EFFECTS</span>
+        <span className="hud-globe-focus-panel-chev">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && rows.map(([label, key, min, max, step, dflt, fmt]) => {
+        const val = prefs[key] ?? dflt;
+        return (
+          <div className="hud-slider-row" key={key}>
+            <label>{label}</label>
+            <input type="range" min={min} max={max} step={step}
+              value={val}
+              onChange={(e) => onUpdate(key, Number(e.target.value))} />
+            <span>{fmt(val)}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

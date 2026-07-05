@@ -120,6 +120,59 @@ export const PRODUCT = {
   ],
 };
 
+/* ---------- Testimonials ---------- */
+// TODO: replace with real testimonial copy before production
+export const TESTIMONIALS = [
+  {
+    name: "Maya Rodriguez",
+    role: "Short-form Editor",
+    quote: "Reel DNA showed me exactly why a hook worked — the cut timing, the SFX placement, all of it. My retention jumped in a week.",
+    avatar: "",
+  },
+  {
+    name: "Devon Blake",
+    role: "Content Creator, 480k",
+    quote: "I stopped guessing which font or transition a viral reel used. It's just there, one click, ready to drop into my own edit.",
+    avatar: "",
+  },
+  {
+    name: "Priya Nair",
+    role: "Agency Producer",
+    quote: "We onboard junior editors with Reel DNA now. Watching a breakdown teaches pacing faster than any course we tried.",
+    avatar: "",
+  },
+  {
+    name: "Marcus Feld",
+    role: "TikTok Strategist",
+    quote: "The timeline view is the clearest way I've ever seen to explain 'why this clip works' to a client. Total game-changer.",
+    avatar: "",
+  },
+  {
+    name: "Sofia Alvarez",
+    role: "Reels Coach",
+    quote: "Being able to swap the footage but keep the proven structure means my students ship real posts, not just watch tutorials.",
+    avatar: "",
+  },
+  {
+    name: "Jaylen Carter",
+    role: "Brand Video Lead",
+    quote: "Reverse-engineering a competitor's best reel used to take an afternoon. Now it's under a second and I have every asset.",
+    avatar: "",
+  },
+  {
+    name: "Hannah Weiss",
+    role: "Freelance Editor",
+    quote: "The beat-grid and speed-ramp breakdowns alone paid for themselves. I finally understand how the pros land a transition.",
+    avatar: "",
+  },
+  {
+    name: "Omar Haddad",
+    role: "Studio Owner",
+    quote: "It's the tool I wished existed for years. My whole team deconstructs, learns, and ships sharper edits every single week.",
+    avatar: "",
+  },
+];
+
 /* ---------- Nav ---------- */
 export const NAV = [
   { key: "home", label: "Home" },

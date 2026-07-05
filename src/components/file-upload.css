@@ -1,0 +1,165 @@
+/* FileUpload — see file-upload.jsx. Scoped, token-driven, no Tailwind.
+   styles.css stays edit-locked; all rules live here. */
+
+.fup {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  padding: 16px;
+  border: 1.5px dashed var(--border, rgba(255, 255, 255, 0.2));
+  border-radius: 10px;
+  background: var(--bg-2, rgba(20, 22, 28, 0.5));
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  outline: none;
+}
+
+.fup:hover,
+.fup:focus-visible {
+  border-color: var(--c-cyan, #2dd4bf);
+  background: var(--bg-1, rgba(28, 32, 40, 0.62));
+}
+
+.fup--drag {
+  border-color: var(--c-cyan, #2dd4bf);
+  border-style: solid;
+  background: var(--bg-1, rgba(28, 32, 40, 0.72));
+  box-shadow: inset 0 0 0 1px var(--c-cyan, #2dd4bf), 0 6px 22px rgba(0, 0, 0, 0.4);
+}
+
+.fup--disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.fup--busy {
+  cursor: wait;
+}
+
+/* Subtle dot grid that lifts on drag-over (Aceternity's "background grid"). */
+.fup__grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(
+    var(--line-hard, rgba(255, 255, 255, 0.12)) 1px,
+    transparent 1px
+  );
+  background-size: 16px 16px;
+  opacity: 0.5;
+  transition: opacity 0.16s ease, background-size 0.16s ease;
+}
+
+.fup--drag .fup__grid {
+  opacity: 0.9;
+  background-size: 20px 20px;
+}
+
+.fup__input {
+  display: none;
+}
+
+.fup__body {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fup__icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--bg-0, rgba(13, 15, 20, 0.8));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+  color: var(--c-cyan, #2dd4bf);
+  font-size: 18px;
+  transition: transform 0.16s ease;
+}
+
+.fup__icon--drag {
+  transform: translateY(-3px) scale(1.06);
+}
+
+.fup__spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border, rgba(255, 255, 255, 0.25));
+  border-top-color: var(--c-cyan, #2dd4bf);
+  animation: fup-spin 0.7s linear infinite;
+}
+
+@keyframes fup-spin {
+  to { transform: rotate(360deg); }
+}
+
+.fup__text {
+  min-width: 0;
+}
+
+.fup__title {
+  font-family: var(--f-sans, system-ui, sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg, #d7dde5);
+}
+
+.fup__hint {
+  margin-top: 2px;
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--fg-dim, #9aa4b2);
+}
+
+.fup__files {
+  position: relative;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fup__file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--bg-0, rgba(13, 15, 20, 0.7));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+}
+
+.fup__file-icon {
+  font-size: 14px;
+}
+
+.fup__file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--f-sans, system-ui, sans-serif);
+  font-size: 12px;
+  color: var(--fg, #d7dde5);
+}
+
+.fup__file-meta {
+  flex: 0 0 auto;
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--fg-dim, #9aa4b2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fup__spinner { animation-duration: 1.4s; }
+  .fup__icon { transition: none; }
+}

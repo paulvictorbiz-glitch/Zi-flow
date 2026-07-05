@@ -1,0 +1,9 @@
+/* Footage library — focus-row effect.
+   On row hover, dim + blur the other rows so the hovered clip stands out.
+   Dim/blur only (never scale a <tr> — it breaks table layout). */
+.lib-focus-table tr { transition: filter .18s ease, opacity .18s ease, background .18s ease; }
+.lib-focus-table tbody:has(tr:hover) tr:not(:hover) { filter: blur(2px) brightness(.75); opacity: .6; }
+.lib-focus-table tr:hover { background: var(--bg-3); }
+@media (prefers-reduced-motion: reduce) {
+  .lib-focus-table tbody:has(tr:hover) tr:not(:hover) { filter: none; opacity: 1; transition: none; }
+}
