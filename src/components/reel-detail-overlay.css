@@ -1,0 +1,76 @@
+/* =========================================================
+   ReelDetailOverlay — the full ReelDetail editor shown in a large popup
+   overlay (instead of a page swap) when a Pipeline card is clicked.
+
+   z-index 88 is deliberate: it sits ABOVE board cards (≤80) and the reel
+   kebab menu (85) but BELOW ReelDetail's OWN modals — MusicPicker /
+   Compare / AssetAttach all use the generic `.m-backdrop` at z-index 90 in
+   the edit-locked styles.css. If this backdrop were ≥90, those inner modals
+   would render BEHIND the detail. Do not raise it past 89.
+
+   THEMING: the overlay portals to <body>, OUTSIDE #root where the Solarin
+   theme sets [data-theme="solarin"]. The component mirrors data-theme onto
+   .rdo-backdrop so the popup reskins with the app (the Solarin token block is
+   an element-agnostic attribute selector). styles.css is never touched.
+
+   SCROLL MODEL: the BACKDROP scrolls (align-items:flex-start), not an inner
+   card — same as the real detail page, which grows to its natural height and
+   scrolls in the window. This guarantees the card's TOP (‹ Back + title) and
+   BOTTOM are always reachable; a centered card with internal scroll clipped
+   both ends. The side/top padding is the dim, click-to-close gap.
+   ========================================================= */
+
+.rdo-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 88;
+  display: flex;
+  align-items: flex-start;   /* top-aligned; the backdrop is the scroll container */
+  justify-content: center;   /* center horizontally (matters when max-width caps the card) */
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* top clears the 62px Solarin nav; the 32px sides are the small dim gap the
+     owner clicks to return to the pipeline. Bottom gap is the panel's own
+     margin (flex + overflow can drop container padding-bottom). */
+  padding: 74px 32px 0;
+  box-sizing: border-box;
+  background: rgba(4, 8, 14, 0.62);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  animation: rdo-fade 0.18s ease;
+}
+
+.rdo-panel {
+  position: relative;
+  width: 100%;               /* fill the padded backdrop → the gap is the 32px sides */
+  max-width: 1760px;         /* cap on ultra-wide monitors */
+  margin: 0 auto 40px;       /* center when capped + reliable bottom breathing room */
+  background: var(--s-panel, var(--bg-1, var(--bg-0, #0e1211)));
+  border: 1px solid var(--s-border, var(--line-hard, rgba(255, 255, 255, 0.12)));
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  animation: rdo-rise 0.2s cubic-bezier(0.16, 0.84, 0.44, 1);
+}
+
+/* The standalone detail PAGE caps .det-wrap at ~1280px (injected
+   [data-theme="solarin"] .det-wrap rule). Inside the wide popup that would
+   just add empty side margins and keep the 3 columns squished — so lift the
+   cap here. Scoped to the overlay with higher specificity than the injected
+   rule, so the full-page detail view is unaffected. */
+.rdo-backdrop .rdo-panel .det-wrap {
+  max-width: none;
+}
+
+@keyframes rdo-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes rdo-rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rdo-backdrop,
+  .rdo-panel { animation: none; }
+}

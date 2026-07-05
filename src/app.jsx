@@ -31,6 +31,7 @@ const EDITOR_ORIGIN = __isLocalhost ? "http://localhost:3000" : "https://editor.
 import { MyWork } from "./pages/my-work.jsx";
 import { Pipeline } from "./pages/pipeline.jsx";
 import { ReelDetail } from "./pages/detail.jsx";
+import { ReelDetailOverlay } from "./components/reel-detail-overlay.jsx";
 import { FootageLibrary } from "./pages/footage-library.jsx";
 import { ReelDna } from "./pages/reel-dna.jsx";
 /* ---- LAZY peripheral pages (code-split — each loads on first open, or is
@@ -248,6 +249,7 @@ function AppShell() {
   const [viewStack, setViewStack]       = useState([]);
   const [pipelineMode, setPipelineMode] = useState(() => localStorage.getItem("wb_pipeline_mode") || "board");   // board | list | calendar
   const [selectedReel, setSelectedReel] = useState(null);
+  const [overlayReel, setOverlayReel]   = useState(null);   // Pipeline card → full-detail popup (ReelDetailOverlay), no page swap
   const [editingProjectId, setEditingProjectId] = useState(null);   // which Editor project the OpenCut editor opened from the Projects browser
   const [focusModule, setFocusModule]   = useState(null);   // training skillKey to auto-expand/scroll
   const [role, setRole]                 = useState(() => me?.id ?? "paul");
@@ -411,10 +413,16 @@ function AppShell() {
   }, [view, canView]);
 
   const openReel = reel => {
+    setOverlayReel(null);   // close the pipeline popup if a full-page open is requested
     setViewStack(prev => [...prev.slice(-19), view]);
     setSelectedReel(reel);
     setView("detail");
   };
+
+  /* Pipeline cards open the full reel detail in a POPUP overlay (the board
+     stays mounted behind it) instead of the page-swap above. Same prop-driven
+     ReelDetail — see components/reel-detail-overlay.jsx. */
+  const openReelOverlay = reel => setOverlayReel(reel);
 
   /* Expose openReel so the FAB's create-reel flow can deep-link
      straight into the new reel after dispatch. __navigate lets deep
@@ -434,6 +442,7 @@ function AppShell() {
 
   /* Navigate from the drawer: push current view onto stack, switch, close drawer. */
   const goView = (key) => {
+    setOverlayReel(null);   // never leave a reel-detail popup stranded over a new view
     // Landing on the Editor tab from the nav always shows the Projects picker
     // (clear any project carried over from a previous open) — the embedded
     // CapCut editor is only entered by PICKING a project. openEditorProject()
@@ -1050,10 +1059,10 @@ function AppShell() {
           always-mounted TeamChat is lazy too, so it lives inside the boundary. */}
       <React.Suspense fallback={<ViewFallback />}>
         {view === "mywork"    && <MyWork    role={viewingRoleKey} personId={shownPerson?.id} onOpen={openReel} onNavigate={goView} onSetPerson={setRole} />}
-        {view === "pipeline"  && pipelineMode === "board"    && <Pipeline    onOpen={openReel} />}
-        {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReel} />}
-        {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReel} />}
-        {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReel} />}
+        {view === "pipeline"  && pipelineMode === "board"    && <Pipeline    onOpen={openReelOverlay} />}
+        {view === "pipeline"  && pipelineMode === "list"     && <ListView    role="all" onOpen={openReelOverlay} />}
+        {view === "pipeline"  && pipelineMode === "calendar" && <CalendarView role="all" onOpen={openReelOverlay} />}
+        {view === "pipeline"  && pipelineMode === "archived" && <ArchivedView onOpen={openReelOverlay} />}
         {view === "detail"    && <ReelDetail reel={selectedReel} onBack={goBack} onLearnSkill={openTrainingModule} openCompare={autoCompare} onCompareMounted={() => setAutoCompare(false)} />}
         {view === "footage"   && <FootageLibrary onOpen={openReel} />}
         {view === "editor"    && (editingProjectId
@@ -1098,6 +1107,16 @@ function AppShell() {
 
       {/* Display & accessibility preferences (owner-only entry) */}
       {prefsOpen && <PreferencesModal onClose={() => setPrefsOpen(false)} />}
+
+      {/* Pipeline card → full reel detail in a popup overlay (board stays behind). */}
+      {overlayReel && (
+        <ReelDetailOverlay
+          reel={overlayReel}
+          onClose={() => setOverlayReel(null)}
+          onLearnSkill={(skillKey) => { setOverlayReel(null); openTrainingModule(skillKey); }}
+          solarinMode={solarinMode}
+        />
+      )}
     </div>
   );
 }

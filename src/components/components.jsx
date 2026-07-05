@@ -10,6 +10,7 @@ import { useWorkflow } from "../store/store.jsx";
 import { useNotifications } from "./notifications.jsx";
 import { usePermissions } from "../lib/permissions.jsx";
 import { useRoster } from "../lib/roster.jsx";
+import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
 
 /* ---------- Status pill ---------- */
 function Pill({ tone, dashed, children }) {
@@ -64,6 +65,135 @@ function Card({ title, right, footLeft, children, defaultOpen = true, tone, soli
 // The 8 card colours the user can pick (must match CARD_COLORS in detail.jsx
 // and the --c-* tokens in styles.css). Default is cyan.
 const CARD_COLORS = ["cyan", "violet", "green", "amber", "red", "blue", "orange", "pink"];
+
+/* ---------- Inline field editors (reel pop-out) ----------
+   Commit on blur / Enter; Escape reverts. Resync when the underlying
+   value changes (store realtime echo) so a live edit elsewhere reflects. */
+function EditText({ value, placeholder, onCommit, type = "text" }) {
+  const [v, setV] = useState(value ?? "");
+  useEffect(() => { setV(value ?? ""); }, [value]);
+  const commit = () => { const t = (v ?? "").trim(); if (t !== (value ?? "")) onCommit(t); };
+  return (
+    <input
+      type={type}
+      className="exc-edit-input mono"
+      value={v}
+      placeholder={placeholder}
+      onChange={e => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") { setV(value ?? ""); requestAnimationFrame(() => e.target.blur()); }
+      }}
+    />
+  );
+}
+
+function EditArea({ value, placeholder, onCommit }) {
+  const [v, setV] = useState(value ?? "");
+  useEffect(() => { setV(value ?? ""); }, [value]);
+  const commit = () => { if (v !== (value ?? "")) onCommit(v); };
+  return (
+    <textarea
+      className="exc-edit-area"
+      value={v}
+      placeholder={placeholder}
+      rows={4}
+      onChange={e => setV(e.target.value)}
+      onBlur={commit}
+    />
+  );
+}
+
+/* The reel pop-out body — every field editable in place (mirrors the
+   thumbnail card's inline-edit feel). Writes go straight to the store via
+   updateReel / moveStage; the board card + this panel both re-render on the
+   realtime echo. `firstUrl` is a best-effort external link for "Open original". */
+function ReelEditPanel({ reel, actions, can, firstUrl }) {
+  const canMove = can("moveReel");
+  const canComplete = can("moveToCompleted");
+  const setStage = (stage) => {
+    if (!canMove) return;
+    if (stage === "completed" && !canComplete) return;
+    if (stage === (reel.stage || "not_started")) return;
+    actions.moveStage(reel.id, { stage });
+  };
+  return (
+    <div className="exc-reel-edit">
+      <label className="exc-edit-row">
+        <span className="exc-edit-label">Title</span>
+        <EditText value={reel.title} placeholder="Untitled reel"
+                  onCommit={(val) => actions.updateReel(reel.id, { title: val })} />
+      </label>
+
+      <label className="exc-edit-row">
+        <span className="exc-edit-label">Series</span>
+        <EditText value={reel.series} placeholder="No series"
+                  onCommit={(val) => actions.updateReel(reel.id, { series: val || null })} />
+      </label>
+
+      <div className="exc-edit-row">
+        <span className="exc-edit-label">Stage</span>
+        <div className="exc-stage-pills">
+          {STAGES.map(s => {
+            const on = (reel.stage || "not_started") === s;
+            const blocked = !canMove || (s === "completed" && !canComplete);
+            return (
+              <button key={s} type="button"
+                      className={"exc-stage-pill" + (on ? " is-on" : "")}
+                      disabled={blocked && !on}
+                      onClick={() => setStage(s)}>
+                {STAGE_LABEL[s] || s}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="exc-edit-row">
+        <span className="exc-edit-label">Card colour</span>
+        <div className="exc-color-dots">
+          {CARD_COLORS.map(c => {
+            const on = (reel.tone || "cyan") === c;
+            return (
+              <span key={c}
+                    className={"exc-color-dot" + (on ? " is-on" : "")}
+                    style={{ background: `var(--c-${c})` }}
+                    title={c}
+                    onClick={() => actions.updateReel(reel.id, { tone: c })} />
+            );
+          })}
+        </div>
+      </div>
+
+      <label className="exc-edit-row">
+        <span className="exc-edit-label">Scheduled</span>
+        <input type="date" className="exc-edit-input mono"
+               value={reel.scheduledPostDate || ""}
+               onChange={(e) => actions.updateReel(reel.id, { scheduledPostDate: e.target.value || null })} />
+      </label>
+
+      <label className="exc-edit-col">
+        <span className="exc-edit-label">Note</span>
+        <EditArea value={reel.note} placeholder="Add a note…"
+                  onCommit={(val) => actions.updateReel(reel.id, { note: val || null })} />
+      </label>
+
+      {Array.isArray(reel.links) && reel.links.length > 0 && (
+        <div className="exc-edit-col">
+          <span className="exc-edit-label">Links</span>
+          <div className="exc-reel-links">
+            {reel.links.map((l, i) => <span key={i} className="exc-reel-link">{l}</span>)}
+          </div>
+        </div>
+      )}
+
+      {firstUrl && (
+        <a className="exc-reel-open-orig" href={firstUrl} target="_blank" rel="noreferrer">Open original ↗</a>
+      )}
+    </div>
+  );
+}
 
 function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
   // state: 'ok' | 'warn' | 'block' | 'selected'
@@ -128,13 +258,31 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
   const menuPos = useAnchoredPosition(menuOpen, menuBtnRef, { width: 180, align: "right", gap: 4 });
   useEffect(() => {
     if (!menuOpen) return;
-    const close = (e) => {
+    /* Dismiss on any outside interaction. Listen on the CAPTURE phase (3rd arg
+       `true`) — a bubble-phase listener was swallowed by the kebab button's
+       onClick `stopPropagation`, which left menus stuck open: a second card's
+       kebab opened WITHOUT closing the first (stacked menus), and any
+       stopPropagation'd click failed to dismiss. Also close on scroll/resize:
+       the menu is portaled to <body> with one-shot fixed coords, so a board
+       reflow would otherwise strand it far from its card. Mirrors the robust
+       pattern in EditProjectMenu.jsx. */
+    const onDown = (e) => {
       const inMenu = menuRef.current && menuRef.current.contains(e.target);
       const inBtn = menuBtnRef.current && menuBtnRef.current.contains(e.target);
       if (!inMenu && !inBtn) setMenuOpen(false);
     };
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
+    const onKey = (e) => { if (e.key === "Escape") setMenuOpen(false); };
+    const onReflow = () => setMenuOpen(false);
+    window.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", onReflow, true);
+    window.addEventListener("resize", onReflow, true);
+    return () => {
+      window.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("scroll", onReflow, true);
+      window.removeEventListener("resize", onReflow, true);
+    };
   }, [menuOpen]);
   // Reset picker view whenever the menu closes.
   useEffect(() => { if (!menuOpen) setShowDupePicker(false); }, [menuOpen]);
@@ -160,7 +308,10 @@ function ReelCard({ reel, onOpen, state, isSelected, compact = false }) {
   return (
     <div
       className={cls}
-      onClick={openReel}
+      /* Plain click → open the full reel detail in the popup overlay. The
+         parent's handleCardClick routes modifier-clicks (⌘/Ctrl/Shift) to
+         multi-select instead of opening. */
+      onClick={(e) => openReel(e)}
       /* Compact (grid) cards clip to 58px via overflow:hidden; while the kebab
          menu is open, let the dropdown escape that clamp (inline overrides the
          stylesheet rule — styles.css is edit-locked). */
