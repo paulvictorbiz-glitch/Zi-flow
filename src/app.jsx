@@ -1151,6 +1151,12 @@ class AppErrorBoundary extends React.Component {
    entirely outside the AuthGate. */
 const Landing = lazyPage(() => import("./pages/landing.jsx"), "Landing");
 
+/* Public front page ("/") — the Paul Victor cinematic portfolio, embedded as
+   its own isolated build. Lazy so nothing of it loads on the /app routes. The
+   old Reel DNA marketing landing (above) is preserved and one line from being
+   restored here. */
+const PortfolioFront = lazyPage(() => import("./pages/portfolio-front.jsx"), "PortfolioFront");
+
 /* Owner-only 3D HUD dashboard at /space. Lazy-loaded so the CSS-3D bundle
    never ships with the normal app. Rendered INSIDE the authed provider tree
    so it has live store access; its own owner gate bounces non-owners to /app. */
@@ -1169,10 +1175,10 @@ function App() {
       <AppErrorBoundary>
         <React.Suspense
           fallback={
-            <div style={{ minHeight: "100vh", background: "#06070d" }} />
+            <div style={{ minHeight: "100vh", background: "#070907" }} />
           }
         >
-          <Landing onEnterApp={onEnterApp} />
+          <PortfolioFront onEnterApp={onEnterApp} />
         </React.Suspense>
       </AppErrorBoundary>
     );
