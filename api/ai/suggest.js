@@ -1296,7 +1296,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (action === "forge-ingest" || action === "forge-discover" || action === "forge-expand" || action === "forge-script") {
+  if (action === "forge-ingest" || action === "forge-discover" || action === "forge-expand" || action === "forge-script" || action === "forge-backfill-entities") {
     const forgeSecret = process.env.CONTENT_FORGE_SECRET;
     if (!forgeSecret) { res.status(500).json({ error: "CONTENT_FORGE_SECRET not configured" }); return; }
     // Tolerant body parse (mirrors the other proxy branches, e.g. :1228-1230).
@@ -1386,6 +1386,43 @@ export default async function handler(req, res) {
         }
         console.error("forge-discover error:", e.message);
         res.status(502).json({ error: `Couldn't reach the content-forge discover worker: ${e.message}` });
+      } finally {
+        clearTimeout(t);
+      }
+      return;
+    }
+
+    // ── Fire-and-forget: kick a one-off entity backfill over existing rows ────
+    // Enriches old content_opportunities with entities_mentioned (migration 0111)
+    // WITHOUT re-discovering or altering hooks/scripts. Returns a job_id; the UI
+    // polls api/monitor/status.js?action=forge-backfill-status.
+    if (action === "forge-backfill-entities") {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const r = await fetch(
+          `https://api.footagebrain.com/api/content-forge/backfill-entities?secret=${encodeURIComponent(forgeSecret)}` +
+            (tier ? `&tier=${encodeURIComponent(tier)}` : "") +
+            // only_missing=0 reprocesses ALL rows; default (absent) = only the empty ones.
+            (body.only_missing === false || body.only_missing === 0 ? "&only_missing=0" : ""),
+          {
+            method: "POST",
+            signal: ctrl.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tier, model: body.model, only_missing: body.only_missing }),
+          });
+        const out = await r.json().catch(() => ({}));
+        // 409 = a backfill is already running — surface it as a soft state, not a 502.
+        if (r.status === 409) { res.status(200).json({ ok: false, already_running: true, ...out }); return; }
+        if (!r.ok) { res.status(502).json({ error: `Hetzner backfill HTTP ${r.status}`, ...out }); return; }
+        res.status(200).json({ ok: true, started: true, ...out });
+      } catch (e) {
+        if (e.name === "AbortError") {
+          res.status(202).json({ ok: true, started: true, pending: true });
+          return;
+        }
+        console.error("forge-backfill-entities error:", e.message);
+        res.status(502).json({ error: `Couldn't reach the content-forge backfill worker: ${e.message}` });
       } finally {
         clearTimeout(t);
       }

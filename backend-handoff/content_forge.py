@@ -897,6 +897,12 @@ async def _read_existing_titles(client: httpx.AsyncClient, country: str | None,
     return []
 
 
+# Columns added by migration 0111 (entities_mentioned) — degrade-safe like the 0108 clip
+# columns: if the migration hasn't been applied yet, PostgREST 400s the whole batch on an
+# unknown column, so we retry once with these keys stripped rather than losing the run.
+_OPP_0111_COLS = {"entities_mentioned"}
+
+
 async def _upsert_opportunities(client: httpx.AsyncClient,
                                 rows: list[dict[str, Any]]) -> int:
     """Upsert content_opportunities deduped on the FULL unique index arbiter
@@ -916,7 +922,21 @@ async def _upsert_opportunities(client: httpx.AsyncClient,
         )
         if r.status_code in (200, 201, 204):
             return len(rows)
-        log.warning("content_forge: opportunity upsert HTTP %s: %s", r.status_code, r.text[:300])
+        if r.status_code == 400:
+            stripped = [{k: v for k, v in row.items() if k not in _OPP_0111_COLS}
+                        for row in rows]
+            r2 = await client.post(
+                f"{url}/rest/v1/content_opportunities"
+                "?on_conflict=discovery_run_id,country,title",
+                headers=headers,
+                json=stripped,
+            )
+            if r2.status_code in (200, 201, 204):
+                return len(stripped)
+            log.warning("content_forge: opportunity upsert HTTP %s (retry %s): %s",
+                        r.status_code, r2.status_code, r2.text[:300])
+        else:
+            log.warning("content_forge: opportunity upsert HTTP %s: %s", r.status_code, r.text[:300])
     except Exception as e:  # noqa: BLE001
         log.warning("content_forge: opportunity upsert failed: %s", e)
     return 0
@@ -1674,6 +1694,14 @@ GROUND EVERY OPPORTUNITY IN THE TRANSCRIPT. Cite the clip ids it draws from. Do 
 facts, quotes, numbers, or moments that are not supported by the clips. Prefer fewer,
 higher-quality opportunities over many weak ones. De-duplicate near-identical angles.
 
+ENTITIES MENTIONED — the anti-generic step. For each opportunity, also pull out the concrete,
+NAMEABLE things the transcript states or clearly implies: a place/landmark, a historical
+event, a person, a cultural practice or tradition, a specific record/number/date. These are
+the nouns a viewer could type into a search engine — NOT vague themes (those belong in
+"topics"). A later step looks these up to pull real facts/history so the hook/title can cite
+something specific ("the 700-year-old bridge" beats "an old bridge"). Only list entities the
+transcript actually names or unambiguously implies — leave the array empty rather than guess.
+
 Return a JSON ARRAY (8-20 items) of objects with EXACTLY these keys:
 [
   {
@@ -1682,6 +1710,7 @@ Return a JSON ARRAY (8-20 items) of objects with EXACTLY these keys:
     "country": "global" OR an ISO-ish country/region the angle targets (default "global"),
     "topics": ["topic", ...],
     "keywords": ["keyword", ...],
+    "entities_mentioned": ["<specific named place/event/person/tradition/record from the transcript>", ...],
     "source_clip_ids": ["<clip id from the transcript>", ...],
     "virality_tier": "S" | "A" | "B" | "C",
     "virality_score": 0.0-1.0,
@@ -1693,18 +1722,28 @@ Output the JSON array ONLY — no prose, no code fences."""
 
 # ── expansion prompt ──────────────────────────────────────────────────────────────────
 def _expansion_user_prompt(opp: dict[str, Any], grounding: list[str]) -> str:
+    entities = [str(e) for e in (opp.get("entities_mentioned") or []) if str(e).strip()]
     facts = ""
     if grounding:
         bullet = "\n".join(f"- {g}" for g in grounding[:6])
         facts = f"\n\nGROUNDING FACTS (verified; use only if relevant, do NOT contradict):\n{bullet}"
+    specificity_note = (
+        "\n\nAt least one hook SHOULD cite a concrete fact from the grounding facts above "
+        "(a name, date, number) so it reads as specific rather than generic."
+        if grounding else
+        "\n\nNo verified outside facts were found for this one — stay strictly footage-grounded "
+        "(the angle/topics/keywords above); do not invent history or statistics."
+    )
     return (
         "Write EXACTLY 3 opening hooks for this short-form video opportunity — one in each "
         "style, in this order: curiosity, controversy, personal_stakes.\n\n"
         f"TITLE: {opp.get('title') or ''}\n"
         f"ANGLE: {opp.get('angle_summary') or ''}\n"
         f"TOPICS: {', '.join(opp.get('topics') or [])}\n"
-        f"KEYWORDS: {', '.join(opp.get('keywords') or [])}"
-        f"{facts}\n\n"
+        f"KEYWORDS: {', '.join(opp.get('keywords') or [])}\n"
+        f"ENTITIES MENTIONED IN FOOTAGE: {', '.join(entities) if entities else '(none captured)'}"
+        f"{facts}"
+        f"{specificity_note}\n\n"
         "Each hook is 1-2 sentences, punchy, scroll-stopping, and faithful to the angle. "
         "Do NOT invent facts beyond the angle and any grounding facts above.\n\n"
         "Return a JSON ARRAY of EXACTLY 3 objects with these keys:\n"
@@ -1750,6 +1789,19 @@ def _tavily_ground(query: str) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         log.info("content_forge: tavily grounding failed (degrading): %s", e)
         return {"skipped": True, "reason": "error", "detail": str(e)[:200]}
+
+
+def _grounding_query(opp: dict[str, Any]) -> str:
+    """Build the Tavily search query for an opportunity. Prefers the concrete named
+    entities the discovery pass extracted from the transcript (a place, event, person,
+    tradition, record) over the generic title/angle — "Zhangjiajie glass bridge history"
+    returns real facts, "The Bridge Locals Fear" does not. Falls back to title+angle when
+    no entities were captured (e.g. rows discovered before migration 0111, or genuinely
+    entity-less footage)."""
+    entities = [str(e).strip() for e in (opp.get("entities_mentioned") or []) if str(e).strip()]
+    if entities:
+        return (", ".join(entities[:3]) + " " + (opp.get("title") or "")).strip()
+    return ((opp.get("title") or "") + " " + (opp.get("angle_summary") or "")).strip()
 
 
 def _grounding_bullets(fact_check: dict[str, Any]) -> list[str]:
@@ -2153,6 +2205,7 @@ async def _discover_worker(batch_id: str, tier: str, country: str | None,
                     "country": ctry,
                     "topics": [str(t) for t in (it.get("topics") or [])],
                     "keywords": [str(k) for k in (it.get("keywords") or [])],
+                    "entities_mentioned": [str(e) for e in (it.get("entities_mentioned") or []) if str(e).strip()],
                     "source_clip_ids": src_ids,
                     "virality_tier": _norm_tier(it.get("virality_tier")),
                     "virality_score": _norm_score(it.get("virality_score")),
@@ -2433,6 +2486,347 @@ async def discover_status(batch_id: str, request: Request):
                          "count": len(opps), "opportunities": opps}, status_code=200)
 
 
+# ── ENTITY BACKFILL ───────────────────────────────────────────────────────────────────
+# One-off enrichment: the entities_mentioned column (migration 0111) is populated for NEW
+# discovery passes, but the ~2,600 opportunities discovered before this feature carry an
+# empty array. This backfill re-reads each old opportunity's stored context (title/angle/
+# topics/keywords + its source-clip transcripts, which are all still on the row) and asks
+# the LLM ONLY to extract entities — NOT to re-discover or re-write anything. So it keeps
+# every existing hook/script/vet-state/favorite intact and just fills the one column, cheap
+# (output is tiny). Idempotent: re-running only re-touches rows still empty.
+
+ENTITY_BACKFILL_BATCH = 10          # opportunities per LLM call (small ctx each → batchable)
+ENTITY_BACKFILL_CONCURRENCY = 4     # LLM calls in flight per wave (keep modest — thinking model)
+ENTITY_BACKFILL_MAX = 6000          # safety cap on rows processed per job
+
+_ENTITY_SYSTEM = (
+    "You extract the concrete, NAMEABLE entities from short-form video content opportunities. "
+    "For each item you are given its title, angle, topics/keywords and (when available) the raw "
+    "footage transcript it was drawn from. Return ONLY the specific look-up-able nouns the "
+    "material names or unambiguously implies — a place/landmark, a historical event, a person, "
+    "a cultural practice/tradition, a specific record/number/date. These are what a viewer could "
+    "type into a search engine. Do NOT return vague themes (e.g. 'food', 'danger', 'travel') — "
+    "those are topics, not entities. If an item has no concrete entity, return an empty array for "
+    "it rather than guessing. You reply with STRICT JSON ONLY: no prose, no code fences."
+)
+
+
+def _entity_backfill_prompt(items: list[dict[str, Any]]) -> str:
+    """Build one batched extraction prompt for up to ENTITY_BACKFILL_BATCH opportunities.
+    Each item is referenced by a batch-LOCAL index [i] (never its UUID — the model mangles
+    long ids), mapped back to the real opportunity id on our side."""
+    blocks: list[str] = []
+    for it in items:
+        clip_txt = ""
+        clips = it.get("_clips") or []
+        if clips:
+            snips = []
+            for c in clips[:3]:
+                t = (c.get("transcript_text") or "").strip().replace("\n", " ")
+                if t:
+                    snips.append(t[:300])
+            if snips:
+                clip_txt = "\n  TRANSCRIPT: " + " … ".join(snips)
+        blocks.append(
+            f"[{it['_i']}] TITLE: {it.get('title') or ''}\n"
+            f"  ANGLE: {it.get('angle_summary') or ''}\n"
+            f"  TOPICS: {', '.join(it.get('topics') or [])}\n"
+            f"  KEYWORDS: {', '.join(it.get('keywords') or [])}"
+            f"{clip_txt}"
+        )
+    body = "\n\n".join(blocks)
+    return (
+        "Extract entities_mentioned for EACH opportunity below.\n\n"
+        f"{body}\n\n"
+        "Return a JSON ARRAY with one object per item, using the SAME index:\n"
+        '[{"i": <index>, "entities": ["<specific named place/event/person/tradition/record>", ...]}, ...]\n'
+        "Include every index exactly once (empty array if none). Output the JSON array ONLY — "
+        "no prose, no code fences."
+    )
+
+
+async def _fetch_clips_for_ids(client: httpx.AsyncClient,
+                               ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch transcript_clips text for a batch of clip ids in ONE query (so a whole
+    opportunity batch shares a single Supabase round-trip). Returns id → clip dict.
+    Best-effort → {} on any error."""
+    ids = [str(x) for x in ids if x]
+    if not ids:
+        return {}
+    url = _supabase_url()
+    if not url:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    # Chunk the IN() list so a big batch can't blow the URL length.
+    for i in range(0, len(ids), 100):
+        chunk = ids[i:i + 100]
+        try:
+            r = await client.get(
+                f"{url}/rest/v1/transcript_clips"
+                f"?select=id,transcript_text&id=in.({','.join(chunk)})&limit=200",
+                headers=_supabase_headers(),
+            )
+            if r.status_code == 200 and isinstance(r.json(), list):
+                for row in r.json():
+                    if isinstance(row, dict) and row.get("id"):
+                        out[str(row["id"])] = row
+        except Exception as e:  # noqa: BLE001
+            log.info("content_forge: backfill clip fetch failed: %s", e)
+    return out
+
+
+async def _read_opps_missing_entities(client: httpx.AsyncClient, *, offset: int,
+                                      limit: int, only_missing: bool) -> list[dict[str, Any]]:
+    """Page opportunities for the backfill, oldest first. only_missing=True selects rows whose
+    entities_mentioned is still the empty array (the un-backfilled ones); False reprocesses
+    all. Returns [] on any error (e.g. migration 0111 not applied → the filter/column 400s)."""
+    url = _supabase_url()
+    if not url:
+        return []
+    flt = "&entities_mentioned=eq.%7B%7D" if only_missing else ""   # %7B%7D = {}
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/content_opportunities"
+            f"?select=id,title,angle_summary,topics,keywords,source_clip_ids"
+            f"{flt}&order=created_at.asc&offset={offset}&limit={limit}",
+            headers=_supabase_headers(),
+        )
+        if r.status_code == 200 and isinstance(r.json(), list):
+            return r.json()
+        log.warning("content_forge: backfill opp read HTTP %s: %s", r.status_code, r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        log.warning("content_forge: backfill opp read failed: %s", e)
+    return []
+
+
+async def _count_opps_missing_entities(client: httpx.AsyncClient, only_missing: bool) -> int:
+    url = _supabase_url()
+    if not url:
+        return 0
+    flt = "&entities_mentioned=eq.%7B%7D" if only_missing else ""
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/content_opportunities?select=id{flt}&limit=1",
+            headers={**_supabase_headers(), "Prefer": "count=exact"},
+        )
+        cr = r.headers.get("content-range") or ""
+        if "/" in cr:
+            tail = cr.split("/")[-1]
+            return int(tail) if tail.isdigit() else 0
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: backfill count failed: %s", e)
+    return 0
+
+
+async def _write_backfill_progress(client: httpx.AsyncClient, prog: dict[str, Any]) -> None:
+    """Persist backfill progress into app_settings key 'content_forge_backfill' (service role;
+    no migration). Polled by GET /backfill-status. Best-effort — never raises."""
+    url = _supabase_url()
+    if not url:
+        return
+    try:
+        await client.post(
+            f"{url}/rest/v1/app_settings?on_conflict=key",
+            headers={**_supabase_headers("return=minimal"),
+                     "Prefer": "resolution=merge-duplicates"},
+            json={"key": "content_forge_backfill", "value": prog, "updated_at": _now_iso()},
+        )
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: backfill progress write failed: %s", e)
+
+
+async def _read_backfill_progress(client: httpx.AsyncClient) -> dict[str, Any] | None:
+    url = _supabase_url()
+    if not url:
+        return None
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/app_settings?key=eq.content_forge_backfill&select=value&limit=1",
+            headers=_supabase_headers(),
+        )
+        if r.status_code == 200 and isinstance(r.json(), list) and r.json():
+            v = r.json()[0].get("value")
+            return v if isinstance(v, dict) else None
+    except Exception as e:  # noqa: BLE001
+        log.info("content_forge: backfill progress read failed: %s", e)
+    return None
+
+
+async def _extract_entities_batch(client: httpx.AsyncClient, items: list[dict[str, Any]], *,
+                                  tier: str, model_override: str | None,
+                                  job_id: str) -> int:
+    """Run ONE LLM extraction over a batch of opportunities and patch each row's
+    entities_mentioned. Returns the count patched. Never raises — a failed batch is skipped
+    (those rows stay empty and are retried on a future run)."""
+    if not items:
+        return 0
+    messages = [
+        {"role": "system", "content": _ENTITY_SYSTEM},
+        {"role": "user", "content": _entity_backfill_prompt(items)},
+    ]
+    try:
+        text, meta = _forge_llm(messages, tier=tier, kind="discovery",
+                                model_override=model_override or None)
+        await _log_usage(client, kind="entity_backfill", meta=meta, batch_id=job_id)
+        parsed = _extract_json(text)
+    except Exception as e:  # noqa: BLE001
+        log.warning("content_forge: entity backfill LLM failed: %s", e)
+        return 0
+    rows = parsed if isinstance(parsed, list) else parsed.get("items", [])
+    by_index: dict[int, list[str]] = {}
+    if isinstance(rows, list):
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            try:
+                idx = int(r.get("i"))
+            except (TypeError, ValueError):
+                continue
+            ents = [str(e).strip() for e in (r.get("entities") or []) if str(e).strip()]
+            by_index[idx] = ents
+    patched = 0
+    for it in items:
+        ents = by_index.get(it["_i"])
+        if ents is None:
+            continue   # model dropped this index — leave empty, retried next run
+        if await _patch_opportunity(client, it["id"], {"entities_mentioned": ents}):
+            patched += 1
+    return patched
+
+
+async def _backfill_entities_worker(job_id: str, tier: str, model_override: str | None,
+                                    only_missing: bool = True) -> None:
+    """Fire-and-forget: page opportunities lacking entities, extract + patch in batched LLM
+    calls (bounded concurrency), tracking progress in app_settings. Never raises. Stops early
+    if the credit gate (kill switch / daily limit) closes mid-run."""
+    import asyncio
+    processed = 0
+    patched = 0
+    started = _now_iso()
+    try:
+        async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
+            total = await _count_opps_missing_entities(client, only_missing)
+            await _write_backfill_progress(client, {
+                "job_id": job_id, "running": True, "processed": 0, "patched": 0,
+                "total": total, "started_at": started, "updated": started})
+            offset = 0
+            while processed < ENTITY_BACKFILL_MAX:
+                allowed, reason = await _forge_llm_gate(client)
+                if not allowed:
+                    log.info("content_forge: backfill job=%s STOPPED — %s", job_id, reason)
+                    await _write_backfill_progress(client, {
+                        "job_id": job_id, "running": False, "processed": processed,
+                        "patched": patched, "total": total, "started_at": started,
+                        "finished_at": _now_iso(), "updated": _now_iso(),
+                        "stopped_reason": reason})
+                    return
+                # Read a wave of opportunities (CONCURRENCY batches worth).
+                wave_size = ENTITY_BACKFILL_BATCH * ENTITY_BACKFILL_CONCURRENCY
+                # only_missing: patched rows drop out of the filter, so always read at offset 0.
+                # not only_missing: rows stay, so advance offset to walk the whole table.
+                read_offset = 0 if only_missing else offset
+                opps = await _read_opps_missing_entities(
+                    client, offset=read_offset, limit=wave_size, only_missing=only_missing)
+                if not opps:
+                    break
+                # Prefetch every clip in the wave in one query, then attach to each opp.
+                all_clip_ids: list[str] = []
+                for o in opps:
+                    all_clip_ids.extend(str(x) for x in (o.get("source_clip_ids") or [])[:3] if x)
+                clip_map = await _fetch_clips_for_ids(client, all_clip_ids)
+                # Split the wave into extraction batches, indexed locally.
+                batches: list[list[dict[str, Any]]] = []
+                for i in range(0, len(opps), ENTITY_BACKFILL_BATCH):
+                    chunk = opps[i:i + ENTITY_BACKFILL_BATCH]
+                    items = []
+                    for j, o in enumerate(chunk):
+                        clips = [clip_map[str(x)] for x in (o.get("source_clip_ids") or [])[:3]
+                                 if str(x) in clip_map]
+                        items.append({**o, "_i": j + 1, "_clips": clips})
+                    batches.append(items)
+                results = await asyncio.gather(
+                    *[_extract_entities_batch(client, b, tier=tier,
+                                              model_override=model_override, job_id=job_id)
+                      for b in batches],
+                    return_exceptions=True)
+                for res in results:
+                    if isinstance(res, int):
+                        patched += res
+                processed += len(opps)
+                offset += len(opps)
+                await _write_backfill_progress(client, {
+                    "job_id": job_id, "running": True, "processed": processed,
+                    "patched": patched, "total": total, "started_at": started,
+                    "updated": _now_iso()})
+                # only_missing with a full wave that patched nothing → avoid an infinite loop
+                # (all remaining rows are genuinely entity-less and re-selected forever).
+                if only_missing and not any(isinstance(r, int) and r > 0 for r in results):
+                    break
+            await _write_backfill_progress(client, {
+                "job_id": job_id, "running": False, "processed": processed,
+                "patched": patched, "total": total, "started_at": started,
+                "finished_at": _now_iso(), "updated": _now_iso()})
+            log.info("content_forge: backfill job=%s DONE processed=%d patched=%d total=%d",
+                     job_id, processed, patched, total)
+    except Exception as e:  # noqa: BLE001 — never crash the worker
+        log.exception("content_forge: backfill worker error (job=%s): %s", job_id, e)
+        try:
+            async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as c2:
+                await _write_backfill_progress(c2, {
+                    "job_id": job_id, "running": False, "processed": processed,
+                    "patched": patched, "started_at": started, "finished_at": _now_iso(),
+                    "updated": _now_iso(), "error": str(e)[:200]})
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@router.post("/backfill-entities")
+async def backfill_entities(request: Request, background_tasks: BackgroundTasks):
+    """POST /api/content-forge/backfill-entities?secret=…[&tier=free|pro][&only_missing=1]
+
+    Secret-gated. Fire-and-forget: enrich existing content_opportunities with
+    entities_mentioned (migration 0111) WITHOUT re-discovering or altering hooks/scripts.
+    Returns a job_id immediately; poll /backfill-status for progress. only_missing=1 (default)
+    only touches rows whose entities array is still empty; only_missing=0 reprocesses all."""
+    if not _check_secret(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
+    tier = (request.query_params.get("tier") or "free").strip().lower()
+    only_missing = (request.query_params.get("only_missing") or "1").strip().lower() not in ("0", "false", "no")
+    model = _clean_model(request.query_params.get("model"))
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            tier = (body.get("tier") or tier or "free").strip().lower()
+            if "only_missing" in body:
+                only_missing = str(body.get("only_missing")).strip().lower() not in ("0", "false", "no")
+            model = model or _clean_model(body.get("model"))
+    except Exception:  # noqa: BLE001
+        pass
+    if tier not in ("free", "pro"):
+        tier = "free"
+    # Guard against a second job while one is already running.
+    async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
+        prog = await _read_backfill_progress(client)
+        if prog and prog.get("running"):
+            return JSONResponse({"ok": False, "error": "a backfill is already running",
+                                 "progress": prog}, status_code=409)
+    job_id = str(uuid.uuid4())
+    background_tasks.add_task(_backfill_entities_worker, job_id, tier, model or None, only_missing)
+    return JSONResponse({"ok": True, "job_id": job_id, "tier": tier,
+                         "only_missing": only_missing}, status_code=200)
+
+
+@router.get("/backfill-status")
+async def backfill_status(request: Request):
+    """GET /api/content-forge/backfill-status?secret=… → the entity backfill progress record
+    ({running, processed, patched, total, ...}) or {progress:null} if none has ever run."""
+    if not _check_secret(request):
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
+    async with httpx.AsyncClient(timeout=SUPABASE_TIMEOUT) as client:
+        prog = await _read_backfill_progress(client)
+    return JSONResponse({"ok": True, "progress": prog}, status_code=200)
+
+
 @router.post("/expand")
 async def expand(request: Request):
     """POST /api/content-forge/expand?secret=…&opportunity_id=…[&tier=free|pro] → hooks
@@ -2481,9 +2875,11 @@ async def expand(request: Request):
                                  "opportunity_id": opp_id}, status_code=200)
 
         # Optional grounding — never blocks hook generation; degrades on quota/no-key.
-        gq = (opp.get("title") or "") + " " + (opp.get("angle_summary") or "")
-        fact_check = _tavily_ground(gq.strip()) if gq.strip() else {"skipped": True,
-                                                                    "reason": "no_query"}
+        # _grounding_query prefers the discovery pass's entities_mentioned (specific named
+        # place/event/person) over the generic title+angle, so the search actually surfaces
+        # real facts/history instead of nothing.
+        gq = _grounding_query(opp)
+        fact_check = _tavily_ground(gq) if gq else {"skipped": True, "reason": "no_query"}
         grounding = _grounding_bullets(fact_check)
 
         messages = [
@@ -2626,7 +3022,9 @@ def _script_user_prompt(
         if grounding_bullets:
             bullet = "\n".join(f"- {g}" for g in grounding_bullets[:6])
             grounding_note = (
-                f"WEB-GROUNDED FACTS (verified; use only if relevant; do NOT contradict):\n{bullet}"
+                f"WEB-GROUNDED FACTS (verified; use only if relevant; do NOT contradict):\n{bullet}\n"
+                "Weave in at least one concrete fact above (a name, date, number) so the script "
+                "reads as specific rather than generic."
             )
         else:
             grounding_note = "No web grounding available — use model knowledge as fallback."
@@ -2647,9 +3045,11 @@ def _script_user_prompt(
             '  ]'
         )
 
+    entities = [str(e) for e in (opp.get("entities_mentioned") or []) if str(e).strip()]
     return (
         f'OPPORTUNITY\nTitle: {opp.get("title","")}\n'
-        f'Angle: {opp.get("angle_summary","")}\n\n'
+        f'Angle: {opp.get("angle_summary","")}\n'
+        f'Entities mentioned in footage: {", ".join(entities) if entities else "(none captured)"}\n\n'
         f'NARRATIVE TEMPLATE: {template}\n'
         f'Beat structure:\n{beats_block}\n\n'
         f'TONE: {tone_desc}\n\n'
@@ -2727,7 +3127,7 @@ async def script(request: Request):
         grounding_bullets: list[str] = []
         fact_check: dict[str, Any] = {"skipped": True, "reason": "not_requested"}
         if grounding_mode == "web":
-            gq = ((opp.get("title") or "") + " " + (opp.get("angle_summary") or "")).strip()
+            gq = _grounding_query(opp)
             if gq:
                 fact_check = _tavily_ground(gq)
                 grounding_bullets = _grounding_bullets(fact_check)
@@ -2768,6 +3168,11 @@ async def script(request: Request):
         }
         if citations:
             script_json_row["citations"] = citations
+        if grounding_mode == "web" and not fact_check.get("skipped"):
+            script_json_row["grounding_sources"] = [
+                {"title": s.get("title"), "url": s.get("url")}
+                for s in (fact_check.get("sources") or []) if s.get("url")
+            ][:6]
 
         persisted = await _patch_opportunity(client, opp_id, {"script_json": script_json_row})
         if not persisted:

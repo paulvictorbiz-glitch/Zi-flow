@@ -236,6 +236,10 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
   const [generating, setGenerating] = useState(false);
   const [generateErr, setGenerateErr] = useState(null);
 
+  // Tavily grounding result from the last Expound call — {skipped, sources:[{title,url,snippet}]}.
+  // Seeded from the row (persisted by /expand) so a re-opened modal still shows what was found.
+  const [factCheck, setFactCheck] = useState(() => opportunity.fact_check_result || null);
+
   // Source clips: null = not loaded yet, [] = none found, [{id, filename, drive_url, ...}]
   const [sourceClips, setSourceClips] = useState(null);
 
@@ -328,6 +332,7 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
       if (!r.ok && r.status !== 202) { setExpandErr(body.error || `Expansion failed (${r.status}).`); }
       const hooks = body.hooks || body.hook_versions;
       if (Array.isArray(hooks) && hooks.length) applyHooks(hooks);
+      if (body.fact_check_result) setFactCheck(body.fact_check_result);
       const { data: fresh } = await supabase
         .from("content_opportunities").select("hook_versions").eq("id", opportunity.id).maybeSingle();
       if (fresh?.hook_versions) applyHooks(fresh.hook_versions);
@@ -457,6 +462,15 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
         {opportunity.angle_summary && (
           <p className="cf-modal-angle">{opportunity.angle_summary}</p>
         )}
+        {Array.isArray(opportunity.entities_mentioned) && opportunity.entities_mentioned.length > 0 && (
+          <div className="cf-modal-entities">
+            {opportunity.entities_mentioned.map((e, i) => (
+              <span key={e + i} className="cf-entity-tag" title="Named in the footage — used to ground hooks/scripts in real facts">
+                🔎 {e}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* ── Tab nav ── */}
         {showTabs && (
@@ -538,6 +552,30 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
                   );
                 })}
               </div>
+            )}
+            {factCheck && !factCheck.skipped && (
+              <details className="cf-facts-used">
+                <summary>
+                  🔎 {factCheck.sources?.length || 0} fact{factCheck.sources?.length === 1 ? "" : "s"} pulled in
+                </summary>
+                {Array.isArray(factCheck.sources) && factCheck.sources.length > 0 ? (
+                  <ul className="cf-facts-list">
+                    {factCheck.sources.map((s, i) => (
+                      <li key={(s.url || s.title || "") + i}>
+                        {s.url ? (
+                          <a className="cf-fact-link" href={s.url} target="_blank" rel="noopener noreferrer">
+                            ↗ {s.title || s.url}
+                          </a>
+                        ) : (
+                          <span className="cf-clip-name">{s.title}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="cf-facts-none">No usable sources came back for this search.</p>
+                )}
+              </details>
             )}
           </>
         )}
@@ -637,6 +675,26 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
                         <li key={i}>
                           <span className="cf-citation-beat">{c.beat}</span>
                           {c.quote && <span className="cf-citation-quote">"{c.quote}"</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                {Array.isArray(scriptJson.grounding_sources) && scriptJson.grounding_sources.length > 0 && (
+                  <details className="cf-facts-used">
+                    <summary>
+                      🔎 {scriptJson.grounding_sources.length} fact{scriptJson.grounding_sources.length === 1 ? "" : "s"} pulled in
+                    </summary>
+                    <ul className="cf-facts-list">
+                      {scriptJson.grounding_sources.map((s, i) => (
+                        <li key={(s.url || s.title || "") + i}>
+                          {s.url ? (
+                            <a className="cf-fact-link" href={s.url} target="_blank" rel="noopener noreferrer">
+                              ↗ {s.title || s.url}
+                            </a>
+                          ) : (
+                            <span className="cf-clip-name">{s.title}</span>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -802,6 +860,12 @@ export function ContentForge() {
   const [libFolders, setLibFolders] = useState([]);
   const [libFolder, setLibFolder] = useState("");
   const [mining, setMining] = useState(false);
+
+  // Entity backfill — a one-off pass that fills entities_mentioned on OLD opportunities
+  // (discovered before the entity feature) WITHOUT re-discovering or touching hooks/scripts.
+  // backfill = the live progress record {running, processed, patched, total} or null.
+  const [backfill, setBackfill] = useState(null);
+  const [backfilling, setBackfilling] = useState(false);
 
   // Backend kill-switch / daily-limit state (the authoritative verdict computed
   // server-side, mirrored from the Monitor budgets card). Drives the page banner
@@ -1331,7 +1395,10 @@ export function ContentForge() {
             {topics.slice(0, 4).map((tp, i) => (
               <span key={tp + i} className="cf-topic-tag">{tp}</span>
             ))}
-            {topics.length === 0 && "—"}
+            {(Array.isArray(o.entities_mentioned) ? o.entities_mentioned : []).slice(0, 3).map((e, i) => (
+              <span key={"e" + e + i} className="cf-entity-tag" title="Named in the footage">🔎 {e}</span>
+            ))}
+            {topics.length === 0 && (!o.entities_mentioned || o.entities_mentioned.length === 0) && "—"}
           </div>
         </td>
         <td>{o.country || "—"}</td>
@@ -1514,6 +1581,78 @@ export function ContentForge() {
       setMining(false);
     }
   }, [libFolder, libFolders, clipCount, loadClipCount, showToast]);
+
+  // Poll the entity-backfill progress once. Returns the progress record (or null).
+  const pollBackfill = useCallback(async () => {
+    try {
+      const r = await fetch("/api/monitor/status?action=forge-backfill-status");
+      if (!r.ok) return null;
+      const d = await r.json();
+      const prog = d && d.ok ? d.progress : null;
+      setBackfill(prog);
+      return prog;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // On mount (owner), check whether a backfill is already in flight — so a reload mid-run
+  // still shows the "Backfilling…" state instead of offering to start a duplicate.
+  useEffect(() => {
+    if (!isOwner) return;
+    pollBackfill();
+  }, [isOwner, pollBackfill]);
+
+  // Kick off (or resume watching) the one-off entity backfill over existing opportunities.
+  const handleBackfillEntities = useCallback(async () => {
+    if (isBlockedSync("content_forge")) {
+      showToast("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
+      return;
+    }
+    if (!window.confirm(
+      "Backfill entities on existing opportunities?\n\nThis reads each old opportunity's " +
+      "source clips and fills in the named places/events/people — it does NOT re-discover or " +
+      "change any hooks/scripts you've made. Cheap (tiny output), runs in the background."
+    )) return;
+    setBackfilling(true);
+    setProgress("Starting entity backfill…");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { showToast("Not signed in — backfill skipped."); setProgress(null); setBackfilling(false); return; }
+      const r = await fetch("/api/ai/suggest?action=forge-backfill-entities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ tier: "free", model }),
+      });
+      const b = await r.json().catch(() => ({}));
+      if (b?.already_running) showToast("A backfill is already running — watching its progress.");
+      else if (!r.ok && r.status !== 202) {
+        showToast(`Backfill failed to start (${r.status}): ${b.error || "unknown error"}`);
+        setProgress(null); setBackfilling(false); return;
+      }
+      // Poll progress until the worker reports done (or we hit a long ceiling — it keeps
+      // running server-side regardless; this is just the live feedback loop).
+      for (let i = 0; i < 120; i++) {
+        await new Promise((res) => setTimeout(res, 3000));
+        const prog = await pollBackfill();
+        if (prog) {
+          const { processed = 0, patched = 0, total = 0, running } = prog;
+          setProgress(`Backfilling entities… ${processed}/${total || "?"} scanned · ${patched} tagged`);
+          if (!running) {
+            showToast(`Entity backfill done — ${patched} opportunities tagged.`);
+            break;
+          }
+        }
+      }
+      await loadOpps();
+      setProgress(null);
+    } catch {
+      setProgress(null);
+      showToast("Could not reach the backfill worker. Try again.");
+    } finally {
+      setBackfilling(false);
+    }
+  }, [model, pollBackfill, loadOpps, showToast]);
 
   const handleDiscover = useCallback(async () => {
     if (isBlockedSync("content_forge")) {
@@ -1711,6 +1850,16 @@ export function ContentForge() {
           title="Ingest every transcribed file in the selected library scope into the discovery store ($0 — no LLM)"
         >
           {mining ? "Mining…" : "⛏ Mine Library"}
+        </button>
+        <button
+          className="cf-btn"
+          onClick={handleBackfillEntities}
+          disabled={backfilling || (backfill && backfill.running)}
+          title="Fill in named places/events/people on OLD opportunities (discovered before the entity feature). Does NOT re-discover or change hooks/scripts — cheap, background."
+        >
+          {backfilling || (backfill && backfill.running)
+            ? `Backfilling… ${backfill?.patched ?? 0}`
+            : "🔎 Backfill entities"}
         </button>
         <span className="cf-tier" role="group" aria-label="LLM tier">
           <button

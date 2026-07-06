@@ -46,6 +46,14 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Content Forge — entity-backfill job progress. Proxies the Hetzner
+  // /content-forge/backfill-status endpoint so the page can poll a running backfill
+  // (processed / patched / total). CONTENT_FORGE_SECRET stays server-side. Folded in here.
+  if (req.query?.action === "forge-backfill-status") {
+    res.status(200).json(await fetchForgeBackfillStatus());
+    return;
+  }
+
   const [sbResult, hzResult, gcpResult, osResult, wmResult] = await Promise.allSettled([
     fetchSupabaseStats(),
     fetchHetznerStats(),
@@ -211,6 +219,35 @@ async function fetchForgeLibraryFolders() {
     );
     const body = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, error: `Hetzner forge-library-folders HTTP ${r.status}`, ...body };
+    return body;
+  } catch (e) {
+    return { ok: false, error: `Couldn't reach the content-forge worker: ${e.message}` };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// ── Content Forge entity-backfill status proxy ──────────────────────────────────
+// GET /api/monitor/status?action=forge-backfill-status
+// Proxies the Hetzner /content-forge/backfill-status endpoint so the Content Forge page
+// can poll a running entity backfill ({running, processed, patched, total}).
+// CONTENT_FORGE_SECRET stays server-side. Returns { ok:false } on any failure.
+
+async function fetchForgeBackfillStatus() {
+  const forgeSecret = process.env.CONTENT_FORGE_SECRET;
+  if (!forgeSecret) {
+    return { ok: false, error: "CONTENT_FORGE_SECRET not configured" };
+  }
+  const base = process.env.FB_PROXY_TARGET || "https://api.footagebrain.com";
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 12000);
+  try {
+    const r = await fetch(
+      `${base}/api/content-forge/backfill-status?secret=${encodeURIComponent(forgeSecret)}`,
+      { signal: controller.signal }
+    );
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: `Hetzner forge-backfill-status HTTP ${r.status}`, ...body };
     return body;
   } catch (e) {
     return { ok: false, error: `Couldn't reach the content-forge worker: ${e.message}` };
