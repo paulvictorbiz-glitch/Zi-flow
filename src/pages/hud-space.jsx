@@ -20,11 +20,14 @@ import { useMonitorStatus } from "../lib/use-monitor-status.js";
 import { MONITOR_CARDS } from "./monitor.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { HudGlobe3D } from "./hud-globe-webgl.jsx";
+import { HudTasksCommsPanel } from "./hud/hud-tasks-comms.jsx";
+import { HudPipelineBoard } from "./hud/hud-pipeline-board.jsx";
+import { HudControlsPanel } from "./hud/hud-controls.jsx";
 import "./hud-space.css";
 
 /* ── Default layout preferences ───────────────────── */
 const PREFS_KEY = "hud_layout_prefs";          // legacy prefs (migrated forward)
-const LAYOUT_KEY = "hud_layout_v2";            // { version, prefs, slots }
+const LAYOUT_KEY = "hud_layout_v3";            // { version, prefs, slots } (v3: pruned defaults)
 const STAGE_W = 1760, FACE_W = 1760;           // face plane width
 const DEFAULT_PREFS = {
   perspective: 1700,
@@ -142,18 +145,24 @@ function goToTab(target) {
   window.location.assign("/app");
 }
 
+/* Panel onOpenTab adapter — panels call onOpenTab('mywork'|'team'|'pipeline'|
+   'monitor'|…) with a bare VIEW key; forward to goToTab. String-friendly and,
+   for a bare string, sets NO mode → a pre-set wb_monitor_mode (e.g. from the
+   Controls launcher) survives. */
+function openTabAdapter(t) {
+  goToTab(typeof t === "string" ? { view: t } : t);
+}
+
 /* Per-content open-tab target. Delegated infra + mon-* cards → Monitor; pipe-*
    → Pipeline; the rest from an explicit map. */
 const OPEN_TAB_BY_ID = {
   "tasks-comms":   { view: "mywork",        label: "Open My Work" },
-  "daily-tasks":   { view: "mywork",        label: "Open My Work" },
   "reel-dna":      { view: "reeldna",       label: "Open Reel DNA" },
   "thumbnail-dna": { view: "reeldna", tab: "thumbnails", label: "Open Thumbnails" },
   "pipeline":      { view: "pipeline",      label: "Open Pipeline" },
   "review-queue":  { view: "pipeline",      label: "Open Pipeline" },
   "content-forge": { view: "content-forge", label: "Open Content Forge" },
-  "resources":     { view: "resources",     label: "Open Resources" },
-  "team-chat":     { view: "team",          label: "Open Team Chat" },
+  "controls":      { view: "monitor", mode: "infra", label: "Open Monitor" },
   "gamify-back":   { view: "monitor", mode: "infra", label: "Open Monitor" },
 };
 function openTabFor(contentId) {
@@ -800,15 +809,6 @@ const FRONT_CARDS = [
     detailText: "Hetzner CX33 · Falkenstein DC · 4 vCPU · 8 GB RAM · 80 GB NVMe · Ubuntu 22.04. Docker stack: fb-caddy → frontend:80 → backend:8000. Cron via systemd. Backup: daily snapshot.",
   },
   {
-    id: "social-token",
-    col: 0, title: "SOCIAL · TOKEN HEALTH",
-    accentColor: "#5cc9ff", statusColor: "#5fe0a8", shineColor: "rgba(92,201,255,.6)",
-    pos: { left:20, top:552, width:292, height:200 },
-    render: () => <SocialTokenCard />,
-    detailTitle: "Social Token Health — Detail",
-    detailText: "OAuth tokens are checked on each monitor refresh. YouTube token expired 2026-06-20 (8 days ago) — reconnect required via Monitor → Social. TikTok was never linked. Facebook + Instagram tokens last verified < 12h ago.",
-  },
-  {
     id: "api-budgets",
     col: 0, title: "API BUDGETS & LIMITS",
     accentColor: "#ff9a4d", statusColor: "#ff9a4d", status: "72d LEFT", shineColor: "rgba(255,154,77,.6)",
@@ -828,25 +828,6 @@ const FRONT_CARDS = [
     detailTitle: "Supabase — Database Metrics",
     detailText: "Project: kjruhbaahqkuajseoojn. Free tier: 50k rows, 500 MB DB, 1 GB storage. Row counts are live from the workflow store hydrated on login. Migrations applied via Supabase SQL editor.",
   },
-  {
-    id: "storage",
-    col: 1, title: "STORAGE BREAKDOWN",
-    accentColor: "#5fe0a8", statusColor: "#5fe0a8", shineColor: "rgba(95,224,168,.6)",
-    pos: { left:326, top:332, width:250, height:250 },
-    render: () => <StorageCard />,
-    detailTitle: "Storage Breakdown — Detail",
-    detailText: "Total tracked: 397 MB. Breakdown: RC video attachments 217 MB (55%), Supabase reel-videos 176 MB (44%), RC other uploads 5 MB (1%). 27 video clips, 21 uploaded files, 13 RC files.",
-  },
-  {
-    id: "gcp",
-    col: 1, title: "GOOGLE CLOUD",
-    accentColor: "#ff9a4d", statusColor: "#5fe0a8", shineColor: "rgba(255,154,77,.6)",
-    cssClass: "hud-card--orange",
-    pos: { left:326, top:594, width:250, height:390 },
-    render: () => <GoogleCloudCard />,
-    detailTitle: "Google Cloud — API Quotas",
-    detailText: "Project: footage-brain-database. All APIs currently at 0 usage. YouTube Data API: 10k units/day. Maps JS: 28k/day ($200/mo free credit). Geocoding: 3k/day. No billing cost reported yet — all within free tier.",
-  },
   /* Center top (col 2) */
   {
     id: "news-monitor",
@@ -856,18 +837,6 @@ const FRONT_CARDS = [
     render: (wf) => <NewsMonitorCard wf={wf} />,
     detailTitle: "News Monitor — Full Status",
     detailText: "Auto-ingested every 30 min via Pulse. Classified by free OpenRouter models (falls back to source defaults if throttled). Articles auto-prune after 60 days. 5 active sources · 499 articles stored · 0 feeds erroring.",
-  },
-  /* Center core (col 2) */
-  {
-    id: "llm-gates",
-    col: 2, title: "FREE LLM GATES",
-    accentColor: "#ff9a4d", statusColor: "#5fe0a8", status: "5 / 7 ON", shineColor: "rgba(255,154,77,.7)",
-    cssClass: "hud-card--orange",
-    pos: { left:720, top:700, width:320, height:272 },
-    colTransformOverride: "translateZ(-60px)",
-    render: (wf) => <FreeLlmGatesCard wf={wf} />,
-    detailTitle: "Free LLM Gates — All Features",
-    detailText: "Donut counts free-LLM calls from this browser since tracking began (no backfill). ON: Reel DNA, Pulse ingest, Footage Vision Tagging, Workflow Insights, Scout AI dossiers. OFF: Content Forge (Vet stage paused), Idea Generator.",
   },
   /* Inner right (col 3) */
   {
@@ -879,26 +848,6 @@ const FRONT_CARDS = [
     render: (wf) => <ScoutCard wf={wf} />,
     detailTitle: "Scout — MicroSaaS Intelligence",
     detailText: "Live Scout = src/pages/scout.jsx inside FootageBrain. Separate Scout Supabase DB (rqkzstyvqfmcsxdyogij). Daily auto-scrape at 08:00 UTC. OpenRouter free tier: 50 AI dossiers/day. Product Hunt: 6,250 pts / 15min.",
-  },
-  {
-    id: "ai-credits",
-    col: 3, title: "AI CREDITS",
-    accentColor: "#ff9a4d", statusColor: "#5fe0a8", shineColor: "rgba(255,154,77,.6)",
-    cssClass: "hud-card--orange",
-    pos: { left:1186, top:332, width:250, height:240 },
-    render: () => <AiCreditsCard />,
-    detailTitle: "AI Credits — Cohere",
-    detailText: "Cohere free tier: 1,000 API calls/month. Resets 1st of each month. 15 FAQ embeddings created, 0 bot questions this month. Each FAQ approval + bot question = 1 API call.",
-  },
-  {
-    id: "anthropic",
-    col: 3, title: "ANTHROPIC (CLAUDE)",
-    accentColor: "#ff9a4d", statusColor: "#ff9a4d", shineColor: "rgba(255,154,77,.6)",
-    cssClass: "hud-card--orange",
-    pos: { left:1186, top:584, width:250, height:200 },
-    render: () => <AnthropicCard />,
-    detailTitle: "Anthropic — Claude API",
-    detailText: "Currently paused (no API key in env). When active: used by AI Brain (Generate hooks), FAQ Bot (answer questions), Content Forge (Expound stage). Model: claude-sonnet-4-6. Toggle in Monitor → AI Brain.",
   },
   /* Far right (col 4) */
   {
@@ -985,15 +934,6 @@ const BACK_CARDS = [
   },
   /* Center (col 2) */
   {
-    id: "team-chat",
-    col: 2, title: "TEAM CHAT",
-    accentColor: "#5cc9ff", statusColor: "#5fe0a8", status: "LIVE", shineColor: "rgba(92,201,255,.7)",
-    pos: { left:640, top:20, width:480, height:142 },
-    render: () => <TeamChatCard />,
-    detailTitle: "Team Chat — Rocket.Chat",
-    detailText: "Rocket.Chat 7.13.8 + MongoDB on Hetzner. chat.footagebrain.com. WhatsApp omnichannel available (not yet configured). FB proxies team notifications. Outbox channel linked for publishing workflow.",
-  },
-  {
     id: "content-forge",
     col: 2, title: "CONTENT FORGE",
     accentColor: "#ff9a4d", statusColor: "#5fe0a8", shineColor: "rgba(255,154,77,.7)",
@@ -1006,47 +946,23 @@ const BACK_CARDS = [
   },
   /* Inner right (col 3) */
   {
-    id: "daily-tasks",
-    col: 3, title: "DAILY TASKS",
-    accentColor: "#5fe0a8", statusColor: "#5fe0a8", shineColor: "rgba(95,224,168,.6)",
+    id: "controls",
+    col: 3, title: "CONTROLS",
+    accentColor: "#ff9a4d", statusColor: "#ff9a4d", shineColor: "rgba(255,154,77,.6)",
     cssClass: "hud-card--back-item",
     pos: { left:1186, top:20, width:250, height:300 },
-    render: (wf) => {
-      const daily = wf.dailyTasks ?? [];
-      const open = daily.filter(t => !t.completed);
-      return <>
-        <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:10 }}>
-          <span style={{ font:"600 28px 'Chakra Petch'", color:"#5fe0a8" }}>{open.length}</span>
-          <span className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>pending today</span>
-        </div>
-        {daily.slice(0,5).map(t => (
-          <div key={t.id} className="hud-metric-row">
-            <span style={{ color: t.completed ? "#5fe0a8" : "#cfe0f2" }}>{t.completed ? "✓" : "○"} {(t.taskText || "").slice(0,28)}</span>
-          </div>
-        ))}
-        {!daily.length && <div className="hud-muted" style={{ font:"10px 'Share Tech Mono'" }}>No tasks yet — expand to add.</div>}
-      </>;
-    },
-    detailTitle: "Daily Tasks — Full List",
-    detailText: "Daily task list that resets each morning. Tasks are manually added or auto-generated from pipeline blockers. Completed tasks shown with ✓. Accessible from the Tasks tab or the pipeline board sidebar.",
-  },
-  {
-    id: "resources",
-    col: 3, title: "RESOURCES",
-    accentColor: "#5cc9ff", statusColor: "#5fe0a8", shineColor: "rgba(92,201,255,.6)",
-    cssClass: "hud-card--back-item",
-    pos: { left:1186, top:332, width:250, height:250 },
     render: () => <>
-      <div className="hud-section-label">TOOLS & LINKS</div>
-      <Row label="Resource rows" value="22" />
-      <Row label="Resource cells" value="56" />
-      <Row label="Categories"    value="8" />
+      <div className="hud-section-label">OWNER SWITCHES</div>
+      <Row label="Free-LLM gates" value="7 features" />
+      <Row label="Gamify"         value="toggle" />
+      <Row label="Unified cards"  value="toggle" />
+      <Row label="Monitor views"  value="5 launchers" />
       <div className="hud-muted" style={{ font:"9px 'Share Tech Mono'", marginTop:8 }}>
-        Internal tool directory · updated manually by owner
+        Flip real feature switches · launch Monitor sub-views · expand to control
       </div>
     </>,
-    detailTitle: "Resources — Tool Directory",
-    detailText: "Internal link and tool directory stored in resource_rows + resource_cells tables. Organized by category. Editable from the Resources tab. 22 rows / 56 cells tracked.",
+    detailTitle: "Controls — Owner Switches",
+    detailText: "Flip the real owner feature switches (free-LLM kill + per-feature gates, Gamify, Unified cards) and launch the 5 Monitor sub-views (Infra · Pulse · AI · Scout · MapForge). All writes go through the existing owner-only actions.",
   },
   /* Far right (col 4) */
   {
@@ -1128,16 +1044,10 @@ const MON_BY_ID = Object.fromEntries(MONITOR_CARDS.map(m => [m.id, m]));
    these ids become dead code, kept only for git history. */
 const STATIC_TO_MON = {
   "server-host":  "mon-server",
-  "social-token": "mon-social-tokens",
   "api-budgets":  "mon-budgets",
   "supabase":     "mon-supabase",
-  "storage":      "mon-storage",
-  "gcp":          "mon-gcp",
   "news-monitor": "mon-news",
-  "llm-gates":    "mon-free-llm",
   "scout":        "mon-scout",
-  "ai-credits":   "mon-ai-credits",
-  "anthropic":    "mon-anthropic",
   "vercel":       "mon-vercel",
   "editor-usage": "mon-editor-usage",
   "gamify-front": "mon-gamify",
@@ -1210,6 +1120,15 @@ const PIPELINE_STAGE_CATALOG = STAGES.map(s => ({
 const STATIC_CATALOG = [...PIPELINE_STAGE_CATALOG, ...MONITOR_CATALOG, ...HUD_CATALOG];
 const CATALOG_BY_ID = Object.fromEntries(STATIC_CATALOG.map(e => [e.id, e]));
 
+/* A persisted slot's contentId is "known" if it's empty, a dynamic person-lane,
+   or present in the (now-pruned) static catalog. Slots whose content was CUT in
+   the v3 prune are dropped on load so the picker can't resurrect them. */
+function isKnownContent(id) {
+  if (!id) return true;
+  if (id.startsWith("pipe-lane-")) return true;
+  return !!CATALOG_BY_ID[id];
+}
+
 /* Presentation meta for a slot's content (frame title/accent/chrome). Handles
    the dynamic person-lane ids that aren't in the static catalog. */
 function metaFor(contentId, roster) {
@@ -1231,11 +1150,11 @@ function metaFor(contentId, roster) {
 /* When EXPANDED, these content ids swap their read-only compact body for a
    directly-manipulable / richer panel (Decision 1: edit lives in the modal). */
 const EXPANDED_PANEL = {
-  "tasks-comms":   (ctx) => <TodoPanel ctx={ctx} />,
-  "daily-tasks":   (ctx) => <TodoPanel ctx={ctx} />,
+  "tasks-comms":   (ctx) => <HudTasksCommsPanel onOpenTab={ctx.onOpenTab} onClose={ctx.onClose} />,
   "reel-dna":      (ctx) => <ReelDnaRecentPanel ctx={ctx} />,
   "thumbnail-dna": (ctx) => <ThumbnailRecentPanel ctx={ctx} />,
-  "pipeline":      (ctx) => <PipelineExpanded ctx={ctx} />,
+  "pipeline":      (ctx) => <HudPipelineBoard onOpenTab={ctx.onOpenTab} onClose={ctx.onClose} />,
+  "controls":      (ctx) => <HudControlsPanel onOpenTab={ctx.onOpenTab} onClose={ctx.onClose} />,
   "review-queue":  (ctx) => <ReviewQueueExpanded ctx={ctx} />,
 };
 
@@ -1276,7 +1195,10 @@ function loadLayout() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.slots)) {
-        return { prefs: { ...DEFAULT_PREFS, ...(parsed.prefs || {}) }, slots: parsed.slots };
+        return {
+          prefs: { ...DEFAULT_PREFS, ...(parsed.prefs || {}) },
+          slots: parsed.slots.filter(s => isKnownContent(s.contentId)),
+        };
       }
     }
   } catch (_) {}
@@ -1373,7 +1295,9 @@ function HudCard({ slot, col, tiltRow, prefs, ctx, meta, node, editMode, selecte
 ─────────────────────────────────────────────────────── */
 function HudModal({ contentId, ctx, onClose, stageRef, onPin }) {
   const meta = useMemo(() => metaFor(contentId, ctx.roster), [contentId, ctx.roster]);
-  const node = resolveContentNode(contentId, ctx, true);   // expanded = manipulable variant
+  // Augment ctx so the interactive expanded panels can deep-link tabs + self-close.
+  const panelCtx = useMemo(() => ({ ...ctx, onOpenTab: openTabAdapter, onClose }), [ctx, onClose]);
+  const node = resolveContentNode(contentId, panelCtx, true);   // expanded = manipulable variant
   const openTab = openTabFor(contentId);
 
   useEffect(() => {
@@ -1427,7 +1351,9 @@ function HudModal({ contentId, ctx, onClose, stageRef, onPin }) {
    3D wall (Decision E). Renders the same expanded node as the modal. */
 function HudDock({ contentId, ctx, onClose }) {
   const meta = useMemo(() => metaFor(contentId, ctx.roster), [contentId, ctx.roster]);
-  const node = resolveContentNode(contentId, ctx, true);
+  // Augment ctx so pinned interactive panels can deep-link tabs + self-close (unpin).
+  const panelCtx = useMemo(() => ({ ...ctx, onOpenTab: openTabAdapter, onClose }), [ctx, onClose]);
+  const node = resolveContentNode(contentId, panelCtx, true);
   const openTab = openTabFor(contentId);
   if (!contentId) return null;
   return (
@@ -1920,9 +1846,10 @@ function HudSpaceInner() {
           .eq("person_id", pid).eq("key", LAYOUT_KEY).maybeSingle();
         if (!cancelled && !error && data?.value && Array.isArray(data.value.slots)) {
           const remotePrefs = { ...DEFAULT_PREFS, ...(data.value.prefs || {}) };
+          const remoteSlots = data.value.slots.filter(s => isKnownContent(s.contentId));
           setPrefs(remotePrefs);
-          setSlots(data.value.slots);
-          saveLayout(remotePrefs, data.value.slots);
+          setSlots(remoteSlots);
+          saveLayout(remotePrefs, remoteSlots);
         }
       } catch (_) {}
       finally { if (!cancelled) remoteHydratedRef.current = true; }

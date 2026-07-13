@@ -5,6 +5,14 @@
   <title>Workflow — short-form video ops</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0a0f17" />
+  <!-- Mobile / installed-PWA shell (additive; no effect in desktop browsers).
+       black-translucent lets standalone iOS draw under the status bar, which is
+       what makes env(safe-area-inset-top/bottom) — consumed via --safe-top /
+       --safe-bottom in styles-mobile.css — resolve to real values. -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Workflow" />
   <!-- Display-mode no-flash guard: apply saved accessibility prefs to <html>
        before the bundle loads, so opted-in users don't see a default→comfortable
        snap. No-op when no preference is set (keeps the default site untouched). -->

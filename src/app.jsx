@@ -150,6 +150,13 @@ import { ThemeProvider } from "./lib/theme.jsx";
 import { PreferencesModal } from "./components/PreferencesModal.jsx";
 import { extractUrl } from "./lib/reel-dna.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
+import { MobileProvider } from "./lib/use-is-mobile.js";
+/* Bottom tab bar + "More" sheet — the ONLY mobile nav (C-NAV-REACH). The
+   component gates itself on useIsMobile().isMobile (frozen C-HOOK contract,
+   matchMedia('(max-width: 768px)')) and renders NULL at every desktop width,
+   so the ≥769px DOM stays byte-identical. Styled exclusively by
+   styles-mobile.css (.mb-* classes, all rules gated ≤768px). */
+import { MobileNav } from "./components/mobile-nav.jsx";
 
 /* ViewFallback is imported from loading-screen.jsx — photo cycling slideshow
    shown while lazy page chunks load. */
@@ -1105,6 +1112,25 @@ function AppShell() {
       {/* Global new-Teams-message toast (bottom-left). */}
       <TeamChatToast onOpenTeam={() => goView("team")} />
 
+      {/* ── Mobile bottom tab bar + More sheet (T1 shell, C-NAV-REACH) ────
+          The ONLY mobile nav: 4 primary canViewView-visible tabs + More (full
+          group/tab list in the user's saved order, live badges, global reel
+          search). On Solarin phones it's the sole nav (Solarin hides .topbar).
+          MobileNav gates itself on useIsMobile().isMobile and renders NULL at
+          every desktop width — the ≥769px DOM is untouched. Styled entirely by
+          styles-mobile.css: .mb-tabbar at z-index 900 (C-NAV-Z); the sheet +
+          backdrop sit ≥1000 and legitimately cover the bar. */}
+      <MobileNav
+        view={view}
+        onNavigate={goView}
+        canViewView={canViewView}
+        tabs={TABS}
+        groups={sortedGroups}
+        badges={{ mywork: needsYouCount, inbox: inboxUnread, team: teamUnseen }}
+        reels={reels}
+        onOpenReel={openReel}
+      />
+
       {/* Display & accessibility preferences (owner-only entry) */}
       {prefsOpen && <PreferencesModal onClose={() => setPrefsOpen(false)} />}
 
@@ -1148,13 +1174,14 @@ class AppErrorBoundary extends React.Component {
 }
 
 /* Public landing page — heavy 3D bundle, so load it lazily and keep it
-   entirely outside the AuthGate. */
+   entirely outside the AuthGate. This is the DEFAULT public front page
+   ("/"). */
 const Landing = lazyPage(() => import("./pages/landing.jsx"), "Landing");
 
-/* Public front page ("/") — the Paul Victor cinematic portfolio, embedded as
-   its own isolated build. Lazy so nothing of it loads on the /app routes. The
-   old Reel DNA marketing landing (above) is preserved and one line from being
-   restored here. */
+/* The Paul Victor cinematic portfolio, embedded as its own isolated build.
+   Lazy so nothing of it loads on the /app or default "/" routes. Reachable
+   at "/3d" via the toggle button on the default landing page (swapped back
+   from being the default front page — see [[project_footagebrain-portfolio-front]]). */
 const PortfolioFront = lazyPage(() => import("./pages/portfolio-front.jsx"), "PortfolioFront");
 
 /* Owner-only 3D HUD dashboard at /space. Lazy-loaded so the CSS-3D bundle
@@ -1165,14 +1192,17 @@ const HudSpace = lazyPage(() => import("./pages/hud-space.jsx"), "HudSpace");
 function App() {
   // Root path "/" is the fully public landing page (no auth). Anything else
   // (e.g. "/app") renders the existing authed tree exactly as before.
-  const isLanding = window.location.pathname === "/";
-  // "/landing" is the old Reel DNA marketing landing — kept reachable for the
-  // portfolio's "Book a call" CTA to link back to.
-  const isOldLanding = window.location.pathname === "/landing";
+  // "/landing" is kept as an alias of "/" (the portfolio's own "Book a call"
+  // CTA links there).
+  const isLanding =
+    window.location.pathname === "/" || window.location.pathname === "/landing";
+  // "/3d" is the Paul Victor cinematic portfolio — reachable via the toggle
+  // button on the default landing page.
+  const isPortfolio = window.location.pathname === "/3d";
   // "/space" swaps AppShell for the 3D cube inside the same authed tree.
   const isSpace = window.location.pathname === "/space";
 
-  if (isLanding) {
+  if (isPortfolio) {
     const onEnterApp = () => window.location.assign("/app");
     return (
       <AppErrorBoundary>
@@ -1187,12 +1217,13 @@ function App() {
     );
   }
 
-  if (isOldLanding) {
+  if (isLanding) {
     const onEnterApp = () => window.location.assign("/app");
+    const onView3D = () => window.location.assign("/3d");
     return (
       <AppErrorBoundary>
         <React.Suspense fallback={<div style={{ minHeight: "100vh" }} />}>
-          <Landing onEnterApp={onEnterApp} />
+          <Landing onEnterApp={onEnterApp} onView3D={onView3D} />
         </React.Suspense>
       </AppErrorBoundary>
     );
@@ -1218,8 +1249,14 @@ function App() {
                           </React.Suspense>
                         ) : (
                           <ThemeProvider>
-                            <AppShell />
-                            <GamifyWelcomePopup />
+                            {/* MobileProvider is memoization-only sugar (C-HOOK):
+                                useIsMobile() is standalone-safe everywhere else
+                                (HudSpace above, Landing, PortfolioFront) — no
+                                consumer may depend on this provider existing. */}
+                            <MobileProvider>
+                              <AppShell />
+                              <GamifyWelcomePopup />
+                            </MobileProvider>
                           </ThemeProvider>
                         )}
                       </PermissionsProvider>

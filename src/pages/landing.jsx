@@ -81,7 +81,7 @@ function Wordmark({ onClick }) {
 }
 
 /* ── Home view (the v3 breakdown experience) ─────────────── */
-function HomeView({ onEnterApp }) {
+function HomeView({ onEnterApp, onView3D }) {
   const [hoveredGene, setHoveredGene] = useState(null);
   const [reelUrl, setReelUrl] = useState(DEMO_REEL.sampleReel.sourceUrl);
 
@@ -169,7 +169,9 @@ function HomeView({ onEnterApp }) {
         <div className="lp-hero-inner">
           <p className="lp-eyebrow">Reverse-engineer any reel</p>
           <h1 className="lp-hero-title">
-            See the <span className="lp-grad-strong">DNA</span> of any reel.
+            See the <span className="lp-grad-strong">DNA</span> of any reel<button
+              type="button" className="lp-easter-dot" onClick={onView3D}
+              aria-label="View 3D portfolio">.</button>
           </h1>
 
           <p className="lp-subhead">
@@ -331,7 +333,7 @@ function HomeView({ onEnterApp }) {
   );
 }
 
-export function Landing({ onEnterApp = () => {} }) {
+export function Landing({ onEnterApp = () => {}, onView3D = () => {} }) {
   const [page, setPage] = useState("home");
   const [creditsOpen, setCreditsOpen] = useState(false);
 
@@ -363,7 +365,7 @@ export function Landing({ onEnterApp = () => {} }) {
       </header>
 
       {/* ── Active page ── */}
-      {page === "home" && <HomeView onEnterApp={onEnterApp} />}
+      {page === "home" && <HomeView onEnterApp={onEnterApp} onView3D={onView3D} />}
       {page === "product" && (
         <>
           <ProductPage product={PRODUCT} onEnterApp={onEnterApp} />

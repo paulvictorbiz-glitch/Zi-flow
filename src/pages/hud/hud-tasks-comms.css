@@ -1,0 +1,297 @@
+/* =========================================================
+   HUD · TEAM TASKS & COMMS panel — scoped styles
+   All selectors are prefixed .hudtc-* (K5 isolation). The panel
+   inherits app CSS vars so it stays Solarin-safe, and it is
+   compact + vertically scrollable so it renders cleanly in both
+   the flat HudModal body and the pinned HudDock.
+   ========================================================= */
+
+.hudtc {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  color: var(--fg, #e7ecf5);
+  font-family: var(--f-mono, ui-monospace, "Share Tech Mono", monospace);
+  font-size: 12px;
+}
+
+.hudtc-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hudtc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hudtc-label {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--c-cyan, #36d6e7);
+  font-weight: 700;
+}
+
+.hudtc-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hudtc-link {
+  background: transparent;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.14));
+  border-radius: 6px;
+  color: var(--fg-dim, #aeb6c6);
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.hudtc-link:hover:not(:disabled) {
+  color: var(--fg, #e7ecf5);
+  border-color: var(--c-cyan, #36d6e7);
+}
+.hudtc-link:disabled { opacity: 0.5; cursor: default; }
+
+/* ---- shared form controls ---- */
+.hudtc-select,
+.hudtc-input,
+.hudtc-date,
+.hudtc-textarea,
+.hudtc-mini-select {
+  background: var(--bg-2, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.14));
+  border-radius: 6px;
+  color: var(--fg, #e7ecf5);
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 7px;
+  outline: none;
+  min-width: 0;
+}
+.hudtc-select:focus,
+.hudtc-input:focus,
+.hudtc-date:focus,
+.hudtc-textarea:focus,
+.hudtc-mini-select:focus {
+  border-color: var(--c-cyan, #36d6e7);
+}
+.hudtc-mini-select {
+  font-size: 10px;
+  padding: 3px 5px;
+}
+
+/* ---- tasks ---- */
+.hudtc-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.hudtc-task {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: var(--bg-1, rgba(255, 255, 255, 0.02));
+}
+.hudtc-task.is-done { opacity: 0.55; }
+.hudtc-task.is-done .hudtc-task-text { text-decoration: line-through; }
+
+.hudtc-check {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.28));
+  background: transparent;
+  color: var(--c-cyan, #36d6e7);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.hudtc-check:hover { border-color: var(--c-cyan, #36d6e7); }
+
+.hudtc-task-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+}
+.hudtc-task-text:focus {
+  white-space: normal;
+  overflow: visible;
+  background: var(--bg-2, rgba(255, 255, 255, 0.06));
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.hudtc-task-who {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--fg-mute, #8b93a7);
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hudtc-del {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg-mute, #8b93a7);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.hudtc-del:hover { color: #ff6b6b; }
+
+.hudtc-create {
+  display: grid;
+  grid-template-columns: minmax(0, 90px) minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.hudtc-add,
+.hudtc-send {
+  background: var(--c-cyan, #36d6e7);
+  border: none;
+  border-radius: 6px;
+  color: #06131a;
+  font: inherit;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hudtc-add:disabled,
+.hudtc-send:disabled { opacity: 0.4; cursor: default; }
+
+/* ---- comms feed ---- */
+.hudtc-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.hudtc-msg {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  text-decoration: none;
+  color: inherit;
+}
+a.hudtc-msg:hover { background: var(--bg-2, rgba(255, 255, 255, 0.05)); }
+
+.hudtc-msg-sender {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--fg, #e7ecf5);
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hudtc-msg-room {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--c-cyan, #36d6e7);
+}
+.hudtc-msg-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-dim, #aeb6c6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hudtc-msg-time {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--fg-mute, #8b93a7);
+}
+
+/* ---- share composer ---- */
+.hudtc-share {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  padding: 8px;
+}
+.hudtc-share-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-mute, #8b93a7);
+}
+.hudtc-share-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 110px);
+  gap: 6px;
+}
+.hudtc-textarea {
+  resize: vertical;
+  min-height: 34px;
+  line-height: 1.4;
+}
+.hudtc-share-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hudtc-spacer { flex: 1; }
+
+.hudtc-ok { color: #4ade80; font-size: 10px; }
+.hudtc-ok-link { color: var(--c-cyan, #36d6e7); }
+.hudtc-err { color: #ff6b6b; font-size: 10px; }
+
+.hudtc-empty {
+  padding: 8px 4px;
+  color: var(--fg-mute, #8b93a7);
+  font-size: 11px;
+}
+
+/* thin scrollbars so nested scroll areas stay unobtrusive in the dock */
+.hudtc-tasks::-webkit-scrollbar,
+.hudtc-feed::-webkit-scrollbar,
+.hudtc::-webkit-scrollbar { width: 7px; }
+.hudtc-tasks::-webkit-scrollbar-thumb,
+.hudtc-feed::-webkit-scrollbar-thumb,
+.hudtc::-webkit-scrollbar-thumb {
+  background: var(--line, rgba(255, 255, 255, 0.18));
+  border-radius: 4px;
+}

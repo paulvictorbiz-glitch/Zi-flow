@@ -1,5 +1,5 @@
 {
-  "generated": "2026-07-05T11:27:19.299Z",
+  "generated": "2026-07-13T19:47:40.013Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -436,6 +436,14 @@
     {
       "version": "0110_content_opps_archived_at.sql",
       "checksum": "a67ad1552a9ed8212973eb6fd118f47deef268ffc6b09ee02ebdbeb02e768044"
+    },
+    {
+      "version": "0111_content_opps_entities_mentioned.sql",
+      "checksum": "70e4d2651744b3c4b0a8c845b3c690c5517086e05b5a00100f863f49e232279c"
+    },
+    {
+      "version": "0112_oc_media.sql",
+      "checksum": "bc9e73d53ff3848fade9440e470ae0064714ce4f3c04b753b04893a780d9a2c1"
     }
   ]
 }

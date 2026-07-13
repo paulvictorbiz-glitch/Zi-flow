@@ -4,30 +4,37 @@
 > and the memory files in `C:\Users\Mi\.claude\projects\c--Users-Mi-Downloads-ziflow-project-final\memory\` for deeper context.
 
 ## TL;DR of this session
-- **"Book a call" on the portfolio now links to `/landing`** (a new FootageBrain route restoring the old Reel DNA marketing page) instead of a `mailto:` link.
-- **Builder + closer clips are now scroll-scrubbed** like the hero orbit — converted from real-time `<video>` playback to canvas frame-sequences (91 webp frames each) via a new shared `useFrameScrub` hook, frame index driven directly by scroll progress.
-- **Fixed three text-overlap issues** where overlay copy was blocking the video subject: the "Selected work" cards over the closer (shrunk + lightened), the "What I do" pillars over the builder (constrained to the vignette's darkened left band — this was the ORIGINAL "text blocking the animation" complaint, initially mis-targeted at the cards before the user clarified), and the hero "PAUL VICTOR" name (moved off-center to bottom-left, was sitting directly over the crossed arms).
-- All fixes verified via Playwright — bounding-box math + canvas `getImageData` pixel sampling for skin-tone/glow overlap (not just eyeballing screenshots) — at both 1440px and 390px viewports.
-- Committed on `feat/capcut-replica-v2` (`afb132b`), pushed, and **deployed LIVE** (`dpl_8Eof7ih8bhqTH8KW6RtuVZN2yFpe`, aliased www.footagebrain.com).
+- **Planned + built OpenCut 3-editors durability Phase 1** — the fix for the one thing standing between "the embedded editor works" and "3 editors can rely on it": media bytes lived only in the importing browser (OPFS), so a project opened on another machine/person showed silent black frames. Now media is content-addressed (SHA-256, deduped) and shared via a new Supabase Storage bucket, with upload-on-import + resolve-on-load and an explicit "Unavailable" tile instead of silence.
+- **Autosave is now version-checked (CAS)** instead of last-writer-wins — a stale write can no longer silently clobber a newer save. The save-state pill is now truthful (Saved / Saving / Unsaved / Save failed+Retry / Offline / "updated elsewhere"+Reload) — the old indicator lied and showed "Saved" even on failed writes.
+- **Fixed a live bug along the way:** a solo editor's OWN autosave could trigger a realtime echo that reloaded them mid-edit and left autosave paused forever. Also downscaled project thumbnails (full-res PNG → ≤360px JPEG) since they were bloating every doc and blowing past Realtime's ~1MB payload cap.
+- Planned via 3 domain agents + a genuinely adversarial QA agent (ran 2 rounds — verified every claim against real source in BOTH repos, not just plan text) before writing one line of code. Found 6 blocking issues in round 1 (a key-format mismatch that would have 100%-failed every upload; a file-ownership collision; a rename that would silently break media on other machines; a two-tab infinite reload/save loop; a missing save UI in the default CapCut skin; an unconfirmed Supabase upload cap).
+- Built by hand across two repos under locked file ownership; **both build gates are green** (`bun run build:web` in the fork, `npm run build` in FootageBrain, sequential).
+- **Nothing is deployed.** Migration not applied, fork image not rebuilt, editors' tabs not enabled. Deploy runbook written: `docs/opencut-durability-deploy.md`.
 
 ## Where we left off
-Clean and live. HEAD of `feat/capcut-replica-v2` = `afb132b`. www.footagebrain.com/ shows the updated portfolio; `/landing` serves the restored Reel DNA marketing page; `/app` is the unchanged FootageBrain app.
+Code complete, both builds green, zero deploy actions taken. This is a **two-repo change**:
+- FB (`ziflow project-final`, this repo): ONE new file, `supabase/migrations/0112_oc_media.sql` (not applied). No other FB app-code touched by this work.
+- Fork (`C:\Users\Mi\Downloads\opencut-ai`, branch `feat/capcut-replica-v2`... check current branch): all the editor-side changes (media sync, CAS autosave, collab hardening, UI). New dependency `hash-wasm` added to `apps/web/package.json`. Not pushed/committed by this session — verify branch/commit state before deploying.
+
+**Note:** the FB repo tree has other UNRELATED uncommitted changes sitting alongside this work (e.g. `src/app.jsx`, `src/pages/landing.jsx`, `src/pages/hud/`, migration `0111_content_opps_entities_mentioned.sql`) — those are from other sessions/work, not touched or reviewed here. Per standing policy, don't flag/reconcile the dirty tree; the owner manages it.
 
 ## Open blockers
-- None.
+- **Entry-gate question unanswered:** what Supabase plan is `kjruhbaahqkuajseoojn` on? Determines the real per-file upload cap (Free=50MB, Pro=500MB+ raisable) — the whole media story is designed to trial fine on either, but full-size footage needs Pro.
 
 ## Pending (written but not yet live)
-- None for FootageBrain. **One flagged, not-yet-actioned item:** `paulvictor-portfolio/public/clips/builder.mp4` + `closer.mp4` (~8.8MB) are now dead weight — no longer used by the live scrub path (replaced by the webp frame sequences) — but left in place since that repo isn't git-tracked and deleting wouldn't be reversible. Owner's call whether to remove them.
-- Portfolio's own outstanding items (tracked in `paulvictor-portfolio`'s own `HANDOFF.md`, not blocking): real stats numbers, optional jewelry re-gen.
+- Apply migration `0112_oc_media.sql` (scoped one-off — NOT bulk `migrate:apply`; other pending migrations are intentionally held back).
+- Rebuild the fork's Hetzner Docker image (`git archive apps/web/src apps/web/package.json bun.lock | ssh root@178.105.14.144 tar xf - -C /srv/opencut-ai` → `docker compose build web && up -d web`). Baked env — `vercel --prod` does NOT touch the editor.
+- Enable the Editor/Projects tabs for Judy/Jay/Leroy (currently `LEAN_HIDDEN` for their roles).
+- Owner trial (clips ≤50MB) → **verdict gate**: GO → upgrade Supabase Pro + raise the Dashboard upload cap (zero code change needed). NO-GO → pivot the media backend to Hetzner (contingency documented in the runbook; the fork's `supabase-media-sync.ts` is a swappable seam for exactly this) and keep CapCut Pro as primary.
+- Full validation checklist (cross-machine media resolution, rename-preserves-media, two-tab double-open, export quality vs CapCut Pro) is in `docs/opencut-durability-deploy.md` — none of it has been run against a deployed instance yet.
 
 ## Next session — start here
-1. Owner's call — no forced follow-up. If updating the portfolio: edit in `C:\Users\Mi\Downloads\paulvictor-portfolio`, `npm run build`, then copy `dist/*` into FootageBrain's `public/portfolio/` and redeploy.
-2. Optional cleanup: remove the now-unused `public/clips/builder.mp4`/`closer.mp4` from the portfolio repo (see Pending above).
-3. Deferred from prior sessions: landing testimonials real quotes; `webkitdirectory` folder-pick; images badge on compact tiles.
+1. If the owner wants to proceed: answer the Supabase-plan question, then apply migration 0112 (scoped one-off) and rebuild the fork image per the runbook.
+2. After deploy, run the validation checklist with Judy/Jay/Leroy before calling Phase 1 done.
+3. Phase 2/3 of the original plan (`.claude/plans/opencut-3-editors-durability.md`) — gallery reading `oc_projects` as source of truth, per-role tab enablement, scale/hardening — is explicitly OUT of scope for this build and still open.
 
 ## Verification commands (to confirm current state on resume)
-- `git -C "C:\Users\Mi\Downloads\ziflow project-final" log --oneline -3` → HEAD `afb132b`.
-- Front page: open https://www.footagebrain.com/ → Paul Victor portfolio; scroll through hero → builder ("what I do" over a person at a desk) → closer ("selected work" cards) and confirm no text sits on top of the face/hands in either clip.
-- `/landing` route: `curl -sI https://www.footagebrain.com/landing` → 200 (Reel DNA marketing page).
-- App intact: https://www.footagebrain.com/app → FootageBrain sign-in screen.
-- Static serve: `curl -s https://www.footagebrain.com/portfolio/index.html | grep -o 'assets/[^"]*'` → should reference `index-COtT4kIl.js` / `index-CQg6U85G.css`.
+- `git -C "C:\Users\Mi\Downloads\ziflow project-final" status --short` → should show only `docs/opencut-durability-deploy.md` + `supabase/migrations/0112_oc_media.sql` as NEW from this session (plus unrelated pre-existing dirty files).
+- `git -C "C:\Users\Mi\Downloads\opencut-ai" status --short` → confirm all the fork edits listed above are still present (uncommitted) before doing anything destructive.
+- `Get-Content "c:\Users\Mi\Downloads\ziflow project-final\supabase\migrations\0112_oc_media.sql" | Select-Object -First 5` → confirm the migration file is intact.
+- Read `docs/opencut-durability-deploy.md` for the full apply/deploy/verify sequence.

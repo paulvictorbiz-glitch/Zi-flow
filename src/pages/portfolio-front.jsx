@@ -16,6 +16,19 @@ import React from "react";
 export function PortfolioFront({ onEnterApp = () => {} }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "#070907" }}>
+      <button
+        onClick={() => window.location.assign("/")}
+        style={{
+          position: "absolute", top: 18, left: 18, zIndex: 10,
+          padding: "9px 16px", borderRadius: 10, cursor: "pointer",
+          border: "1px solid rgba(255,255,255,0.22)",
+          background: "rgba(7,9,7,0.55)", color: "rgba(255,255,255,0.85)",
+          fontFamily: "monospace", fontSize: 12.5, fontWeight: 600,
+          letterSpacing: "0.02em", backdropFilter: "blur(6px)",
+        }}
+      >
+        ← Back
+      </button>
       <iframe
         src="/portfolio/index.html"
         title="Paul Victor — Social Growth Systems"

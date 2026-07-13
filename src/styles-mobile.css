@@ -1,0 +1,407 @@
+/* =========================================================
+   styles-mobile.css — T1 FOUNDATION (mobile-friendly build)
+
+   The ONE global additive mobile stylesheet. Imported LAST in
+   src/main.jsx (after styles-solarin.css — C-CASCADE-ORDER) so
+   equal-specificity rules here win by source order.
+
+   HARD RULES (frozen cross-team contracts):
+   · EVERY rule is gated behind @media (max-width: 480/768/1024px)
+     — the only sanctioned width gates (C-BREAKPOINTS). Zero
+     un-gated selectors → desktop (≥1025px) is byte-identical.
+   · !important appears ONLY inside these gated blocks (needed to
+     beat inline styles + [data-theme="solarin"] attribute
+     selectors) — sanctioned by C-CASCADE-ORDER.
+   · This file emits rules ONLY for the locked shell primitives
+     T1 exclusively owns (C-SHELL-PRIMITIVES): .topbar compaction,
+     .board/.spine touch scroll, .m-* modal bottom-sheets, generic
+     .page-head stacking, .sol-* Solarin nav collapse, the .mb-*
+     bottom-nav classes, and the CSS-only repositioning of the
+     CreateFab (.fab-wrap) + TeamChatToast (.tc-toast) fixed
+     elements. NO page-team namespace (.pl-/.rd-/.lib-/…), NO
+     .detail-grid/.det-* (C-DETAIL-STACK — T3's SOL_DETAIL_CSS
+     owns the detail collapse), NO .exp-* (C-EXP — T5 owns it).
+   · CSS vars (C-VARS): --mb-nav-h / --safe-top / --safe-bottom
+     are defined HERE ONLY, on :root inside the ≤768px gate, so
+     they resolve to their var(…, 0px) fallbacks on desktop and
+     tablet. No other team defines these names.
+   ========================================================= */
+
+/* ── C-VARS — phone-only shell variables (≤768px, :root) ────────────
+   Consumers everywhere MUST use the fallback form var(--mb-nav-h, 0px)
+   / var(--safe-bottom, 0px) so tablet + desktop resolve to 0. */
+@media (max-width: 768px) {
+  :root {
+    --mb-nav-h: 56px;                             /* bottom tab-bar height */
+    --safe-top: env(safe-area-inset-top, 0px);    /* notch */
+    --safe-bottom: env(safe-area-inset-bottom, 0px); /* home indicator */
+  }
+}
+
+/* ── Tablet + phone (≤1024px): board/spine horizontal touch scroll ──
+   C-SHELL-PRIMITIVES ANSWER to T2: ships at ≤1024px so tablets get
+   it too. T2's .pl-* min-width/column-width rules COMPOSE on top of
+   this under T2's own namespace — never re-specified here or there. */
+@media (max-width: 1024px) {
+  .board,
+  .spine {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ── Phone (≤768px): shell layout ─────────────────────────────────── */
+@media (max-width: 768px) {
+
+  /* C-CLEARANCE — the ONE global bottom-nav clearance. Normally-flowing
+     pages (T6 etc.) add NO per-page clearance; only elements that escape
+     .app padding (fixed shells / bounded scrollboxes / bottom sheets)
+     subtract/pad with var(--mb-nav-h, 0px) + var(--safe-bottom, 0px)
+     themselves inside their own gated CSS. */
+  .app {
+    padding-bottom: calc(var(--mb-nav-h, 0px) + var(--safe-bottom, 0px));
+  }
+
+  /* ── Classic-theme .topbar compaction ──────────────────────────────
+     C-TOPBAR (WRITTEN GUARANTEE): the topbar stays 64px tall at ALL
+     widths — we compact its CONTENTS only, never its height (team-chat
+     .jsx's fixed top:64px depends on it). Solarin display:none's the
+     whole .topbar (existing styles-solarin.css behavior, untouched). */
+  .topbar .crumb { display: none; }          /* breadcrumb — too wide for a phone */
+  .topbar .nav-toggle { display: none; }     /* drawer superseded: the bottom
+                                                tab bar + More sheet is the ONLY
+                                                mobile nav (C-NAV-REACH) */
+  /* Global reel search input (inline-styled width:180 in app.jsx —
+     gated !important is the sanctioned way to beat an inline style). */
+  .topbar-actions input[type="text"] { width: 130px !important; }
+
+  /* ── Solarin top-nav mobile collapse ───────────────────────────────
+     styles-solarin.css keeps its [data-theme="solarin"] specificity, so
+     these match it and win by source order (this file imports last).
+     The center category dropdowns + search collapse away — on Solarin
+     phones the bottom bar is the SOLE nav (C-NAV-REACH). The logo and
+     the avatar (perspective switch / "Exit Pimped Out" / sign out) stay
+     reachable in the slim top bar. */
+  [data-theme="solarin"] .sol-nav { padding: 0 14px; }
+  [data-theme="solarin"] .sol-center { display: none; }
+  [data-theme="solarin"] .sol-search { display: none; }
+  [data-theme="solarin"] .sol-logo { min-width: 0; }
+  [data-theme="solarin"] .sol-nav-right { min-width: 0; }
+
+  /* ── Shared modal shell → bottom sheet (C-SHELL-PRIMITIVES) ────────
+     Sizes the SHELL only — modal descendants (T3's .rdc-/.rpv-/.rcm-
+     content etc.) self-size. z-index ≥1000 so backdrops legitimately
+     COVER the .mb-tabbar (900) per C-NAV-Z. */
+  .m-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;                    /* C-NAV-Z: above .mb-tabbar (900) */
+    display: flex;
+    align-items: flex-end;            /* sheet docks to the bottom edge */
+    justify-content: center;
+    padding: 0;
+  }
+  .m-shell {
+    width: 100% !important;           /* beats fixed desktop/Solarin widths */
+    max-width: 100% !important;
+    margin: 0;
+    max-height: calc(100vh - 24px - var(--safe-top, 0px));
+    max-height: calc(100dvh - 24px - var(--safe-top, 0px));
+    border-radius: 14px 14px 0 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: mb-sheet-up .22s ease-out;
+  }
+  .m-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .m-foot {
+    flex-wrap: wrap;
+    gap: 8px;
+    /* the sheet sits on the bottom edge → pad past the home indicator */
+    padding-bottom: calc(12px + var(--safe-bottom, 0px));
+  }
+  /* Keyboard-shortcut hint ("Esc to cancel · ⌘↵ to submit") is
+     meaningless on touch — class added in Modal.jsx (T1-owned). */
+  .m-kbd-hint { display: none; }
+
+  @keyframes mb-sheet-up {
+    from { transform: translateY(24px); opacity: .6; }
+    to   { transform: none;             opacity: 1; }
+  }
+
+  /* ── Generic .page-head stacking (assigned to T1 per T4/T5/T7) ─────
+     Title + .actions wrap instead of overflowing. Stacking only —
+     page teams own their own typography/controls. */
+  .page-head {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .page-head > * { min-width: 0; }
+  .page-head .actions {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    max-width: 100%;
+  }
+
+  /* ── Fixed-element repositioning (CSS-only; fab.jsx and
+     team-chat-toast.jsx are NOT edited — C-SHELL-PRIMITIVES) ────────
+     .fab-wrap carries inline right/bottom → gated !important. Both
+     lift above the bottom tab bar + safe area. */
+  .fab-wrap {
+    right: 14px !important;
+    bottom: calc(var(--mb-nav-h, 0px) + var(--safe-bottom, 0px) + 14px) !important;
+  }
+  .tc-toast {
+    bottom: calc(var(--mb-nav-h, 0px) + var(--safe-bottom, 0px) + 12px) !important;
+  }
+
+  /* ── .mb-* bottom tab bar + More sheet (C-NAV-REACH / C-NAV-Z) ─────
+     Markup rendered by src/components/mobile-nav.jsx (T1 sibling — it
+     ships ZERO inline styles); ALL its styling lives here, matching the
+     class inventory documented in that file's header. Colors ride the
+     existing CSS vars, so the bar reskins automatically under
+     [data-theme="solarin"] (the var-remap pattern) — no theme-specific
+     rules needed. */
+  .mb-tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 900;                                     /* C-NAV-Z: FROZEN */
+    display: flex;
+    align-items: stretch;
+    height: calc(var(--mb-nav-h, 56px) + var(--safe-bottom, 0px));
+    padding-bottom: var(--safe-bottom, 0px);
+    background: var(--bg-2, #101413);
+    border-top: 1px solid var(--line-hard, rgba(255, 255, 255, .14));
+  }
+  .mb-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 44px;                 /* touch-target floor */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    position: relative;
+    padding: 0 2px;
+    background: none;
+    border: none;
+    color: var(--fg-dim, #8fa39c);
+    font-family: var(--f-mono, ui-monospace, monospace);
+    font-size: 10px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mb-tab.is-active { color: var(--c-cyan, #58d0c4); }
+  .mb-tab-ic { font-size: 17px; line-height: 1; }
+  .mb-tab-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: .04em;
+  }
+  .mb-tab-badge {
+    position: absolute;
+    top: 4px;
+    right: calc(50% - 20px);
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--c-red, #e05555);
+    color: #fff;
+    font-size: 9.5px;
+    line-height: 15px;
+    text-align: center;
+  }
+  .mb-tab-dot {                       /* unread dot on the More tab */
+    position: absolute;
+    top: 6px;
+    right: calc(50% - 14px);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--c-red, #e05555);
+  }
+
+  /* More sheet — full group/tab list (saved order) + live badges +
+     global reel search. Sits ABOVE the tab bar per C-NAV-Z (≥1000). */
+  .mb-more-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, .55);
+  }
+  .mb-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 48px - var(--safe-top, 0px));
+    max-height: calc(100dvh - 48px - var(--safe-top, 0px));
+    background: var(--bg-elev, #141d1a);
+    border-top: 1px solid var(--line-hard, rgba(255, 255, 255, .14));
+    border-radius: 14px 14px 0 0;
+    padding: 10px 12px calc(14px + var(--safe-bottom, 0px));
+    animation: mb-sheet-up .22s ease-out;
+  }
+  .mb-sheet-grip {
+    flex-shrink: 0;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line-hard, rgba(255, 255, 255, .2));
+    margin: 0 auto 10px;
+  }
+  .mb-sheet-head {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .mb-sheet-title {
+    font-family: var(--f-mono, ui-monospace, monospace);
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--fg-mute, #6d7f78);
+  }
+  .mb-sheet-close {
+    background: none;
+    border: none;
+    color: var(--fg-dim, #8fa39c);
+    font-size: 16px;
+    min-width: 44px;
+    min-height: 36px;
+    cursor: pointer;
+  }
+  .mb-sheet-search {
+    flex-shrink: 0;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-2, #101413);
+    border: 1px solid var(--line-hard, rgba(255, 255, 255, .14));
+    border-radius: 6px;
+    color: var(--fg, #e8efec);
+    font-family: var(--f-mono, ui-monospace, monospace);
+    font-size: 13px;
+    padding: 9px 12px;
+    margin-bottom: 10px;
+    outline: none;
+    -webkit-appearance: none;
+  }
+  .mb-sheet-results {
+    flex-shrink: 0;
+    list-style: none;
+    margin: 0 0 10px;
+    padding: 0;
+    max-height: 40vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .mb-sheet-result {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    border-bottom: 1px solid var(--line, rgba(255, 255, 255, .07));
+    color: var(--fg, #e8efec);
+    font-family: var(--f-mono, ui-monospace, monospace);
+    font-size: 12px;
+    padding: 12px 4px;                /* ≥44px row incl. line-height */
+    cursor: pointer;
+  }
+  .mb-sheet-result-id { color: var(--fg-dim, #8fa39c); flex-shrink: 0; }
+  .mb-sheet-result-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mb-sheet-result-empty {
+    list-style: none;
+    color: var(--fg-mute, #6d7f78);
+    font-family: var(--f-mono, ui-monospace, monospace);
+    font-size: 12px;
+    padding: 12px 4px;
+  }
+  .mb-sheet-groups {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .mb-sheet-group { margin-bottom: 4px; }
+  .mb-sheet-group-label {
+    font-family: var(--f-mono, ui-monospace, monospace);
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--fg-mute, #6d7f78);
+    padding: 10px 4px 4px;
+  }
+  .mb-sheet-tab {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;                 /* touch-target floor */
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--fg, #e8efec);
+    font-size: 14px;
+    text-align: left;
+    padding: 6px 10px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mb-sheet-tab.is-active {
+    color: var(--c-cyan, #58d0c4);
+    background: var(--bg-2, rgba(255, 255, 255, .05));
+  }
+  .mb-sheet-tab .mb-tab-ic { font-size: 15px; width: 20px; text-align: center; }
+  .mb-sheet-tab-badge {
+    margin-left: auto;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--c-red, #e05555);
+    color: #fff;
+    font-size: 9.5px;
+    line-height: 15px;
+    text-align: center;
+  }
+}
+
+/* ── Small phone (≤480px): tighter topbar ─────────────────────────── */
+@media (max-width: 480px) {
+  /* The More sheet carries the global reel search — the inline topbar
+     search doesn't fit next to brand + back + avatar on small phones. */
+  .topbar-actions { display: none; }
+  .mb-tab-label { font-size: 9.5px; }
+}
+
+/* ── Reduced motion (C-REDUCED-MOTION): still path for the shell's two
+   animated surfaces (modal sheet + More sheet slide-up). Combined with
+   the width gate so desktop stays untouched; !important is sanctioned
+   inside a prefers-reduced-motion block. */
+@media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+  .m-shell,
+  .mb-sheet {
+    animation: none !important;
+  }
+}
