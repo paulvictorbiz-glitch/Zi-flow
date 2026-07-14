@@ -392,12 +392,33 @@
 }
 /* Mobile: less vertical chrome above the table, so give it more room — the
    freeze (sticky header row + sticky first column) works identically here,
-   it just needs the wrapper to stay the scroll container. */
+   it just needs the wrapper to stay the scroll container.
+   CRITICAL: subtract the fixed bottom tab-bar height (--mb-nav-h) + the home-
+   indicator safe area, otherwise the box bottoms out at the very viewport edge
+   and its last rows + the horizontal scrollbar hide BEHIND the tab bar — which
+   is exactly why the spreadsheet felt "too small to see the data". Vars come
+   from styles-mobile.css (:root, ≤768px); the fallbacks keep this safe if that
+   sheet ever changes. */
 @media (max-width: 720px) {
+  /* Fill almost the whole viewport height. The capture panel + page head sit
+     ABOVE the table and the page scrolls, so the box doesn't need to reserve
+     room for them — it only needs to be tall enough that, once you scroll it
+     into view, it runs all the way down to just above the tab bar. A tiny 20px
+     top gap for breathing room; the nav + safe-area subtraction keeps the last
+     row and the horizontal scrollbar clear of the fixed tab bar. */
   .rd-table-wrap {
-    max-height: calc(100vh - 130px);
-    max-height: calc(100dvh - 130px);
+    max-height: calc(100vh - 20px - var(--mb-nav-h, 56px) - var(--safe-bottom, 0px));
+    max-height: calc(100dvh - 20px - var(--mb-nav-h, 56px) - var(--safe-bottom, 0px));
   }
+  /* Denser rows + a slimmer reel-URL column so the genes/music/font/status
+     columns come into view instead of being pushed off the right edge. The
+     table still scrolls horizontally (min-width intact) — it's just no longer
+     dominated by one 320px URL cell. */
+  .rd-table td { padding: 3px 6px; }
+  .rd-table thead th { padding: 7px 6px; }
+  .rd-table .rd-th-reel { min-width: 150px; }
+  .rd-td-reel { max-width: 190px; }
+  .rd-cell-link { max-width: 174px; }
 }
 .rd-table {
   width: 100%; border-collapse: collapse;

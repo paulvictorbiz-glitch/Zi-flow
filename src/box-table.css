@@ -201,6 +201,44 @@
 .bxt-empty { padding: 40px 16px; text-align: center; color: var(--fg-dim, #9aa1b2); }
 
 @media (max-width: 640px) {
-  .bxt-row { grid-template-columns: 30px 18px 70px minmax(0, 1fr) 190px; }
-  .bxt-c-series { display: none; }
+  /* Full-screen takeover on phones (the overlay sits above the tab bar at
+     z-index 9000, closed via its own ✕) so the dense table gets every pixel. */
+  .bxt-overlay { padding: 0; }
+  .bxt-panel { border-radius: 0; max-width: 100%; }
+
+  /* The 6-column dense row can't fit a phone — its fixed tracks overflowed and
+     the Open/Dup/Archive actions collided with the ID + title. Reflow each row
+     into a stacked card: checkbox + colour dot down the left, ID and title
+     stacked in the middle, and the action buttons wrapping full-width below. */
+  .bxt-row--head { display: none; }               /* labels are self-evident once stacked */
+  .bxt-row {
+    grid-template-columns: 26px 14px minmax(0, 1fr);
+    grid-template-areas:
+      "check dot id"
+      "check dot title"
+      "check dot actions";
+    row-gap: 3px;
+    column-gap: 8px;
+    align-items: start;
+    padding: 10px 12px;
+    content-visibility: visible;                  /* stacked rows vary in height */
+  }
+  .bxt-c-check   { grid-area: check; padding-top: 2px; }
+  .bxt-c-color   { grid-area: dot; padding-top: 6px; }
+  .bxt-c-id      { grid-area: id; font-size: 12.5px; }
+  .bxt-c-title   { grid-area: title; white-space: normal; font-size: 13px; }
+  .bxt-c-series  { display: none; }
+  .bxt-c-actions {
+    grid-area: actions;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  /* Real touch targets for the per-row actions. */
+  .bxt-act { padding: 6px 12px; font-size: 12px; min-height: 32px; }
+  .bxt-dup { max-width: none; }
+
+  /* Toolbar + bulk bar already wrap; give the search full width so it's usable. */
+  .bxt-search { flex: 1 1 100%; }
 }

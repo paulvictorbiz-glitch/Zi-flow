@@ -10,6 +10,7 @@ import { useWorkflow } from "../store/store.jsx";
 import { STAGES, STAGE_LABEL } from "../lib/shared-data.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { usePermissions, useIsOwner } from "../lib/permissions.jsx";
+import { useIsMobile } from "../lib/use-is-mobile.js";
 
 const SOL_PIPELINE_CSS = `
 [data-theme="solarin"] .pl-wrap {
@@ -52,6 +53,97 @@ const SOL_PIPELINE_CSS = `
 }
 `;
 
+/* Mobile board layout (T2 owns .pl-*). At ≤768px the 5 stage columns can't
+   share a phone width and stay legible — the inline `1fr` tracks just shrink to
+   ~30px and cards collapse into vertical slivers. Here we floor each stage
+   column via --pl-col-min and slim the lane gutter via --pl-lane-w, so the
+   board grows past the viewport and horizontal-scrolls (the .board
+   overflow-x:auto from styles-mobile.css is the scroll container). Desktop
+   never sets these vars → the inline fallbacks (200px / 0px) keep ≥769px
+   byte-identical. */
+const PL_MOBILE_CSS = `
+@media (max-width: 768px) {
+  .pl-board {
+    --pl-lane-w: 120px;
+    --pl-col-min: 158px;
+  }
+  /* Lane / column heads read fine at the slimmer gutter, just tighten padding. */
+  .pl-board .lane-head { padding: 12px 10px; }
+  .pl-board .col-head { padding: 10px 10px; }
+  /* Give tapped cards a real touch target — the compact grid tiles stay, but
+     list-mode cards shouldn't clamp so hard they're unreadable. */
+  .pl-board .cell { min-height: 96px; }
+}
+@media (max-width: 480px) {
+  .pl-board {
+    --pl-lane-w: 104px;
+    --pl-col-min: 150px;
+  }
+}
+
+/* ── Mobile pipeline list (<PipelineMobile>) — only ever rendered ≤768px, so
+   these classes never exist on desktop and need no width gate. ─────────────── */
+.plm-wrap { display: flex; flex-direction: column; gap: 14px; padding: 8px 12px 20px; }
+.plm-stage { border: 1px solid var(--line, rgba(255,255,255,.1)); border-radius: 10px; overflow: hidden; background: var(--bg-1, #0f1311); }
+.plm-stage-head {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-0, #0b0e0d);
+  border-bottom: 1px solid var(--line, rgba(255,255,255,.1));
+}
+.plm-stage-toggle {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: none; cursor: pointer;
+  color: var(--fg, #e8efec);
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  padding: 12px 10px; text-align: left;
+}
+.plm-stage-chev { color: var(--fg-dim, #8fa39c); font-size: 11px; width: 12px; }
+.plm-stage-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plm-stage-count {
+  flex-shrink: 0; min-width: 22px; text-align: center;
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--bg-3, rgba(255,255,255,.08)); color: var(--fg-dim, #8fa39c);
+  font-size: 11px;
+}
+.plm-stage-table {
+  flex-shrink: 0; margin-right: 8px;
+  background: none; border: 1px solid var(--line-hard, rgba(255,255,255,.16));
+  border-radius: 6px; color: var(--c-cyan, #58d0c4);
+  font-family: var(--f-mono, ui-monospace, monospace); font-size: 11px;
+  padding: 5px 9px; min-height: 30px; cursor: pointer;
+}
+.plm-cards { display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+.plm-empty { color: var(--fg-mute, #6d7f78); font-family: var(--f-mono, ui-monospace, monospace); font-size: 12px; padding: 6px 2px; }
+.plm-card { display: flex; flex-direction: column; gap: 6px; }
+.plm-card-lane {
+  font-family: var(--f-mono, ui-monospace, monospace); font-size: 10px;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--fg-mute, #6d7f78);
+}
+/* ReelCard fills the column and is never clamped to the board's compact tile. */
+.plm-card .reel { width: 100%; box-sizing: border-box; height: auto; }
+.plm-move {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--f-mono, ui-monospace, monospace); font-size: 11px;
+  color: var(--fg-dim, #8fa39c);
+}
+.plm-move-lbl { flex-shrink: 0; text-transform: uppercase; letter-spacing: .05em; }
+.plm-move-sel {
+  flex: 1 1 auto; min-width: 0;
+  background: var(--bg-2, #101413); color: var(--fg, #e8efec);
+  border: 1px solid var(--line-hard, rgba(255,255,255,.16)); border-radius: 6px;
+  font-family: var(--f-mono, ui-monospace, monospace); font-size: 12px;
+  padding: 8px 10px; min-height: 38px;
+}
+.plm-more {
+  background: none; border: 1px dashed var(--line-hard, rgba(255,255,255,.2));
+  border-radius: 8px; color: var(--c-cyan, #58d0c4);
+  font-family: var(--f-mono, ui-monospace, monospace); font-size: 12px;
+  padding: 10px; cursor: pointer; margin-top: 2px;
+}
+`;
+
 /* Board columns derived from the canonical STAGES list. Labels are
    upper-cased here because the board column heads use that style;
    list-view / archived-view consume STAGE_LABEL as-is (title case). */
@@ -62,11 +154,86 @@ const PIPELINE_STAGES = STAGES.map((key) => ({ key, label: STAGE_LABEL[key].toUp
    the special "review" workflow lane appended last. */
 const LANE_ROLE_ORDER = { skilled: 0, owner: 1, variant: 2 };
 
+/* ── Mobile pipeline: single-column, stage-grouped list of full ReelCards ──
+   The desktop lane×stage grid is unreadable on a phone, so on mobile we group
+   every card by STAGE (owner shown as a small caption on each card, since the
+   lane dimension collapses) and stack readable, tappable cards vertically:
+     · tap a card → opens the full detail/editor (onOpen)
+     · the card's ⋯ kebab → duplicate / archive / delete (ReelCard's own menu)
+     · "Move to" select → change stage (onMove; reuses the board's guards)
+   Stages with many reels render a capped preview + a button into the (now
+   phone-friendly) dense BoxTable for bulk triage. */
+const PLM_INLINE_LIMIT = 20;
+function PipelineMobile({ stages, itemsByStage, laneNameById, onOpen, onMove, onExpand, canMove }) {
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const toggle = (key) => setCollapsed(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  return (
+    <div className="plm-wrap">
+      {stages.map(stage => {
+        const list = itemsByStage[stage.key] || [];
+        const isCollapsed = collapsed.has(stage.key);
+        const shown = isCollapsed ? [] : list.slice(0, PLM_INLINE_LIMIT);
+        const overflow = list.length - shown.length;
+        return (
+          <section className="plm-stage" key={stage.key}>
+            <div className="plm-stage-head">
+              <button type="button" className="plm-stage-toggle"
+                      onClick={() => toggle(stage.key)} aria-expanded={!isCollapsed}>
+                <span className="plm-stage-chev">{isCollapsed ? "▸" : "▾"}</span>
+                <span className="plm-stage-name">{stage.label}</span>
+                <span className="plm-stage-count">{list.length}</span>
+              </button>
+              {list.length > 0 && (
+                <button type="button" className="plm-stage-table"
+                        title="Open this stage in a dense table (search · bulk move · duplicate)"
+                        onClick={() => onExpand(stage.key)}>⤢ Table</button>
+              )}
+            </div>
+            {!isCollapsed && (
+              <div className="plm-cards">
+                {list.length === 0 && <div className="plm-empty">No reels in this stage.</div>}
+                {shown.map(r => (
+                  <div className="plm-card" key={r.id}>
+                    <div className="plm-card-lane">{laneNameById[r.lane] || r.lane || "—"}</div>
+                    <ReelCard reel={r} state={r.state} compact={false}
+                              onOpen={(reel, e) => onOpen(reel, e || {})} />
+                    {canMove && (
+                      <label className="plm-move">
+                        <span className="plm-move-lbl">Move to</span>
+                        <select className="plm-move-sel" value={stage.key}
+                                onChange={(e) => onMove(r, e.target.value)}>
+                          {stages.map(s => (
+                            <option key={s.key} value={s.key}>{STAGE_LABEL[s.key] || s.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                ))}
+                {overflow > 0 && (
+                  <button type="button" className="plm-more" onClick={() => onExpand(stage.key)}>
+                    View all {list.length} in dense table →
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function Pipeline({ onOpen }) {
   const { reels, reviewLaneCards, actions, hiddenLaneIds } = useWorkflow();
   const { peopleList } = useRoster();
   const { can } = usePermissions();
   const isOwner = useIsOwner();
+  const { isMobile } = useIsMobile();
   const [scheduleModal, setScheduleModal] = useState(null);
   const [scheduleDate, setScheduleDate] = useState("");
 
@@ -354,16 +521,51 @@ function Pipeline({ onOpen }) {
 
   const visibleStages = PIPELINE_STAGES.filter(s => !hiddenCols.has(s.key));
 
+  /* ── Mobile layout support ────────────────────────────────────────────────
+     The lane×stage grid is unusable on a phone (5+ columns squeeze every card
+     down to an unreadable sliver). On mobile we render a single-column,
+     stage-grouped list of full ReelCards instead — see <PipelineMobile>. These
+     memos/handler feed it, reusing the exact same store actions as the board so
+     open / duplicate / archive / move behave identically. */
+  const itemsByStage = useMemo(() => {
+    const m = {};
+    for (const r of items) (m[r.stage] = m[r.stage] || []).push(r);
+    Object.values(m).forEach(list =>
+      list.sort((a, b) => (a.board_order ?? Infinity) - (b.board_order ?? Infinity)));
+    return m;
+  }, [items]);
+  const laneNameById = useMemo(
+    () => Object.fromEntries(lanes.map(l => [l.id, l.name])),
+    [lanes]);
+
+  /* Move a single card to another stage (the mobile replacement for drag/drop).
+     Mirrors handleDrop's guards: the Completed gate and the Posted → schedule-
+     modal intercept, so scheduling still runs on mobile. Lane is preserved. */
+  const moveCardToStage = (reel, stage) => {
+    if (!canMove || !stage || stage === reel.stage) return;
+    if (stage === "completed" && !can("moveToCompleted")) { flashBlocked("completed"); return; }
+    if (stage === "posted") {
+      setScheduleModal({ reelId: reel.id, lane: reel.lane, fromStage: reel.stage });
+      setScheduleDate("");
+      return;
+    }
+    actions.moveStage(reel.id, { lane: reel.lane, stage });
+  };
+
   return (
     <div className="pl-wrap">
       <style>{SOL_PIPELINE_CSS}</style>
+      <style>{PL_MOBILE_CSS}</style>
       <div className="page-head pl-header">
         <div className="titles">
           <h1>Pipeline</h1>
           <div className="sub">
-            Rows = who owns it. Columns = where it is. Drag to move.
+            {isMobile
+              ? "Grouped by stage. Tap a card to open · ⋯ to duplicate/archive · Move to… to change stage."
+              : "Rows = who owns it. Columns = where it is. Drag to move."}
           </div>
         </div>
+        {!isMobile && (
         <div className="actions">
           <DPill active={groupBySeries} onClick={() => setGroupBySeries(v => !v)}>Group by series</DPill>
           {/* Column visibility menu */}
@@ -405,9 +607,11 @@ function Pipeline({ onOpen }) {
             )}
           </div>
         </div>
+        )}
       </div>
 
-      {/* Lanes visibility toolbar + card view toggle */}
+      {/* Lanes visibility toolbar + card view toggle (desktop board only) */}
+      {!isMobile && (
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 16px 4px", position: "relative" }}>
         <div style={{ position: "relative" }} ref={lanesMenuRef}>
           <button
@@ -462,13 +666,29 @@ function Pipeline({ onOpen }) {
           )}
         </div>
       </div>
+      )}
 
-      {isOwner && cardView === "graph" ? (
+      {isMobile ? (
+        <PipelineMobile
+          stages={PIPELINE_STAGES}
+          itemsByStage={itemsByStage}
+          laneNameById={laneNameById}
+          onOpen={handleCardClick}
+          onMove={moveCardToStage}
+          onExpand={(stageKey) => setExpandBox({ laneName: "All lanes", stageKey, allStage: true })}
+          canMove={canMove}
+        />
+      ) : isOwner && cardView === "graph" ? (
         <PipelineGraph reels={items} peopleList={peopleList} onOpenReel={(r) => handleCardClick(r, {})} />
       ) : (
       /* Board grid */
       <div className="board pl-board" style={{
-        gridTemplateColumns: `200px repeat(${visibleStages.length}, minmax(0, 1fr))`,
+        /* Widths come from CSS vars so the mobile stylesheet (PL_MOBILE_CSS)
+           can floor each stage column to a readable min-width — the board then
+           overflows and horizontal-scrolls instead of squishing 5 columns into
+           a phone width. Desktop resolves the fallbacks (200px / 0px) →
+           byte-identical to the previous static template. */
+        gridTemplateColumns: `var(--pl-lane-w, 200px) repeat(${visibleStages.length}, minmax(var(--pl-col-min, 0px), 1fr))`,
       }}>
         {/* Column heads (offset by lane gutter) */}
         <div className="col-head pl-col-head" style={{ background: "var(--bg-0)" }}>
@@ -662,7 +882,9 @@ function Pipeline({ onOpen }) {
           laneName={expandBox.laneName}
           stageLabel={STAGE_LABEL[expandBox.stageKey] || expandBox.stageKey}
           stageKey={expandBox.stageKey}
-          reels={cells[expandBox.laneId + "::" + expandBox.stageKey] || []}
+          reels={expandBox.allStage
+            ? (itemsByStage[expandBox.stageKey] || [])
+            : (cells[expandBox.laneId + "::" + expandBox.stageKey] || [])}
           peopleList={peopleList}
           actions={actions}
           canArchive={can("archiveReel")}
