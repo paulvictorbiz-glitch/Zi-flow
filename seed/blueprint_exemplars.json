@@ -1,0 +1,550 @@
+{
+  "_meta": {
+    "purpose": "Gold-standard few-shot exemplars for Content-Forge blueprint generation (mode=blueprint). Consumed read-only by content_forge.py /script when building the LLM prompt. Each exemplar pairs the request context (inputs) with the frozen-schema blueprint_json AND the human-readable vo_markdown sheet the model should emit.",
+    "schema": "BlueprintJson (frozen draft-07). See CONTRACT 3. blueprint_json in each exemplar validates against it byte-for-byte in structure.",
+    "source": "Live footagebrain reels.vo for REEL-360 and REEL-377 (read-only). Do not write back to the DB.",
+    "footage_refs_note": "drive_url is null in these historical exemplars (they predate footage attachment). At runtime, footage_refs carry real Drive links and beat.clip_id resolves against them; degrades to [clip:id] when absent."
+  },
+  "exemplars": [
+    {
+      "id": "REEL-377",
+      "source": "footagebrain reels.vo — Europe's Largest Waterfall: Dettifoss's Raw Power",
+      "inputs": {
+        "topic": "Europe's Largest Waterfall: Dettifoss's Raw Power",
+        "logline": "Everyone films Iceland's waterfalls — but almost nobody knows the crossing it takes to reach the most powerful one.",
+        "footage": "Wide/close shots of the waterfall + you crossing ice sheets to reach the viewing point.",
+        "format_assumed": "Vertical 9:16, ~30-35 seconds, platform-agnostic (Shorts/Reels/TikTok).",
+        "verified_facts": "Dettifoss really lives up to the hype, but there's a nuance. Average flow 193 m³/s (≈ 50,985 gallons/second). Olympic pool (~2,500 m³) fills every ~13 seconds. Peak summer glacial melt can push flow to ~400 m³/s (nearly double). 44 m drop, 100 m wide, Vatnajökull National Park. Caveat: technically reputed to be the SECOND most powerful in Europe after Switzerland's Rhine Falls on one metric, but most travel sources market it as the most powerful — hence bold vs bulletproof framing."
+      },
+      "blueprint_json": {
+        "topic": "Europe's Largest Waterfall: Dettifoss's Raw Power",
+        "logline": "Everyone films Iceland's waterfalls — but almost nobody knows the crossing it takes to reach the most powerful one.",
+        "format_assumed": "Vertical 9:16, ~30-35 seconds, platform-agnostic (Shorts/Reels/TikTok).",
+        "verified_facts_intro": "Dettifoss really does live up to the hype — but there's a nuance worth knowing before you lock the hook. Average flow is 193 m³/s (≈ 50,985 gallons/second); that fills an Olympic swimming pool every ~13 seconds, and peak summer glacial melt can push it to ~400 m³/s. The one caveat: it's technically reputed to be the second most powerful waterfall in Europe after Switzerland's Rhine Falls on one specific metric, though most travel/tourism sources market it as the most powerful — which is why the scripts ship with both a bold and a bulletproof version of the claim.",
+        "fact_sheet": [
+          {
+            "label": "Average flow",
+            "value": "193 m³/s (~50,985 gallons/second)"
+          },
+          {
+            "label": "Pool analogy",
+            "value": "Fills an Olympic swimming pool (2,500 m³) every ~13 seconds"
+          },
+          {
+            "label": "Peak summer flow",
+            "value": "Can surge to ~400 m³/s during glacial melt (nearly double)"
+          },
+          {
+            "label": "Drop / width",
+            "value": "44 m drop, 100 m wide"
+          },
+          {
+            "label": "Location",
+            "value": "Vatnajökull National Park, NE Iceland — fed by Vatnajökull, Europe's largest ice cap"
+          }
+        ],
+        "claim_framings": {
+          "bold": "the most powerful waterfall in Europe",
+          "bulletproof": "one of the most powerful waterfalls in Europe (or \"Iceland's most powerful waterfall\") — Wikipedia notes Rhine Falls edges it out on one specific metric, so this version is comment-proof.",
+          "note": "The scripts use the bold version — swap in the safer line if you'd rather not deal with pushback in the comments."
+        },
+        "variations": [
+          {
+            "name": "Stat Attack",
+            "angle": "Voiceover + animated numbers; fact-hook led.",
+            "best_for": "YouTube Shorts/Reels, educational-viral audience, works with sound ON.",
+            "beats": [
+              {
+                "time": "0-3s",
+                "visual": "Mist/close-up of falls",
+                "vo": "Did you know the most powerful waterfall in Europe... is hiding in Iceland?",
+                "on_screen": "Kinetic text: \"EUROPE'S MOST POWERFUL WATERFALL\"",
+                "clip_id": "falls_closeup"
+              },
+              {
+                "time": "3-8s",
+                "visual": "You stepping onto the ice sheet",
+                "vo": "This is Dettifoss. And to get here, I had to cross this.",
+                "on_screen": "Small location pin animation: \"Iceland 🇮🇸\"",
+                "clip_id": "ice_crossing"
+              },
+              {
+                "time": "8-18s",
+                "visual": "Ice crossing, tension building",
+                "vo": "One wrong step on this ice... and it's a very cold, very bad day.",
+                "on_screen": "",
+                "clip_id": "ice_crossing"
+              },
+              {
+                "time": "18-24s",
+                "visual": "Full waterfall reveal",
+                "vo": "But then you see it. 193 cubic meters of water — crashing through here every single second.",
+                "on_screen": "Number count-up animation: 0 → 193 m³/s",
+                "clip_id": "falls_wide"
+              },
+              {
+                "time": "24-30s",
+                "visual": "Waterfall + graphic overlay",
+                "vo": "That's over 50,000 gallons a second. Enough to fill an Olympic pool... every 13 seconds.",
+                "on_screen": "Animated pool icon filling up in a 13-second loop bar",
+                "clip_id": "falls_wide"
+              },
+              {
+                "time": "30-35s",
+                "visual": "You, smiling, waterfall behind",
+                "vo": "This is just one of Iceland's insane waterfalls. Follow for more.",
+                "on_screen": "End card: \"Follow for more 🌊\"",
+                "clip_id": "you_smiling"
+              }
+            ]
+          },
+          {
+            "name": "Silent Scroll-Stopper",
+            "angle": "Text-only, no voice; timed to a big-build / bass-drop track.",
+            "best_for": "TikTok / muted autoplay feeds (~85% of viewers watch without sound).",
+            "beats": [
+              {
+                "time": "0-2s",
+                "visual": "Waterfall wide shot",
+                "vo": "",
+                "on_screen": "Europe's most powerful waterfall 🌊",
+                "clip_id": "falls_wide"
+              },
+              {
+                "time": "2-5s",
+                "visual": "Same shot",
+                "vo": "",
+                "on_screen": "...is in Iceland.",
+                "clip_id": "falls_wide"
+              },
+              {
+                "time": "5-6s",
+                "visual": "Cut to ice sheet",
+                "vo": "",
+                "on_screen": "To reach it, you cross this ⚠️",
+                "clip_id": "ice_crossing"
+              },
+              {
+                "time": "6-16s",
+                "visual": "Ice crossing footage",
+                "vo": "",
+                "on_screen": "no ropes. no guide. just ice. (minimal text — let tension play out)",
+                "clip_id": "ice_crossing"
+              },
+              {
+                "time": "16-20s",
+                "visual": "Waterfall reveal",
+                "vo": "",
+                "on_screen": "193 m³/s",
+                "clip_id": "falls_wide"
+              },
+              {
+                "time": "20-24s",
+                "visual": "Same",
+                "vo": "",
+                "on_screen": "= 51,000 gallons. Every. Second.",
+                "clip_id": "falls_wide"
+              },
+              {
+                "time": "24-28s",
+                "visual": "Same, pool icon graphic",
+                "vo": "",
+                "on_screen": "= 1 Olympic pool every 13 seconds 🏊",
+                "clip_id": "falls_wide"
+              },
+              {
+                "time": "28-32s",
+                "visual": "Wide final shot",
+                "vo": "",
+                "on_screen": "Dettifoss, Iceland 🇮🇸 — save this for your trip",
+                "clip_id": "falls_wide"
+              }
+            ]
+          },
+          {
+            "name": "The Risky Crossing",
+            "angle": "First-person narrative; curiosity/risk led, delays the payoff.",
+            "best_for": "Adventure/personal-brand audience — tends to pull higher watch-through.",
+            "beats": [
+              {
+                "time": "0-2s",
+                "visual": "Mid-crossing, unstable footing",
+                "vo": "I nearly went into the water to get this shot.",
+                "on_screen": "",
+                "clip_id": "ice_crossing"
+              },
+              {
+                "time": "2-8s",
+                "visual": "Ice crossing",
+                "vo": "This ice sheet was the only way to the viewing point — and it was moving.",
+                "on_screen": "",
+                "clip_id": "ice_crossing"
+              },
+              {
+                "time": "8-16s",
+                "visual": "More crossing, close on feet/ice cracks",
+                "vo": "No rope. No guide. Just me, a canyon, and a waterfall that fills an Olympic pool every 13 seconds.",
+                "on_screen": "",
+                "clip_id": "ice_crossing"
+              },
+              {
+                "time": "16-24s",
+                "visual": "Big reveal, wide shot",
+                "vo": "This is Dettifoss — the most powerful waterfall in Europe. 193,000 liters a second.",
+                "on_screen": "",
+                "clip_id": "falls_wide"
+              },
+              {
+                "time": "24-30s",
+                "visual": "You, catching breath, smiling",
+                "vo": "Worth every second on that ice.",
+                "on_screen": "",
+                "clip_id": "you_smiling"
+              },
+              {
+                "time": "30-35s",
+                "visual": "Final shot, direct to camera",
+                "vo": "Would you cross this for the shot? 👇",
+                "on_screen": "",
+                "clip_id": "you_smiling"
+              }
+            ]
+          }
+        ],
+        "hook_bank": [
+          "Did you know Europe's most powerful waterfall is in Iceland?",
+          "This waterfall moves 51,000 gallons of water — every second.",
+          "I crossed a moving ice sheet for this shot.",
+          "You've never seen water move like this.",
+          "Iceland's most dangerous waterfall to reach.",
+          "This fills an Olympic pool every 13 seconds."
+        ],
+        "captions": [
+          "193,000 liters a second. Every second. 🌊 #Dettifoss",
+          "The waterfall that fills an Olympic pool every 13 seconds 🏊🌊",
+          "Crossed a moving ice sheet for this view. Worth it."
+        ],
+        "hashtags": [
+          "#Iceland",
+          "#Dettifoss",
+          "#IcelandTravel",
+          "#TravelReels",
+          "#NatureShorts",
+          "#VatnajokullNationalPark",
+          "#RingRoad",
+          "#AdventureTravel",
+          "#EuropeTravel",
+          "#WaterfallTikTok"
+        ],
+        "posting_checklist": [
+          "Vertical 9:16, 1080×1920",
+          "Captions burned in (most viewers watch muted)",
+          "Hook lands in first 1.5s — no logo/intro before it",
+          "Hook text also appears as on-screen title (redundancy helps retention + accessibility)",
+          "Native upload, no reposted watermark, for max reach",
+          "Location tag: Iceland / Vatnajökull National Park",
+          "Pin a comment with a bonus fact to seed engagement (e.g. peak summer flow doubles to ~400 m³/s)"
+        ],
+        "footage_refs": [
+          {
+            "clip_id": "falls_wide",
+            "drive_url": null
+          },
+          {
+            "clip_id": "falls_closeup",
+            "drive_url": null
+          },
+          {
+            "clip_id": "ice_crossing",
+            "drive_url": null
+          },
+          {
+            "clip_id": "you_smiling",
+            "drive_url": null
+          }
+        ]
+      },
+      "vo_markdown": "# Dettifoss Short — Script Variations & Fact Sheet\n\n**Footage you have:** wide/close shots of the waterfall + you crossing ice sheets to reach the viewing point.\n**Format assumed:** vertical 9:16, ~30-35 seconds, platform-agnostic (Shorts/Reels/TikTok). Tell me if you want to tighten this for one platform specifically.\n\n---\n\n## 🎯 Fact Sheet (so you don't get \"well actually'd\" in the comments)\n\n| Stat | Number |\n|---|---|\n| Average flow | 193 m³/s (~50,985 gallons/second) |\n| Pool analogy | Fills an Olympic swimming pool (2,500 m³) every ~13 seconds |\n| Peak summer flow | Can surge to ~400 m³/s during glacial melt (nearly double) |\n| Drop / width | 44 m drop, 100 m wide |\n| Location | Vatnajökull National Park, NE Iceland — fed by Vatnajökull, Europe's largest ice cap |\n\n**Two ways to frame the superlative:**\n\n- **Bold** (what most travel sites say): \"the most powerful waterfall in Europe\"\n- **Bulletproof** (technically precise): \"one of the most powerful waterfalls in Europe\" or \"Iceland's most powerful waterfall\" — Wikipedia notes Rhine Falls edges it out on one specific metric, so this version is comment-proof.\n\nThe scripts below use the bold version — swap in the safer line if you'd rather not deal with pushback.\n\n---\n\n## Variation 1 — \"Stat Attack\" (Voiceover + Animated Numbers)\n\n*Best for: YouTube Shorts/Reels, educational-viral audience, works with sound ON*\n\n| Time | Visual | VO Script | On-screen animation |\n|---|---|---|---|\n| 0-3s | Mist/close-up of falls | \"Did you know the most powerful waterfall in Europe... is hiding in Iceland?\" | Kinetic text: \"EUROPE'S MOST POWERFUL WATERFALL\" |\n| 3-8s | You stepping onto the ice sheet | \"This is Dettifoss. And to get here, I had to cross this.\" | Small location pin animation: \"Iceland 🇮🇸\" |\n| 8-18s | Ice crossing, tension building | \"One wrong step on this ice... and it's a very cold, very bad day.\" | Subtle shake/zoom on risky footsteps; no text (let it breathe) |\n| 18-24s | Full waterfall reveal | \"But then you see it. 193 cubic meters of water — crashing through here every single second.\" | Number count-up animation: 0 → 193 m³/s |\n| 24-30s | Waterfall + graphic overlay | \"That's over 50,000 gallons a second. Enough to fill an Olympic pool... every 13 seconds.\" | Animated pool icon filling up in a 13-second loop bar |\n| 30-35s | You, smiling, waterfall behind | \"This is just one of Iceland's insane waterfalls. Follow for more.\" | End card: \"Follow for more 🌊\" |\n\n---\n\n## Variation 2 — \"Silent Scroll-Stopper\" (Text-Only, No Voice)\n\n*Best for: TikTok / muted autoplay feeds (~85% of viewers watch without sound)*\n\n| Time | Visual | On-screen text |\n|---|---|---|\n| 0-2s | Waterfall wide shot | \"Europe's most powerful waterfall 🌊\" |\n| 2-5s | Same shot | \"...is in Iceland.\" |\n| 5-6s | Cut to ice sheet | \"To reach it, you cross this ⚠️\" |\n| 6-16s | Ice crossing footage | (minimal text — let tension play out) small caption: \"no ropes. no guide. just ice.\" |\n| 16-20s | Waterfall reveal | \"193 m³/s\" |\n| 20-24s | Same | \"= 51,000 gallons. Every. Second.\" |\n| 24-28s | Same, pool icon graphic | \"= 1 Olympic pool every 13 seconds 🏊\" |\n| 28-32s | Wide final shot | \"Dettifoss, Iceland 🇮🇸 — save this for your trip\" |\n\n*Audio: don't hardcode a specific trending sound here since trends turn over fast — check your platform's trending-sounds page for a \"big build / bass-drop\" style track and time the drop to the 16s reveal.*\n\n---\n\n## Variation 3 — \"The Risky Crossing\" (First-Person Narrative)\n\n*Best for: adventure/personal-brand audience — leans on curiosity/risk instead of the fact-hook, tends to pull higher watch-through because it delays the payoff*\n\n| Time | Visual | VO Script |\n|---|---|---|\n| 0-2s | Mid-crossing, unstable footing | \"I nearly went into the water to get this shot.\" |\n| 2-8s | Ice crossing | \"This ice sheet was the only way to the viewing point — and it was moving.\" |\n| 8-16s | More crossing, close on feet/ice cracks | \"No rope. No guide. Just me, a canyon, and a waterfall that fills an Olympic pool every 13 seconds.\" |\n| 16-24s | Big reveal, wide shot | \"This is Dettifoss — the most powerful waterfall in Europe. 193,000 liters a second.\" |\n| 24-30s | You, catching breath, smiling | \"Worth every second on that ice.\" |\n| 30-35s | Final shot, direct to camera | \"Would you cross this for the shot? 👇\" |\n\n*(Ends on a question — built to drive comments, which the algorithm rewards more than likes.)*\n\n---\n\n## 🪝 Hook Bank (for A/B testing openers/thumbnails)\n\n1. \"Did you know Europe's most powerful waterfall is in Iceland?\"\n2. \"This waterfall moves 51,000 gallons of water — every second.\"\n3. \"I crossed a moving ice sheet for this shot.\"\n4. \"You've never seen water move like this.\"\n5. \"Iceland's most dangerous waterfall to reach.\"\n6. \"This fills an Olympic pool every 13 seconds.\"\n\n---\n\n## 📝 Caption & Hashtag Starter Pack\n\n**Caption options:**\n- \"193,000 liters a second. Every second. 🌊 #Dettifoss\"\n- \"The waterfall that fills an Olympic pool every 13 seconds 🏊🌊\"\n- \"Crossed a moving ice sheet for this view. Worth it.\"\n\n**Hashtags:** #Iceland #Dettifoss #IcelandTravel #TravelReels #NatureShorts #VatnajokullNationalPark #RingRoad #AdventureTravel #EuropeTravel #WaterfallTikTok\n\n---\n\n## ✅ Posting Checklist\n\n- [ ] Vertical 9:16, 1080×1920\n- [ ] Captions burned in (most viewers watch muted)\n- [ ] Hook lands in first 1.5s — no logo/intro before it\n- [ ] Hook text also appears as on-screen title (redundancy helps retention + accessibility)\n- [ ] Native upload, no reposted watermark, for max reach\n- [ ] Location tag: Iceland / Vatnajökull National Park\n- [ ] Pin a comment with a bonus fact to seed engagement (e.g. peak summer flow doubles to ~400 m³/s)\n"
+    },
+    {
+      "id": "REEL-360",
+      "source": "footagebrain reels.vo — Ancient Coins of the Temple: Widow's Mites & Silver Shekels",
+      "inputs": {
+        "topic": "Ancient Coins of the Temple: Widow's Mites & Silver Shekels",
+        "logline": "Everyone talks about the 'widow's mite,' but are we missing the true economic reality these tiny coins represented? It's not what you think.",
+        "footage": "Merchant places 2 mites in your hand (\"you are holding 2 mites\") → later hands you silver shekels to inspect. Gives a free two-act arc: Act 1 sacrifice/poverty (mite), Act 2 betrayal (temple-tax shekel).",
+        "format_assumed": "Vertical 9:16, ~35-40s (two reveals to earn).",
+        "verified_facts": "Lepton (widow's mite): smallest coin in Judea, two lepta = 1 Roman quadrans, ~6 minutes of a day's wage, Mark 12:41-44 / Luke 21:1-4. Tyrian shekel: only currency accepted for the Second Temple tax, ~92-94% silver, stamped with the pagan god Melqart + an eagle. \"30 pieces of silver\": scholars disagree on exact coin type (Tyrian shekels most likely, or Antioch staters / Ptolemaic tetradrachms) since Matthew's Greek just says \"silver coins\" — hedge with \"historians believe / most likely.\" 30 shekels was also the Exodus 21:32 price of a slave."
+      },
+      "blueprint_json": {
+        "topic": "Ancient Coins of the Temple: Widow's Mites & Silver Shekels",
+        "logline": "Everyone talks about the 'widow's mite,' but are we missing the true economic reality these tiny coins represented? It's not what you think.",
+        "format_assumed": "Vertical 9:16, ~35-40s (two reveals to earn) — the footage gives a free two-act arc: sacrifice (mite) then betrayal (shekel).",
+        "verified_facts_intro": "This one has real narrative weight (poverty and sacrifice, then betrayal), and the facts hold up. The lepton (\"widow's mite\") was the smallest coin circulating in Judea — two lepta made one Roman quadrans, worth about six minutes of an average day's wage. The Tyrian shekel was the only currency the Second Temple accepted for its annual tax, prized for its ~92-94% silver purity, yet stamped with the pagan god Melqart and an eagle. On the \"30 pieces of silver,\" scholars disagree on the exact coin type (Tyrian shekels are most likely, but Antioch staters or Ptolemaic tetradrachms are alternatives), so \"historians believe / most likely\" is the honest framing rather than a flat claim. Thirty shekels was also the Exodus 21:32 price of a slave — meaning Judas was paid the price of a slave.",
+        "fact_sheet": [
+          {
+            "label": "Lepton (\"widow's mite\")",
+            "value": "Smallest coin in circulation in Judea. Two lepta = 1 Roman quadrans (smallest Roman coin). Worth ~6 minutes of an average day's wage. First minted under Hasmonean king Alexander Jannaeus (103-76 BC) — already ~100 years old by Jesus's time, still circulating. Referenced in Mark 12:41-44 / Luke 21:1-4."
+          },
+          {
+            "label": "Tyrian shekel",
+            "value": "The only coin the Second Temple accepted for the annual temple tax, because of its consistently high silver purity (~92-94%). Ironic twist: it's stamped with Melqart, a Tyrian pagan god, and an eagle — pagan imagery required for a Jewish religious payment."
+          },
+          {
+            "label": "The \"30 pieces of silver\" link",
+            "value": "Most likely — but not certain — Tyrian shekels. Scholars also consider Antioch staters or Ptolemaic tetradrachms, since Matthew's Greek just says \"silver coins.\" Use hedged language (\"historians believe,\" \"most likely\") rather than a flat claim."
+          },
+          {
+            "label": "Bonus detail",
+            "value": "30 shekels was also the compensation set in Exodus 21:32 for a gored slave — meaning Judas was paid the price of a slave. Strong closing beat if you want it."
+          }
+        ],
+        "claim_framings": {
+          "bold": "This is the exact coin that paid for Judas's betrayal — thirty pieces of silver.",
+          "bulletproof": "Historians believe this type of coin — the Tyrian shekel — is the most likely candidate for the thirty pieces of silver, though Matthew's Greek only says \"silver coins.\"",
+          "note": "History/Bible audiences fact-check hard — hedged wording (\"historians believe,\" \"most likely\") keeps you accurate and reads as the kind of nuance the audience respects, instead of undercutting the hook."
+        },
+        "variations": [
+          {
+            "name": "Two Coins, Two Stories",
+            "angle": "Voiceover, documentary tone; two-act sacrifice-then-betrayal arc.",
+            "best_for": "Sound-on narrative/documentary audiences.",
+            "beats": [
+              {
+                "time": "0-3s",
+                "visual": "Macro shot, 2 mites in palm",
+                "vo": "This coin might be worth more than you think — but for one woman, it was everything she had.",
+                "on_screen": "",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "3-10s",
+                "visual": "Merchant placing coins, close on mites",
+                "vo": "This is a lepton — the exact type of coin Jesus called a 'widow's mite.' A poor widow gave two of these to the temple. It was all she had.",
+                "on_screen": "",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "10-16s",
+                "visual": "Coin close-up, texture/detail",
+                "vo": "It's the smallest coin in the ancient world — worth about six minutes of a day's wage. Struck almost 2,000 years ago, and still here.",
+                "on_screen": "",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "16-20s",
+                "visual": "Transition: merchant hands you shekels",
+                "vo": "But then he handed me something else.",
+                "on_screen": "",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "20-28s",
+                "visual": "Shekel in hand, inspecting",
+                "vo": "A Tyrian shekel. The only coin the Temple would accept for its tax — because of its silver. Ironic, since it's stamped with the face of a pagan god.",
+                "on_screen": "",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "28-34s",
+                "visual": "Close on shekel detail",
+                "vo": "Historians believe this exact type of coin is what paid for Judas's betrayal. Thirty pieces of silver — the price of a slave.",
+                "on_screen": "",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "34-38s",
+                "visual": "You, holding both coins",
+                "vo": "Two coins. One about giving everything you have. One about betrayal. Which hits harder?",
+                "on_screen": "",
+                "clip_id": "both_coins"
+              }
+            ]
+          },
+          {
+            "name": "Silent Reveal",
+            "angle": "Text-only, no voice; punchy on-screen captions.",
+            "best_for": "Muted autoplay feeds (TikTok / Reels).",
+            "beats": [
+              {
+                "time": "0-2s",
+                "visual": "Coins dropping into palm",
+                "vo": "",
+                "on_screen": "He just handed me a 2,000-year-old coin.",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "2-6s",
+                "visual": "Macro on mites",
+                "vo": "",
+                "on_screen": "This is a widow's mite.",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "6-10s",
+                "visual": "Same",
+                "vo": "",
+                "on_screen": "The exact coin from Mark 12 — a poor widow's entire life savings.",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "10-14s",
+                "visual": "Same",
+                "vo": "",
+                "on_screen": "Worth about... 6 minutes of a day's wage.",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "14-16s",
+                "visual": "Transition, shekels appear",
+                "vo": "",
+                "on_screen": "Then he gave me this.",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "16-20s",
+                "visual": "Shekel close-up",
+                "vo": "",
+                "on_screen": "A Tyrian shekel.",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "20-24s",
+                "visual": "Same",
+                "vo": "",
+                "on_screen": "The ONLY coin the Temple accepted for tax.",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "24-28s",
+                "visual": "Same",
+                "vo": "",
+                "on_screen": "Historians believe this exact coin type = Judas's 30 pieces of silver.",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "28-32s",
+                "visual": "Same",
+                "vo": "",
+                "on_screen": "The price of a slave. (Exodus 21:32)",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "32-36s",
+                "visual": "Both coins in hand",
+                "vo": "",
+                "on_screen": "Which coin hits you harder? 👇",
+                "clip_id": "both_coins"
+              }
+            ]
+          },
+          {
+            "name": "I Wasn't Ready For This",
+            "angle": "First-person, intimate/reflective voiceover.",
+            "best_for": "Personal-brand / emotional-storytelling audience.",
+            "beats": [
+              {
+                "time": "0-2s",
+                "visual": "Coins in palm",
+                "vo": "I'm holding 2,000 years of history in my hand right now.",
+                "on_screen": "",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "2-8s",
+                "visual": "Close on mites",
+                "vo": "These are called lepta — mites. The same coin a poor widow gave away when she had nothing left.",
+                "on_screen": "",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "8-14s",
+                "visual": "Coin detail",
+                "vo": "Jesus watched her give these two coins... and said she'd given more than anyone else in the room.",
+                "on_screen": "",
+                "clip_id": "mites_in_palm"
+              },
+              {
+                "time": "14-18s",
+                "visual": "Transition, shekels handed over",
+                "vo": "Then he hands me this.",
+                "on_screen": "",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "18-26s",
+                "visual": "Shekel inspection",
+                "vo": "A silver shekel. The only coin holy enough for the Temple — but stamped with a pagan god's face. Historians think this exact type of coin is what bought Judas's betrayal.",
+                "on_screen": "",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "26-32s",
+                "visual": "Close on shekel",
+                "vo": "Thirty of these. The price of a slave. For the Son of God.",
+                "on_screen": "",
+                "clip_id": "shekel_in_hand"
+              },
+              {
+                "time": "32-36s",
+                "visual": "You, reflective",
+                "vo": "I wasn't ready for how that felt in my hand.",
+                "on_screen": "",
+                "clip_id": "both_coins"
+              }
+            ]
+          }
+        ],
+        "hook_bank": [
+          "This coin might be worth more than you think — but for one woman, it was everything she had.",
+          "He just handed me a 2,000-year-old coin.",
+          "I'm holding the same type of coin historians believe betrayed Jesus.",
+          "This coin was too holy for the Temple to reject — even with a pagan god stamped on it.",
+          "Two coins. One story about giving everything. One about betrayal.",
+          "A poor widow gave away her entire life savings — two coins exactly like this."
+        ],
+        "captions": [
+          "Two coins. Two of the most powerful stories in the Bible. 🪙",
+          "Holding 2,000 years of history — and a story of betrayal.",
+          "He handed me the coin type historians believe paid for Judas's betrayal."
+        ],
+        "hashtags": [
+          "#Bible",
+          "#BiblicalHistory",
+          "#AncientCoins",
+          "#HolyLand",
+          "#Jerusalem",
+          "#Numismatics",
+          "#Archaeology",
+          "#WidowsMite",
+          "#TempleTax",
+          "#ChristianHistory",
+          "#BibleFacts"
+        ],
+        "posting_checklist": [
+          "Vertical 9:16, captions burned in",
+          "Hook lands in first 1.5s",
+          "Use hedged language on-screen (\"historians believe,\" \"most likely\") — history/Bible audiences fact-check hard, and precise wording builds credibility instead of undercutting the hook",
+          "Pin a comment with the source (Matthew 26:15; Mark 12:41-44) to preempt \"well actually\" comments",
+          "Location tag if applicable",
+          "End on a question (Variations 1 & 2) to drive comments — the algorithm rewards comments more than likes"
+        ],
+        "footage_refs": [
+          {
+            "clip_id": "mites_in_palm",
+            "drive_url": null
+          },
+          {
+            "clip_id": "shekel_in_hand",
+            "drive_url": null
+          },
+          {
+            "clip_id": "both_coins",
+            "drive_url": null
+          }
+        ]
+      },
+      "vo_markdown": "# \"Ancient Coins of the Temple\" Short — Script Variations & Fact Sheet\n\n**Footage you have:** merchant places 2 mites in your hand (\"you are holding 2 mites\") → later hands you silver shekels to inspect.\n**Structure this gives you for free:** a two-act emotional arc — Act 1 = sacrifice/poverty (widow's mite), Act 2 = betrayal (temple tax shekel). Lean into that; it's a stronger arc than either coin alone.\n**Format assumed:** vertical 9:16, ~35-40s (slightly longer than Dettifoss since there are two \"reveals\" to earn).\n\n---\n\n## 🎯 Fact Sheet\n\n| Coin | Key facts |\n|---|---|\n| **Lepton (\"widow's mite\")** | Smallest coin in circulation in Judea. Two lepta = 1 Roman quadrans (smallest Roman coin). Worth ~6 minutes of an average day's wage. First minted under Hasmonean king Alexander Jannaeus (103-76 BC) — already ~100 years old by Jesus's time, still circulating. Referenced in Mark 12:41-44 / Luke 21:1-4. |\n| **Tyrian shekel** | The *only* coin the Second Temple accepted for the annual temple tax, because of its consistently high silver purity (~92-94%). Ironic twist: it's stamped with Melqart, a Tyrian pagan god, and an eagle — pagan imagery required for a Jewish religious payment. |\n| **The \"30 pieces of silver\" link** | Most likely — but not certain — Tyrian shekels. Scholars also consider Antioch staters or Ptolemaic tetradrachms as alternatives, since Matthew's Greek just says \"silver coins.\" Use hedged language (\"historians believe,\" \"most likely\") rather than a flat claim — this keeps you accurate *and* it's the kind of nuance history audiences respect. |\n| **Bonus detail** | 30 shekels was also the compensation set in Exodus 21:32 for a gored slave — meaning Judas was paid the price of a slave. Strong closing beat if you want it. |\n\n**Claim framing:**\n- **Bold:** \"This is the exact coin that paid for Judas's betrayal — thirty pieces of silver.\"\n- **Bulletproof:** \"Historians believe this type of coin — the Tyrian shekel — is the most likely candidate for the thirty pieces of silver, though Matthew's Greek only says 'silver coins.'\"\n\n---\n\n## Variation 1 — \"Two Coins, Two Stories\" (Voiceover, documentary tone)\n\n| Time | Visual | VO Script |\n|---|---|---|\n| 0-3s | Macro shot, 2 mites in palm | \"This coin might be worth more than you think — but for one woman, it was everything she had.\" |\n| 3-10s | Merchant placing coins, close on mites | \"This is a lepton — the exact type of coin Jesus called a 'widow's mite.' A poor widow gave two of these to the temple. It was all she had.\" |\n| 10-16s | Coin close-up, texture/detail | \"It's the smallest coin in the ancient world — worth about six minutes of a day's wage. Struck almost 2,000 years ago, and still here.\" |\n| 16-20s | Transition: merchant hands you shekels | \"But then he handed me something else.\" |\n| 20-28s | Shekel in hand, inspecting | \"A Tyrian shekel. The only coin the Temple would accept for its tax — because of its silver. Ironic, since it's stamped with the face of a pagan god.\" |\n| 28-34s | Close on shekel detail | \"Historians believe this exact type of coin is what paid for Judas's betrayal. Thirty pieces of silver — the price of a slave.\" |\n| 34-38s | You, holding both coins | \"Two coins. One about giving everything you have. One about betrayal. Which hits harder?\" |\n\n---\n\n## Variation 2 — \"Silent Reveal\" (Text-Only, No Voice)\n\n| Time | Visual | On-screen text |\n|---|---|---|\n| 0-2s | Coins dropping into palm | \"He just handed me a 2,000-year-old coin.\" |\n| 2-6s | Macro on mites | \"This is a widow's mite.\" |\n| 6-10s | Same | \"The exact coin from Mark 12 — a poor widow's entire life savings.\" |\n| 10-14s | Same | \"Worth about... 6 minutes of a day's wage.\" |\n| 14-16s | Transition, shekels appear | \"Then he gave me this.\" |\n| 16-20s | Shekel close-up | \"A Tyrian shekel.\" |\n| 20-24s | Same | \"The ONLY coin the Temple accepted for tax.\" |\n| 24-28s | Same | \"Historians believe this exact coin type = Judas's 30 pieces of silver.\" |\n| 28-32s | Same | \"The price of a slave. (Exodus 21:32)\" |\n| 32-36s | Both coins in hand | \"Which coin hits you harder? 👇\" |\n\n---\n\n## Variation 3 — \"I Wasn't Ready For This\" (First-Person, intimate/reflective)\n\n| Time | Visual | VO Script |\n|---|---|---|\n| 0-2s | Coins in palm | \"I'm holding 2,000 years of history in my hand right now.\" |\n| 2-8s | Close on mites | \"These are called lepta — mites. The same coin a poor widow gave away when she had nothing left.\" |\n| 8-14s | Coin detail | \"Jesus watched her give these two coins... and said she'd given more than anyone else in the room.\" |\n| 14-18s | Transition, shekels handed over | \"Then he hands me this.\" |\n| 18-26s | Shekel inspection | \"A silver shekel. The only coin holy enough for the Temple — but stamped with a pagan god's face. Historians think this exact type of coin is what bought Judas's betrayal.\" |\n| 26-32s | Close on shekel | \"Thirty of these. The price of a slave. For the Son of God.\" |\n| 32-36s | You, reflective | \"I wasn't ready for how that felt in my hand.\" |\n\n---\n\n## 🪝 Hook Bank\n\n1. \"This coin might be worth more than you think — but for one woman, it was everything she had.\"\n2. \"He just handed me a 2,000-year-old coin.\"\n3. \"I'm holding the same type of coin historians believe betrayed Jesus.\"\n4. \"This coin was too holy for the Temple to reject — even with a pagan god stamped on it.\"\n5. \"Two coins. One story about giving everything. One about betrayal.\"\n6. \"A poor widow gave away her entire life savings — two coins exactly like this.\"\n\n---\n\n## 📝 Caption & Hashtag Starter Pack\n\n**Caption options:**\n- \"Two coins. Two of the most powerful stories in the Bible. 🪙\"\n- \"Holding 2,000 years of history — and a story of betrayal.\"\n- \"He handed me the coin type historians believe paid for Judas's betrayal.\"\n\n**Hashtags:** #Bible #BiblicalHistory #AncientCoins #HolyLand #Jerusalem #Numismatics #Archaeology #WidowsMite #TempleTax #ChristianHistory #BibleFacts\n\n---\n\n## ✅ Posting Checklist\n\n- [ ] Vertical 9:16, captions burned in\n- [ ] Hook lands in first 1.5s\n- [ ] Use hedged language on-screen (\"historians believe,\" \"most likely\") — history/Bible audiences fact-check hard, and precise wording builds credibility instead of undercutting the hook\n- [ ] Pin a comment with the source (Matthew 26:15; Mark 12:41-44) to preempt \"well actually\" comments\n- [ ] Location tag if applicable\n- [ ] End on a question (Variations 1 & 2) to drive comments — the algorithm rewards comments more than likes\n"
+    }
+  ]
+}

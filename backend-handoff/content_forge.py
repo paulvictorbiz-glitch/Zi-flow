@@ -158,7 +158,7 @@ _MODEL_PRICES: dict[str, tuple[float, float]] = {
     "gemini-2.0-flash":             (0.10, 0.40),   # AI-Studio rung default
     "gemini-2.0-flash-001":         (0.10, 0.40),
     "claude-haiku-4-5":             (1.00, 5.00),    # Anthropic discovery
-    "claude-sonnet-4-6":            (3.00, 15.00),   # Anthropic expansion
+    "claude-sonnet-4-6":            (3.00, 15.00),   # Anthropic expansion + blueprint (kind="blueprint")
 }
 
 
@@ -1306,6 +1306,18 @@ _SYSTEM_BY_KIND = {
         "You write in the exact template structure requested — never skip a beat, never pad. "
         "You reply with STRICT JSON ONLY: no prose, no code fences."
     ),
+    "blueprint": (
+        "You are a senior short-form content strategist producing a COMPLETE, fact-checked "
+        "production blueprint for one reel — the gold standard the creator edits from. Your "
+        "blueprint always contains, in this order: a verified-facts intro, a fact sheet (so the "
+        "creator never gets 'well-actually'd' in the comments), a BOLD-vs-BULLETPROOF framing of "
+        "any superlative or contestable claim, EXACTLY THREE distinct NAMED time-coded script "
+        "variations (each a different angle — e.g. voiceover/documentary, silent text-only, "
+        "first-person), a hook bank of exactly six openers, a caption/hashtag pack, and a posting "
+        "checklist. You HEDGE uncertain claims ('historians believe', 'most likely') and you cite "
+        "the provided footage clips by their [clip:<id>] where a beat draws on one. You reply with "
+        "STRICT JSON ONLY matching the requested schema: no prose, no code fences."
+    ),
 }
 
 
@@ -1396,7 +1408,9 @@ def _call_vertex_gemini(messages: list[dict[str, str]], *,
 
 def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
                kind: str = "discovery",
-               model_override: str | None = None) -> tuple[str, dict[str, Any]]:
+               model_override: str | None = None,
+               prefer_pro: bool = False,
+               max_tokens: int | None = None) -> tuple[str, dict[str, Any]]:
     """PROVIDER SEAM — the ONLY place the Content Forge LLM provider is selected.
 
     Escalating ladder (cheapest-first; each rung skipped when its keys are absent, a
@@ -1447,15 +1461,26 @@ def _forge_llm(messages: list[dict[str, str]], *, tier: str = "free",
     def _rung_anthropic():
         if not _anthropic_key():
             return None
+        # kind selects the Anthropic model: "discovery" → Haiku; everything else
+        # (expansion, script, and the new "blueprint") → Sonnet (_expansion_model()).
         model = _discovery_model() if kind == "discovery" else _expansion_model()
-        text, usage = _call_anthropic(messages, model=model)
+        text, usage = _call_anthropic(messages, model=model,
+                                      max_tokens=max_tokens or 2400)
         return text, {"provider": "anthropic", "model": model, "tier_used": "pro", "usage": usage}
 
     def _rung_openrouter():
         text, used, usage = _call_openrouter(messages, models=_free_models())
         return text, {"provider": "openrouter", "model": used, "tier_used": "free", "usage": usage}
 
-    rungs = [_rung_gemini_api, _rung_vertex_gemini, _rung_anthropic, _rung_openrouter]
+    # Default ladder = cheapest-first (unchanged for discovery/expansion/script). When a
+    # caller asks for the PRO model as PRIMARY (prefer_pro=True — the blueprint pass wants
+    # Sonnet quality, not a free-tier draft), float the Anthropic rung to the front while
+    # KEEPING the free ladder underneath as graceful fallback (fell_back flips True if the
+    # pro rung errors and a free rung serves instead). No behaviour change unless opted in.
+    if prefer_pro and _anthropic_key():
+        rungs = [_rung_anthropic, _rung_gemini_api, _rung_vertex_gemini, _rung_openrouter]
+    else:
+        rungs = [_rung_gemini_api, _rung_vertex_gemini, _rung_anthropic, _rung_openrouter]
 
     fell_back = False
     last_err = "no provider configured"
@@ -1538,7 +1563,8 @@ def _call_openrouter(messages: list[dict[str, str]], *,
     raise RuntimeError(f"all free models unavailable; last: {last_err}")
 
 
-def _call_anthropic(messages: list[dict[str, str]], *, model: str) -> tuple[str, dict[str, int]]:
+def _call_anthropic(messages: list[dict[str, str]], *, model: str,
+                    max_tokens: int = 2400) -> tuple[str, dict[str, int]]:
     """PRO provider call — Anthropic Messages API via the `anthropic` SDK. Splits the
     chat-style messages into a top-level `system` string + user/assistant turns (the
     Messages API takes system separately). The large discovery system prompt carries a
@@ -1572,7 +1598,7 @@ def _call_anthropic(messages: list[dict[str, str]], *, model: str) -> tuple[str,
     client = anthropic.Anthropic(api_key=key)
     kwargs: dict[str, Any] = {
         "model": model,
-        "max_tokens": 2400,
+        "max_tokens": max_tokens,
         "messages": convo,
     }
     if system_blocks is not None:
@@ -3065,6 +3091,458 @@ def _script_user_prompt(
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ── BLUEPRINT MODE — the full multi-variation gold-standard sheet (mode="blueprint") ───
+# ══════════════════════════════════════════════════════════════════════════════════════
+# Guarded behind the /script `mode` flag: mode="script" (default) is the existing single-VO
+# path byte-for-byte; mode="blueprint" emits the frozen BlueprintJson (REEL-360/REEL-377
+# gold standard) PLUS a rendered human-readable vo_markdown. Model = Sonnet via the pro seam
+# (_forge_llm prefer_pro=True, kind="blueprint"), with the free ladder as graceful fallback.
+# Frozen response contract (consumed by Team A / rendered by Team C) — see CONTRACT 2/3.
+
+# Frozen top-level BlueprintJson keys (CONTRACT 3). Kept as a constant so the prompt, the
+# normaliser, and the markdown renderer never drift from the locked schema.
+_BLUEPRINT_REQUIRED_KEYS = (
+    "fact_sheet", "claim_framings", "variations", "hook_bank",
+    "captions", "hashtags", "posting_checklist", "footage_refs",
+)
+
+_BLUEPRINT_EXEMPLARS_CACHE: list[dict[str, Any]] | None = None
+
+
+def _blueprint_exemplars() -> list[dict[str, Any]]:
+    """Load the REEL-360 / REEL-377 gold-standard few-shot exemplars from
+    seed/blueprint_exemplars.json (owned/produced by the seed teammate). Cached after the
+    first read. Degrade-safe: returns [] if the seed file is absent or malformed so blueprint
+    generation still runs — just without few-shot priming. Never raises.
+
+    Accepts either a bare JSON array of exemplar objects or a wrapper object with an
+    "exemplars" (or "items") array. Path is resolved relative to this module, with a
+    BLUEPRINT_EXEMPLARS_PATH env override for non-standard deploy layouts."""
+    global _BLUEPRINT_EXEMPLARS_CACHE
+    if _BLUEPRINT_EXEMPLARS_CACHE is not None:
+        return _BLUEPRINT_EXEMPLARS_CACHE
+    candidates: list[str] = []
+    env_path = (os.environ.get("BLUEPRINT_EXEMPLARS_PATH") or "").strip()
+    if env_path:
+        candidates.append(env_path)
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates += [
+        os.path.join(here, "seed", "blueprint_exemplars.json"),
+        os.path.join(here, "..", "seed", "blueprint_exemplars.json"),
+        os.path.join(here, "blueprint_exemplars.json"),
+    ]
+    for p in candidates:
+        try:
+            if p and os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                items = data.get("exemplars") or data.get("items") if isinstance(data, dict) else data
+                if isinstance(items, list):
+                    _BLUEPRINT_EXEMPLARS_CACHE = [x for x in items if isinstance(x, dict)]
+                    return _BLUEPRINT_EXEMPLARS_CACHE
+        except Exception as e:  # noqa: BLE001 — a bad seed must never break generation
+            log.warning("content_forge: blueprint exemplars load failed at %s: %s", p, e)
+    _BLUEPRINT_EXEMPLARS_CACHE = []
+    return []
+
+
+def _blueprint_fewshot_block(exemplars: list[dict[str, Any]], *, limit: int = 2) -> str:
+    """Render the loaded exemplars into a compact few-shot reference block. Prefers a full
+    `blueprint_json` object (dumped as the gold OUTPUT the model should mirror); falls back to
+    whatever human-readable text the seed carries (vo_markdown / markdown / vo+script)."""
+    if not exemplars:
+        return ""
+    blocks: list[str] = []
+    for ex in exemplars[:limit]:
+        name = (ex.get("name") or ex.get("title") or ex.get("topic") or "exemplar").strip()
+        bp = ex.get("blueprint_json")
+        if isinstance(bp, dict) and bp:
+            body = json.dumps(bp, ensure_ascii=False, indent=2)
+            blocks.append(f"### GOLD EXAMPLE — {name}\n(target blueprint_json shape & quality)\n{body}")
+            continue
+        text = ""
+        for k in ("vo_markdown", "markdown", "sheet", "vo"):
+            v = ex.get(k)
+            if isinstance(v, str) and v.strip():
+                text = v.strip()
+                break
+        if not text:
+            vo = (ex.get("vo") or "").strip() if isinstance(ex.get("vo"), str) else ""
+            sc = (ex.get("script") or "").strip() if isinstance(ex.get("script"), str) else ""
+            text = "\n\n".join(t for t in (vo, sc) if t)
+        if text:
+            blocks.append(f"### GOLD EXAMPLE — {name}\n(reference for structure, naming & hedging)\n{text[:4000]}")
+    return "\n\n---\n\n".join(blocks)
+
+
+def _blueprint_footage_refs(clips: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Authoritative footage_refs built from the fetched clips (NOT the model) so the Drive
+    links are real. clip_id → the transcript_clips id; drive_url falls back to the folder URL."""
+    refs: list[dict[str, Any]] = []
+    for c in clips[:20]:
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            continue
+        drive = (c.get("drive_url") or c.get("drive_folder_url") or None)
+        refs.append({"clip_id": cid, "drive_url": drive or None})
+    return refs
+
+
+def _blueprint_user_prompt(
+    opp: dict[str, Any],
+    clips: list[dict[str, Any]],
+    grounding_mode: str,
+    tone: str,
+    grounding_bullets: list[str],
+    exemplars: list[dict[str, Any]],
+) -> str:
+    """Build the blueprint user prompt: opportunity + footage + grounding facts + the frozen
+    output schema + the gold-standard few-shot. Reuses the same tone/grounding vocabulary as
+    _script_user_prompt so the two modes read consistently."""
+    clips_block = ""
+    clip_ids: list[str] = []
+    if clips:
+        lines = []
+        for c in clips[:20]:
+            cid = str(c.get("id", "") or "")
+            clip_ids.append(cid)
+            fn = (c.get("filename") or "").strip() or "clip"
+            txt = (c.get("transcript_text") or "").strip()[:600]
+            lines.append(f"[clip:{cid}] ({fn})" + (f"\n{txt}" if txt else ""))
+        clips_block = "\n\n---\n".join(lines)
+
+    grounding_note = ""
+    if grounding_mode == "footage":
+        grounding_note = (
+            "GROUNDING: base facts on the footage clips above where possible. Do NOT invent "
+            "specific dates, names or statistics you cannot support."
+        )
+    elif grounding_mode == "model":
+        grounding_note = (
+            "GROUNDING: you may enrich with well-established real-world facts from your training "
+            "knowledge, but HEDGE anything contestable and never fabricate precise figures."
+        )
+    elif grounding_mode == "web":
+        if grounding_bullets:
+            bullet = "\n".join(f"- {g}" for g in grounding_bullets[:8])
+            grounding_note = (
+                f"WEB-GROUNDED VERIFIED FACTS (use these; do NOT contradict):\n{bullet}"
+            )
+        else:
+            grounding_note = "GROUNDING: no web facts available — use hedged model knowledge."
+
+    tone_map = {
+        "neutral": "calm, informative, measured",
+        "punchy":  "short punchy sentences, energetic, fast-paced",
+        "educational": "clear, explanatory, teacher-voice",
+        "provocative": "edgy, opinionated, debate-sparking",
+    }
+    tone_desc = tone_map.get(tone, "calm, informative, measured")
+
+    entities = [str(e) for e in (opp.get("entities_mentioned") or []) if str(e).strip()]
+    fewshot = _blueprint_fewshot_block(exemplars)
+    fewshot_block = (f"\nGOLD-STANDARD EXEMPLARS (match this depth, naming style and hedging — "
+                     f"do NOT copy their topic):\n\n{fewshot}\n\n") if fewshot else ""
+    clip_id_hint = (", ".join(f'"{c}"' for c in clip_ids if c) or "(none)")
+
+    schema_block = (
+        '{\n'
+        '  "topic": "<short topic label>",\n'
+        '  "logline": "<one-sentence hook-y logline>",\n'
+        '  "format_assumed": "<e.g. vertical 9:16, ~30-35s, platform-agnostic>",\n'
+        '  "verified_facts_intro": "<1-3 sentences: what checks out + the key nuance to know>",\n'
+        '  "fact_sheet": [ {"label": "<stat/fact name>", "value": "<the verified detail>"} ],\n'
+        '  "claim_framings": {\n'
+        '    "bold": "<the punchy superlative most sources use>",\n'
+        '    "bulletproof": "<the technically-precise, comment-proof version>",\n'
+        '    "note": "<optional: when to use which>"\n'
+        '  },\n'
+        '  "variations": [\n'
+        '    {\n'
+        '      "name": "<catchy variation name, e.g. Two Coins, Two Stories>",\n'
+        '      "angle": "<the creative angle, e.g. voiceover documentary / silent text-only / first-person>",\n'
+        '      "best_for": "<audience/platform this variation suits>",\n'
+        '      "beats": [\n'
+        '        {"time": "0-3s", "visual": "<what is on screen>", "vo": "<voiceover line, or \\"\\" if text-only>", "on_screen": "<on-screen text, or \\"\\" if none>", "clip_id": "<a clip id from the list, or null>"}\n'
+        '      ]\n'
+        '    }\n'
+        '  ],\n'
+        '  "hook_bank": ["<hook 1>", "<hook 2>", "<hook 3>", "<hook 4>", "<hook 5>", "<hook 6>"],\n'
+        '  "captions": ["<caption option 1>", "<caption option 2>", "<caption option 3>"],\n'
+        '  "hashtags": ["#tag1", "#tag2", "..."],\n'
+        '  "posting_checklist": ["<checklist item 1>", "<checklist item 2>", "..."]\n'
+        '}'
+    )
+
+    return (
+        f'OPPORTUNITY\nTitle: {opp.get("title","")}\n'
+        f'Angle: {opp.get("angle_summary","")}\n'
+        f'Existing logline (if any): {opp.get("logline","") or "(none)"}\n'
+        f'Entities mentioned in footage: {", ".join(entities) if entities else "(none captured)"}\n\n'
+        f'TONE: {tone_desc}\n\n'
+        f'{grounding_note}\n\n'
+        f'FOOTAGE CLIPS (reference beats to these via clip_id):\n'
+        f'{clips_block or "(no clips available — use hedged model knowledge)"}\n\n'
+        f'Available clip_id values: {clip_id_hint}\n'
+        f'{fewshot_block}'
+        f'PRODUCE the full production blueprint as STRICT JSON matching EXACTLY this schema:\n'
+        f'{schema_block}\n\n'
+        f'HARD REQUIREMENTS:\n'
+        f'- EXACTLY 3 variations, each with a distinct angle and a DIFFERENT name.\n'
+        f'- Each variation has 5-8 time-coded beats. For text-only variations set "vo" to "".\n'
+        f'  For pure-VO beats set "on_screen" to "". clip_id is one of the ids above, or null.\n'
+        f'- EXACTLY 6 hooks in hook_bank.\n'
+        f'- fact_sheet has 3-6 rows. HEDGE contestable claims ("historians believe", "most likely").\n'
+        f'- claim_framings ALWAYS has both a bold and a bulletproof version (if nothing is '
+        f'contestable, still give a punchy vs. precise phrasing of the core claim).\n'
+        f'- captions: 2-3 options. hashtags: 8-12. posting_checklist: 5-8 concrete items.\n'
+        f'Respond with the JSON object ONLY. No prose outside it. No code fences.'
+    )
+
+
+def _as_str(v: Any) -> str:
+    return v.strip() if isinstance(v, str) else ("" if v is None else str(v))
+
+
+def _as_str_list(v: Any) -> list[str]:
+    if isinstance(v, list):
+        return [s.strip() for s in (x if isinstance(x, str) else str(x) for x in v) if s and s.strip()]
+    if isinstance(v, str) and v.strip():
+        return [v.strip()]
+    return []
+
+
+def _normalize_blueprint_beat(b: Any, valid_clip_ids: set[str]) -> dict[str, Any]:
+    b = b if isinstance(b, dict) else {}
+    cid = b.get("clip_id")
+    cid = str(cid).strip() if isinstance(cid, (str, int)) and str(cid).strip() else None
+    if cid is not None and valid_clip_ids and cid not in valid_clip_ids:
+        cid = None  # drop hallucinated clip ids; Team C degrades cleanly on null
+    return {
+        "time": _as_str(b.get("time")),
+        "visual": _as_str(b.get("visual")),
+        "vo": _as_str(b.get("vo")),
+        "on_screen": _as_str(b.get("on_screen") or b.get("on_screen_text") or b.get("text")),
+        "clip_id": cid,
+    }
+
+
+def _normalize_blueprint_variation(v: Any, idx: int, valid_clip_ids: set[str]) -> dict[str, Any]:
+    v = v if isinstance(v, dict) else {}
+    beats = v.get("beats")
+    beats = [_normalize_blueprint_beat(b, valid_clip_ids) for b in beats] if isinstance(beats, list) else []
+    if not beats:
+        beats = [{"time": "", "visual": "", "vo": "", "on_screen": "", "clip_id": None}]
+    return {
+        "name": _as_str(v.get("name")) or f"Variation {idx + 1}",
+        "angle": _as_str(v.get("angle")) or "alternate angle",
+        "best_for": _as_str(v.get("best_for")) or "general audience",
+        "beats": beats,
+    }
+
+
+def _normalize_blueprint_json(parsed: Any, clips: list[dict[str, Any]]) -> dict[str, Any]:
+    """Coerce the model reply into the frozen BlueprintJson shape: guarantees every required
+    key, exactly 3 variations, exactly 6 hooks, list-typed collections, and authoritative
+    footage_refs built from the real clips. Never raises — a thin reply still yields a
+    schema-valid object (Team C renders with array fallbacks, Team A persists opaque)."""
+    p = parsed if isinstance(parsed, dict) else {}
+    footage_refs = _blueprint_footage_refs(clips)
+    valid_clip_ids = {r["clip_id"] for r in footage_refs}
+
+    # fact_sheet — list of {label, value}
+    fact_sheet: list[dict[str, str]] = []
+    for row in (p.get("fact_sheet") or []):
+        if isinstance(row, dict):
+            label = _as_str(row.get("label") or row.get("name") or row.get("stat"))
+            value = _as_str(row.get("value") or row.get("fact") or row.get("detail"))
+            if label or value:
+                fact_sheet.append({"label": label, "value": value})
+
+    # claim_framings — always both bold + bulletproof
+    cf_raw = p.get("claim_framings") if isinstance(p.get("claim_framings"), dict) else {}
+    claim_framings: dict[str, str] = {
+        "bold": _as_str(cf_raw.get("bold")),
+        "bulletproof": _as_str(cf_raw.get("bulletproof")),
+    }
+    if _as_str(cf_raw.get("note")):
+        claim_framings["note"] = _as_str(cf_raw.get("note"))
+
+    # variations — force exactly 3
+    raw_vars = p.get("variations") if isinstance(p.get("variations"), list) else []
+    variations = [_normalize_blueprint_variation(v, i, valid_clip_ids) for i, v in enumerate(raw_vars[:3])]
+    while len(variations) < 3:
+        variations.append(_normalize_blueprint_variation({}, len(variations), valid_clip_ids))
+
+    # hook_bank — force exactly 6
+    hooks = _as_str_list(p.get("hook_bank") or p.get("hooks"))
+    hooks = hooks[:6]
+    while len(hooks) < 6:
+        hooks.append("")
+
+    out: dict[str, Any] = {
+        "fact_sheet": fact_sheet,
+        "claim_framings": claim_framings,
+        "variations": variations,
+        "hook_bank": hooks,
+        "captions": _as_str_list(p.get("captions")),
+        "hashtags": _as_str_list(p.get("hashtags")),
+        "posting_checklist": _as_str_list(p.get("posting_checklist") or p.get("checklist")),
+        "footage_refs": footage_refs,
+    }
+    # Optional descriptive top-level strings (schema allows them).
+    for k in ("topic", "logline", "format_assumed", "verified_facts_intro"):
+        val = _as_str(p.get(k))
+        if val:
+            out[k] = val
+    return out
+
+
+def _render_blueprint_markdown(bp: dict[str, Any]) -> str:
+    """Render the frozen BlueprintJson into the human-readable gold-standard sheet
+    (reels.vo). Deterministic — always consistent with blueprint_json. Same section model
+    Team C's detail.jsx panel + blueprint-pdf.js render from."""
+    L: list[str] = []
+    topic = _as_str(bp.get("topic"))
+    L.append(f"# {topic}" if topic else "# Content Blueprint")
+    if _as_str(bp.get("logline")):
+        L.append(f"\n_{_as_str(bp['logline'])}_")
+    if _as_str(bp.get("verified_facts_intro")):
+        L.append(f"\n{_as_str(bp['verified_facts_intro'])}")
+    if _as_str(bp.get("format_assumed")):
+        L.append(f"\n**Format assumed:** {_as_str(bp['format_assumed'])}")
+
+    fact_sheet = bp.get("fact_sheet") or []
+    if fact_sheet:
+        L.append("\n## 🎯 Fact Sheet\n")
+        L.append("| Fact | Detail |")
+        L.append("|---|---|")
+        for row in fact_sheet:
+            label = _as_str(row.get("label")).replace("|", "\\|")
+            value = _as_str(row.get("value")).replace("|", "\\|")
+            L.append(f"| **{label}** | {value} |")
+
+    cf = bp.get("claim_framings") or {}
+    if _as_str(cf.get("bold")) or _as_str(cf.get("bulletproof")):
+        L.append("\n## Two ways to frame the claim\n")
+        if _as_str(cf.get("bold")):
+            L.append(f"- **Bold (what most sources say):** {_as_str(cf['bold'])}")
+        if _as_str(cf.get("bulletproof")):
+            L.append(f"- **Bulletproof (comment-proof):** {_as_str(cf['bulletproof'])}")
+        if _as_str(cf.get("note")):
+            L.append(f"\n_{_as_str(cf['note'])}_")
+
+    for i, v in enumerate(bp.get("variations") or []):
+        name = _as_str(v.get("name")) or f"Variation {i + 1}"
+        angle = _as_str(v.get("angle"))
+        best_for = _as_str(v.get("best_for"))
+        header = f"\n## Variation {i + 1} — {name}"
+        if angle:
+            header += f" ({angle})"
+        L.append(header)
+        if best_for:
+            L.append(f"\n**Best for:** {best_for}\n")
+        else:
+            L.append("")
+        beats = v.get("beats") or []
+        # Choose a VO or text-only table shape based on which column carries content.
+        any_vo = any(_as_str(b.get("vo")) for b in beats)
+        any_text = any(_as_str(b.get("on_screen")) for b in beats)
+        if any_vo:
+            L.append("| Time | Visual | VO Script | On-screen text |")
+            L.append("|---|---|---|---|")
+            for b in beats:
+                cells = [_as_str(b.get("time")), _as_str(b.get("visual")),
+                         _as_str(b.get("vo")), _as_str(b.get("on_screen"))]
+                L.append("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |")
+        else:
+            L.append("| Time | Visual | On-screen text |")
+            L.append("|---|---|---|")
+            for b in beats:
+                cells = [_as_str(b.get("time")), _as_str(b.get("visual")), _as_str(b.get("on_screen"))]
+                L.append("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |")
+        _ = any_text  # column choice already handled
+
+    hooks = [h for h in (bp.get("hook_bank") or []) if _as_str(h)]
+    if hooks:
+        L.append("\n## 🪝 Hook Bank\n")
+        for h in hooks:
+            L.append(f"- \"{_as_str(h)}\"")
+
+    captions = [c for c in (bp.get("captions") or []) if _as_str(c)]
+    hashtags = [h for h in (bp.get("hashtags") or []) if _as_str(h)]
+    if captions or hashtags:
+        L.append("\n## 📝 Caption & Hashtag Pack\n")
+        if captions:
+            L.append("**Caption options:**")
+            for c in captions:
+                L.append(f"- {_as_str(c)}")
+        if hashtags:
+            L.append(f"\n**Hashtags:** {' '.join(_as_str(h) for h in hashtags)}")
+
+    checklist = [c for c in (bp.get("posting_checklist") or []) if _as_str(c)]
+    if checklist:
+        L.append("\n## ✅ Posting Checklist\n")
+        for c in checklist:
+            L.append(f"- [ ] {_as_str(c)}")
+
+    return "\n".join(L).strip() + "\n"
+
+
+async def _run_blueprint(
+    client: httpx.AsyncClient,
+    opp: dict[str, Any],
+    opp_id: str,
+    clips: list[dict[str, Any]],
+    grounding_mode: str,
+    tone: str,
+    grounding_bullets: list[str],
+    model_override: str | None,
+) -> JSONResponse:
+    """mode="blueprint" branch of /script. Sonnet-primary (prefer_pro) with the free ladder as
+    fallback; kind="blueprint" for the system prompt + usage telemetry. Returns the frozen
+    CONTRACT 2 response { ok, persisted, opportunity_id, mode:'blueprint', blueprint_json,
+    vo_markdown, provider, fell_back }. Persists blueprint_json to content_opportunities (opaque)
+    — degrades to persisted:false until migration 0113 is hand-applied."""
+    exemplars = _blueprint_exemplars()
+    messages = [
+        {"role": "system", "content": _SYSTEM_BY_KIND["blueprint"]},
+        {"role": "user", "content": _blueprint_user_prompt(
+            opp, clips, grounding_mode, tone, grounding_bullets, exemplars)},
+    ]
+    try:
+        text, meta = _forge_llm(messages, tier="pro", kind="blueprint",
+                                model_override=model_override or None,
+                                prefer_pro=True, max_tokens=8192)
+        await _log_usage(client, kind="blueprint", meta=meta, batch_id=None)
+        parsed = _extract_json(text)
+    except Exception as e:  # noqa: BLE001
+        log.warning("content_forge: blueprint LLM failed for %s: %s", opp_id, e)
+        return JSONResponse({"error": f"blueprint generation failed: {e}"}, status_code=502)
+
+    blueprint_json = _normalize_blueprint_json(parsed, clips)
+    vo_markdown = _render_blueprint_markdown(blueprint_json)
+
+    # Persist opaque onto the opportunity so a re-opened modal can re-seed from it
+    # (migration 0113 adds content_opportunities.blueprint_json). Degrade-safe.
+    persisted = await _patch_opportunity(client, opp_id, {"blueprint_json": blueprint_json})
+    if not persisted:
+        log.info("content_forge: blueprint generated for %s but not persisted "
+                 "(migration 0113 applied?)", opp_id)
+
+    return JSONResponse({
+        "ok": True,
+        "persisted": persisted,
+        "opportunity_id": opp_id,
+        "mode": "blueprint",
+        "blueprint_json": blueprint_json,
+        "vo_markdown": vo_markdown,
+        "provider": meta.get("provider"),
+        "fell_back": meta.get("fell_back", False),
+    }, status_code=200)
+
+
 @router.post("/script")
 async def script(request: Request):
     """POST /api/content-forge/script?secret=…
@@ -3072,7 +3550,11 @@ async def script(request: Request):
     Secret-gated. SYNCHRONOUS. Generates a full ~150-200 word voice-over script for one
     opportunity using a chosen narrative template (fact-reveal / hot-take / question-hook /
     story-first) and grounding mode (footage / model / web). Writes script_json JSONB onto
-    the content_opportunities row and returns it. Mirrors the /expand pattern."""
+    the content_opportunities row and returns it. Mirrors the /expand pattern.
+
+    mode="blueprint" (frozen switch, default "script") instead emits the FULL multi-variation
+    gold-standard blueprint (BlueprintJson + rendered vo_markdown) via the Sonnet pro seam,
+    persisting blueprint_json onto the opportunity. The default "script" path is UNCHANGED."""
     if not _check_secret(request):
         return JSONResponse({"ok": False, "error": "forbidden"}, status_code=401)
 
@@ -3082,6 +3564,7 @@ async def script(request: Request):
     tone = "neutral"
     model_override: str | None = None
     tier = "free"
+    mode = "script"
 
     # Accept params from query string or JSON body.
     opp_id = request.query_params.get("opportunity_id") or request.query_params.get("id")
@@ -3093,10 +3576,13 @@ async def script(request: Request):
             grounding_mode = (body.get("grounding_mode") or grounding_mode).strip().lower()
             tone = (body.get("tone") or tone).strip().lower()
             tier = (body.get("tier") or tier).strip().lower()
+            mode = (body.get("mode") or mode).strip().lower()
             model_override = _clean_model(body.get("model"))
     except Exception:  # noqa: BLE001
         pass
 
+    if mode not in ("script", "blueprint"):
+        mode = "script"
     if template not in _SCRIPT_TEMPLATE_BEATS:
         template = "fact-reveal"
     if grounding_mode not in ("footage", "model", "web"):
@@ -3131,6 +3617,13 @@ async def script(request: Request):
             if gq:
                 fact_check = _tavily_ground(gq)
                 grounding_bullets = _grounding_bullets(fact_check)
+
+        # ── mode="blueprint" — full multi-variation gold-standard sheet (guarded branch) ──
+        # Everything below this point is the UNCHANGED single-script path (mode="script").
+        if mode == "blueprint":
+            return await _run_blueprint(
+                client, opp, opp_id, clips, grounding_mode, tone,
+                grounding_bullets, model_override)
 
         messages = [
             {"role": "system", "content": _SYSTEM_BY_KIND["script"]},

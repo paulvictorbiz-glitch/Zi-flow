@@ -1471,10 +1471,18 @@ export default async function handler(req, res) {
     // Generates a full ~150-200 word voice-over script using a chosen template
     // (fact-reveal / hot-take / question-hook / story-first) and grounding mode
     // (footage / model / web). Writes script_json onto the opportunity row.
-    // Same abort budget as forge-expand (45s).
+    //
+    // mode is the ONLY behavioural switch (Contract 2). Default "script" keeps the
+    // single-script path byte-for-byte; mode:"blueprint" makes the backend emit the
+    // FULL REEL-360/377 gold-standard blueprint — a structured blueprint_json plus a
+    // human-readable vo_markdown sheet — on the SAME /content-forge/script endpoint
+    // (no new api/* file; Vercel Hobby is at the hard 12-function cap). Blueprint
+    // runs Sonnet and does more work, so it gets a longer abort budget (~55s, inside
+    // the maxDuration:60 ceiling) than the default script path (45s, unchanged).
     if (action === "forge-script") {
+      const mode = body.mode === "blueprint" ? "blueprint" : "script";
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 45000);
+      const t = setTimeout(() => ctrl.abort(), mode === "blueprint" ? 55000 : 45000);
       try {
         const r = await fetch(
           `https://api.footagebrain.com/api/content-forge/script?secret=${encodeURIComponent(forgeSecret)}`,
@@ -1484,19 +1492,28 @@ export default async function handler(req, res) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               opportunity_id: body.opportunity_id,
+              mode,
               template: body.template,
               grounding_mode: body.grounding_mode,
               tone: body.tone,
+              // Blueprint pass-through fields (Contract 2). The backend reads what
+              // it needs and ignores the rest; unused/harmless in the script path.
+              selected_hook_version: body.selected_hook_version,
+              hook_text: body.hook_text,
+              hook_style: body.hook_style,
               tier,
               model: body.model,
             }),
           });
         const out = await r.json().catch(() => ({}));
         if (!r.ok) { res.status(502).json({ error: `Hetzner script HTTP ${r.status}`, ...out }); return; }
+        // Pass the backend body through verbatim. For mode:"blueprint" this carries
+        // the frozen keys { ok, persisted, opportunity_id, mode, blueprint_json,
+        // vo_markdown, provider, fell_back }; for the script path it's unchanged.
         res.status(200).json(out);
       } catch (e) {
         if (e.name === "AbortError") {
-          res.status(504).json({ error: "script generation timed out, retry" });
+          res.status(504).json({ error: `${mode === "blueprint" ? "blueprint" : "script"} generation timed out, retry` });
           return;
         }
         console.error("forge-script error:", e.message);

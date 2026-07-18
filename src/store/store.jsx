@@ -74,10 +74,17 @@ function reelToDb(reel) {
           lane, owner, stage, state, age, due, fb, refs,
           blocker, next, downstream, grouping, note, foot,
           tone, links, status, logline, script, vo, audio, inspo, plan,
-          detail, skill_tags, series, title, id } = reel;
+          detail, skill_tags, series, title, id,
+          blueprint_json, creative_brief } = reel;
+  // Content Forge send-to-pipeline columns. creative_brief exists (0103);
+  // blueprint_json does NOT until 0113 is hand-applied — both are `undefined`
+  // for ordinary reels, so JSON serialization omits the keys and no missing-
+  // column error fires. When a Content-Forge reel carries blueprint_json,
+  // persistCreateReel/persistUpdateReel strip+retry it (0113-graceful).
   const out = { id, title, stage, owner, lane, state, age, due,
     fb, refs, blocker, next, downstream, grouping, note, foot,
     tone, links, status, logline, script, vo, audio, inspo, plan, detail,
+    blueprint_json, creative_brief,
     dup_group_id: dupGroupId ?? null,
     series: series ?? null,
     skill_tags: skill_tags ?? [],
@@ -1736,8 +1743,11 @@ async function persistUpdateReel(state, id, patch) {
   // board_order / gamify_difficulty may not be migrated yet — if PostgREST
   // rejects an unknown column, drop it and retry (the change still shows
   // locally; it just won't persist until the column is added).
-  if (error && /board_order|gamify_difficulty|column|PGRST204/i.test(error.message || "")) {
-    const { board_order, gamify_difficulty, ...rest } = dbPatch;
+  if (error && /board_order|gamify_difficulty|blueprint_json|column|PGRST204/i.test(error.message || "")) {
+    // blueprint_json is stripped alongside board_order/gamify_difficulty: the
+    // column doesn't exist until 0113 is hand-applied, so a Content-Forge
+    // re-send patch degrades to persisting script/vo/logline/creative_brief.
+    const { board_order, gamify_difficulty, blueprint_json, ...rest } = dbPatch;
     error = Object.keys(rest).length
       ? (await supabase.from(table).update(rest).eq("id", id)).error
       : null;
@@ -1747,7 +1757,17 @@ async function persistUpdateReel(state, id, patch) {
 
 async function persistCreateReel(reel) {
   if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
-  const { error } = await supabase.from("reels").insert(reelToDb(reel));
+  const row = reelToDb(reel);
+  let { error } = await supabase.from("reels").insert(row);
+  // Graceful fallback: reels.blueprint_json isn't migrated until 0113 is
+  // hand-applied. If PostgREST rejects the unknown column, strip blueprint_json
+  // and retry so script/vo/logline/creative_brief still persist (same pattern
+  // as persistUpdateReel + persistAddAttachedFootage). Applying 0113 flips this
+  // to full persistence with no code change.
+  if (error && /blueprint_json|column|PGRST204/i.test(error.message || "")) {
+    const { blueprint_json, ...rest } = row;
+    ({ error } = await supabase.from("reels").insert(rest));
+  }
   if (error) throw error;
 }
 
@@ -3102,6 +3122,13 @@ function WorkflowProvider({ children }) {
          analyzedAt, assetManifest, pacing) are intentionally NOT copied so the
          duplicate starts clean and can be re-analyzed independently.
          externalRef is cleared (unique index on non-null values).
+         CONTENT-FORGE FIELDS: script, vo, logline, blueprint_json and
+         creative_brief all ride via the `...src` spread and are persisted by
+         reelToDb (blueprint_json/creative_brief now in its whitelist, with the
+         persistCreateReel strip+retry until 0113 is hand-applied); detail.footageDrive
+         + detail.fromOpportunity ride inside the deep-cloned `detail` blob. Without
+         those the per-editor "(Jay)" clones (e.g. REEL-379/382) landed empty — the
+         same silent-drop bug class fixed in reelToDb / createReelWithFootage.
          FK ordering: reels → attached_footage_items → reel_dna → reel_dna_assets. */
       duplicateReel: (id, targetPersonId, targetFirstName) => {
         const current = stateRef.current;
@@ -3124,6 +3151,16 @@ function WorkflowProvider({ children }) {
           lane:  targetPersonId || src.lane,
           stage: targetPersonId ? "not_started" : src.stage,
           detail: clonedDetail,
+          // Explicitly carry the Content-Forge send-to-pipeline fields onto the
+          // clone. `...src` already copies them, but making them explicit keeps
+          // the per-editor clone from silently arriving empty if a future refactor
+          // narrows the spread (undefined values serialize away harmlessly for
+          // ordinary reels). script/vo/logline are same-name reels columns.
+          script:         src.script ?? undefined,
+          vo:             src.vo ?? undefined,
+          logline:        src.logline ?? undefined,
+          blueprint_json: src.blueprint_json ?? undefined,
+          creative_brief: src.creative_brief ?? undefined,
           dupGroupId: groupId,
           board_order: undefined,
           displayNumber: undefined,
@@ -3134,6 +3171,10 @@ function WorkflowProvider({ children }) {
           wrap({ type: "UPDATE_REEL", id: src.id, patch: { dupGroupId: groupId } },
             (s) => persistUpdateReel(s, src.id, { dupGroupId: groupId }));
         }
+        // Copy every attached_footage_items row onto the new reel id. `...f`
+        // carries filename/source_path/footage_file_id AND drive_url/drive_folder_url
+        // (persistAddAttachedFootage strip+retries the drive_* columns if unmigrated),
+        // so the clone's footage — and its Drive links — is never lost.
         const footageClones = current.attachedFootage
           .filter(f => f.reel_id === id)
           .map(f => ({
@@ -3288,25 +3329,90 @@ function WorkflowProvider({ children }) {
           });
       },
 
-      /* Create a reel AND its attached footage atomically-ish.
-         The footage rows have a reel_id FK to reels.id, so the reel
-         MUST be inserted into Supabase before the footage rows — the
-         old approach fired both via wrap() concurrently, so footage
-         inserts raced ahead of the reel and failed the FK silently.
-         Here we dispatch optimistically, then persist sequentially. */
+      /* FROZEN CONTRACT (Team B store helper, consumed by Content Forge / Team A):
+           createReelWithFootage(reel, footageItems = []) -> Promise<reelId:string>
+
+         Persists a Content-Forge send in one call. `reel` is a FULL reel object
+         with a CLIENT-SUPPLIED reel.id (Team A mints it), carrying title, owner,
+         creative_brief and — conditionally — script, vo, logline, blueprint_json,
+         and detail:{ fromOpportunity, footageDrive:{ [footage_file_id]: {drive_url,
+         drive_folder_url} } }. `footageItems` are attached_footage_items rows whose
+         reel_id === reel.id.
+
+         Behaviour (all frozen):
+         • CREATE-OR-PATCH by reel.id — if the id is already in state we PATCH
+           (persistUpdateReel) instead of INSERT, so a re-send never PK-conflicts.
+         • FK-SAFE ORDER — the reel row is persisted BEFORE any footage insert
+           (footage.reel_id FKs reels.id). We await the reel, then the footage,
+           sequentially.
+         • FOOTAGE IDEMPOTENCY — there is NO unique constraint on
+           (reel_id, footage_file_id), so we dedupe here: an incoming row is
+           dropped if its (reel_id, footage_file_id) key already exists on a
+           persisted attachedFootage row OR earlier in the same batch. A NULL
+           footage_file_id is NEVER collapsed (attachedFootageKey returns null →
+           every null-footage row survives), matching the reducer/realtime rules.
+         • detail.footageDrive rides through whole (reelToDb passes `detail`
+           verbatim; the patch path sets dbPatch.detail directly) so fromOpportunity
+           is never clobbered.
+         • blueprint_json + creative_brief ride the persistCreate/UpdateReel
+           strip+retry until 0113 is hand-applied.
+
+         Best-effort: internal persist errors are caught (surfaced via SET_ERROR)
+         and the returned Promise still RESOLVES to reel.id — Team A calls this
+         exactly once per Send inside its own try/catch, then does its own
+         content_opportunities.update. */
       createReelWithFootage: (reel, footageItems = []) => {
+        const cur = stateRef.current;
+        const exists = (cur.reels || []).some(r => r.id === reel.id);
+
+        // Dedupe footage against already-persisted rows AND within this batch.
+        // attachedFootageKey => `${reel_id}:${footage_file_id}` or null when
+        // footage_file_id is null (never collapse distinct null-footage rows).
+        const seen = new Set(
+          (cur.attachedFootage || []).map(attachedFootageKey).filter(Boolean)
+        );
+        const dedupedFootage = [];
+        for (const item of (footageItems || [])) {
+          const k = attachedFootageKey(item);
+          if (k && seen.has(k)) continue;   // already persisted / already in batch
+          if (k) seen.add(k);
+          dedupedFootage.push(item);
+        }
+
+        // Optimistic: create-or-patch the reel, then its (deduped) footage rows.
+        if (exists) {
+          // Patch only the fields a re-send legitimately changes — all map 1:1
+          // to snake==camel reels columns, so no camelCase leaks to PostgREST.
+          const patch = {};
+          for (const key of ["title", "owner", "creative_brief", "script", "vo",
+                             "logline", "blueprint_json", "detail"]) {
+            if (key in reel && reel[key] !== undefined) patch[key] = reel[key];
+          }
+          dispatch({ type: "UPDATE_REEL", id: reel.id, patch });
+          dedupedFootage.forEach(item => dispatch({ type: "ADD_ATTACHED_FOOTAGE", item }));
+          return (async () => {
+            try {
+              await persistUpdateReel(stateRef.current, reel.id, patch);
+              for (const item of dedupedFootage) await persistAddAttachedFootage(item);
+            } catch (e) {
+              console.error("createReelWithFootage patch persist failed:", e);
+              dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+            }
+            return reel.id;
+          })();
+        }
+
         dispatch({ type: "CREATE_REEL", reel });
-        footageItems.forEach(item => dispatch({ type: "ADD_ATTACHED_FOOTAGE", item }));
-        (async () => {
+        dedupedFootage.forEach(item => dispatch({ type: "ADD_ATTACHED_FOOTAGE", item }));
+        return (async () => {
           try {
             await persistCreateReel(reel);
-            for (const item of footageItems) {
-              await persistAddAttachedFootage(item);
-            }
+            for (const item of dedupedFootage) await persistAddAttachedFootage(item);
           } catch (e) {
             console.error("createReelWithFootage persist failed:", e);
             dispatch({ type: "SET_ERROR", error: e.message || String(e) });
           }
+          return reel.id;
         })();
       },
 

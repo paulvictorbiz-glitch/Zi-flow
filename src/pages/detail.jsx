@@ -32,6 +32,7 @@ import { extractYouTubeId, thumbnailUrlFromId } from "../lib/thumbnail-dna.jsx";
 import { SKILLS } from "../lib/training-curriculum.jsx";
 import GamifyRubricSheet from "../components/GamifyRubricSheet.jsx";
 import { FileUpload } from "../components/file-upload.jsx";
+import { renderBlueprintPdf, footageIndexFrom, resolveClipHref } from "../lib/blueprint-pdf.js";
 import "./detail-cards.css";
 
 const SOL_DETAIL_CSS = `
@@ -326,6 +327,267 @@ function LocationPicker({ reelId }) {
   );
 }
 
+/* =========================================================
+   Editor Blueprint — read-only variations panel (OUTCOME #2).
+   Renders the Content-Forge blueprint_json (CONTRACT 3 schema) as a
+   fact sheet · Bold/Bulletproof framing · the 3 named time-coded
+   variations · hook bank · captions · hashtags · posting checklist.
+
+   · Renders for EDITORS — no isOwner gate.
+   · Fully inline-styled — content-forge.css is deliberately NOT imported
+     into this hot, eagerly-loaded detail component.
+   · Optional-access + array fallbacks everywhere (Team D emits strict
+     JSON, but a partial/legacy row must never crash the card).
+   · Each beat.clip_id resolves against footage_refs (via the shared
+     footageIndexFrom / resolveClipHref helpers that blueprint-pdf.js also
+     uses — one source of truth) to a Drive link, degrading to a
+     [clip:id] token when no drive_url is present.
+   · "Download Blueprint PDF" calls the frozen renderBlueprintPdf util
+     (CONTRACT 4) from a user gesture; consumes no return value.
+   ========================================================= */
+function EditorBlueprintPanel({ blueprintJson, voMarkdown }) {
+  const bp = blueprintJson && typeof blueprintJson === "object" ? blueprintJson : null;
+  if (!bp) return null;
+
+  const factSheet  = Array.isArray(bp.fact_sheet) ? bp.fact_sheet : [];
+  const framings   = bp.claim_framings && typeof bp.claim_framings === "object" ? bp.claim_framings : {};
+  const variations = Array.isArray(bp.variations) ? bp.variations : [];
+  const hookBank   = Array.isArray(bp.hook_bank) ? bp.hook_bank : [];
+  const captions   = Array.isArray(bp.captions) ? bp.captions : [];
+  const hashtags   = Array.isArray(bp.hashtags) ? bp.hashtags : [];
+  const checklist  = Array.isArray(bp.posting_checklist) ? bp.posting_checklist : [];
+  const footageIndex = footageIndexFrom(bp);
+
+  // Nothing renderable? (e.g. an empty object slipped through) — stay silent.
+  const hasContent =
+    factSheet.length || variations.length || hookBank.length ||
+    captions.length || hashtags.length || checklist.length ||
+    framings.bold || framings.bulletproof;
+  if (!hasContent) return null;
+
+  const S = {
+    panel: {
+      border: "1px solid var(--line-hard)",
+      borderLeft: "3px solid var(--c-violet, #a78bfa)",
+      borderRadius: 8,
+      padding: "14px 16px",
+      margin: "0 0 16px",
+      background: "var(--bg-2)",
+    },
+    head: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 4 },
+    badge: {
+      display: "inline-block", fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+      letterSpacing: "0.04em", padding: "2px 8px", borderRadius: 999,
+      border: "1px solid var(--c-violet, #a78bfa)", color: "var(--c-violet, #a78bfa)",
+    },
+    dlBtn: {
+      marginLeft: "auto", padding: "5px 12px", background: "transparent",
+      border: "1px solid var(--c-cyan, #22d3ee)", color: "var(--c-cyan, #22d3ee)",
+      borderRadius: 4, cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
+    },
+    secHead: {
+      fontFamily: "var(--f-mono)", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
+      letterSpacing: "0.08em", color: "var(--c-violet, #a78bfa)", margin: "16px 0 6px",
+    },
+    factRow: { display: "flex", gap: 12, padding: "5px 0", borderBottom: "1px solid var(--line)", fontSize: 12.5 },
+    factKey: { minWidth: 130, flexShrink: 0, color: "var(--fg-mute)", fontFamily: "var(--f-mono)", fontSize: 11 },
+    factVal: { color: "var(--fg)" },
+    tag: {
+      display: "inline-block", fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+      letterSpacing: "0.04em", padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap", marginRight: 8,
+    },
+    beatTable: { width: "100%", borderCollapse: "collapse", margin: "4px 0 6px", fontSize: 12 },
+    th: {
+      textAlign: "left", padding: "5px 7px", background: "var(--bg-3, #1a2335)",
+      color: "var(--fg-mute)", fontFamily: "var(--f-mono)", fontSize: 9.5,
+      textTransform: "uppercase", letterSpacing: "0.04em", border: "1px solid var(--line)",
+    },
+    td: { padding: "5px 7px", border: "1px solid var(--line)", verticalAlign: "top", color: "var(--fg)" },
+    dim: { color: "var(--fg-dim)" },
+    listWrap: { margin: "4px 0 6px", paddingLeft: 20, fontSize: 12.5, color: "var(--fg)", lineHeight: 1.55 },
+  };
+
+  const clipCell = (clipId) => {
+    if (clipId == null || String(clipId).trim() === "") return null;
+    const href = resolveClipHref(clipId, footageIndex);
+    if (href) {
+      return (
+        <a href={href} target="_blank" rel="noreferrer"
+           style={{ color: "var(--c-cyan)", textDecoration: "none", whiteSpace: "nowrap" }}>
+          Drive ↗
+        </a>
+      );
+    }
+    return (
+      <span style={{ fontFamily: "var(--f-mono)", fontSize: 10.5, color: "var(--fg-dim)", whiteSpace: "nowrap" }}>
+        [clip:{String(clipId)}]
+      </span>
+    );
+  };
+
+  const title = bp.topic || bp.logline || "Editor Blueprint";
+
+  return (
+    <div className="cf-blueprint-panel" style={S.panel}>
+      <div style={S.head}>
+        <span style={S.badge}>Editor Blueprint</span>
+        <span className="mono dim" style={{ fontSize: 10 }}>gold-standard sheet · Content Forge</span>
+        <button
+          type="button"
+          onClick={() => renderBlueprintPdf(bp, voMarkdown)}
+          title="Open a print-ready PDF of this blueprint (uses your browser's Save as PDF)"
+          style={S.dlBtn}
+        >
+          ⬇ Download Blueprint PDF
+        </button>
+      </div>
+
+      {title && (
+        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--fg)", margin: "6px 0 2px" }}>{title}</div>
+      )}
+      {bp.logline && bp.logline !== title && (
+        <div style={{ fontSize: 12.5, color: "var(--fg-mute)", margin: "2px 0" }}>{bp.logline}</div>
+      )}
+      {bp.format_assumed && (
+        <div style={{ fontSize: 11.5, color: "var(--fg-mute)", margin: "2px 0" }}>
+          <b style={{ color: "var(--fg)" }}>Format:</b> {bp.format_assumed}
+        </div>
+      )}
+      {bp.verified_facts_intro && (
+        <div style={{ fontSize: 11.5, color: "var(--fg-mute)", margin: "2px 0 4px" }}>{bp.verified_facts_intro}</div>
+      )}
+
+      {/* Fact sheet */}
+      {factSheet.length > 0 && (
+        <>
+          <div style={S.secHead}>Fact sheet</div>
+          <div>
+            {factSheet.map((f, i) => (
+              <div key={i} style={S.factRow}>
+                <span style={S.factKey}>{f?.label}</span>
+                <span style={S.factVal}>{f?.value}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Claim framing — Bold / Bulletproof */}
+      {(framings.bold || framings.bulletproof) && (
+        <>
+          <div style={S.secHead}>Claim framing</div>
+          {framings.bold && (
+            <div style={{ display: "flex", alignItems: "baseline", margin: "4px 0", fontSize: 12.5 }}>
+              <span style={{ ...S.tag, background: "var(--c-amber-soft, #fde68a)", color: "var(--c-amber, #92400e)" }}>Bold</span>
+              <span style={{ color: "var(--fg)" }}>{framings.bold}</span>
+            </div>
+          )}
+          {framings.bulletproof && (
+            <div style={{ display: "flex", alignItems: "baseline", margin: "4px 0", fontSize: 12.5 }}>
+              <span style={{ ...S.tag, background: "var(--c-green-soft, #bbf7d0)", color: "var(--c-green, #065f46)" }}>Bulletproof</span>
+              <span style={{ color: "var(--fg)" }}>{framings.bulletproof}</span>
+            </div>
+          )}
+          {framings.note && (
+            <div style={{ fontSize: 11.5, fontStyle: "italic", color: "var(--fg-dim)", margin: "2px 0" }}>{framings.note}</div>
+          )}
+        </>
+      )}
+
+      {/* Variations — the 3 named time-coded cutdowns */}
+      {variations.length > 0 && (
+        <>
+          <div style={S.secHead}>Variations</div>
+          {variations.map((v, vi) => {
+            const beats = Array.isArray(v?.beats) ? v.beats : [];
+            return (
+              <div key={vi} style={{ margin: "0 0 14px" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--fg)", margin: "6px 0 3px" }}>
+                  {v?.name || `Variation ${vi + 1}`}
+                </div>
+                {v?.angle && (
+                  <div style={{ fontSize: 11.5, color: "var(--fg-mute)", margin: "1px 0" }}>
+                    <b style={{ color: "var(--fg)" }}>Angle:</b> {v.angle}
+                  </div>
+                )}
+                {v?.best_for && (
+                  <div style={{ fontSize: 11.5, color: "var(--fg-mute)", margin: "1px 0 4px" }}>
+                    <b style={{ color: "var(--fg)" }}>Best for:</b> {v.best_for}
+                  </div>
+                )}
+                {beats.length > 0 && (
+                  <table style={S.beatTable}>
+                    <thead>
+                      <tr>
+                        <th style={S.th}>Time</th>
+                        <th style={S.th}>Visual</th>
+                        <th style={S.th}>VO</th>
+                        <th style={S.th}>On-screen</th>
+                        <th style={S.th}>Clip</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {beats.map((beat, bi) => (
+                        <tr key={bi}>
+                          <td style={{ ...S.td, whiteSpace: "nowrap", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{beat?.time}</td>
+                          <td style={S.td}>{beat?.visual}</td>
+                          <td style={S.td}>{beat?.vo ? beat.vo : <span style={S.dim}>—</span>}</td>
+                          <td style={S.td}>{beat?.on_screen ? beat.on_screen : <span style={S.dim}>—</span>}</td>
+                          <td style={{ ...S.td, whiteSpace: "nowrap" }}>{clipCell(beat?.clip_id) || <span style={S.dim}>—</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      {/* Hook bank */}
+      {hookBank.length > 0 && (
+        <>
+          <div style={S.secHead}>Hook bank</div>
+          <ol style={S.listWrap}>
+            {hookBank.map((h, i) => <li key={i}>{h}</li>)}
+          </ol>
+        </>
+      )}
+
+      {/* Captions */}
+      {captions.length > 0 && (
+        <>
+          <div style={S.secHead}>Captions</div>
+          <ul style={S.listWrap}>
+            {captions.map((c, i) => <li key={i}>{c}</li>)}
+          </ul>
+        </>
+      )}
+
+      {/* Hashtags */}
+      {hashtags.length > 0 && (
+        <>
+          <div style={S.secHead}>Hashtags</div>
+          <div style={{ fontSize: 12.5, color: "var(--c-cyan)", wordSpacing: 4, lineHeight: 1.6 }}>
+            {hashtags.join(" ")}
+          </div>
+        </>
+      )}
+
+      {/* Posting checklist */}
+      {checklist.length > 0 && (
+        <>
+          <div style={S.secHead}>Posting checklist</div>
+          <ul style={S.listWrap}>
+            {checklist.map((c, i) => <li key={i}>{c}</li>)}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompareMounted }) {
   /* reel is passed from Pipeline when a card is clicked. Default to REEL-201. */
   const current = reel || { id: "REEL-201", title: "Temple crowd sequence" };
@@ -404,6 +666,24 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
       setEditNotes("");
     }
   }, [current.id, stored]);
+
+  /* Realtime top-up for a freshly-forged blueprint. When a Content-Forge
+     "blueprint" generation lands AFTER this card is already open, the reels
+     realtime channel pushes the new reels.vo / reels.blueprint_json into
+     `stored` (UPSERT_REEL) — but the once-per-id seed guard above has already
+     fired, so the Voiceover tab would stay blank until reload. This effect
+     keyed on `stored?.vo` re-seeds the VO field ONLY when it's still empty
+     locally, so an untouched card fills in live while any in-flight editor
+     edit is never clobbered (a local edit doesn't change stored.vo, so this
+     doesn't run; a cleared-but-unsaved field also won't refill because
+     stored.vo is unchanged). blueprint_json itself is read straight off
+     `stored` in the panel below, so it re-renders live with no extra state. */
+  useEffect(() => {
+    if (!stored) return;
+    if (seededIdRef.current !== current.id) return;   // wait for the initial seed
+    if (stored.vo && !String(vo || "").trim()) setVo(stored.vo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stored?.vo, stored?.blueprint_json]);
 
   /* Save-on-blur helper: only writes if the value actually
      changed, so passive tab-outs are free. */
@@ -1334,6 +1614,18 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
             </p>
           )}
         </div>
+      )}
+
+      {/* Editor Blueprint — read-only variations panel driven by the forged
+          reels.blueprint_json. Renders for editors (NO isOwner gate). The VO
+          markdown handed to the PDF is the local `vo` (mirrors stored.vo, the
+          same text the Voiceover tab shows). Reads straight off `stored` so a
+          realtime blueprint arrival re-renders it live. */}
+      {stored?.blueprint_json && (
+        <EditorBlueprintPanel
+          blueprintJson={stored.blueprint_json}
+          voMarkdown={vo || stored.vo || ""}
+        />
       )}
 
       {/* Attach a screen recording from a Rocket.Chat channel as the reel state */}

@@ -1030,3 +1030,239 @@
   color: var(--color-muted, #888);
   font-size: 0.75rem;
 }
+
+/* ---- Blueprint variation sheet (ForgeModal review-before-send, trigger A) ----
+   Wave 2. After the "Expound into 3 hooks" pass returns, the modal can generate
+   the editor blueprint via the extended forge-script action (mode=blueprint) and
+   show it here for review BEFORE Send. Team A renders the human-readable
+   vo_markdown (blueprint_json is persisted opaque); detail.jsx renders the
+   structured panel for editors with its own inline styles. Same `.cf-` namespace
+   + themeable vars as the rest of this file. */
+
+/* Generate/review section wrapper inside the Script/Blueprint tab. */
+.cf-bp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border-top: 1px solid var(--color-border, #333);
+  padding-top: 1rem;
+  margin-top: 0.25rem;
+}
+
+/* Status banner — one element, four states (idle | generating | ready | error).
+   `generating` reuses the .cf-progress spinner; `ready`/`error` are static pills. */
+.cf-bp-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  border-radius: 6px;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--color-border, #333);
+  color: var(--color-muted, #888);
+}
+.cf-bp-status.generating {
+  color: var(--color-accent, #6bd6e0);
+  border-color: var(--color-accent, #6bd6e0);
+  background: rgba(107, 214, 224, 0.06);
+}
+.cf-bp-status.generating::before {
+  content: "";
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: cf-spin 0.8s linear infinite;
+  flex: none;
+}
+.cf-bp-status.ready {
+  color: var(--color-ok, #4ade80);
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.08);
+}
+.cf-bp-status.error {
+  color: var(--color-danger, #f44);
+  border-color: var(--color-danger, #f44);
+  background: rgba(255, 68, 68, 0.07);
+}
+/* Recoverable-timeout hint shown when a background job goes silent. */
+.cf-bp-timeout {
+  font-size: 0.72rem;
+  color: var(--color-warn, #fbbf24);
+  line-height: 1.45;
+}
+
+/* Rendered blueprint sheet (vo_markdown → readable review). */
+.cf-bp-sheet {
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  background: var(--color-surface, #1a1d24);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+/* Primary path: vo_markdown shown verbatim, wrapped, monospace, editable-safe. */
+.cf-bp-md {
+  margin: 0;
+  font-family: inherit;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: inherit;
+}
+
+/* Structured helpers (used if the sheet is rendered section-by-section rather
+   than as raw markdown). Mirror the blueprint_json schema section model. */
+.cf-bp-heading {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted, #888);
+  margin: 0.85rem 0 0.35rem;
+}
+.cf-bp-heading:first-child { margin-top: 0; }
+.cf-bp-logline {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0 0 0.5rem;
+}
+
+/* fact_sheet[{label,value}] */
+.cf-bp-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.85rem;
+  font-size: 0.8rem;
+}
+.cf-bp-fact-label { color: var(--color-muted, #888); white-space: nowrap; }
+.cf-bp-fact-value { font-variant-numeric: tabular-nums; }
+
+/* claim_framings{bold,bulletproof} */
+.cf-bp-framings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.cf-bp-framing {
+  border-left: 3px solid var(--color-border, #333);
+  padding: 0.15rem 0 0.15rem 0.6rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.cf-bp-framing.bold { border-left-color: var(--cf-gold); }
+.cf-bp-framing.bulletproof { border-left-color: var(--color-accent, #6bd6e0); }
+.cf-bp-framing-tag {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted, #888);
+  margin-right: 0.4rem;
+}
+
+/* variations[3]{name,angle,best_for,beats[]} */
+.cf-bp-variations {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.cf-bp-variation {
+  border: 1px solid var(--color-border, #333);
+  border-radius: 7px;
+  padding: 0.6rem 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+.cf-bp-var-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.cf-bp-var-meta {
+  font-size: 0.72rem;
+  color: var(--color-muted, #888);
+  margin: 0.1rem 0 0.5rem;
+  line-height: 1.4;
+}
+.cf-bp-beats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.cf-bp-beat {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 0.25rem 0;
+  border-top: 1px solid var(--color-border, #2a2a2a);
+}
+.cf-bp-beat:first-child { border-top: none; }
+.cf-bp-beat-time {
+  color: var(--color-accent, #6bd6e0);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.cf-bp-beat-body { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.cf-bp-beat-vo { color: inherit; }
+.cf-bp-beat-visual { color: var(--color-muted, #888); }
+.cf-bp-beat-onscreen {
+  font-size: 0.72rem;
+  color: var(--color-muted, #888);
+  font-style: italic;
+}
+.cf-bp-beat-clip {
+  align-self: flex-start;
+  font-size: 0.7rem;
+  color: var(--color-accent, #6bd6e0);
+  text-decoration: none;
+}
+.cf-bp-beat-clip:hover { text-decoration: underline; }
+
+/* hook_bank[6], captions[], hashtags[], posting_checklist[] */
+.cf-bp-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.cf-bp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.cf-bp-chip {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border, #333);
+  color: var(--color-muted, #888);
+  white-space: nowrap;
+}
+.cf-bp-check {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.cf-bp-check::before {
+  content: "☐";
+  color: var(--color-muted, #888);
+  flex: none;
+}
+
+/* Action row — Regenerate + Download/Preview PDF. Buttons reuse .cf-btn. */
+.cf-bp-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.cf-bp-actions .cf-foot-spacer { flex: 1; }
