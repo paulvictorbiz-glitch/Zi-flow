@@ -1,0 +1,409 @@
+/* =========================================================
+   ProductDive — scroll-scrubbed underwater "dive" for the Product tab.
+   Scoped under .pd so it can't collide with .lp-* / app styles.
+   ========================================================= */
+.pd {
+  --pd-cyan: #56e6ff;
+  --pd-ink: #eaf7fb;
+  --pd-abyss: #02090f;
+  position: relative;
+  font-weight: 300;
+  color: var(--pd-ink);
+}
+
+/* Scroll spacer — gives the fixed stage room to scrub through. */
+.pd-scroll {
+  height: 900vh;
+  position: relative;
+}
+.pd-stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--pd-abyss);
+  z-index: 1; /* below the sticky landing topbar (z-index:50) */
+}
+.pd-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.pd-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(2, 9, 15, 0.55) 100%);
+}
+.pd-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
+}
+
+/* ---------- HUD ---------- */
+.pd-hud {
+  position: absolute;
+  z-index: 6;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--pd-cyan);
+  text-transform: uppercase;
+  pointer-events: none;
+  text-shadow: 0 0 8px rgba(86, 230, 255, 0.35);
+}
+.pd-brand {
+  top: 22px;
+  left: 26px;
+  font-size: 13px;
+  letter-spacing: 0.42em;
+  color: #fff;
+}
+.pd-signal {
+  top: 22px;
+  right: 26px;
+  text-align: right;
+}
+.pd-signal b {
+  font-size: 16px;
+  font-weight: 400;
+}
+.pd-zone {
+  bottom: 24px;
+  left: 26px;
+}
+.pd-zone b {
+  color: #fff;
+  font-weight: 400;
+}
+.pd-time {
+  bottom: 24px;
+  right: 26px;
+}
+.pd-rail {
+  position: absolute;
+  z-index: 6;
+  top: 15%;
+  bottom: 15%;
+  left: 26px;
+  width: 1px;
+  background: rgba(86, 230, 255, 0.22);
+}
+.pd-rail-dot {
+  position: absolute;
+  left: -2px;
+  width: 5px;
+  height: 26px;
+  background: var(--pd-cyan);
+  border-radius: 2px;
+  box-shadow: 0 0 10px rgba(86, 230, 255, 0.8);
+  top: 0;
+}
+.pd-reticle {
+  position: absolute;
+  z-index: 6;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  opacity: 0.4;
+}
+.pd-reticle.tl {
+  top: 74px;
+  left: 14px;
+  border-top: 1px solid var(--pd-cyan);
+  border-left: 1px solid var(--pd-cyan);
+}
+.pd-reticle.tr {
+  top: 74px;
+  right: 14px;
+  border-top: 1px solid var(--pd-cyan);
+  border-right: 1px solid var(--pd-cyan);
+}
+.pd-reticle.bl {
+  bottom: 14px;
+  left: 14px;
+  border-bottom: 1px solid var(--pd-cyan);
+  border-left: 1px solid var(--pd-cyan);
+}
+.pd-reticle.br {
+  bottom: 14px;
+  right: 14px;
+  border-bottom: 1px solid var(--pd-cyan);
+  border-right: 1px solid var(--pd-cyan);
+}
+
+/* ---------- Beats ---------- */
+.pd-beat {
+  position: absolute;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  max-width: min(560px, 86vw);
+}
+.pd-beat .pd-k {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--pd-cyan);
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.pd-beat h1 {
+  font-size: clamp(2.2rem, 6vw, 4.4rem);
+  line-height: 1.04;
+  font-weight: 200;
+  margin: 0 0 18px;
+  color: var(--pd-ink);
+}
+.pd-beat h2 {
+  font-size: clamp(1.6rem, 4vw, 2.8rem);
+  line-height: 1.1;
+  font-weight: 200;
+  margin: 0 0 14px;
+  color: var(--pd-ink);
+}
+.pd-beat p {
+  font-size: clamp(0.95rem, 1.6vw, 1.15rem);
+  line-height: 1.55;
+  margin: 0;
+  color: rgba(234, 247, 251, 0.85);
+}
+
+/* Hero — centered near the top. */
+.pd-hero {
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  max-width: min(720px, 90vw);
+}
+.pd-eyebrow {
+  font-family: ui-monospace, Consolas, monospace;
+  letter-spacing: 0.4em;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--pd-cyan);
+  margin-bottom: 18px;
+}
+
+/* Feature cards — alternate sides, vertically centered. */
+.pd-feature {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.pd-feature.side-left {
+  left: 7%;
+}
+.pd-feature.side-right {
+  right: 7%;
+}
+.pd-card {
+  --accent: var(--pd-cyan);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: rgba(2, 9, 15, 0.42);
+  backdrop-filter: blur(6px);
+  padding: 26px 30px;
+  position: relative;
+}
+.pd-card::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
+}
+.pd-card::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 12px;
+  height: 12px;
+  border-bottom: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+}
+.pd-card-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  margin-bottom: 12px;
+}
+.pd-card .pd-k {
+  color: var(--accent);
+}
+
+/* How-it-works — centered row of steps. */
+.pd-steps {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  max-width: min(920px, 92vw);
+}
+.pd-steps-row {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.pd-step {
+  flex: 1 1 220px;
+  max-width: 260px;
+  border: 1px solid rgba(86, 230, 255, 0.28);
+  background: rgba(2, 9, 15, 0.42);
+  backdrop-filter: blur(6px);
+  padding: 20px 22px;
+  text-align: left;
+}
+.pd-step-n {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--pd-cyan);
+}
+.pd-step h4 {
+  margin: 8px 0 6px;
+  font-weight: 400;
+  font-size: 1rem;
+  color: var(--pd-ink);
+}
+.pd-step p {
+  font-size: 0.9rem;
+}
+
+/* Arrival — CTA. */
+.pd-arrival {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  max-width: min(720px, 90vw);
+}
+.pd-cta {
+  display: inline-block;
+  pointer-events: auto;
+  margin-top: 26px;
+  padding: 16px 44px;
+  border: 1px solid var(--pd-cyan);
+  color: #031018;
+  background: var(--pd-cyan);
+  font-family: ui-monospace, Consolas, monospace;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 0 26px rgba(86, 230, 255, 0.45);
+  transition: transform 0.2s;
+}
+.pd-cta:hover {
+  transform: scale(1.05);
+}
+
+.pd-cue {
+  position: absolute;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: rgba(234, 247, 251, 0.7);
+  text-transform: uppercase;
+  animation: pd-cue 2.2s infinite;
+}
+@keyframes pd-cue {
+  0%,
+  100% {
+    transform: translate(-50%, 0);
+    opacity: 0.7;
+  }
+  50% {
+    transform: translate(-50%, 8px);
+    opacity: 1;
+  }
+}
+
+/* ---------- Loader ---------- */
+.pd-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--pd-abyss);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--pd-cyan);
+  letter-spacing: 0.3em;
+  font-size: 11px;
+  text-transform: uppercase;
+  transition: opacity 0.6s;
+}
+.pd-bar {
+  width: 220px;
+  height: 1px;
+  background: rgba(86, 230, 255, 0.2);
+}
+.pd-loadbar {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--pd-cyan);
+  box-shadow: 0 0 12px rgba(86, 230, 255, 0.8);
+}
+
+/* ---------- Reduced motion / no-scrub fallback ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .pd-scroll {
+    height: auto;
+  }
+  .pd-stage {
+    position: relative;
+    height: auto;
+    padding: 80px 22px;
+  }
+  .pd-beat {
+    position: relative;
+    opacity: 1 !important;
+    top: auto;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    transform: none;
+    margin: 60px auto;
+    max-width: 720px;
+  }
+  .pd-cue,
+  .pd-rail {
+    display: none;
+  }
+}
+
+/* Small screens — cards go full-width centered rather than pinned to a side. */
+@media (max-width: 720px) {
+  .pd-feature.side-left,
+  .pd-feature.side-right {
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -50%);
+    max-width: 90vw;
+  }
+  .pd-steps-row {
+    flex-direction: column;
+    align-items: center;
+  }
+}

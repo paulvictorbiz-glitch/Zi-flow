@@ -24,6 +24,10 @@ import { TimelineView } from "../components/timeline-view.jsx";
 import { ReelPlayer } from "../components/reel-player.jsx";
 import { TeamSection } from "../components/team-section.jsx";
 import { AboutPage } from "../components/about-page.jsx";
+import { ProductDive } from "../components/product-dive.jsx";
+// DORMANT: the old static Product page (feature grid + platform showcase +
+// studio). The Product tab now renders the immersive ProductDive instead;
+// these are kept imported so the previous layout can be restored quickly.
 import { ProductPage } from "../components/product-page.jsx";
 import { ContentStudio } from "../components/content-studio.jsx";
 import { CreditsModal } from "../components/credits-modal.jsx";
@@ -366,12 +370,12 @@ export function Landing({ onEnterApp = () => {}, onView3D = () => {} }) {
 
       {/* ── Active page ── */}
       {page === "home" && <HomeView onEnterApp={onEnterApp} onView3D={onView3D} />}
+      {/* Product tab — immersive scroll-scrubbed dive (jellyfish footage
+          + Reel DNA cards populating at scroll sections). The former
+          static layout (ProductPage/PlatformShowcase/ContentStudio) is
+          dormant; see the imports above to restore it. */}
       {page === "product" && (
-        <>
-          <ProductPage product={PRODUCT} onEnterApp={onEnterApp} />
-          <PlatformShowcase />
-          <ContentStudio defaultTab="analyze" />
-        </>
+        <ProductDive product={PRODUCT} onEnterApp={onEnterApp} />
       )}
       {page === "about" && <AboutPage about={ABOUT} mission={MISSION} />}
       {page === "team" && <TeamSection team={TEAM} mission={MISSION} />}
@@ -379,7 +383,9 @@ export function Landing({ onEnterApp = () => {}, onView3D = () => {} }) {
       {/* ── Get Credits payment modal (mockup) ── */}
       <CreditsModal open={creditsOpen} onClose={() => setCreditsOpen(false)} />
 
-      {/* ── Footer ── */}
+      {/* ── Footer ── (hidden on the immersive Product dive; the fixed
+          full-viewport canvas would otherwise cover it) */}
+      {page !== "product" && (
       <footer className="lp-footer">
         <Wordmark onClick={() => go("home")} />
         <nav className="lp-footer-nav">
@@ -391,6 +397,7 @@ export function Landing({ onEnterApp = () => {}, onView3D = () => {} }) {
         </nav>
         <span className="lp-footer-note">Reel DNA · AI Video Synthesis Core</span>
       </footer>
+      )}
     </div>
   );
 }
