@@ -34,7 +34,7 @@
    ========================================================= */
 
 import React from "react";
-import { defaultConfig, defaultPermsForRole, EDITABLE_ROLES, DEMO_VIEWS, DEMO_ACTIONS } from "./permissions-catalog.js";
+import { defaultConfig, defaultPermsForRole, EDITABLE_ROLES, DEMO_VIEWS, DEMO_ACTIONS, FAIL_CLOSED_VIEWS } from "./permissions-catalog.js";
 import { supabase } from "./supabase-client.js";
 import { useAuth } from "../auth.jsx";
 
@@ -182,7 +182,11 @@ function PermissionsProvider({ children }) {
       return !!config[effectivePersonId].views[viewKey];
     }
     const v = config[r]?.views?.[viewKey];
-    return v === undefined ? true : !!v; // fail-open
+    if (v !== undefined) return !!v;
+    // Unset: fail-OPEN by default, but fail-CLOSED for paid/sensitive views
+    // (e.g. content-forge) so they never leak in via a legacy/partial config —
+    // the owner must explicitly grant them per person or role.
+    return FAIL_CLOSED_VIEWS.has(viewKey) ? false : true;
   }, [config, effectiveRole, effectivePersonId, signedInPerson]);
 
   const can = React.useCallback((actionKey, roleOverride) => {

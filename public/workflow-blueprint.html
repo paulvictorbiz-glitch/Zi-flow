@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Footage Brain — App Workflow Blueprint</title>
+<style>
+:root{
+  --bg:#14161A; --grid-dot: rgba(255,255,255,0.045);
+  --surface:#1D2027; --surface-2:#22252D; --border:#2C303A;
+  --text:#E9E8E3; --text-dim:#9BA0AC;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden;}
+#app{display:flex;flex-direction:column;height:100%;}
+.sprockets{
+  height:8px;flex:0 0 auto;
+  background-image: radial-gradient(circle, #3A3F49 1.6px, transparent 2px);
+  background-size:18px 8px; background-position:center;
+}
+header{flex:0 0 auto;background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px 10px;}
+.title-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.title-row h1{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;margin:0;color:var(--text);font-weight:600;}
+.title-row h1 span{color:var(--text-dim);font-weight:400;}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;}
+.btn{
+  font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+  padding:7px 10px;border-radius:7px;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;
+}
+.btn:active{transform:translateY(1px);}
+.btn.primary{border-color:#4A5568;color:#F5C242;}
+.legend{display:flex;gap:14px;margin-top:10px;overflow-x:auto;padding-bottom:2px;font-family:var(--mono);font-size:10.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;}
+.legend .item{display:flex;align-items:center;gap:6px;flex:0 0 auto;}
+.legend .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
+.legend .dash{width:14px;height:0;border-top:2px dashed var(--text-dim);flex:0 0 auto;}
+#viewport{flex:1 1 auto;position:relative;overflow:auto;background:var(--bg);background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);background-size:26px 26px;}
+#world{position:relative;transform-origin:0 0;}
+#lines{position:absolute;left:0;top:0;pointer-events:none;overflow:visible;}
+.node{
+  position:absolute;background:var(--surface);border-radius:12px;
+  border:1px solid var(--border);border-left:4px solid var(--accent, #4FA8FF);
+  box-shadow:0 10px 24px rgba(0,0,0,.35);padding:0 0 12px 0;user-select:none;
+}
+.node.phase-film{--accent:#4FA8FF;}
+.node.phase-process{--accent:#34D1C0;}
+.node.phase-library{--accent:#B694FF;}
+.node.phase-lane{--accent:#FFB454;}
+.node.phase-pipeline{--accent:#F5C242;}
+.node.phase-cycle{--accent:#FF8B6B;}
+.node.phase-produce{--accent:#6FCF97;}
+.node.phase-growth{--accent:#56CCF2;}
+.node.phase-report{--accent:#FFD36E;}
+.node.phase-note{border:none;border-radius:5px;background:#F4DE7A;box-shadow:0 10px 20px rgba(0,0,0,.45);padding-bottom:10px;}
+.node-header{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:11px 14px 0;cursor:grab;touch-action:none;}
+.node-header:active{cursor:grabbing;}
+.eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:6px;}
+.eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:0 0 auto;}
+.del-btn{background:none;border:none;color:rgba(0,0,0,.45);font-size:15px;cursor:pointer;line-height:1;padding:0 2px;}
+.node-title{font-size:15.5px;font-weight:700;margin:6px 14px 8px;color:var(--text);}
+.phase-note .node-title{color:#3A3220;font-size:14.5px;}
+.node-body{margin:0 14px;font-size:12.8px;line-height:1.48;color:#C9CDD6;outline:none;}
+.phase-note .node-body{color:#4A4023;}
+.node-body:focus{outline:1px dashed rgba(255,255,255,.25);border-radius:4px;}
+.b-list{list-style:none;margin:0;padding:0;}
+.b-list li{position:relative;padding-left:14px;margin-bottom:6px;}
+.b-list li::before{content:"–";position:absolute;left:0;color:var(--accent);}
+.step-list{list-style:none;margin:0;padding:0;}
+.step-list li{position:relative;padding-left:20px;margin-bottom:8px;}
+.step-tag{position:absolute;left:0;top:1px;width:14px;height:14px;border-radius:50%;background:var(--accent);color:#1A1C22;font-family:var(--mono);font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.lib-grid{display:flex;flex-direction:column;gap:9px;}
+.lib-item{display:flex;gap:9px;align-items:flex-start;}
+.lib-num{flex:0 0 auto;width:16px;height:16px;border-radius:50%;background:var(--accent);color:#1A1C22;font-family:var(--mono);font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px;}
+.lib-item strong{display:block;font-size:12.8px;color:var(--text);}
+.lib-item p{margin:2px 0 0;color:var(--text-dim);font-size:12px;line-height:1.4;}
+.fab-col{position:fixed;right:14px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:20;}
+.fab{width:38px;height:38px;border-radius:50%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:17px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.4);}
+.fab:active{transform:scale(.94);}
+.fab-note{position:fixed;left:14px;bottom:16px;z-index:20;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="sprockets"></div>
+  <header>
+    <div class="title-row">
+      <h1>Footage Brain <span>/ app workflow blueprint</span></h1>
+      <div class="toolbar">
+        <a class="btn" href="/app" title="Return to the dashboard">← My Work</a>
+        <button class="btn" id="resetBtn">Reset layout</button>
+      </div>
+    </div>
+    <div class="legend">
+      <span class="item"><span class="dot" style="background:#4FA8FF"></span>Ingest</span>
+      <span class="item"><span class="dot" style="background:#34D1C0"></span>Index</span>
+      <span class="item"><span class="dot" style="background:#B694FF"></span>Asset library</span>
+      <span class="item"><span class="dot" style="background:#FFB454"></span>Procurement</span>
+      <span class="item"><span class="dot" style="background:#F5C242"></span>Pipeline</span>
+      <span class="item"><span class="dot" style="background:#FF8B6B"></span>Editor cycle</span>
+      <span class="item"><span class="dot" style="background:#6FCF97"></span>Produce</span>
+      <span class="item"><span class="dot" style="background:#56CCF2"></span>Growth</span>
+      <span class="item"><span class="dot" style="background:#FFD36E"></span>Reporting</span>
+      <span class="item"><span class="dot" style="background:#F4DE7A"></span>Note</span>
+      <span class="item" style="color:#FF8B6B">— revision loop</span>
+      <span class="item"><span class="dash"></span>branch / aggregate</span>
+      <span class="item" style="color:#6b7280">drag headers to move · tap text to edit · scroll to pan</span>
+    </div>
+  </header>
+  <div id="viewport">
+    <div id="world"><svg id="lines"></svg></div>
+  </div>
+  <div class="fab-col">
+    <button class="fab" id="zoomIn" title="Zoom in">+</button>
+    <button class="fab" id="zoomOut" title="Zoom out">–</button>
+    <button class="fab" id="zoomReset" title="Reset zoom" style="font-size:12px;">1:1</button>
+  </div>
+  <button class="btn fab-note" id="addNoteBtn">+ Note</button>
+</div>
+<script>
+(function(){
+  var WORLD_W = 2760, WORLD_H = 2320;
+  var STORAGE_KEY = 'fb-blueprint-v1';
+
+  // localStorage-backed persistence (this file runs in the app, not the Claude artifact runtime).
+  var store = {
+    get: function(k){ try { var v = localStorage.getItem(k); return v==null ? null : {value:v}; } catch(e){ return null; } },
+    set: function(k,v){ try { localStorage.setItem(k,v); } catch(e){} },
+    del: function(k){ try { localStorage.removeItem(k); } catch(e){} }
+  };
+
+  function bulletsHTML(arr){
+    return '<ul class="b-list">' + arr.map(function(t){ return '<li>'+t+'</li>'; }).join('') + '</ul>';
+  }
+  function stepsHTML(arr){
+    return '<ol class="step-list">' + arr.map(function(s){ return '<li><span class="step-tag">'+s.l+'</span>'+s.t+'</li>'; }).join('') + '</ol>';
+  }
+  function itemsHTML(arr){
+    return '<div class="lib-grid">' + arr.map(function(it,i){
+      return '<div class="lib-item"><span class="lib-num">'+(i+1)+'</span><div><strong>'+it.name+'</strong><p>'+it.desc+'</p></div></div>';
+    }).join('') + '</div>';
+  }
+
+  var NODES = [
+    {id:'film', phase:'film', x:40, y:40, w:300, eyebrow:'Ingest', title:'Film', body:bulletsHTML([
+      'Dump all raw footage folders into Footage Brain',
+      'Auto-organizes by date, location &amp; type',
+      'AI scans for unusable / lossless cuts → generates a cut-timestamp sheet for editors',
+      'Paul reviews &amp; accepts the cuts → unlocks Process'
+    ])},
+    {id:'process', phase:'process', x:40, y:320, w:300, eyebrow:'Index', title:'Process', body:bulletsHTML([
+      'Accepted footage uploads to Google Drive',
+      'Local files split into audio-only tracks',
+      'Whisper transcription',
+      'Thumbnails extracted &amp; embedded in-app',
+      'Vision model auto-tags footage for search',
+      'Linked &amp; pushed live to the Coverage Tree'
+    ])},
+    {id:'library', phase:'library', x:40, y:640, w:620, eyebrow:'Concurrent · feeds every procurement lane', title:'Asset Library', body:itemsHTML([
+      {name:'Pulse (News)', desc:'Automated news-tracking system + manual article links, attachable to any card'},
+      {name:'Music + AI VO', desc:'Pulls from YouTube &amp; Epidemic Sound; reusable library of Epidemic AI-voice prompts'},
+      {name:'Thumbnails', desc:'Curated YouTube inspiration playlist, synced into the app'},
+      {name:'Locations', desc:'Turns a reel you want to recreate into a filming route &amp; itinerary'},
+      {name:'Google SEO Keywords', desc:'Keyword research, attachable per card'},
+      {name:'B-Roll', desc:'Tagged, reusable library of downloaded clips'},
+      {name:'AI Generated Content', desc:'50 free Google Flow Labs credits/day — auto-prompted &amp; auto-generated, fully automated'}
+    ])},
+    {id:'forge', phase:'lane', x:800, y:40, w:380, eyebrow:'Procurement 1 / 4', title:'Content Forge', body:stepsHTML([
+      {l:'a', t:'Mine library — LLM scans transcripts for viral-hook candidates'},
+      {l:'b', t:'Paul audits results, tags clips worth expanding'},
+      {l:'c', t:'LLM drafts 3 variations: shot list + voiceover + hooks + hashtags'},
+      {l:'d', t:'Asset attachment — pulls from the Asset Library'},
+      {l:'e', t:'Sent to Pipeline'}
+    ])},
+    {id:'reeldna', phase:'lane', x:800, y:410, w:380, eyebrow:'Procurement 2 / 4', title:'Reel DNA Ingestion', body:stepsHTML([
+      {l:'a', t:'Self-DM a reel on Instagram → logs to the Reel DNA sheet'},
+      {l:'b', t:'Reverse-engineer the reel into a timeline edit'},
+      {l:'c', t:'Export the timeline to a DaVinci-ready format (assets + cuts) — if not built yet, open the reel manually'},
+      {l:'d', t:'Asset attachment, then sent to Pipeline'}
+    ])},
+    {id:'generate', phase:'lane', x:800, y:770, w:380, eyebrow:'Procurement 3 / 4', title:'Generate', body:stepsHTML([
+      {l:'a', t:'LLM scans the current media pool for thematic clip sets (e.g. "top 5 foods in Asia")'},
+      {l:'b', t:'Produces the matching clip set'},
+      {l:'c', t:'Asset attachment'},
+      {l:'d', t:'Sent to Pipeline'}
+    ])},
+    {id:'manual', phase:'lane', x:800, y:1060, w:380, eyebrow:'Procurement 4 / 4', title:'Manual', body:stepsHTML([
+      {l:'a', t:'Open a blank reel card'},
+      {l:'b', t:'Fill out all fields by hand'},
+      {l:'c', t:'Asset attachment'},
+      {l:'d', t:'Sent to Pipeline'}
+    ])},
+    {id:'pipeline', phase:'pipeline', x:1330, y:530, w:250, eyebrow:'Queue', title:'Pipeline', body:bulletsHTML([
+      'All 4 procurement paths converge here',
+      'Paul reviews &amp; duplicates before handoff to editors'
+    ])},
+    {id:'assign', phase:'cycle', x:1650, y:40, w:280, eyebrow:'Editor Cycle · Start', title:'Assign to Editor', body:bulletsHTML([
+      'Paul reviews the queued reel card in Pipeline',
+      'Assigns it to an editor'
+    ])},
+    {id:'editorcycle', phase:'cycle', x:2000, y:40, w:300, eyebrow:'Editor Cycle', title:'Edit + Export', body:bulletsHTML([
+      'Editor opens OpenCut and builds the reel',
+      'Exports to RocketChat / Teams — auto-attaches to the reel card',
+      'Paul gets a WhatsApp notification the edit is done',
+      'Editor moves the card: Started → Review'
+    ])},
+    {id:'grading', phase:'cycle', x:2000, y:300, w:300, eyebrow:'Editor Cycle · Review', title:'Grading Review', body:bulletsHTML([
+      'Paul reviews &amp; grades against the syllabus rubric',
+      '≥ 80% → approved, exits the cycle',
+      '&lt; 80% → sent back for revision'
+    ])},
+    {id:'revision', phase:'cycle', x:1650, y:300, w:320, eyebrow:'Editor Cycle · Revise', title:'Needs Revision', body:bulletsHTML([
+      "Paul's feedback is attached to the card",
+      'Weak-skill areas can route to the Training Module',
+      'Editor re-edits &amp; re-exports → repeats until it clears 80%'
+    ])},
+    {id:'training', phase:'cycle', x:1650, y:540, w:300, eyebrow:'Skill branch', title:'Training Module', body:bulletsHTML([
+      'Lessons targeted to the specific skill graded low',
+      'Assessments &amp; exercises to prove the concept lands',
+      'Editor returns to revise the reel'
+    ])},
+    {id:'thumbnail', phase:'produce', x:1710, y:830, w:320, eyebrow:'Produce · 1', title:'Thumbnail', body:bulletsHTML([
+      'AI-generated, or a frame pulled into Canva to edit',
+      'Export &amp; upload',
+      'Thumbnail Ranker scores it — iterate until the score is solid',
+      'Attach the winner to the reel card'
+    ])},
+    {id:'seo', phase:'produce', x:1710, y:1060, w:320, eyebrow:'Produce · 2', title:'SEO Keywords', body:bulletsHTML([
+      'Keyword research, if applicable',
+      'Results attached to the reel card'
+    ])},
+    {id:'exportsched', phase:'produce', x:1710, y:1240, w:320, eyebrow:'Produce · 3', title:'Export + Schedule', body:bulletsHTML([
+      'Ready reels land in the Export tab',
+      'Paul finalizes posting details + a due date',
+      '"Export All Reels" pushes everything to Planable to be scheduled'
+    ])},
+    {id:'analytics', phase:'growth', x:1710, y:1460, w:320, eyebrow:'Growth · 1', title:'Posted → Analytics', body:bulletsHTML([
+      'Performance is tracked per reel',
+      'Linked back to the editor who made it, for editor-level analysis'
+    ])},
+    {id:'community', phase:'growth', x:1500, y:1700, w:300, eyebrow:'Growth · 2', title:'Community Management', body:bulletsHTML([
+      'Inbox / DM tab, across every platform',
+      'Reply to DMs, like &amp; reply to every comment'
+    ])},
+    {id:'marketing', phase:'growth', x:1900, y:1700, w:300, eyebrow:'Growth · 3', title:'Cross-Platform Marketing', body:bulletsHTML([
+      'Share into Reddit, Facebook groups &amp; other platforms',
+      'Drives outside traffic back to the posted reel'
+    ])},
+    {id:'weeklyreport', phase:'report', x:1710, y:1950, w:340, eyebrow:'Reporting · Weekly', title:'Client Report', body:bulletsHTML([
+      'Client tag carried from Procurement keeps each client’s work separate',
+      'After 1 week, an analytics report generates per client',
+      'Client logs into the portal; a brief PDF is also emailed',
+      'Covers: work delivered, what’s upcoming, current analytics/research &amp; a forward strategy plan'
+    ])},
+    {id:'nightlyreport', phase:'report', x:2130, y:1950, w:300, eyebrow:'Reporting · Nightly', title:'Nightly Ops Report', body:bulletsHTML([
+      'Sent to Paul’s WhatsApp at end of day',
+      'Editor activity + hours worked',
+      'Rolling analytics snapshot'
+    ])},
+    {id:'note-crm', phase:'note', x:1330, y:40, w:200, eyebrow:'', title:'★ Build a CRM system', body:'<em>Idea — not scoped yet</em>'},
+    {id:'note-jarvis', phase:'note', x:2370, y:40, w:270, eyebrow:'', title:'Jarvis — future ops assistant', body:bulletsHTML([
+      'Activity &amp; flight-ticket tracker',
+      'AWS + Azure cloud storage',
+      'Security measures, nightly ops brief',
+      'Testimonials, accurate UX/UI'
+    ])}
+  ];
+
+  var CONNECTORS = [
+    ['film','process','solid'],
+    ['process','forge','solid'],
+    ['process','generate','solid'],
+    ['library','forge','dashed'],
+    ['library','reeldna','dashed'],
+    ['library','generate','dashed'],
+    ['library','manual','dashed'],
+    ['forge','pipeline','solid'],
+    ['reeldna','pipeline','solid'],
+    ['generate','pipeline','solid'],
+    ['manual','pipeline','solid'],
+    ['pipeline','assign','solid'],
+    ['assign','editorcycle','solid'],
+    ['editorcycle','grading','solid'],
+    ['grading','revision','loop','< 80%'],
+    ['revision','editorcycle','loop','re-edit & re-export'],
+    ['revision','training','dashed','skill gap'],
+    ['training','revision','dashed'],
+    ['grading','thumbnail','solid','≥ 80% approved'],
+    ['thumbnail','seo','solid'],
+    ['seo','exportsched','solid'],
+    ['exportsched','analytics','solid'],
+    ['analytics','community','solid'],
+    ['analytics','marketing','solid'],
+    ['community','weeklyreport','solid'],
+    ['marketing','weeklyreport','solid'],
+    ['editorcycle','nightlyreport','dashed'],
+    ['analytics','nightlyreport','dashed']
+  ];
+
+  var state = { positions:{}, texts:{}, customNotes:[], zoom:1 };
+  var saveTimer = null;
+
+  function loadState(){
+    try {
+      var res = store.get(STORAGE_KEY);
+      if(res && res.value){
+        var parsed = JSON.parse(res.value);
+        state = Object.assign({positions:{},texts:{},customNotes:[],zoom:1}, parsed);
+      }
+    } catch(e){}
+  }
+  function saveState(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function(){ store.set(STORAGE_KEY, JSON.stringify(state)); }, 250);
+  }
+
+  var world = document.getElementById('world');
+  var svg = document.getElementById('lines');
+  world.style.width = WORLD_W+'px';
+  world.style.height = WORLD_H+'px';
+  svg.setAttribute('width', WORLD_W);
+  svg.setAttribute('height', WORLD_H);
+  svg.setAttribute('viewBox', '0 0 '+WORLD_W+' '+WORLD_H);
+
+  var DEFS = '<defs>'
+    + '<marker id="arrowSolid" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="rgba(230,233,240,0.7)"/></marker>'
+    + '<marker id="arrowDashed" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="rgba(150,157,171,0.55)"/></marker>'
+    + '<marker id="arrowLoop" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#FF8B6B"/></marker>'
+    + '</defs>';
+  svg.innerHTML = DEFS;
+
+  function allNodeDefs(){ return NODES.concat(state.customNotes || []); }
+
+  function buildNodeEl(def){
+    var el = document.createElement('div');
+    el.className = 'node phase-' + def.phase;
+    el.id = 'node-' + def.id;
+    var pos = state.positions[def.id];
+    el.style.left = (pos ? pos.x : def.x) + 'px';
+    el.style.top = (pos ? pos.y : def.y) + 'px';
+    el.style.width = def.w + 'px';
+
+    var header = document.createElement('div');
+    header.className = 'node-header';
+    var eyebrowHTML = '';
+    if(def.phase !== 'note'){
+      eyebrowHTML = '<span class="eyebrow"><span class="dot"></span>'+def.eyebrow+'</span>';
+    }
+    header.innerHTML = eyebrowHTML;
+    if(def.custom){
+      var del = document.createElement('button');
+      del.className = 'del-btn';
+      del.innerHTML = '✕';
+      del.onclick = function(){ removeCustomNote(def.id); };
+      header.appendChild(del);
+    }
+    el.appendChild(header);
+
+    var title = document.createElement('div');
+    title.className = 'node-title';
+    title.textContent = def.title;
+    el.appendChild(title);
+
+    var body = document.createElement('div');
+    body.className = 'node-body';
+    body.contentEditable = 'true';
+    body.spellcheck = false;
+    body.innerHTML = (state.texts[def.id] !== undefined) ? state.texts[def.id] : def.body;
+    body.addEventListener('blur', function(){ state.texts[def.id] = body.innerHTML; saveState(); });
+    el.appendChild(body);
+
+    makeDraggable(el, header, def.id);
+    world.appendChild(el);
+  }
+
+  function renderAll(){
+    var nodes = world.querySelectorAll('.node');
+    for(var i=0;i<nodes.length;i++){ nodes[i].remove(); }
+    allNodeDefs().forEach(buildNodeEl);
+    applyZoom();
+    requestAnimationFrame(drawConnectors);
+  }
+
+  function edgeGeometry(a, b){
+    var acx=a.x+a.w/2, acy=a.y+a.h/2, bcx=b.x+b.w/2, bcy=b.y+b.h/2;
+    var dx=bcx-acx, dy=bcy-acy;
+    var start, end, horizontal;
+    if(Math.abs(dx) >= Math.abs(dy)){
+      horizontal = true;
+      if(dx >= 0){ start={x:a.x+a.w,y:acy}; end={x:b.x,y:bcy}; }
+      else { start={x:a.x,y:acy}; end={x:b.x+b.w,y:bcy}; }
+    } else {
+      horizontal = false;
+      if(dy >= 0){ start={x:acx,y:a.y+a.h}; end={x:bcx,y:b.y}; }
+      else { start={x:acx,y:a.y}; end={x:bcx,y:b.y+b.h}; }
+    }
+    var c1,c2;
+    if(horizontal){
+      var midX = start.x + (end.x-start.x)/2;
+      c1={x:midX,y:start.y}; c2={x:midX,y:end.y};
+    } else {
+      var midY = start.y + (end.y-start.y)/2;
+      c1={x:start.x,y:midY}; c2={x:end.x,y:midY};
+    }
+    var mid = {
+      x: 0.125*start.x + 0.375*c1.x + 0.375*c2.x + 0.125*end.x,
+      y: 0.125*start.y + 0.375*c1.y + 0.375*c2.y + 0.125*end.y
+    };
+    var d = 'M'+start.x+','+start.y+' C'+c1.x+','+c1.y+' '+c2.x+','+c2.y+' '+end.x+','+end.y;
+    return { d: d, mid: mid };
+  }
+
+  var STYLE_COLOR = { solid:'rgba(230,233,240,0.7)', dashed:'rgba(150,157,171,0.55)', loop:'#FF8B6B' };
+  var STYLE_MARKER = { solid:'arrowSolid', dashed:'arrowDashed', loop:'arrowLoop' };
+
+  function drawConnectors(){
+    var out = '';
+    CONNECTORS.forEach(function(c){
+      var fromId=c[0], toId=c[1], style=c[2], label=c[3];
+      var a = document.getElementById('node-'+fromId);
+      var b = document.getElementById('node-'+toId);
+      if(!a || !b) return;
+      var rectA = {x:a.offsetLeft,y:a.offsetTop,w:a.offsetWidth,h:a.offsetHeight};
+      var rectB = {x:b.offsetLeft,y:b.offsetTop,w:b.offsetWidth,h:b.offsetHeight};
+      var geo = edgeGeometry(rectA, rectB);
+      var stroke = STYLE_COLOR[style] || STYLE_COLOR.solid;
+      var dash = style==='dashed' ? 'stroke-dasharray="5,5"' : '';
+      var width = style==='loop' ? 2 : 1.6;
+      var marker = STYLE_MARKER[style] || 'arrowSolid';
+      out += '<path d="'+geo.d+'" fill="none" stroke="'+stroke+'" stroke-width="'+width+'" '+dash+' marker-end="url(#'+marker+')" />';
+      if(label){
+        var w = Math.max(30, label.length*5.6+12);
+        out += '<g>'
+          + '<rect x="'+(geo.mid.x-w/2)+'" y="'+(geo.mid.y-9)+'" width="'+w+'" height="16" rx="4" fill="#14161A" stroke="'+stroke+'" stroke-width="1" />'
+          + '<text x="'+geo.mid.x+'" y="'+(geo.mid.y+3)+'" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="'+stroke+'">'+label+'</text>'
+          + '</g>';
+      }
+    });
+    svg.innerHTML = DEFS + out;
+  }
+
+  function makeDraggable(el, handle, id){
+    var sx=0, sy=0, ox=0, oy=0, dragging=false;
+    handle.addEventListener('pointerdown', function(e){
+      dragging = true; handle.setPointerCapture(e.pointerId);
+      sx = e.clientX; sy = e.clientY; ox = el.offsetLeft; oy = el.offsetTop; e.preventDefault();
+    });
+    handle.addEventListener('pointermove', function(e){
+      if(!dragging) return;
+      var dx = (e.clientX - sx) / state.zoom;
+      var dy = (e.clientY - sy) / state.zoom;
+      var nx = Math.max(0, ox+dx), ny = Math.max(0, oy+dy);
+      el.style.left = nx+'px'; el.style.top = ny+'px';
+      drawConnectors();
+    });
+    function end(){
+      if(!dragging) return;
+      dragging = false;
+      state.positions[id] = { x: el.offsetLeft, y: el.offsetTop };
+      saveState();
+    }
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }
+
+  function applyZoom(){ world.style.transform = 'scale('+state.zoom+')'; }
+  document.getElementById('zoomIn').onclick = function(){ state.zoom = Math.min(1.4, +(state.zoom+0.1).toFixed(2)); applyZoom(); saveState(); };
+  document.getElementById('zoomOut').onclick = function(){ state.zoom = Math.max(0.4, +(state.zoom-0.1).toFixed(2)); applyZoom(); saveState(); };
+  document.getElementById('zoomReset').onclick = function(){ state.zoom = 1; applyZoom(); saveState(); };
+
+  var noteCounter = 0;
+  document.getElementById('addNoteBtn').onclick = function(){
+    noteCounter++;
+    var vp = document.getElementById('viewport');
+    var cx = (vp.scrollLeft + vp.clientWidth/2) / state.zoom - 100;
+    var cy = (vp.scrollTop + vp.clientHeight/2) / state.zoom - 60;
+    var id = 'custom-note-' + noteCounter + '-' + (state.customNotes ? state.customNotes.length : 0);
+    var def = { id:id, phase:'note', x:Math.max(0,cx), y:Math.max(0,cy), w:220, eyebrow:'', title:'New note', body:'Tap to edit…', custom:true };
+    state.customNotes = state.customNotes || [];
+    state.customNotes.push(def);
+    buildNodeEl(def);
+    saveState();
+  };
+  function removeCustomNote(id){
+    state.customNotes = (state.customNotes||[]).filter(function(n){ return n.id!==id; });
+    delete state.positions[id]; delete state.texts[id];
+    var el = document.getElementById('node-'+id);
+    if(el) el.remove();
+    saveState(); drawConnectors();
+  }
+
+  document.getElementById('resetBtn').onclick = function(){
+    if(!confirm('Reset the canvas to the original layout & text? Your edits and added notes will be cleared.')) return;
+    state = { positions:{}, texts:{}, customNotes:[], zoom:1 };
+    store.del(STORAGE_KEY);
+    renderAll();
+  };
+
+  window.addEventListener('resize', function(){ requestAnimationFrame(drawConnectors); });
+
+  loadState();
+  if(!state.zoom) state.zoom = 1;
+  renderAll();
+})();
+</script>
+</body>
+</html>

@@ -145,6 +145,7 @@ import { TeamChatAlertsProvider, useTeamChatAlerts } from "./lib/team-chat-alert
 import { TeamChatToast } from "./components/team-chat-toast.jsx";
 import { PermissionsProvider, usePermissions, useIsOwner, ownsReviewQueue } from "./lib/permissions.jsx";
 import { RosterProvider, useRoster } from "./lib/roster.jsx";
+import { WorkspaceProvider, useWorkspace, SLUG_RE } from "./lib/workspace.jsx";
 import GamifyWelcomePopup from "./components/GamifyWelcomePopup.jsx";
 import { ThemeProvider } from "./lib/theme.jsx";
 import { PreferencesModal } from "./components/PreferencesModal.jsx";
@@ -222,6 +223,11 @@ function AppShell() {
   const { person: me, signOut } = useAuth();
   const { reels, prefetchHeavyTabs } = useWorkflow();
   const { peopleById, peopleList } = useRoster();
+  /* Workspace (client) switcher — consumes ONLY useWorkspace() (C5). Selecting
+     an entry calls setActive(slug), which re-scopes every tab via the store's
+     module-singleton re-hydrate; it never touches storage keys or Supabase
+     tables directly. */
+  const { activeSlug, workspaces, setActive: setActiveWorkspace, createWorkspace } = useWorkspace();
   const { canView, setEffectiveRole, setEffectivePersonId } = usePermissions();
   // Real-role owner flag (NOT the previewed perspective) — drives owner-only
   // affordances: the perspective switcher, settings, and the Monitor hub.
@@ -235,10 +241,11 @@ function AppShell() {
   const canViewView = (v) =>
     v === "monitor"
       ? (canView("monitor") || canView("pulse") || canView("ai"))
-      // Content Forge is an owner-only tool — gated on the REAL owner role
-      // (not the catalog), so non-owners never see the tab or reach the route.
+      // Content Forge — owner always; plus any teammate the owner explicitly
+      // grants the fail-closed "content-forge" permission (paid AI tool, so it
+      // never leaks in via fail-open — see FAIL_CLOSED_VIEWS).
       : v === "content-forge"
-      ? isOwner
+      ? (isOwner || canView("content-forge"))
       // Fonts (font ID) is an owner-only tool — same real-owner gate as Content Forge.
       : v === "fonts"
       ? isOwner
@@ -268,6 +275,17 @@ function AppShell() {
   const [openCat, setOpenCat] = useState(null);
   const roleSwitchRef                   = useRef(null);
   const solRoleRef                      = useRef(null);   // Solarin-nav avatar (mirrors role menu)
+  // Workspace (client) switcher — dual-mounted in classic topbar + Solarin
+  // sol-nav, sharing this state/handlers (C5).
+  const [wsMenu, setWsMenu]             = useState(false);
+  const wsSwitchRef                     = useRef(null);
+  const solWsRef                        = useRef(null);   // Solarin-nav mirror
+  const [newClientOpen, setNewClientOpen] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientSlug, setNewClientSlug] = useState("");
+  const [creatingClient, setCreatingClient] = useState(false);
+  const [clientError, setClientError]     = useState("");
+  const newClientSlugTouched             = useRef(false);   // true once the slug field is hand-edited
   const [navOpen, setNavOpen]           = useState(false);   // left slide-in drawer
   const [globalSearch, setGlobalSearch] = useState("");
   const [capturePrefill, setCapturePrefill] = useState(null);   // Reel DNA share-target/bookmarklet
@@ -318,6 +336,21 @@ function AppShell() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [roleMenu]);
+
+  /* Close workspace dropdown on outside click (mirrors the perspective menu). */
+  useEffect(() => {
+    if (!wsMenu) return;
+    const handler = (e) => {
+      const inClassic = wsSwitchRef.current && wsSwitchRef.current.contains(e.target);
+      const inSolarin = solWsRef.current && solWsRef.current.contains(e.target);
+      if (!inClassic && !inSolarin) {
+        setWsMenu(false);
+        setNewClientOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [wsMenu]);
 
   /* Inbox unread badge — count of unreplied comments/DMs across
      connected social platforms. Cheap, synchronous read from the
@@ -572,6 +605,123 @@ function AppShell() {
   // Role key the rest of the app (MyWork, permissions) needs.
   const viewingRoleKey = shownPerson?.role || "skilled";
 
+  /* Best-effort kebab-case suggestion for the "New client" slug field, derived
+     from the typed name. Purely a UX nicety — createWorkspace() (and SLUG_RE
+     below) is the real validator, this never needs to be perfect. */
+  const slugifyName = (name) =>
+    (name || "")
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40);
+
+  const activeWorkspace = workspaces.find(w => w.slug === activeSlug);
+
+  const submitNewClient = async () => {
+    if (creatingClient) return;
+    setClientError("");
+    const slug = newClientSlug.trim().toLowerCase();
+    const name = newClientName.trim();
+    if (!name) { setClientError("Client name is required."); return; }
+    if (!SLUG_RE.test(slug)) { setClientError("Slug must be lowercase-kebab, 2–40 chars."); return; }
+    setCreatingClient(true);
+    try {
+      const created = await createWorkspace(slug, name);
+      setActiveWorkspace(created.slug);
+      setNewClientOpen(false);
+      setNewClientName("");
+      setNewClientSlug("");
+      newClientSlugTouched.current = false;
+      setWsMenu(false);
+    } catch (e) {
+      setClientError(e?.message || "Failed to create workspace.");
+    } finally {
+      setCreatingClient(false);
+    }
+  };
+
+  /* Workspace (client) switcher dropdown — dual-mounted in the classic topbar
+     AND the Solarin top nav, same state/handlers, mirroring roleMenuPanel
+     below. Reuses the .role-menu/.rm-* styling so it matches the existing
+     identity dropdown exactly (no new CSS needed). Consumes ONLY
+     useWorkspace() — never store internals, storage keys, or Supabase tables
+     (C5); selecting an entry calls setActive(slug), never a local scope. */
+  const wsMenuPanel = () => (
+    <div className="role-menu" onClick={e => e.stopPropagation()} style={{ minWidth: 250 }}>
+      <div className="rm-h">Workspace</div>
+      {workspaces.map(w => (
+        <div key={w.slug}
+             className={"rm-opt " + (w.slug === activeSlug ? "active" : "")}
+             onClick={() => { setActiveWorkspace(w.slug); setWsMenu(false); setNewClientOpen(false); }}>
+          <span className="avatar-chip" style={w.color ? { background: w.color, color: "#0c0f0e", borderColor: w.color } : undefined}>
+            {(w.name || w.slug).slice(0, 2).toUpperCase()}
+          </span>
+          <div>
+            <div className="rm-name">{w.name || w.slug}</div>
+            <div className="rm-role">{w.slug}</div>
+          </div>
+          {w.slug === activeSlug && <span className="mono cyan">●</span>}
+        </div>
+      ))}
+      <div className="rm-opt"
+           style={{ borderTop: "1px dashed var(--line-hard)", marginTop: 6, paddingTop: 10 }}
+           onClick={() => { setNewClientOpen(o => !o); setClientError(""); }}>
+        <span className="avatar-chip" style={{ fontSize: 13 }}>＋</span>
+        <div>
+          <div className="rm-name">New client</div>
+          <div className="rm-role">Add a workspace</div>
+        </div>
+      </div>
+      {newClientOpen && (
+        <div style={{ padding: "2px 10px 8px" }} onClick={e => e.stopPropagation()}>
+          <input
+            type="text"
+            placeholder="Client name"
+            value={newClientName}
+            onChange={e => {
+              const name = e.target.value;
+              setNewClientName(name);
+              if (!newClientSlugTouched.current) setNewClientSlug(slugifyName(name));
+            }}
+            style={{
+              width: "100%", background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+              borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-sans)", fontSize: 12,
+              padding: "6px 9px", outline: "none", boxSizing: "border-box",
+            }}
+          />
+          <input
+            type="text"
+            placeholder="slug-like-this"
+            value={newClientSlug}
+            onChange={e => { newClientSlugTouched.current = true; setNewClientSlug(e.target.value.toLowerCase()); }}
+            style={{
+              width: "100%", background: "var(--bg-2)", border: "1px solid var(--line-hard)",
+              borderRadius: 4, color: "var(--fg)", fontFamily: "var(--f-mono)", fontSize: 11.5,
+              padding: "6px 9px", outline: "none", marginTop: 6, boxSizing: "border-box",
+            }}
+          />
+          {clientError && (
+            <div style={{ color: "var(--c-red)", fontSize: 10.5, marginTop: 5, fontFamily: "var(--f-mono)" }}>
+              {clientError}
+            </div>
+          )}
+          <button
+            disabled={creatingClient}
+            onClick={submitNewClient}
+            style={{
+              marginTop: 7, width: "100%", padding: "6px 10px",
+              border: "1px solid var(--line-hard)", borderRadius: 6,
+              background: "var(--bg-2)", color: "var(--fg)",
+              cursor: creatingClient ? "default" : "pointer",
+              fontFamily: "var(--f-mono)", fontSize: 11, opacity: creatingClient ? 0.6 : 1,
+            }}
+          >{creatingClient ? "Creating…" : "Create workspace"}</button>
+        </div>
+      )}
+    </div>
+  );
+
   /* The avatar dropdown (perspective switch · Roles & permissions · Pimped-Out
      toggle · accessibility · sign out). Extracted so it renders in BOTH the
      classic topbar AND the Solarin top nav — otherwise, with the topbar hidden
@@ -775,6 +925,16 @@ function AppShell() {
               <div className="sol-nav-right">
                 <input className="sol-search" placeholder="Search reels…"
                   value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} />
+                {/* Workspace switcher — Solarin mirror of the classic-topbar one
+                    above (dual-mounted, shared state/handlers, C5). */}
+                <div ref={solWsRef} className="role-switch sol-role-switch"
+                  style={{ position: 'relative' }}
+                  onClick={e => { e.stopPropagation(); setWsMenu(o => !o); }}
+                  title={activeWorkspace?.name || activeSlug}>
+                  <span className="avatar-chip">{(activeWorkspace?.name || activeSlug).slice(0, 2).toUpperCase()}</span>
+                  <span className="rs-caret">▾</span>
+                  {wsMenu && wsMenuPanel()}
+                </div>
                 <div ref={solRoleRef} className="role-switch sol-role-switch"
                   style={{ position: 'relative' }}
                   onClick={e => { e.stopPropagation(); setRoleMenu(o => !o); }}
@@ -847,6 +1007,25 @@ function AppShell() {
           </span>
         </div>
         <div className="topbar-spacer" />
+
+        {/* Workspace (client) switcher — next to the identity/role controls.
+            Dropdown lists every workspace from useWorkspace(); selecting one
+            calls setActive(slug), which re-scopes every tab via the store's
+            re-hydrate. "＋ New client" creates + switches via the frozen
+            createWorkspace contract. No per-client login — owner/team-managed. */}
+        <div ref={wsSwitchRef}
+             className="role-switch"
+             onClick={() => setWsMenu(o => !o)}
+             title={activeWorkspace?.name || activeSlug}
+             style={{ marginRight: 8 }}>
+          <span className="avatar-chip">{(activeWorkspace?.name || activeSlug).slice(0, 2).toUpperCase()}</span>
+          <span className="rs-body">
+            <span className="rs-label">{activeWorkspace?.name || activeSlug}</span>
+            <span className="rs-role">workspace</span>
+          </span>
+          <span className="rs-caret">▾</span>
+          {wsMenu && wsMenuPanel()}
+        </div>
 
         {/* Identity / perspective. Owners can switch perspectives (dropdown);
             everyone else just sees their own icon. Clicking opens the menu. */}
@@ -1236,6 +1415,12 @@ function App() {
           <AuthGate>
             <IdentityGate>
               <RosterProvider>
+                {/* WorkspaceProvider mounts ABOVE WorkflowProvider (C5): it's for the
+                    useWorkspace() UI hook only — the store re-hydrates off the module
+                    singleton (getActiveWorkspaceSlug/subscribeWorkspace) via
+                    useSyncExternalStore, so it has no hard mount-order dependency and
+                    can't crash if this provider were ever missing/reordered. */}
+                <WorkspaceProvider>
                 <WorkflowProvider>
                   <LocationsProvider>
                     <NotificationsProvider>
@@ -1264,6 +1449,7 @@ function App() {
                     </NotificationsProvider>
                   </LocationsProvider>
                 </WorkflowProvider>
+                </WorkspaceProvider>
               </RosterProvider>
             </IdentityGate>
           </AuthGate>

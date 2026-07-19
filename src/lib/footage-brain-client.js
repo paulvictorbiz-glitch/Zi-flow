@@ -6,6 +6,7 @@
  */
 
 import { supabase } from "./supabase-client.js";
+import { getActiveWorkspaceSlug } from "./workspace.jsx";
 
 // Resolve the FootageBrain origin at RUNTIME from the page hostname, not at
 // build time. (Vercel builds this project in development mode, so
@@ -35,7 +36,9 @@ const FOOTAGE_BRAIN_HEALTH = "/fb/health";
  * @param {object} options - Optional filters
  * @param {string} options.mode - "semantic" | "keyword" | "hybrid" (default: "semantic")
  * @param {number} options.n_results - Max results (default: 30, max: 200)
- * @param {string} options.project_tag - Filter by project tag
+ * @param {string} options.project_tag - Filter by project tag (country/trip label — untouched by client_id)
+ * @param {string} options.client_id - Explicit workspace/client scope override (frozen C3 contract);
+ *   when omitted, falls back to the active workspace slug.
  * @returns {Promise<SearchResponse>}
  */
 export async function searchFootageBrain(query, options = {}) {
@@ -47,6 +50,18 @@ export async function searchFootageBrain(query, options = {}) {
     mode,
     n_results,
   };
+
+  // Scope the search to a workspace/client (frozen C3 contract: dedicated
+  // top-level client_id field, resolution order explicit options.client_id ->
+  // getActiveWorkspaceSlug() -> omitted if empty). This is a SEPARATE field
+  // from project_tag (which labels country/trip like "Norway") — never
+  // overloaded together. workspaces.slug === reels.workspace_id === backend
+  // client_id is one byte-identical lowercase-kebab slug everywhere (C2).
+  // getActiveWorkspaceSlug() is synchronous and never null (defaults 'paul'),
+  // so the fallback always resolves; explicit callers may still pass "" to
+  // force a global (unscoped) search.
+  const client_id = options.client_id !== undefined ? options.client_id : getActiveWorkspaceSlug();
+  if (client_id) body.client_id = client_id;
 
   // Add optional filters
   if (options.project_tag) body.project_tag = options.project_tag;

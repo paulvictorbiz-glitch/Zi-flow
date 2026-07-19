@@ -346,6 +346,10 @@ function LocationPicker({ reelId }) {
      (CONTRACT 4) from a user gesture; consumes no return value.
    ========================================================= */
 function EditorBlueprintPanel({ blueprintJson, voMarkdown }) {
+  // Collapse/expand the (long) blueprint body — the head row + Download PDF stay
+  // visible so the sheet can be grabbed without expanding. Hook stays above the
+  // early returns below to keep call order stable (rules of hooks).
+  const [collapsed, setCollapsed] = useState(false);
   const bp = blueprintJson && typeof blueprintJson === "object" ? blueprintJson : null;
   if (!bp) return null;
 
@@ -384,6 +388,10 @@ function EditorBlueprintPanel({ blueprintJson, voMarkdown }) {
       marginLeft: "auto", padding: "5px 12px", background: "transparent",
       border: "1px solid var(--c-cyan, #22d3ee)", color: "var(--c-cyan, #22d3ee)",
       borderRadius: 4, cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
+    },
+    caret: {
+      background: "transparent", border: "none", color: "var(--c-violet, #a78bfa)",
+      cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "2px 4px", flexShrink: 0,
     },
     secHead: {
       fontFamily: "var(--f-mono)", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
@@ -430,6 +438,15 @@ function EditorBlueprintPanel({ blueprintJson, voMarkdown }) {
   return (
     <div className="cf-blueprint-panel" style={S.panel}>
       <div style={S.head}>
+        <button
+          type="button"
+          onClick={() => setCollapsed(c => !c)}
+          aria-expanded={!collapsed}
+          title={collapsed ? "Expand blueprint" : "Collapse blueprint"}
+          style={S.caret}
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
         <span style={S.badge}>Editor Blueprint</span>
         <span className="mono dim" style={{ fontSize: 10 }}>gold-standard sheet · Content Forge</span>
         <button
@@ -442,6 +459,8 @@ function EditorBlueprintPanel({ blueprintJson, voMarkdown }) {
         </button>
       </div>
 
+      {!collapsed && (
+      <>
       {title && (
         <div style={{ fontSize: 15, fontWeight: 700, color: "var(--fg)", margin: "6px 0 2px" }}>{title}</div>
       )}
@@ -583,6 +602,8 @@ function EditorBlueprintPanel({ blueprintJson, voMarkdown }) {
             {checklist.map((c, i) => <li key={i}>{c}</li>)}
           </ul>
         </>
+      )}
+      </>
       )}
     </div>
   );

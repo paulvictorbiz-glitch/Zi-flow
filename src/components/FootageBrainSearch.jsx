@@ -17,6 +17,7 @@ import {
   footageBrainFileUrl,
   footageFolderLabel,
 } from "../lib/footage-brain-client.js";
+import { useWorkspace } from "../lib/workspace.jsx";
 
 const SEARCH_MODES = [
   { key: "semantic",   label: "Semantic",   hint: "meaning + visual concepts" },
@@ -39,6 +40,13 @@ export function FootageBrainSearch({
   // "📁 folder" link on attached clips → jump to all that country's clips).
   initialMode = "semantic", initialFolder = "", initialFolderLabel = "",
 }) {
+  // Active workspace/client scope (frozen C1/C3 contracts): threaded into
+  // semantic search as client_id so results are isolated to this client's
+  // clips. activeSlug is never null once <WorkspaceProvider> is mounted
+  // (defaults 'paul' — see C1/C5); useWorkspace() itself only throws if
+  // this component is rendered outside that provider, which should not
+  // happen post-A (WorkspaceProvider wraps the authed tree in app.jsx).
+  const { activeSlug } = useWorkspace();
   const [query, setQuery] = useState("");
   const [mode, setMode]   = useState(initialMode || "semantic");
   const [results, setResults] = useState([]);
@@ -172,9 +180,12 @@ export function FootageBrainSearch({
     setLoading(true);
     setError(null);
     try {
+      // client_id scopes semantic/keyword/hybrid search to the active
+      // workspace ONLY (frozen C3 contract) — omitted when there's no
+      // active slug so the backend treats it as a global search.
       const response = mode === "filename"
         ? await searchByFilename(query, { n_results: 100 })
-        : await searchFootageBrain(query, { mode, n_results: 20 });
+        : await searchFootageBrain(query, { mode, n_results: 20, client_id: activeSlug || undefined });
       setResults(response.results || []);
       if (response.results?.length === 0) {
         setError("No results found. Try a different search.");

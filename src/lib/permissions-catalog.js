@@ -47,7 +47,15 @@ export const VIEW_CAPS = [
   { key: "pulse",     label: "Pulse (real-time alerts)" },
   { key: "ai",        label: "AI Brain (bot & notes)" },
   { key: "scout",     label: "Scout (MicroSaaS radar)" },
+  { key: "content-forge", label: "Content Forge (AI hooks · paid)" },
 ];
+
+/* Views that are FAIL-CLOSED: denied unless an explicit `true` is stored for the
+   person (or their role). Everything else in VIEW_CAPS is fail-OPEN (a missing
+   key = allowed) so a partial/legacy config never locks anyone out. Content
+   Forge burns paid LLM credits, so it must NOT leak in via fail-open to editors
+   whose stored config predates the key — the owner grants it per person. */
+export const FAIL_CLOSED_VIEWS = new Set(["content-forge"]);
 
 /* Actions wired in Phase 1. Every key here maps to a real, gated
    affordance in the UI — no dead toggles. */
@@ -124,6 +132,7 @@ export function defaultPermsForRole(roleKey) {
   views.pulse    = false; // real-time alerts — owner only
   views.ai       = false; // AI Brain — owner only
   views.scout    = false; // MicroSaaS radar — owner only
+  views["content-forge"] = false; // paid AI hook tool — owner enables per-person (fail-closed)
 
   /* A1 LEAN DEFAULT — gate the secondary/heavy tabs off the editable roles'
      default nav so the dashboard opens lean on the core workflow. Resources

@@ -1154,10 +1154,12 @@ export function ReelDna({ prefill }) {
   // Core send: create ONE pipeline reel from the card, owned by ownerId, and
   // migrate the card's location pins onto it (footage + news migrate inside the
   // store action). Returns the new reel id (links the card via reel_id).
-  const sendOne = (item, ownerId) => {
+  const sendOne = async (item, ownerId) => {
     // force when a stale reelId lingers (card was archived) so we mint a fresh
     // reel instead of no-opping; fresh cards (no reelId) send normally.
-    const newId = actions.sendReelDnaToPipeline(item.id, { owner: ownerId, force: !!item.reelId });
+    // sendReelDnaToPipeline is async (DB-authoritative id + collision-safe
+    // persist) — await so location-linking uses the id that actually landed.
+    const newId = await actions.sendReelDnaToPipeline(item.id, { owner: ownerId, force: !!item.reelId });
     if (newId && typeof locationActions?.linkReel === "function") {
       const locLinks = (reelDnaAssets || []).filter(
         a => a && a.reelDnaId === item.id && a.assetType === "location"
@@ -1183,13 +1185,13 @@ export function ReelDna({ prefill }) {
   // editor gets the real linked reel (so the card shows "▸ REEL-xxx" + supports
   // ↩ Back); any additional editors get an INDEPENDENT copy in their Not Started
   // (title " (FirstName)"), mirroring the multi-editor create flow.
-  const doSend = () => {
+  const doSend = async () => {
     const item = sendItem;
     if (!item) return;
     const ids = sendSel.length ? sendSel : [me?.id].filter(Boolean);
     if (!ids.length) { setNotice({ tone: "err", text: "Pick at least one editor." }); return; }
     try {
-      const newId = sendOne(item, ids[0]);
+      const newId = await sendOne(item, ids[0]);
       for (const eid of ids.slice(1)) {
         const p = (peopleList || []).find(pp => pp.id === eid) || {};
         const firstName = p.short || (p.name || "").split(" ")[0] || eid;

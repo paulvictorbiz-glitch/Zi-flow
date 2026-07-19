@@ -22,6 +22,7 @@ import React from "react";
 import { LoadingScreen } from "../components/loading-screen.jsx";
 import { ROLES, normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "../lib/shared-data.jsx";
 import { isKnownPerson, personName } from "../lib/roster.jsx";
+import { getActiveWorkspaceSlug, subscribeWorkspace } from "../lib/workspace.jsx";
 import { supabase } from "../lib/supabase-client.js";
 import { isDemoMode, setDemoMode } from "../lib/demo-sandbox.jsx";
 import { useAuth } from "../auth.jsx";
@@ -75,7 +76,7 @@ function reelToDb(reel) {
           blocker, next, downstream, grouping, note, foot,
           tone, links, status, logline, script, vo, audio, inspo, plan,
           detail, skill_tags, series, title, id,
-          blueprint_json, creative_brief } = reel;
+          blueprint_json, creative_brief, workspace_id } = reel;
   // Content Forge send-to-pipeline columns. creative_brief exists (0103);
   // blueprint_json does NOT until 0113 is hand-applied — both are `undefined`
   // for ordinary reels, so JSON serialization omits the keys and no missing-
@@ -84,7 +85,7 @@ function reelToDb(reel) {
   const out = { id, title, stage, owner, lane, state, age, due,
     fb, refs, blocker, next, downstream, grouping, note, foot,
     tone, links, status, logline, script, vo, audio, inspo, plan, detail,
-    blueprint_json, creative_brief,
+    blueprint_json, creative_brief, workspace_id,
     dup_group_id: dupGroupId ?? null,
     series: series ?? null,
     skill_tags: skill_tags ?? [],
@@ -793,6 +794,15 @@ function workflowReducer(state, action) {
     case "HYDRATE":
       return { ...state, ...action.payload, loaded: true, error: null };
 
+    /* Workspace scoping (WS): dropped BEFORE the new workspace's essential
+       hydrate so no prior-workspace reels/cards/footage linger in memory while
+       the switch is in flight. Mirrors the RESET semantics of the frozen
+       C6 store guarantee. Only touches the workspace-scoped slices; everything
+       else (gamify, monitor, reel_dna, prefs) is untouched (not scoped in v1). */
+    case "RESET_FOR_WORKSPACE":
+      return { ...state, reels: [], reviewLaneCards: [], attachedFootage: [],
+               loaded: false, error: null };
+
     case "SET_ERROR":
       return { ...state, error: action.error };
 
@@ -869,6 +879,32 @@ function workflowReducer(state, action) {
 
     case "CREATE_REEL":
       return { ...state, reels: [action.reel, ...state.reels] };
+
+    /* Reconcile the optimistic state after persistCreateReel had to re-mint the
+       id on a duplicate-key collision: rename the card everywhere it's keyed
+       (reel row, review cards by id/parentId, attached footage by reel_id, and
+       any reel_dna link) from the colliding id to the one actually inserted, so
+       follow-up FK writes and the realtime echo (which carries the final id)
+       line up instead of leaving an orphaned ghost card. */
+    case "REMAP_REEL_ID": {
+      const { from, to } = action;
+      if (!from || !to || from === to) return state;
+      return {
+        ...state,
+        reels: state.reels.map(r =>
+          r.id === from ? { ...r, id: to, displayNumber: parseInt(String(to).slice(5), 10) } : r),
+        reviewLaneCards: state.reviewLaneCards.map(c => {
+          let n = c;
+          if (c.id === from)       n = { ...n, id: to };
+          if (c.parentId === from) n = { ...n, parentId: to };
+          return n;
+        }),
+        attachedFootage: state.attachedFootage.map(f =>
+          f.reel_id === from ? { ...f, reel_id: to } : f),
+        reelDna: (state.reelDna || []).map(d =>
+          d.reelId === from ? { ...d, reelId: to } : d),
+      };
+    }
 
     case "DELETE_REEL":
       return {
@@ -1703,6 +1739,13 @@ async function persistUpdateReel(state, id, patch) {
   if ("parentId" in patch)    { dbPatch.parent_id = patch.parentId; delete dbPatch.parentId; }
   if ("dupGroupId" in patch)  { dbPatch.dup_group_id = patch.dupGroupId; delete dbPatch.dupGroupId; }
   if ("gamifyDifficulty" in patch) { dbPatch.gamify_difficulty = patch.gamifyDifficulty; delete dbPatch.gamifyDifficulty; }
+  // WS: a FULL-reel write (patch carrying workspace_id) must never null/blank
+  // the scope — coerce to the active workspace, defaulting to 'paul'. A partial
+  // patch that doesn't touch workspace_id is left alone (the DB keeps the row's
+  // existing workspace). Mirrors the persistCreateReel stamp.
+  if ("workspace_id" in dbPatch) {
+    dbPatch.workspace_id = dbPatch.workspace_id || getActiveWorkspaceSlug() || "paul";
+  }
   // Planable final-video reference (mediaPath/mediaTarget) has no reels column —
   // fold it into the existing `detail` jsonb (read-modify-write off the current
   // reel) so it persists across reloads, and strip the top-level keys so
@@ -1743,11 +1786,12 @@ async function persistUpdateReel(state, id, patch) {
   // board_order / gamify_difficulty may not be migrated yet — if PostgREST
   // rejects an unknown column, drop it and retry (the change still shows
   // locally; it just won't persist until the column is added).
-  if (error && /board_order|gamify_difficulty|blueprint_json|column|PGRST204/i.test(error.message || "")) {
+  if (error && /board_order|gamify_difficulty|blueprint_json|workspace_id|column|PGRST204/i.test(error.message || "")) {
     // blueprint_json is stripped alongside board_order/gamify_difficulty: the
     // column doesn't exist until 0113 is hand-applied, so a Content-Forge
     // re-send patch degrades to persisting script/vo/logline/creative_brief.
-    const { board_order, gamify_difficulty, blueprint_json, ...rest } = dbPatch;
+    // workspace_id is stripped the same way until 0115 is applied (WS scoping).
+    const { board_order, gamify_difficulty, blueprint_json, workspace_id, ...rest } = dbPatch;
     error = Object.keys(rest).length
       ? (await supabase.from(table).update(rest).eq("id", id)).error
       : null;
@@ -1755,20 +1799,89 @@ async function persistUpdateReel(state, id, patch) {
   if (error) throw error;
 }
 
+/* Scoped reels fetch (WS: workspace scoping). Filters public.reels to the
+   active workspace so state.reels only ever holds one workspace's cards. The
+   slug is the frozen shared client id (workspaces.slug === reels.workspace_id).
+   BOOT-SAFE: pre-0115 the reels.workspace_id column doesn't exist, so the .eq
+   clause errors — we strip-retry UNFILTERED on /workspace_id|column|42703|PGRST/
+   so the app degrades to today's behaviour (everything is implicitly 'paul')
+   instead of throwing and vanishing every card. Applying 0115 flips scoping on
+   with no code change. */
+async function fetchScopedReels(slug) {
+  let res = await supabase.from("reels").select("*").eq("workspace_id", slug);
+  if (res.error && /workspace_id|column|42703|PGRST/i.test(res.error.message || "")) {
+    res = await supabase.from("reels").select("*");
+  }
+  return res;
+}
+
+/* Authoritative next REEL-NNN id, computed from the DATABASE (not just this
+   client's in-memory reels). `reels.id` is a client-supplied text PK, so a
+   client whose local list lags the DB — realtime channel down, a stale session,
+   or a concurrent send by another teammate — would otherwise mint an id that
+   already exists and lose the card on a duplicate-key insert. Querying the live
+   max closes the systematic drift; the insert-time retry in persistCreateReel
+   covers the residual sub-second race. Falls back to the passed local reels if
+   the query fails (offline / RLS), so minting still works degraded. */
+async function mintReelIdFromDb(localReels) {
+  let maxNum = -1;
+  for (const r of (localReels || [])) {
+    const m = /^REEL-(\d+)$/.exec(r?.id || "");
+    if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+  }
+  if (!isDemoMode()) {
+    try {
+      const { data, error } = await supabase.from("reels").select("id");
+      if (!error && Array.isArray(data)) {
+        for (const row of data) {
+          const m = /^REEL-(\d+)$/.exec(row?.id || "");
+          if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+        }
+      }
+    } catch (_) { /* degrade to the local max computed above */ }
+  }
+  return "REEL-" + String(maxNum + 1).padStart(3, "0");
+}
+
+/* Persist a new reel. Returns the id it ACTUALLY inserted — which may differ
+   from reel.id if the client-minted id collided with a row this client hadn't
+   seen (realtime drift / concurrent send). On a duplicate-key (23505) error we
+   re-mint from the DB truth and retry, so a colliding send is transparently
+   healed instead of silently lost (the old behaviour: the optimistic card
+   showed, the insert threw 23505, the caller swallowed it into SET_ERROR, and
+   the card vanished on reload — invisible to everyone). Callers MUST use the
+   returned id for any follow-up FK write (footage.reel_id, content_opportunities
+   .reel_id, reel_dna.reel_id) and reconcile optimistic state via REMAP_REEL_ID. */
 async function persistCreateReel(reel) {
-  if (isDemoMode()) return;   // demo sandbox: optimistic-only, never persist
-  const row = reelToDb(reel);
-  let { error } = await supabase.from("reels").insert(row);
-  // Graceful fallback: reels.blueprint_json isn't migrated until 0113 is
-  // hand-applied. If PostgREST rejects the unknown column, strip blueprint_json
-  // and retry so script/vo/logline/creative_brief still persist (same pattern
-  // as persistUpdateReel + persistAddAttachedFootage). Applying 0113 flips this
-  // to full persistence with no code change.
-  if (error && /blueprint_json|column|PGRST204/i.test(error.message || "")) {
-    const { blueprint_json, ...rest } = row;
-    ({ error } = await supabase.from("reels").insert(rest));
+  if (isDemoMode()) return reel.id;   // demo sandbox: optimistic-only, never persist
+  // WS: stamp the workspace once at the top so reelToDb picks it up for EVERY
+  // create path (this is the universal reel-creation choke point). Never null/
+  // blank — a blank workspace would make the card show in every workspace.
+  reel = { ...reel, workspace_id: reel.workspace_id || getActiveWorkspaceSlug() || "paul" };
+  const insertWith = async (theId) => {
+    const row = reelToDb({ ...reel, id: theId, displayNumber: parseInt(String(theId).slice(5), 10) });
+    let { error } = await supabase.from("reels").insert(row);
+    // Graceful fallback: reels.blueprint_json isn't migrated until 0113 is
+    // hand-applied, and reels.workspace_id not until 0115. If PostgREST rejects
+    // an unknown column, strip it and retry so script/vo/logline/creative_brief
+    // still persist (same pattern as persistUpdateReel + persistAddAttachedFootage).
+    // Applying 0113/0115 flips this to full persistence with no code change.
+    if (error && /blueprint_json|workspace_id|column|PGRST204/i.test(error.message || "")) {
+      const { blueprint_json, workspace_id, ...rest } = row;
+      ({ error } = await supabase.from("reels").insert(rest));
+    }
+    return error;
+  };
+  let id = reel.id;
+  let error = await insertWith(id);
+  let attempts = 0;
+  while (error && /duplicate key|already exists|23505/i.test(error.message || "") && attempts < 6) {
+    attempts++;
+    id = await mintReelIdFromDb([]);   // fresh DB-authoritative id each retry
+    error = await insertWith(id);
   }
   if (error) throw error;
+  return id;
 }
 
 async function persistDeleteReel(id) {
@@ -1850,8 +1963,22 @@ async function persistUpdateReelDna(id, patch) {
   // Spreadsheet row tagging (migration 0089) — rowColor remaps; favorite is
   // same-name and passes through {...patch} untouched.
   if ("rowColor" in patch)          { dbPatch.row_color = patch.rowColor; delete dbPatch.rowColor; }
-  const { error } = await supabase.from("reel_dna").update(dbPatch).eq("id", id);
+  // `.select()` so we can tell a REAL update from a silent zero-row no-op. Under
+  // the pre-0114 RLS (auth_update_reel_dna), a non-owner could only update rows
+  // whose captured_by was their own person id — so updating an IG-DM-ingested
+  // (captured_by NULL) or owner-captured card returned NO error but touched ZERO
+  // rows, silently dropping the reel_id link on send-to-pipeline (and archive /
+  // notes / favorite). Migration 0114 opens this to any authenticated teammate;
+  // this warn makes any lingering silent RLS drop visible instead of invisible.
+  const { data, error } = await supabase.from("reel_dna").update(dbPatch).eq("id", id).select("id");
   if (error) throw error;
+  if (Array.isArray(data) && data.length === 0) {
+    console.warn(
+      `persistUpdateReelDna: update of reel_dna ${id} matched 0 rows — likely an RLS ` +
+      `restriction (apply migration 0114 to let any teammate update reel_dna). Patch:`,
+      Object.keys(dbPatch),
+    );
+  }
 }
 
 async function persistDeleteReelDna(id) {
@@ -2162,8 +2289,12 @@ function WorkflowProvider({ children }) {
            secondary table no longer blocks the app from rendering. The reducer's
            SET_* cases are surgical (touch only their slice) so these incremental
            merges never clobber the essential state set by HYDRATE. */
+        // WS: scope the reels fetch to the active workspace (frozen module
+        // singleton, never null — defaults 'paul'). fetchScopedReels strip-
+        // retries UNFILTERED pre-0115 so boot is byte-identical to today.
+        const _wsSlug = getActiveWorkspaceSlug() || "paul";
         const [reelsRes, cardsRes, tasksRes, dailyTasksRes] = await Promise.all([
-          supabase.from("reels").select("*"),
+          fetchScopedReels(_wsSlug),
           supabase.from("review_lane_cards").select("*"),
           supabase.from("tasks").select("*"),
           supabase.from("daily_tasks").select("*").order("task_date", { ascending: false }).order("created_at", { ascending: true }),
@@ -2353,6 +2484,89 @@ function WorkflowProvider({ children }) {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  /* WS: re-hydrate the ESSENTIAL slices when the active workspace changes.
+     Subscribes to the frozen workspace module singleton (subscribeWorkspace) so
+     it fires for BOTH switcher UIs (classic topbar + Solarin sol-nav) with no
+     provider-order dependency. On a real change it:
+       1. dispatches RESET_FOR_WORKSPACE FIRST — clears the prior workspace's
+          reels/reviewLaneCards/attachedFootage so no other workspace's cards
+          leak in memory while the new fetch is in flight (loaded:false shows the
+          loader), and
+       2. re-fetches the essential set (reels SCOPED to the new slug + review_
+          lane_cards + tasks + daily_tasks) and dispatches HYDRATE.
+     A per-run token + `mounted` flag gate every dispatch so a rapid double-
+     switch or an unmount can't apply a stale workspace's rows. The initial slug
+     is seeded from the module (same value the mount hydrate already fetched), so
+     the first notification for the unchanged slug is a no-op — no double fetch.
+     review_lane_cards/tasks/daily_tasks aren't workspace-columned (children
+     inherit via reel_id) so they refetch whole — harmless and keeps the
+     essential set internally consistent. */
+  React.useEffect(() => {
+    let mounted = true;
+    let runToken = 0;
+    let current = getActiveWorkspaceSlug() || "paul";
+
+    const rehydrate = (slug) => {
+      const myToken = ++runToken;
+      // Clear prior-workspace state BEFORE the fetch (honours the cancelled flag
+      // implicitly — a superseded run's later HYDRATE is dropped by the token).
+      dispatch({ type: "RESET_FOR_WORKSPACE" });
+      (async () => {
+        try {
+          const [reelsRes, cardsRes, tasksRes, dailyTasksRes] = await Promise.all([
+            fetchScopedReels(slug),
+            supabase.from("review_lane_cards").select("*"),
+            supabase.from("tasks").select("*"),
+            supabase.from("daily_tasks").select("*").order("task_date", { ascending: false }).order("created_at", { ascending: true }),
+          ]);
+          if (!mounted || myToken !== runToken) return;
+          if (reelsRes.error) throw reelsRes.error;
+          if (cardsRes.error) throw cardsRes.error;
+          if (tasksRes.error) throw tasksRes.error;
+          if (dailyTasksRes.error) throw dailyTasksRes.error;
+          dispatch({ type: "HYDRATE", payload: {
+            reels: (reelsRes.data || []).map(reelFromDb),
+            reviewLaneCards: (cardsRes.data || []).map(cardFromDb),
+            tasks: (tasksRes.data || []).map(taskFromDb),
+            dailyTasks: (dailyTasksRes.data || []).map(dailyTaskFromDb),
+          }});
+
+          /* WS: RESET_FOR_WORKSPACE (:803) also clears attachedFootage, but the
+             essential HYDRATE above omits it — so without this the attached-
+             footage badges/panels stay blank after a switch until a full reload
+             (the mount-time secondary loader at the boot effect only runs once).
+             Re-fetch it here, windowed + dispatched EXACTLY like that mount-time
+             secondary load (SET_ATTACHED_FOOTAGE, raw rows, RECENT_WINDOW). Own
+             try/catch degrade-to-warn so a footage fetch error can't fail the
+             whole switch; token/mounted gate a stale run's dispatch. */
+          try {
+            const footageRes = await supabase
+              .from("attached_footage_items").select("*")
+              .order("created_at", { ascending: false })
+              .limit(RECENT_WINDOW);
+            if (!mounted || myToken !== runToken) return;
+            if (footageRes.error) throw footageRes.error;
+            dispatch({ type: "SET_ATTACHED_FOOTAGE", items: footageRes.data || [] });
+          } catch (e) {
+            console.warn("attached_footage_items re-hydrate failed:", e?.message || e);
+          }
+        } catch (e) {
+          if (!mounted || myToken !== runToken) return;
+          console.error("Workspace re-hydrate failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+        }
+      })();
+    };
+
+    const unsub = subscribeWorkspace((slug) => {
+      const next = slug || "paul";
+      if (next === current) return;   // no change → no-op (avoids mount double-fetch)
+      current = next;
+      rehydrate(next);
+    });
+    return () => { mounted = false; unsub(); };
   }, []);
 
   /* WS3 role gate — is the signed-in person the owner? FAIL-OPEN: when the
@@ -2583,6 +2797,14 @@ function WorkflowProvider({ children }) {
             if (payload.eventType === "DELETE") {
               dispatch({ type: "DELETE_REEL_BY_ID", id: payload.old?.id });
             } else if (payload.new) {
+              // WS: client-side filter — drop upserts for a DIFFERENT workspace
+              // so another client's reel in another workspace never leaks into
+              // this view. Only filters when workspace_id is DEFINED (pre-0115
+              // rows carry no workspace_id → treated as the current 'paul' scope,
+              // byte-identical to today). Postgres realtime can't server-filter a
+              // client-supplied text PK table by an arbitrary column here.
+              const ws = payload.new.workspace_id;
+              if (ws != null && ws !== (getActiveWorkspaceSlug() || "paul")) return;
               dispatch({ type: "UPSERT_REEL", reel: reelFromDb(payload.new) });
             }
           })
@@ -3258,7 +3480,14 @@ function WorkflowProvider({ children }) {
         // ── Persist (sequential, FK order enforced) ──────────────────────────
         (async () => {
           try {
-            await persistCreateReel(clone);
+            const finalId = await persistCreateReel(clone);
+            // Duplicate-key re-mint: reconcile the optimistic clone + repoint the
+            // clone's footage + linked DNA card at the id that actually landed.
+            if (finalId !== newId) {
+              dispatch({ type: "REMAP_REEL_ID", from: newId, to: finalId });
+              for (const item of footageClones) item.reel_id = finalId;
+              if (dnaClone) dnaClone.reelId = finalId;
+            }
             for (const item of footageClones) await persistAddAttachedFootage(item);
             if (dnaClone) {
               await persistCreateReelDna(dnaClone);
@@ -3358,9 +3587,11 @@ function WorkflowProvider({ children }) {
            strip+retry until 0113 is hand-applied.
 
          Best-effort: internal persist errors are caught (surfaced via SET_ERROR)
-         and the returned Promise still RESOLVES to reel.id — Team A calls this
-         exactly once per Send inside its own try/catch, then does its own
-         content_opportunities.update. */
+         and the returned Promise RESOLVES to the id that was ACTUALLY inserted
+         (persistCreateReel may re-mint it on a duplicate-key collision — the
+         caller MUST use this resolved id for its own content_opportunities
+         .reel_id write, not the id it minted up-front). Team A calls this exactly
+         once per Send inside its own try/catch. */
       createReelWithFootage: (reel, footageItems = []) => {
         const cur = stateRef.current;
         const exists = (cur.reels || []).some(r => r.id === reel.id);
@@ -3405,14 +3636,23 @@ function WorkflowProvider({ children }) {
         dispatch({ type: "CREATE_REEL", reel });
         dedupedFootage.forEach(item => dispatch({ type: "ADD_ATTACHED_FOOTAGE", item }));
         return (async () => {
+          let finalId = reel.id;
           try {
-            await persistCreateReel(reel);
+            finalId = await persistCreateReel(reel);
+            // persistCreateReel may have re-minted the id on a duplicate-key
+            // collision. Reconcile the optimistic card + point the (not-yet-
+            // persisted) footage rows at the id that actually landed, so the
+            // FK-ordered footage inserts and the caller's returned id all agree.
+            if (finalId !== reel.id) {
+              dispatch({ type: "REMAP_REEL_ID", from: reel.id, to: finalId });
+              for (const item of dedupedFootage) item.reel_id = finalId;
+            }
             for (const item of dedupedFootage) await persistAddAttachedFootage(item);
           } catch (e) {
             console.error("createReelWithFootage persist failed:", e);
             dispatch({ type: "SET_ERROR", error: e.message || String(e) });
           }
-          return reel.id;
+          return finalId;
         })();
       },
 
@@ -3470,7 +3710,13 @@ function WorkflowProvider({ children }) {
         (async () => {
           try {
             for (const g of groups) {
-              await persistCreateReel(g.reel);
+              const finalId = await persistCreateReel(g.reel);
+              // Duplicate-key re-mint: reconcile this editor's optimistic copy +
+              // repoint its footage before the FK-ordered footage inserts.
+              if (finalId !== g.reel.id) {
+                dispatch({ type: "REMAP_REEL_ID", from: g.reel.id, to: finalId });
+                for (const item of g.footage) item.reel_id = finalId;
+              }
               for (const item of g.footage) await persistAddAttachedFootage(item);
             }
           } catch (e) {
@@ -4011,8 +4257,11 @@ function WorkflowProvider({ children }) {
          row from the card's genes (mapped 1:1 to the editor's fields via
          reelDnaToPipelineFields), link it back via reel_id, and flip the card to
          in_progress. Returns the new reel id. Idempotent: a card already linked
-         to a reel returns that id without creating a duplicate. */
-      sendReelDnaToPipeline: (id, { owner, force } = {}) => {
+         to a reel returns that id without creating a duplicate. Async: awaits a
+         DB-authoritative id mint + the reel/link persist before resolving to the
+         id that actually landed (may differ from the first mint if a collision
+         forced a re-mint), then migrates assets in the background. */
+      sendReelDnaToPipeline: async (id, { owner, force } = {}) => {
         const cur = stateRef.current;
         const card = (cur.reelDna || []).find(d => d.id === id);
         if (!card) throw new Error("Reel not found");
@@ -4021,7 +4270,9 @@ function WorkflowProvider({ children }) {
         if (card.reelId && !force) return card.reelId;
 
         const who = owner || card.capturedBy || "paul";
-        const newId = nextReelId(cur.reels);
+        // DB-authoritative id so a stale local reels list can't collide (see
+        // mintReelIdFromDb); persistCreateReel re-mints again if it still races.
+        const newId = await mintReelIdFromDb(cur.reels);
         const fields = reelDnaToPipelineFields(card);
         const reel = {
           id: newId,
@@ -4053,16 +4304,27 @@ function WorkflowProvider({ children }) {
         // raced when fired via wrap() concurrently).
         dispatch({ type: "CREATE_REEL", reel });
         dispatch({ type: "UPDATE_REEL_DNA", id, patch: { reelId: newId, status: "in_progress" } });
-        (async () => {
-          try {
-            await persistCreateReel(reel);
-            await persistUpdateReelDna(id, { reelId: newId, status: "in_progress" });
-          } catch (e) {
-            console.error("sendReelDnaToPipeline persist failed:", e);
-            dispatch({ type: "SET_ERROR", error: e.message || String(e) });
-            return;   // reel/card persist failed → don't migrate assets onto a row that may not exist
-          }
 
+        let finalId = newId;
+        try {
+          finalId = await persistCreateReel(reel);
+          // Collision re-mint: reconcile the optimistic card + the reel_dna link
+          // so the FK'd reel_dna.reel_id below (and every asset keyed on the id)
+          // points at the row that actually landed.
+          if (finalId !== newId) {
+            dispatch({ type: "REMAP_REEL_ID", from: newId, to: finalId });
+            dispatch({ type: "UPDATE_REEL_DNA", id, patch: { reelId: finalId } });
+          }
+          await persistUpdateReelDna(id, { reelId: finalId, status: "in_progress" });
+        } catch (e) {
+          console.error("sendReelDnaToPipeline persist failed:", e);
+          dispatch({ type: "SET_ERROR", error: e.message || String(e) });
+          return finalId;   // reel/card persist failed → skip asset migration; still return an id
+        }
+
+        // Asset migration runs in the background (keyed on finalId) so the caller
+        // gets the linked id back promptly for location-linking + multi-editor copies.
+        (async () => {
           /* Migrate the card's attached assets into the native pipeline tables so
              the new reel arrives in the pipeline with its footage/locations/news
              already wired up (mirrors seedAssetsFromPipeline, but the OTHER
@@ -4077,7 +4339,7 @@ function WorkflowProvider({ children }) {
 
           // 1) Footage → COPY the source attached_footage_items row onto the new
           //    reel with a fresh text id, skipping any footage_file_id already
-          //    attached to newId. Reuse the optimistic-dispatch + persist path.
+          //    attached to finalId. Reuse the optimistic-dispatch + persist path.
           try {
             const footageById = new Map();
             for (const f of (fresh.attachedFootage || [])) {
@@ -4085,7 +4347,7 @@ function WorkflowProvider({ children }) {
             }
             const alreadyOnNew = new Set(
               (fresh.attachedFootage || [])
-                .filter(f => f && f.reel_id === newId && f.footage_file_id != null)
+                .filter(f => f && f.reel_id === finalId && f.footage_file_id != null)
                 .map(f => String(f.footage_file_id))
             );
             for (const link of links) {
@@ -4096,7 +4358,7 @@ function WorkflowProvider({ children }) {
               const clone = {
                 ...src,
                 id: `footage-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                reel_id: newId,
+                reel_id: finalId,
               };
               if (src.footage_file_id != null) alreadyOnNew.add(String(src.footage_file_id));
               dispatch({ type: "ADD_ATTACHED_FOOTAGE", item: clone });
@@ -4114,14 +4376,14 @@ function WorkflowProvider({ children }) {
           //    which is why locations appeared not to migrate. Don't double-write.
 
           // 3) News → upsert monitor_event_links (event_id, target_type:'reel',
-          //    target_id:newId). The full unique index (0065) makes it idempotent.
+          //    target_id:finalId). The full unique index (0065) makes it idempotent.
           try {
             const newsRows = links
               .filter(link => link.assetType === "news")
               .map(link => ({
                 event_id: link.assetId,
                 target_type: "reel",
-                target_id: newId,
+                target_id: finalId,
                 label: link.label ?? null,
               }));
             if (newsRows.length) {
@@ -4136,7 +4398,7 @@ function WorkflowProvider({ children }) {
 
           // 4) Thumbnails → SKIP (display-only via the pipeline detail boxes, 6b).
         })();
-        return newId;
+        return finalId;
       },
 
       /* Mint a brand-new pipeline reel into an editor's Not-Started box and
@@ -4148,7 +4410,8 @@ function WorkflowProvider({ children }) {
       mintPipelineReel: async ({ title, owner, detail } = {}) => {
         const cur = stateRef.current;
         const who = owner || "paul";
-        const newId = nextReelId(cur.reels);
+        // DB-authoritative mint so a stale local list can't collide.
+        const newId = await mintReelIdFromDb(cur.reels);
         const reel = {
           id: newId,
           displayNumber: parseInt(newId.slice(5), 10),
@@ -4164,12 +4427,15 @@ function WorkflowProvider({ children }) {
           detail: { ...(detail || {}) },
         };
         // Optimistic first, then AWAIT the insert so the row exists before the
-        // caller writes any follow-up column keyed on newId (e.g. creative_brief,
-        // which the reelToDb mapper doesn't carry) — otherwise that UPDATE would
-        // race the INSERT and silently match zero rows.
+        // caller writes any follow-up column keyed on the returned id (e.g.
+        // creative_brief, which the reelToDb mapper doesn't carry) — otherwise
+        // that UPDATE would race the INSERT and silently match zero rows.
         dispatch({ type: "CREATE_REEL", reel });
-        await persistCreateReel(reel);
-        return newId;
+        const finalId = await persistCreateReel(reel);
+        // A duplicate-key re-mint changed the id — reconcile the optimistic card
+        // so the caller's follow-up writes and the realtime echo agree.
+        if (finalId !== newId) dispatch({ type: "REMAP_REEL_ID", from: newId, to: finalId });
+        return finalId;
       },
 
       /* ----- Pulse Monitor events -----

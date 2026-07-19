@@ -18,7 +18,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase-client.js";
-import { useIsOwner } from "../lib/permissions.jsx";
+import { useIsOwner, usePermissions } from "../lib/permissions.jsx";
 import { useWorkflow, nextReelId } from "../store/store.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
@@ -625,8 +625,12 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
       // reel-before-footage, dedup by (reel_id, footage_file_id)). Best-effort —
       // the optimistic dispatch lands the card + footage even if the persist
       // throws, and content_opportunities.update below still records the link.
+      // The helper RESOLVES to the id that actually landed — which differs from
+      // our up-front newId if the client-minted id collided and was re-minted, so
+      // we must key content_opportunities.reel_id off the RESOLVED id, not newId.
+      let finalId = newId;
       try {
-        await actions.createReelWithFootage(reel, footageItems);
+        finalId = (await actions.createReelWithFootage(reel, footageItems)) || newId;
       } catch (e) {
         console.error("createReelWithFootage failed:", e);
       }
@@ -635,12 +639,12 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
       // content_opportunities (per contract).
       await supabase.from("content_opportunities").update({
         selected_hook_version: selectedHook,
-        reel_id: newId,
+        reel_id: finalId,
         status: "sent",
         sent_to_pipeline_at: new Date().toISOString(),
       }).eq("id", opportunity.id);
       const ownerName = editors.find(e => e.id === who)?.name || who;
-      showToast(`Created ${newId} in ${ownerName}'s Not Started.`);
+      showToast(`Created ${finalId} in ${ownerName}'s Not Started.`);
       onSent?.();
       onClose();
     } catch (e) {
@@ -1062,6 +1066,13 @@ function ForgeModal({ opportunity, tier, model, reels, onClose, onSent, showToas
    ========================================================================= */
 export function ContentForge() {
   const isOwner = useIsOwner();
+  const { canView } = usePermissions();
+  // Access = owner OR a teammate the owner granted the scoped "content-forge"
+  // permission. Gates data-wiring + the page body; the paid backend actions are
+  // themselves only Bearer-JWT-gated (no verifyOwner), so a granted teammate can
+  // fully use the tool. Cost governance stays owner-only via the Monitor budget
+  // kill-switch (a separate surface a non-owner can't reach).
+  const cfAccess = isOwner || canView("content-forge");
 
   const [opps, setOpps] = useState([]);
   const [reels, setReels] = useState([]);
@@ -1431,16 +1442,16 @@ export function ContentForge() {
     }
   }, []);
 
-  // Owner-only: skip all data wiring entirely for non-owners.
+  // Access-gated: skip all data wiring entirely for anyone without Content Forge.
   useEffect(() => {
-    if (!isOwner) return;
+    if (!cfAccess) return;
     loadOpps();
     loadReels();
     loadClipCount();
     loadBudgetState();
     loadFolders();
     loadLibraryFolders();
-  }, [isOwner, loadOpps, loadReels, loadClipCount, loadBudgetState, loadFolders, loadLibraryFolders]);
+  }, [cfAccess, loadOpps, loadReels, loadClipCount, loadBudgetState, loadFolders, loadLibraryFolders]);
 
   // Debounced reload — now that loadOpps pages the whole table, a live discovery
   // run (dozens of realtime inserts) or rapid focus flaps would each fire a full
@@ -1456,7 +1467,7 @@ export function ContentForge() {
   // pure polling). Falls back gracefully: if the channel never connects, the
   // tab-focus poll below still refreshes the list.
   useEffect(() => {
-    if (!isOwner) return;
+    if (!cfAccess) return;
     const ch = supabase
       .channel("content-forge-opps")
       .on(
@@ -1466,11 +1477,11 @@ export function ContentForge() {
       )
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [isOwner, debouncedLoadOpps]);
+  }, [cfAccess, debouncedLoadOpps]);
 
   // Refresh on tab focus / visibility (catches rows written while away).
   useEffect(() => {
-    if (!isOwner) return;
+    if (!cfAccess) return;
     const onFocus = () => { if (document.visibilityState === "visible") debouncedLoadOpps(); };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -1478,7 +1489,7 @@ export function ContentForge() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [isOwner, debouncedLoadOpps]);
+  }, [cfAccess, debouncedLoadOpps]);
 
   const countryOptions = useMemo(() => {
     const set = new Set();
@@ -1862,12 +1873,12 @@ export function ContentForge() {
     }
   }, []);
 
-  // On mount (owner), check whether a backfill is already in flight — so a reload mid-run
+  // On mount (with access), check whether a backfill is already in flight — so a reload mid-run
   // still shows the "Backfilling…" state instead of offering to start a duplicate.
   useEffect(() => {
-    if (!isOwner) return;
+    if (!cfAccess) return;
     pollBackfill();
-  }, [isOwner, pollBackfill]);
+  }, [cfAccess, pollBackfill]);
 
   // Kick off (or resume watching) the one-off entity backfill over existing opportunities.
   const handleBackfillEntities = useCallback(async () => {
@@ -2023,10 +2034,10 @@ export function ContentForge() {
     }
   }, [tier, discoverTarget, maxOpps, model, clipCount, opps.length, cfBudget, loadOpps, loadBudgetState, showToast]);
 
-  if (!isOwner) {
+  if (!cfAccess) {
     return (
       <div className="cf-root">
-        <div className="cf-empty">Content Forge is owner only.</div>
+        <div className="cf-empty">You don't have access to Content Forge. Ask Paul to enable it for you.</div>
       </div>
     );
   }

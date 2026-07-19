@@ -1633,6 +1633,9 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
           <DPill onClick={() => window.location.assign("/space")} title="Switch to the 3D Space view — alternate owner homepage">
             ▦ 3D Space
           </DPill>
+          <DPill onClick={() => window.location.assign("/workflow-blueprint.html")} title="Open the App Workflow Blueprint — the canonical end-to-end operating model">
+            ⧉ App Workflow Blueprint
+          </DPill>
           {me && (
             <DPill onClick={() => downloadCapcutTracker(me)} title="Download CapCut tracker zip — unzip and run install.bat">
               ↓ CapCut tracker setup
