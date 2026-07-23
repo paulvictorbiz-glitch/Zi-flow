@@ -15,7 +15,8 @@ dist/
 obsidian-vault/
 
 # FootageBrain runtime artifacts that landed loose in this folder — never commit
-data/
+/data/
+!src/data/
 footage_brain.db
 footage_brain.db-shm
 footage_brain.db-wal
