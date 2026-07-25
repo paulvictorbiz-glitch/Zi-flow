@@ -65,6 +65,7 @@ export const ACTION_CAPS = [
   { key: "archiveReel",     label: "Archive reels",           hint: "Archive in a card's ⋯ menu" },
   { key: "approveReview",   label: "Approve / send back",     hint: "Review-queue Accept & Send-back" },
   { key: "attachFootage",   label: "Attach footage",          hint: "Search & add clips on a reel" },
+  { key: "uploadFinalVideo", label: "Upload final video",     hint: "Attach the finished MP4 directly to a reel's card (the ⬆ Final video button)" },
   { key: "changeCardColor", label: "Change card color",       hint: "The 5-swatch colour picker on a reel" },
   { key: "editLogline",     label: "Edit logline",            hint: "The logline field on a reel's detail page" },
   { key: "editScript",      label: "Edit beat plan",          hint: "The beat-by-beat plan / shot list textarea" },

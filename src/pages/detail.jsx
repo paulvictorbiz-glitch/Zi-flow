@@ -622,6 +622,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   const { peopleList } = useRoster();
   const canAttach = can("attachFootage");
   const canColor = can("changeCardColor");
+  const canUploadFinal = can("uploadFinalVideo");
   /* Owner-configurable per-field edit gates. Editors get these flipped off in
      the permissions catalog, so the logline / beat plan / voiceover render as
      read-only blocks and the footage ✕ Remove button is hidden for them. */
@@ -1135,19 +1136,28 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
      click to open if already set. */
   const reelStateUrl = stored?.attachUrl || "";
 
-  /* ── OWNER-ONLY "Final video" MP4 upload ─────────────────────────────────
-     ADDITIVE to the attachUrl text field above. On file pick we ask the
-     capacity-aware target endpoint (?action=planable-upload-target) where to
-     upload. supabase → upload to the PRIVATE "reel-videos" bucket (same idiom
-     as locations.jsx) and persist mediaPath/mediaTarget (the source of
-     truth — the push action mints a fresh signed url at push time). hetzner →
-     the documented near-capacity fallback seam is owner-gated/not-yet-wired,
-     so we surface the server message and stop rather than fail silently.
+  /* ── "Final video" MP4 upload ────────────────────────────────────────────
+     Gated by the uploadFinalVideo action cap (canUploadFinal) — owner is
+     always allowed (can() short-circuits true for "owner"); editors get it
+     by default too since the cap is fail-open, so they can attach their own
+     reel state without routing through the owner. ADDITIVE to the attachUrl
+     text field above. On file pick we ask the capacity-aware target endpoint
+     (?action=planable-upload-target) where to upload. supabase → upload to
+     the PRIVATE "reel-videos" bucket (same idiom as locations.jsx) and
+     persist mediaPath/mediaTarget (the source of truth — the push action
+     mints a fresh signed url at push time). hetzner → the documented
+     near-capacity fallback seam is owner-gated/not-yet-wired, so we surface
+     the server message and stop rather than fail silently.
      Consumes ONLY the frozen contract names — reel.mediaPath is the single
      end-to-end field: detail.jsx writes it, export-view.jsx resolveRow reads it,
      and the planable-push server reads it (suggest.js item.mediaPath). Local
      vars are named to MATCH that contract (not attachPath/attachTarget) so the
-     reel field name is unambiguous across the two UI files. */
+     reel field name is unambiguous across the two UI files.
+
+     Re-upload (replace): the previous mediaPath is captured before the new
+     upload starts and deleted from storage once the new one is persisted, so
+     repeated uploads to the same card don't accumulate orphaned copies in
+     the private bucket. */
   const mediaPath   = stored?.mediaPath || "";
   const mediaTarget = stored?.mediaTarget || "";
   // No-copy chat recording: a pointer { channel, fileId, name, private } that
@@ -1157,8 +1167,20 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   // null | 'uploading' | 'done' | 'error'  (mirrors the locations 'uploading' pattern)
   const [videoUploadState, setVideoUploadState] = useState(null);
   const [videoUploadMsg, setVideoUploadMsg] = useState("");
-  // Aceternity file-upload popup for the owner-only "Final video" drop/browse.
+  // Aceternity file-upload popup for the "Final video" drop/browse.
   const [finalVideoModalOpen, setFinalVideoModalOpen] = useState(false);
+  // mediaPath at the moment the modal was opened — lets the auto-close effect
+  // below tell "a new upload just landed" apart from "a video was already
+  // attached when we opened the modal to replace it" (mediaPath is truthy in
+  // both cases, so a plain truthiness check would slam the modal shut
+  // instantly on a replace).
+  const modalOpenPathRef = useRef("");
+  const openFinalVideoModal = () => {
+    modalOpenPathRef.current = mediaPath;
+    setVideoUploadState(null);
+    setVideoUploadMsg("");
+    setFinalVideoModalOpen(true);
+  };
   // "Pick from Chat" — attach an editor's screen recording from Rocket.Chat.
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
   // Signed URL for the hosted "Current reel state" recording, for the inline
@@ -1169,6 +1191,9 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
   // dropzone (which hands us File objects directly, no synthetic event).
   const uploadFinalVideoFile = async (file) => {
     if (!file) return;
+    // Capture the currently-attached file (if any) BEFORE we overwrite
+    // mediaPath, so a replace can clean it up after the new one lands.
+    const previousPath = stored?.mediaPath || "";
     setVideoUploadState("uploading");
     setVideoUploadMsg("");
     try {
@@ -1233,6 +1258,13 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
       });
       setVideoUploadState("done");
       setVideoUploadMsg("");
+
+      // 4) clean up the file this one replaced — best-effort, the new
+      //    mediaPath is already the source of truth so a failure here just
+      //    leaves a harmless orphan rather than losing data.
+      if (previousPath && previousPath !== uploadData.path) {
+        supabase.storage.from(bucket).remove([previousPath]).catch(() => {});
+      }
     } catch (err) {
       setVideoUploadState("error");
       setVideoUploadMsg(err?.message || "Upload failed.");
@@ -1247,9 +1279,12 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
     if (old) supabase.storage.from("reel-videos").remove([old]).catch(() => {});
   };
 
-  // Auto-close the upload popup once the file has landed (mediaPath persisted).
+  // Auto-close the upload popup once a NEW file has landed — compared
+  // against modalOpenPathRef (the mediaPath when the modal opened), not bare
+  // truthiness, so opening the modal to REPLACE an already-attached video
+  // doesn't instantly self-close before the user picks a file.
   useEffect(() => {
-    if (finalVideoModalOpen && mediaPath) {
+    if (finalVideoModalOpen && mediaPath && mediaPath !== modalOpenPathRef.current) {
       const t = setTimeout(() => setFinalVideoModalOpen(false), 650);
       return () => clearTimeout(t);
     }
@@ -1497,14 +1532,19 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           <DPill onClick={() => setChatPickerOpen(true)} title="Attach a screen recording from a chat channel">
             ↙ Pick from Chat
           </DPill>
-          {/* OWNER-ONLY final-video MP4 upload — ADDITIVE; consumes the frozen
-              ?action=planable-upload-target contract + the "reel-videos" bucket. */}
-          {isOwner && (
+          {/* Final-video MP4 upload — gated by canUploadFinal (owner + any role
+              granted the uploadFinalVideo cap, editors by default). ADDITIVE;
+              consumes the frozen ?action=planable-upload-target contract +
+              the "reel-videos" bucket. */}
+          {canUploadFinal && (
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
               {mediaPath ? (
                 <>
                   <DPill title={mediaPath} style={{ cursor: "default" }}>
                     ✓ Final video attached{mediaTarget ? ` (${mediaTarget})` : ""}
+                  </DPill>
+                  <DPill onClick={openFinalVideoModal} title="Upload a new final video (replaces the current one)">
+                    {videoUploadState === "uploading" ? "Uploading…" : "⬆ Replace"}
                   </DPill>
                   <DPill onClick={removeFinalVideo} title="Clear the attached final video">
                     ✕ Remove
@@ -1512,8 +1552,8 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
                 </>
               ) : (
                 <DPill
-                  onClick={() => setFinalVideoModalOpen(true)}
-                  title="Upload the final MP4 for this reel (owner only)"
+                  onClick={openFinalVideoModal}
+                  title="Upload the final MP4 for this reel"
                 >
                   {videoUploadState === "uploading" ? "Uploading…" : "⬆ Final video"}
                 </DPill>
@@ -1537,11 +1577,12 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
         </div>
       </div>
 
-      {/* Aceternity file-upload popup — owner-only "Final video" drop/browse.
-          Rendered inside #root (NOT portaled) so it keeps the active theme.
-          Upload runs on drop/pick via uploadFinalVideoFile; the popup
-          auto-closes once mediaPath is persisted (see effect above). */}
-      {isOwner && finalVideoModalOpen && (
+      {/* Aceternity file-upload popup — "Final video" drop/browse, gated by
+          canUploadFinal (see above). Rendered inside #root (NOT portaled) so
+          it keeps the active theme. Upload runs on drop/pick via
+          uploadFinalVideoFile; the popup auto-closes once a NEW mediaPath is
+          persisted (see effect above). */}
+      {canUploadFinal && finalVideoModalOpen && (
         <div className="m-backdrop" onClick={() => setFinalVideoModalOpen(false)}>
           <div
             className="m-shell"
@@ -1550,7 +1591,7 @@ function ReelDetail({ reel, onBack, onLearnSkill, openCompare = false, onCompare
           >
             <div className="m-head">
               <div>
-                <div className="m-eyebrow">Owner</div>
+                <div className="m-eyebrow">Reel</div>
                 <div className="m-title">Attach final video</div>
                 <div className="m-sub">Drop the finished MP4 for {current.title || current.id}, or click to browse.</div>
               </div>
