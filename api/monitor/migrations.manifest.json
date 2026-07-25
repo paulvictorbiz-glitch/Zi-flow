@@ -1,5 +1,5 @@
 {
-  "generated": "2026-07-23T12:52:35.614Z",
+  "generated": "2026-07-23T18:35:24.462Z",
   "migrations": [
     {
       "version": "0001_init.sql",
