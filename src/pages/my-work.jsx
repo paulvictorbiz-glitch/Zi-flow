@@ -35,6 +35,30 @@ import OwnerSkillOverlay from "../components/OwnerSkillOverlay.jsx";
 import { maxXpForSkills } from "../lib/gamify-data.jsx";
 import "../components/gamify.css";
 
+/* Group the review queue into one section per SUBMITTING EDITOR — the columns
+   Paul and Leroy accept / reject from. Shared by both review dashboards, which
+   carried byte-identical copies of this.
+
+   Keyed on `prevOwner || owner`, not `owner`. prev_owner is stamped with the
+   editor at the moment the reel entered review, so it survives the case where
+   `owner` legitimately stops being the editor: dropping a card onto the
+   pipeline's shared "review" lane reassigns owner to the canonical reviewer,
+   which would otherwise file every such reel under Leroy's own name. */
+function useReviewGroups(inReview, peopleById) {
+  return useMemo(() => {
+    const map = {};
+    inReview.forEach(r => {
+      const key = r.prevOwner || r.owner || "__unknown";
+      (map[key] = map[key] || []).push(r);
+    });
+    return Object.entries(map).map(([editorId, cards]) => ({
+      editorId,
+      submitter: peopleById[editorId] || null,
+      cards,
+    }));
+  }, [inReview, peopleById]);
+}
+
 /* Build the revision history array, folding the older single-field
    shape into one entry so display code only handles one schema. */
 function getRevisionHistory(detail) {
@@ -846,7 +870,10 @@ function VariantWork({ me, onOpen }) {
   const { reels, tasks } = useWorkflow();
   const { person } = useAuth();
   const { peopleById } = useRoster();
-  const mine = reels.filter(r => r.owner === me && !r.archivedAt);
+  // Bucket by `lane || owner` to match the Pipeline board and SkilledWork
+  // exactly — filtering on `owner` alone hid reels assigned to this editor's
+  // lane without an owner-sync, so this board disagreed with his Pipeline lane.
+  const mine = reels.filter(r => (r.lane || r.owner) === me && !r.archivedAt);
   const myTasks = tasks.filter(t => t.to === me);
   const now = useNow();
   const whoLabel = peopleById[me]?.short || "Variant editor";
@@ -1595,18 +1622,7 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
   /* Review queue grouped by submitting editor — drives the by-editor columns
      (Task C). Each editor gets a column of their in-review reels to accept /
      reject / comment on. */
-  const reviewGroups = useMemo(() => {
-    const map = {};
-    inReview.forEach(r => {
-      const key = r.owner || "__unknown";
-      (map[key] = map[key] || []).push(r);
-    });
-    return Object.entries(map).map(([ownerId, cards]) => ({
-      ownerId,
-      submitter: peopleById[ownerId] || null,
-      cards,
-    }));
-  }, [inReview, peopleById]);
+  const reviewGroups = useReviewGroups(inReview, peopleById);
 
   const attentionCount = inReview.length;
 
@@ -1670,8 +1686,8 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
             </div>
           ) : (
             <div className="rq-columns">
-              {reviewGroups.map(({ ownerId, submitter, cards }) => (
-                <div className="rq-col" key={ownerId}>
+              {reviewGroups.map(({ editorId, submitter, cards }) => (
+                <div className="rq-col" key={editorId}>
                   <div className="rq-col-head">
                     {submitter && (
                       <span className={"avatar-chip " + (submitter.role || "")} style={{ fontSize: 13 }}>
@@ -1679,7 +1695,7 @@ function OwnerDashboard({ me, onOpen, onNavigate, onSetPerson }) {
                       </span>
                     )}
                     <span style={{ fontSize: 12, color: "var(--fg)", fontFamily: "var(--f-mono)" }}>
-                      {submitter?.short || submitter?.name || ownerId}
+                      {submitter?.short || submitter?.name || editorId}
                     </span>
                     {submitter?.role && (
                       <span className="mono dim" style={{ fontSize: 10 }}>· {submitter.role}</span>
@@ -1729,19 +1745,8 @@ function ReviewQueueWork({ me, onOpen }) {
   const isOwner = useIsOwner();
   const viewerPersonId = person?.id || "paul";
 
-  // Group cards by the editor who owns (submitted) them
-  const groups = useMemo(() => {
-    const map = {};
-    inReview.forEach(r => {
-      const key = r.owner || "__unknown";
-      (map[key] = map[key] || []).push(r);
-    });
-    return Object.entries(map).map(([ownerId, cards]) => ({
-      ownerId,
-      submitter: peopleById[ownerId] || null,
-      cards,
-    }));
-  }, [inReview, peopleById]);
+  // Group cards by the editor who submitted them
+  const groups = useReviewGroups(inReview, peopleById);
 
   return (
     <div>
@@ -1776,8 +1781,8 @@ function ReviewQueueWork({ me, onOpen }) {
             Review queue is clear.
           </div>
         )}
-        {groups.map(({ ownerId, submitter, cards }) => (
-          <div key={ownerId}>
+        {groups.map(({ editorId, submitter, cards }) => (
+          <div key={editorId}>
             {/* Submitter section header */}
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
@@ -1790,7 +1795,7 @@ function ReviewQueueWork({ me, onOpen }) {
                 </span>
               )}
               <span style={{ fontSize: 12, color: "var(--fg)", fontFamily: "var(--f-mono)" }}>
-                {submitter?.short || submitter?.name || ownerId}
+                {submitter?.short || submitter?.name || editorId}
               </span>
               {submitter?.role && (
                 <span className="mono dim" style={{ fontSize: 10 }}>· {submitter.role}</span>

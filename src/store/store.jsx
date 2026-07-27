@@ -20,7 +20,7 @@
 
 import React from "react";
 import { LoadingScreen } from "../components/loading-screen.jsx";
-import { ROLES, normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "../lib/shared-data.jsx";
+import { normalizeStage, STAGE_ROLE, stageOwnerPersonId } from "../lib/shared-data.jsx";
 import { isKnownPerson, personName } from "../lib/roster.jsx";
 import { getActiveWorkspaceSlug, subscribeWorkspace } from "../lib/workspace.jsx";
 import { supabase } from "../lib/supabase-client.js";
@@ -787,6 +787,56 @@ function appendComment(detail, entry) {
   return [...existing, entry];
 }
 
+/* ---------- Stage-move assignment resolution ----------
+   A reel carries TWO assignment columns: `owner` (drives attribution — the
+   review-queue grouping, send-back routing, VariantWork) and `lane` (drives
+   which board row it renders in). They are meant to stay equal, and when they
+   drifted apart a card could vanish from the editor working on it and be
+   re-attributed to whoever the stale owner happened to be. */
+
+/* Who the team currently believes is working on this reel. Boards render by
+   `lane || owner`, so a lane naming a real person outranks a stale owner. Also
+   what prev_owner must record on entry to review — stamping the stale owner is
+   what routed a send-back to the wrong person. */
+function visibleOwner(reel) {
+  if (reel.lane && reel.lane !== "review" && isKnownPerson(reel.lane)) return reel.lane;
+  return reel.owner;
+}
+
+/* Single source of truth for "who owns this reel, and which board row does it
+   render in, after this move". THREE call sites must agree exactly — the
+   MOVE_STAGE reducer (optimistic state), persistMoveStage (the DB write), and
+   the moveStage action creator (the audit comment). When they disagreed, the
+   row diverged from the UI and the history log named the wrong person.
+
+   Rules, in order:
+     · Explicit lane === "review"  → the shared reviewer pseudo-lane; assign to
+       the canonical reviewer.
+     · Explicit lane === a person  → a deliberate drop into someone else's row;
+       that's a reassignment.
+     · No explicit lane (My Work / list view never pass one) → if the lane names
+       a real person who isn't the current owner, the row is in the split state:
+       adopt the lane as owner rather than yanking the card into the owner's row
+       and stripping it from the editor who was working on it.
+     · Otherwise → re-pin lane to owner, clearing a stale lane (e.g. one left by
+       an old board drag, or pointing at a deleted person) so the card can't
+       strand itself in a row that no longer exists.
+
+   Returns only the fields that should change, so callers can spread it. */
+function resolveMoveTarget(reel, lane) {
+  if (lane !== undefined) {
+    if (lane === "review") {
+      const stagePerson = stageOwnerPersonId("review");
+      return stagePerson ? { lane, owner: stagePerson } : { lane };
+    }
+    if (isKnownPerson(lane) && lane !== reel.owner) return { lane, owner: lane };
+    return { lane };
+  }
+  const seen = visibleOwner(reel);
+  if (seen && seen !== reel.owner) return { owner: seen };   // heal
+  return { lane: reel.owner };
+}
+
 /* ---------- Reducer (pure, identical semantics to before) ---------- */
 function workflowReducer(state, action) {
   switch (action.type) {
@@ -814,8 +864,11 @@ function workflowReducer(state, action) {
         const next = { ...r, stage: action.stage };
         if (stageChanged) next.stageEnteredAt = stamp;
         if (action.scheduledPostDate !== undefined) next.scheduledPostDate = action.scheduledPostDate;
+        /* Record the editor who submitted, so the review queue can group under
+           them and a send-back can route home. visibleOwner (not r.owner) —
+           on a split row the stale owner is the wrong person. */
         if (action.stage === "review" && r.stage !== "review") {
-          next.prevOwner = r.owner;
+          next.prevOwner = visibleOwner(r);
         }
 
         /* Owner/lane only changes when the user explicitly drops into a
@@ -826,20 +879,14 @@ function workflowReducer(state, action) {
            the canonical reviewer.
 
            A stage change with NO explicit lane (list-view / my-work,
-           which never pass one) must re-pin the card to its owner's lane.
-           The pipeline buckets by `lane || owner`, so a stale lane left
-           over from an earlier board placement would otherwise strand the
-           card in the wrong row even though its owner is correct. Shadow
-           review-lane cards (parentId) keep their fixed lane. */
-        if (action.lane !== undefined) next.lane = action.lane;
-        else if (!r.parentId) next.lane = next.owner;
-
-        if (action.lane !== undefined && action.lane !== "review" &&
-            isKnownPerson(action.lane) && action.lane !== r.owner) {
-          next.owner = action.lane;
-        } else if (action.lane === "review") {
-          const stagePerson = stageOwnerPersonId("review");
-          if (stagePerson) next.owner = stagePerson;
+           which never pass one) reconciles owner and lane — see
+           resolveMoveTarget for the full rule set. Shadow review-lane
+           cards (parentId) keep their fixed lane, so only an explicit
+           drop moves them. */
+        if (action.lane !== undefined) {
+          Object.assign(next, resolveMoveTarget(r, action.lane));
+        } else if (!r.parentId) {
+          Object.assign(next, resolveMoveTarget(r, undefined));
         }
 
         /* On a real stage change, append the prebuilt system
@@ -1619,13 +1666,15 @@ function workflowReducer(state, action) {
     }
 
     case "SEND_BACK": {
-      const editor = ROLES.skilled?.person;
       const stamp = action.stageEnteredAt || new Date().toISOString();
       return {
         ...state,
         reels: state.reels.map(r => {
           if (r.id !== action.id) return r;
-          const target = r.prevOwner || editor || r.owner;
+          /* Home is whoever submitted it. No canonical-editor fallback —
+             that silently handed orphaned send-backs to Judy; leaving the
+             reel with its current owner is the honest failure mode. */
+          const target = r.prevOwner || visibleOwner(r);
           const note = (action.note || "").trim();
           const history = appendRevisionEntry(r.detail, {
             action: "sent_back", ts: stamp, by: action.by || null, note,
@@ -1688,24 +1737,23 @@ async function persistMoveStage(state, id, { lane, stage, systemComment, schedul
   const stageChanged = reel.stage !== stage;
   const patch = { stage };
 
-  // Explicit lane (board drag) persists as-is; a no-lane stage change
-  // (list-view / my-work) re-pins lane to the current owner so the pipeline
-  // doesn't strand the card in a stale lane. Mirrors the reducer above.
-  if (lane !== undefined) patch.lane = lane;
-  else if (!isCard) patch.lane = reel.owner;
+  // Owner/lane reconciliation — MUST match the MOVE_STAGE reducer exactly, or
+  // the persisted row diverges from the optimistic UI. Both go through
+  // resolveMoveTarget. Shadow review-lane cards only move on an explicit drop
+  // and never carry an owner.
+  if (lane !== undefined) {
+    const target = resolveMoveTarget(reel, lane);
+    if (target.lane !== undefined) patch.lane = target.lane;
+    if (!isCard && target.owner !== undefined) patch.owner = target.owner;
+  } else if (!isCard) {
+    const target = resolveMoveTarget(reel, undefined);
+    if (target.lane !== undefined) patch.lane = target.lane;
+    if (target.owner !== undefined) patch.owner = target.owner;
+  }
   if (!isCard && scheduledPostDate !== undefined) patch.scheduled_post_date = scheduledPostDate ?? null;
 
-  if (!isCard) {
-    if (lane !== undefined && lane !== "review" && isKnownPerson(lane) && lane !== reel.owner) {
-      patch.owner = lane;
-    } else if (lane === "review") {
-      const stagePerson = stageOwnerPersonId("review");
-      if (stagePerson) patch.owner = stagePerson;
-    }
-  }
-
   if (stage === "review" && reel.stage !== "review" && !isCard) {
-    patch.prev_owner = reel.owner;
+    patch.prev_owner = visibleOwner(reel);   // matches the reducer
   }
   if (!isCard && stageChanged) {
     patch.stage_entered_at = new Date().toISOString();
@@ -3287,22 +3335,24 @@ function WorkflowProvider({ children }) {
             error: "Reel is locked to its editor — reassign from Not Started, or ask the owner." });
           return;
         }
+        /* Resolve the post-move owner through the SAME helper the reducer and
+           the DB write use, so the audit trail can't name someone the move
+           didn't actually assign it to. (It used to fall back to reel.owner,
+           which on a split row logged "assigned to Paul V" for a move the
+           editor made on their own card.) */
+        const moveTarget = reel && !isCard ? resolveMoveTarget(reel, lane) : null;
+        const movedOwner = moveTarget?.owner ?? reel?.owner;
         let systemComment = null;
         if (reel && !isCard && reel.stage !== stage) {
-          const explicit = lane !== undefined && lane !== "review" && isKnownPerson(lane) && lane !== reel.owner;
-          const reviewLane = lane === "review";
-          const targetOwner = explicit ? lane :
-            reviewLane ? (stageOwnerPersonId("review") || reel.owner) :
-            reel.owner;
           const txt = "Stage: " + (reel.stage || "—") + " → " + stage +
-            (targetOwner ? " · assigned to " + personName(targetOwner) : "");
+            (movedOwner ? " · assigned to " + personName(movedOwner) : "");
           systemComment = buildSystemComment(txt);
         }
         wrap(
           { type: "MOVE_STAGE", id, lane, stage, scheduledPostDate, systemComment },
           (s) => persistMoveStage(s, id, { lane, stage, scheduledPostDate, systemComment }));
         if (stage === "in_progress") {
-          const assignee = (lane && isKnownPerson(lane)) ? lane : reel?.owner;
+          const assignee = movedOwner ?? reel?.owner;
           supabase.auth.getSession().then(({ data: { session } }) => {
             const token = session?.access_token;
             if (!token) return;
@@ -3370,6 +3420,13 @@ function WorkflowProvider({ children }) {
           ...src,
           id: newId,
           title: (src.title || "Reel") + nameSuffix,
+          // BOTH owner and lane must move to the target editor. Setting only
+          // `lane` left the clone with a split identity (boards render by
+          // `lane || owner` so the editor saw it, but every attribution path —
+          // review-queue grouping, send-back routing, VariantWork — read the
+          // SOURCE's owner). The first stage move then re-pinned the lane back
+          // to that stale owner and the card vanished from the editor's board.
+          owner: targetPersonId || src.owner,
           lane:  targetPersonId || src.lane,
           stage: targetPersonId ? "not_started" : src.stage,
           detail: clonedDetail,
@@ -3756,8 +3813,7 @@ function WorkflowProvider({ children }) {
          feedback when the reel comes back for re-review. */
       sendBack: (id, opts = {}) => {
         const r = stateRef.current.reels.find(x => x.id === id);
-        const editor = ROLES.skilled?.person;
-        const target = r?.prevOwner || editor || r?.owner;
+        const target = r ? (r.prevOwner || visibleOwner(r)) : null;   // matches the reducer
         const stamp = new Date().toISOString();
         const note  = (opts.note || "").trim();
         const by    = opts.by || null;
