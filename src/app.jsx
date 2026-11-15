@@ -151,6 +151,7 @@ import { ThemeProvider } from "./lib/theme.jsx";
 import { PreferencesModal } from "./components/PreferencesModal.jsx";
 import { extractUrl } from "./lib/reel-dna.jsx";
 import { getInboxSummary } from "./lib/social-client.js";
+import { searchReels, reelSearchLabel } from "./lib/reel-search.js";
 import { MobileProvider } from "./lib/use-is-mobile.js";
 /* Bottom tab bar + "More" sheet — the ONLY mobile nav (C-NAV-REACH). The
    component gates itself on useIsMobile().isMobile (frozen C-HOOK contract,
@@ -291,6 +292,7 @@ function AppShell() {
   const [capturePrefill, setCapturePrefill] = useState(null);   // Reel DNA share-target/bookmarklet
   const [autoCompare, setAutoCompare]     = useState(false);   // ?compare=1 deep-link
   const searchRef                       = useRef(null);
+  const solSearchRef                    = useRef(null);   // Solarin-nav search (mirrors the topbar one)
 
   /* B3 PREFETCH — owner-only warming of the code-split heavy tabs. When the
      owner enables the "Prefetch heavy tabs" pref, warm every lazy chunk on idle
@@ -352,6 +354,20 @@ function AppShell() {
     return () => document.removeEventListener("mousedown", handler);
   }, [wsMenu]);
 
+  /* Dismiss the global-search results on outside click (mirrors the two menus
+     above; the search box is dual-mounted in the classic topbar + Solarin nav,
+     so both refs count as "inside"). */
+  useEffect(() => {
+    if (!globalSearch) return;
+    const handler = (e) => {
+      const inClassic = searchRef.current && searchRef.current.contains(e.target);
+      const inSolarin = solSearchRef.current && solSearchRef.current.contains(e.target);
+      if (!inClassic && !inSolarin) setGlobalSearch("");
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [globalSearch]);
+
   /* Inbox unread badge — count of unreplied comments/DMs across
      connected social platforms. Cheap, synchronous read from the
      local social-client cache; refreshed when the nav opens. */
@@ -400,18 +416,12 @@ function AppShell() {
   }, [reels, me]);
 
   /* Global search — filter reels by title, number, logline, or the shot
-     plan (so a clip filename in the script finds its reel too). */
-  const searchResults = useMemo(() => {
-    const q = globalSearch.trim().toLowerCase();
-    if (!q) return [];
-    return reels
-      .filter(r => !r.archivedAt &&
-        ((r.title || "").toLowerCase().includes(q) ||
-         String(r.display_number || r.id || "").toLowerCase().includes(q) ||
-         (r.logline || "").toLowerCase().includes(q) ||
-         (r.script || "").toLowerCase().includes(q)))
-      .slice(0, 8);
-  }, [globalSearch, reels]);
+     plan (so a clip filename in the script finds its reel too). Matcher is
+     shared with the mobile "More" sheet — see lib/reel-search.js. */
+  const searchResults = useMemo(
+    () => searchReels(reels, globalSearch),
+    [globalSearch, reels]
+  );
 
   // Persist active tab and pipeline sub-mode across reloads
   useEffect(() => { if (view !== "detail") localStorage.setItem("wb_view", view); }, [view]);
@@ -799,6 +809,60 @@ function AppShell() {
     </div>
   );
 
+  /* Global-search results dropdown. Extracted for the same reason as
+     roleMenuPanel above — it renders in BOTH the classic topbar AND the
+     Solarin top nav; while it lived only in the topbar, Solarin's
+     `.topbar { display: none }` made the search box look dead (state updated,
+     results painted into a hidden subtree). Inline styles use theme CSS vars,
+     which Solarin remaps by value, so no new CSS is needed. */
+  const searchPanel = () => (
+    searchResults.length > 0 && (
+      <ul style={{
+        position: "absolute",
+        top: "calc(100% + 4px)",
+        /* Right-anchored: both mounts sit at the top-RIGHT of the screen, so a
+           row wider than the input (Solarin's is only 130px) has to grow
+           leftward or it runs off the viewport. */
+        left: "auto",
+        right: 0,
+        minWidth: 260,
+        margin: 0,
+        padding: "4px 0",
+        listStyle: "none",
+        background: "var(--bg-elev)",
+        border: "1px solid var(--line-hard)",
+        borderRadius: 4,
+        zIndex: 9999,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
+      }}>
+        {searchResults.map(reel => (
+          <li key={reel.id}
+              onClick={() => { setGlobalSearch(""); openReel(reel); }}
+              style={{
+                padding: "7px 12px",
+                cursor: "pointer",
+                fontSize: 12,
+                fontFamily: "var(--f-mono)",
+                color: "var(--fg)",
+                borderBottom: "1px solid var(--line)",
+                display: "flex",
+                gap: 8,
+                alignItems: "baseline",
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--bg-3)"}
+              onMouseLeave={e => e.currentTarget.style.background = ""}>
+            <span style={{ color: "var(--fg-dim)", flexShrink: 0 }}>
+              {reelSearchLabel(reel)}
+            </span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {reel.title || "(untitled)"}
+            </span>
+          </li>
+        ))}
+      </ul>
+    )
+  );
+
   return (
     <div className="app">
       {/* Solarin redesign shell — fixed per-tab background + centered category nav.
@@ -923,8 +987,17 @@ function AppShell() {
                 })}
               </div>
               <div className="sol-nav-right">
-                <input className="sol-search" placeholder="Search reels…"
-                  value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} />
+                {/* Global reel search — Solarin mirror of the classic-topbar one
+                    (dual-mounted, shared state + searchPanel, C5). The panel is
+                    anchored to its own relative wrapper, and right-aligned so a
+                    wider result row grows leftward out of the nav's edge. */}
+                <div ref={solSearchRef} style={{ position: "relative" }}>
+                  <input className="sol-search" placeholder="Search reels…"
+                    value={globalSearch}
+                    onChange={e => setGlobalSearch(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Escape") setGlobalSearch(""); }} />
+                  {searchPanel()}
+                </div>
                 {/* Workspace switcher — Solarin mirror of the classic-topbar one
                     above (dual-mounted, shared state/handlers, C5). */}
                 <div ref={solWsRef} className="role-switch sol-role-switch"
@@ -1059,47 +1132,7 @@ function AppShell() {
                 outline: "none",
               }}
             />
-            {searchResults.length > 0 && (
-              <ul style={{
-                position: "absolute",
-                top: "calc(100% + 4px)",
-                left: 0,
-                right: 0,
-                margin: 0,
-                padding: "4px 0",
-                listStyle: "none",
-                background: "var(--bg-elev)",
-                border: "1px solid var(--line-hard)",
-                borderRadius: 4,
-                zIndex: 9999,
-                boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
-              }}>
-                {searchResults.map(reel => (
-                  <li key={reel.id}
-                      onClick={() => { setGlobalSearch(""); openReel(reel); }}
-                      style={{
-                        padding: "7px 12px",
-                        cursor: "pointer",
-                        fontSize: 12,
-                        fontFamily: "var(--f-mono)",
-                        color: "var(--fg)",
-                        borderBottom: "1px solid var(--line)",
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "baseline",
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.background = "var(--bg-3)"}
-                      onMouseLeave={e => e.currentTarget.style.background = ""}>
-                    <span style={{ color: "var(--fg-dim)", flexShrink: 0 }}>
-                      {reel.display_number ? "#" + reel.display_number : reel.id}
-                    </span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {reel.title || "(untitled)"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            {searchPanel()}
           </div>
         </div>
       </div>

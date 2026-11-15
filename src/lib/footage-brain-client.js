@@ -51,17 +51,18 @@ export async function searchFootageBrain(query, options = {}) {
     n_results,
   };
 
-  // Scope the search to a workspace/client (frozen C3 contract: dedicated
-  // top-level client_id field, resolution order explicit options.client_id ->
-  // getActiveWorkspaceSlug() -> omitted if empty). This is a SEPARATE field
+  // Scope the search to a workspace. The wire field is `workspace_id` — the
+  // ONE byte-identical slug used everywhere (workspaces.slug === reels.
+  // workspace_id === backend VideoFile.workspace_id). This is a SEPARATE field
   // from project_tag (which labels country/trip like "Norway") — never
-  // overloaded together. workspaces.slug === reels.workspace_id === backend
-  // client_id is one byte-identical lowercase-kebab slug everywhere (C2).
+  // overloaded together. Resolution order: explicit options.workspace_id (or
+  // legacy options.client_id) -> getActiveWorkspaceSlug() -> omitted if empty.
   // getActiveWorkspaceSlug() is synchronous and never null (defaults 'paul'),
   // so the fallback always resolves; explicit callers may still pass "" to
   // force a global (unscoped) search.
-  const client_id = options.client_id !== undefined ? options.client_id : getActiveWorkspaceSlug();
-  if (client_id) body.client_id = client_id;
+  const wsOverride = options.workspace_id !== undefined ? options.workspace_id : options.client_id;
+  const workspace_id = wsOverride !== undefined ? wsOverride : getActiveWorkspaceSlug();
+  if (workspace_id) body.workspace_id = workspace_id;
 
   // Add optional filters
   if (options.project_tag) body.project_tag = options.project_tag;
@@ -228,11 +229,17 @@ export async function searchByFolder(absFolder, options = {}) {
  *   }>
  * }>}
  */
-export async function getFootageBrainCoverageTree() {
+export async function getFootageBrainCoverageTree(options = {}) {
   try {
+    // Scope to the active workspace so Coverage only shows this client's roots.
+    // Resolution mirrors searchFootageBrain: explicit override -> active slug ->
+    // omitted (global). Backend filters ScanRoots by workspace_id.
+    const wsOverride = options.workspace_id !== undefined ? options.workspace_id : options.client_id;
+    const workspace_id = wsOverride !== undefined ? wsOverride : getActiveWorkspaceSlug();
+    const qs = workspace_id ? `?workspace_id=${encodeURIComponent(workspace_id)}` : "";
     // No Content-Type on GET — avoids a CORS preflight some networks block,
     // which would make the Coverage panel fail to load cross-origin.
-    const response = await fetch(`${FOOTAGE_BRAIN_BASE}/dashboard/coverage-tree`, {
+    const response = await fetch(`${FOOTAGE_BRAIN_BASE}/dashboard/coverage-tree${qs}`, {
       method: "GET",
     });
     if (!response.ok) {
@@ -412,6 +419,127 @@ export async function tagFootage(footageFileId, thumbnailUrl, filename) {
   }
   const data = await res.json();
   return data.tags;
+}
+
+// ── Scan-root / ingest admin (workspace-scoped) ──────────────────────────────
+
+/** List all scan roots (sources). Each carries workspace_id + drive_folder_url. */
+export async function listScanRoots() {
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sources`, { method: "GET" });
+  if (!r.ok) throw new Error(`List sources failed: ${r.statusText}`);
+  return r.json();
+}
+
+/**
+ * Register a new scan root, stamped to the active workspace by default.
+ * @param {{path:string,label?:string,recursive?:boolean,drive_folder_url?:string,workspace_id?:string}} body
+ */
+export async function addScanRoot(body) {
+  const workspace_id = body.workspace_id !== undefined ? body.workspace_id : getActiveWorkspaceSlug();
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sources`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ recursive: true, ...body, workspace_id }),
+  });
+  if (!r.ok) {
+    let msg = `Add source failed (${r.status})`;
+    try { const j = await r.json(); if (j.detail) msg = j.detail; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/** Trigger a scan of one root. */
+export async function scanScanRoot(rootId) {
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sources/${rootId}/scan`, { method: "POST" });
+  if (!r.ok) throw new Error(`Scan failed: ${r.statusText}`);
+  return r.json();
+}
+
+/**
+ * Bulk-reassign an existing root's files to a workspace. Pass dry_run:true to
+ * preview affected_files without committing.
+ */
+export async function reassignScanRootWorkspace(rootId, workspaceId, dryRun = false) {
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sources/${rootId}/reassign-workspace`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId, dry_run: dryRun }),
+  });
+  if (!r.ok) {
+    let msg = `Reassign failed (${r.status})`;
+    try { const j = await r.json(); if (j.detail) msg = j.detail; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/** Kick off a Drive-folder → footage filename match. Returns { job_id, status }. */
+export async function linkDrive(rootId, driveFolderUrl) {
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sources/${rootId}/link-drive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(driveFolderUrl ? { drive_folder_url: driveFolderUrl } : {}),
+  });
+  if (!r.ok && r.status !== 202) {
+    let msg = `Link Drive failed (${r.status})`;
+    try { const j = await r.json(); if (j.detail) msg = j.detail; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/** Poll a Drive-link job (defaults to the latest job for the root). */
+export async function linkDriveStatus(rootId, jobId) {
+  const qs = jobId ? `?job_id=${encodeURIComponent(jobId)}` : "";
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sources/${rootId}/link-drive/status${qs}`, { method: "GET" });
+  if (!r.ok) throw new Error(`Link-drive status failed: ${r.statusText}`);
+  return r.json();
+}
+
+/**
+ * Confirm operator-resolved ambiguous matches in one batch.
+ * @param {string} rootId
+ * @param {Array<{video_file_id:string,drive_file_id:string}>} resolutions
+ */
+export async function confirmDriveMatches(rootId, resolutions) {
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sources/${rootId}/link-drive/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resolutions }),
+  });
+  if (!r.ok) {
+    let msg = `Confirm matches failed (${r.status})`;
+    try { const j = await r.json(); if (j.detail) msg = j.detail; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+// ── Local → box sync (publish processed footage to the team's search index) ──
+// These target the LOCAL backend (run from the locally-served app during
+// ingest); the local backend then pushes the light data to the box. Only files
+// that carry a Drive URL are published (playback on the box is Drive-only).
+
+/** Publish a root's Drive-linked footage to the box. Returns { job_id, status }. */
+export async function syncRootToBox(rootId) {
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sync/push?root_id=${encodeURIComponent(rootId)}`, {
+    method: "POST",
+  });
+  if (!r.ok && r.status !== 202) {
+    let msg = `Sync failed (${r.status})`;
+    try { const j = await r.json(); if (j.detail) msg = j.detail; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/** Poll a sync job (defaults to the latest for the root). */
+export async function syncStatus(rootId, jobId) {
+  const jq = jobId ? `&job_id=${encodeURIComponent(jobId)}` : "";
+  const r = await fetch(`${FOOTAGE_BRAIN_BASE}/sync/push/status?root_id=${encodeURIComponent(rootId)}${jq}`, { method: "GET" });
+  if (!r.ok) throw new Error(`Sync status failed: ${r.statusText}`);
+  return r.json();
 }
 
 export function formatSearchResultForAttachment(result) {

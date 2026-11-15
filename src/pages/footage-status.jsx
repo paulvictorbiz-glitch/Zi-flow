@@ -5,9 +5,15 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase-client.js";
 import { getFootageBrainCoverageTree } from "../lib/footage-brain-client.js";
+import { getActiveWorkspaceSlug, subscribeWorkspace } from "../lib/workspace.jsx";
+import { ScanRootAdminPanel } from "../components/footage-scan-root-admin.jsx";
 import { DPill } from "../components/components.jsx";
 
 const STATUS_COLOR = { queued: "var(--fg-dim)", running: "var(--c-amber)", done: "var(--c-green)", error: "var(--c-red)" };
+
+// Same graceful-degradation signature store.jsx's fetchScopedReels uses: if the
+// workspace_id column doesn't exist yet (pre-migration-0116), retry unfiltered.
+const WS_MISSING_RE = /workspace_id|column|42703|PGRST/i;
 
 function JobBar({ job }) {
   const pct = job.file_count ? Math.round((job.files_done / job.file_count) * 100) : 0;
@@ -32,6 +38,9 @@ export function FootageStatus() {
   const [selected, setSelected] = useState(new Set());
   const [jobs, setJobs] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  // Re-run all fetches when the top-bar workspace switches.
+  const [activeSlug, setActiveSlug] = useState(getActiveWorkspaceSlug());
+  useEffect(() => subscribeWorkspace(() => setActiveSlug(getActiveWorkspaceSlug())), []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -39,16 +48,34 @@ export function FootageStatus() {
       .then(d => { setData(d); setError(null); })
       .catch(e => setError(e.message || String(e)))
       .finally(() => setLoading(false));
-  }, []);
+  }, [activeSlug]);
 
   useEffect(() => { load(); }, [load]);
 
+  const loadJobs = useCallback(async () => {
+    const slug = getActiveWorkspaceSlug();
+    let { data: rows, error: err } = await supabase
+      .from("processing_jobs").select("*").eq("workspace_id", slug)
+      .order("created_at", { ascending: false }).limit(100);
+    if (err && WS_MISSING_RE.test(err.message || "")) {
+      // Pre-migration-0116: column absent → fall back to unscoped (global).
+      ({ data: rows } = await supabase
+        .from("processing_jobs").select("*")
+        .order("created_at", { ascending: false }).limit(100));
+    }
+    if (rows) setJobs(rows);
+  }, [activeSlug]);
+
   useEffect(() => {
-    supabase.from("processing_jobs").select("*").order("created_at", { ascending: false }).limit(100)
-      .then(({ data: rows }) => { if (rows) setJobs(rows); });
+    loadJobs();
 
     const ch = supabase.channel("processing_jobs_changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "processing_jobs" }, payload => {
+        // Client-side workspace filter (Postgres realtime can't reliably
+        // server-filter here). Degrades safely pre-0116: workspace_id is
+        // undefined → falls through (matches today's global behaviour).
+        const row = payload.new || payload.old;
+        if (row?.workspace_id && row.workspace_id !== getActiveWorkspaceSlug()) return;
         setJobs(prev => {
           if (payload.eventType === "INSERT") return [payload.new, ...prev];
           if (payload.eventType === "UPDATE") return prev.map(j => j.id === payload.new.id ? payload.new : j);
@@ -59,7 +86,7 @@ export function FootageStatus() {
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [load]);
+  }, [load, loadJobs]);
 
   useEffect(() => {
     const hasRunning = jobs.some(j => j.status === "running");
@@ -100,11 +127,16 @@ export function FootageStatus() {
   const processSelected = async () => {
     if (!selected.size || submitting) return;
     setSubmitting(true);
+    const slug = getActiveWorkspaceSlug();
     const rows = [...selected].map(path => {
       const folder = unprocessed.find(f => f.rel_path === path);
-      return { folder_path: path, root_id: folder?.root_id, file_count: folder?.file_count, status: "queued" };
+      return { folder_path: path, root_id: folder?.root_id, file_count: folder?.file_count, status: "queued", workspace_id: slug };
     });
-    await supabase.from("processing_jobs").insert(rows);
+    let { error: insErr } = await supabase.from("processing_jobs").insert(rows);
+    if (insErr && WS_MISSING_RE.test(insErr.message || "")) {
+      // Pre-migration-0116: strip the column and retry unscoped.
+      await supabase.from("processing_jobs").insert(rows.map(({ workspace_id, ...r }) => r));
+    }
     setSelected(new Set());
     setSubmitting(false);
   };
@@ -114,7 +146,7 @@ export function FootageStatus() {
   return (
     <div>
       <div style={{ display: "flex", gap: 6, padding: "10px 22px 0", borderBottom: "1px solid var(--line-hard)" }}>
-        {[["unprocessed", `Unprocessed (${unprocessed.length})`], ["needs_drive", `Needs Drive Link (${needsDrive.length})`], ["completed", `Completed (${completed.length})`]].map(([k, label]) => (
+        {[["unprocessed", `Unprocessed (${unprocessed.length})`], ["needs_drive", `Needs Drive Link (${needsDrive.length})`], ["completed", `Completed (${completed.length})`], ["admin", "Ingest Admin"]].map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
             style={{ background: "none", border: "none", borderBottom: tab === k ? "2px solid var(--c-cyan)" : "2px solid transparent",
                      color: tab === k ? "var(--c-cyan)" : "var(--fg-dim)", fontFamily: "var(--f-mono)", fontSize: 12,
@@ -180,6 +212,10 @@ export function FootageStatus() {
             </div>
           ))}
         </div>
+      )}
+
+      {tab === "admin" && (
+        <ScanRootAdminPanel activeSlug={activeSlug} onChanged={load} />
       )}
 
       {!loading && !error && data && tab === "completed" && (

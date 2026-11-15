@@ -23,8 +23,14 @@ import { useWorkflow, nextReelId } from "../store/store.jsx";
 import { useRoster } from "../lib/roster.jsx";
 import { isBlockedSync, recordUsage } from "../lib/free-llm-gates.js";
 import { footageFolderLabel } from "../lib/footage-brain-client.js";
+import { getActiveWorkspaceSlug, subscribeWorkspace } from "../lib/workspace.jsx";
 import { ForgeAnalytics } from "./forge-analytics.jsx";
 import "../content-forge.css";
+
+// Graceful-degradation signature (mirrors store.jsx fetchScopedReels): if the
+// workspace_id column doesn't exist yet (pre-migration-0116), a scoped query
+// fails with one of these — the caller retries UNFILTERED so nothing vanishes.
+const WS_MISSING_RE = /workspace_id|column|42703|PGRST/i;
 
 /* Virality tiers, best → worst. Order drives the filter pills + sort. */
 const TIERS = ["S", "A", "B", "C"];
@@ -1179,14 +1185,29 @@ export function ContentForge() {
     // could never surface a tagged clip beyond that window). Accumulate newest-first
     // until a short page signals the end.
     const PAGE = 1000;
+    const slug = getActiveWorkspaceSlug();
     try {
       const all = [];
+      // Decide scoped-vs-unscoped ONCE (on the first page) so a mid-loop
+      // fallback can't produce a mixed result set.
+      let scoped = true;
       for (let off = 0; ; off += PAGE) {
-        const { data, error: err } = await supabase
+        let q = supabase
           .from("content_opportunities")
           .select("*")
           .order("created_at", { ascending: false })
           .range(off, off + PAGE - 1);
+        if (scoped) q = q.eq("workspace_id", slug);
+        let { data, error: err } = await q;
+        if (err && off === 0 && scoped && WS_MISSING_RE.test(err.message || "")) {
+          // Pre-0116: column absent → restart unscoped (global) for this call.
+          scoped = false;
+          ({ data, error: err } = await supabase
+            .from("content_opportunities")
+            .select("*")
+            .order("created_at", { ascending: false })
+            .range(off, off + PAGE - 1));
+        }
         if (err) throw err;
         const rows = data || [];
         all.push(...rows);
@@ -1211,13 +1232,24 @@ export function ContentForge() {
     setCoverageLoading(true);
     try {
       const PAGE = 1000;
+      const slug = getActiveWorkspaceSlug();
       const stats = new Map();          // folder -> {folder, clips, discovered, files:Set, opps, hooks}
       const clipFolder = new Map();     // clip id -> folder (for opportunity attribution)
+      let scoped = true;
       for (let off = 0; ; off += PAGE) {
-        const { data, error: err } = await supabase
+        let q = supabase
           .from("transcript_clips")
           .select("id, folder, last_discovered_at, footage_file_id")
           .range(off, off + PAGE - 1);
+        if (scoped) q = q.eq("workspace_id", slug);
+        let { data, error: err } = await q;
+        if (err && off === 0 && scoped && WS_MISSING_RE.test(err.message || "")) {
+          scoped = false;
+          ({ data, error: err } = await supabase
+            .from("transcript_clips")
+            .select("id, folder, last_discovered_at, footage_file_id")
+            .range(off, off + PAGE - 1));
+        }
         if (err) throw err;
         const rows = data || [];
         for (const c of rows) {
@@ -1307,7 +1339,7 @@ export function ContentForge() {
         }
       }
       showToast(`Mining "${f}"…`);
-      const body = { tier, folder: f, clips_per_pass: clipsPerPass }; // normal only_new pass
+      const body = { tier, folder: f, clips_per_pass: clipsPerPass, workspace_id: getActiveWorkspaceSlug() }; // normal only_new pass
       if (model) body.model = model;
       if (maxOpps > 0) body.max_opportunities = maxOpps;
       const r = await fetch("/api/ai/suggest?action=forge-discover", {
@@ -1397,10 +1429,18 @@ export function ContentForge() {
   // count avoids pulling rows; null stays "unknown" so the UI never claims 0 by
   // mistake on a transient error.
   const loadClipCount = useCallback(async () => {
+    const slug = getActiveWorkspaceSlug();
     try {
-      const { count, error: err } = await supabase
+      let { count, error: err } = await supabase
         .from("transcript_clips")
-        .select("id", { count: "exact", head: true });
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", slug);
+      if (err && WS_MISSING_RE.test(err.message || "")) {
+        // Pre-0116: column absent → unscoped head count.
+        ({ count, error: err } = await supabase
+          .from("transcript_clips")
+          .select("id", { count: "exact", head: true }));
+      }
       if (err) throw err;
       setClipCount(typeof count === "number" ? count : 0);
     } catch {
@@ -1473,7 +1513,14 @@ export function ContentForge() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "content_opportunities" },
-        () => debouncedLoadOpps()
+        (payload) => {
+          // Client-side workspace filter (Postgres realtime can't reliably
+          // server-filter here). Degrades safely pre-0116: workspace_id is
+          // undefined → falls through (matches today's global behaviour).
+          const row = payload.new || payload.old;
+          if (row?.workspace_id && row.workspace_id !== getActiveWorkspaceSlug()) return;
+          debouncedLoadOpps();
+        }
       )
       .subscribe();
     return () => { supabase.removeChannel(ch); };
@@ -1490,6 +1537,17 @@ export function ContentForge() {
       document.removeEventListener("visibilitychange", onFocus);
     };
   }, [cfAccess, debouncedLoadOpps]);
+
+  // Re-scope every read when the top-bar workspace switches. loadOpps/
+  // loadClipCount read getActiveWorkspaceSlug() live, so just re-invoking them
+  // repopulates for the new client; the coverage panel reloads lazily on open.
+  useEffect(() => {
+    if (!cfAccess) return;
+    return subscribeWorkspace(() => {
+      loadOpps();
+      loadClipCount();
+    });
+  }, [cfAccess, loadOpps, loadClipCount]);
 
   const countryOptions = useMemo(() => {
     const set = new Set();
@@ -1769,7 +1827,7 @@ export function ContentForge() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ workspace_id: getActiveWorkspaceSlug() }),
       });
       if (!r.ok && r.status !== 202) {
         const b = await r.json().catch(() => ({}));
@@ -1784,7 +1842,8 @@ export function ContentForge() {
         await loadClipCount();
         const { count } = await supabase
           .from("transcript_clips")
-          .select("id", { count: "exact", head: true });
+          .select("id", { count: "exact", head: true })
+          .eq("workspace_id", getActiveWorkspaceSlug());
         const n = typeof count === "number" ? count : last;
         setProgress(`Ingesting… ${n} clip${n === 1 ? "" : "s"} so far`);
         if (n > last && i >= 1) { last = n; }
@@ -1825,7 +1884,7 @@ export function ContentForge() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ source: "library", folder: libFolder || undefined }),
+        body: JSON.stringify({ source: "library", folder: libFolder || undefined, workspace_id: getActiveWorkspaceSlug() }),
       });
       if (!r.ok && r.status !== 202) {
         const b = await r.json().catch(() => ({}));
@@ -1839,7 +1898,8 @@ export function ContentForge() {
         await new Promise((res) => setTimeout(res, FORGE_POLL_MS));
         const { count } = await supabase
           .from("transcript_clips")
-          .select("id", { count: "exact", head: true });
+          .select("id", { count: "exact", head: true })
+          .eq("workspace_id", getActiveWorkspaceSlug());
         const n = typeof count === "number" ? count : last;
         setProgress(`Mining ${libFolder || "library"}… ${n} clip${n === 1 ? "" : "s"} in store`);
         last = Math.max(last, n);
@@ -1931,6 +1991,11 @@ export function ContentForge() {
     }
   }, [model, pollBackfill, loadOpps, showToast]);
 
+  // First big-spend moment for a fresh client: lots of mined clips, nothing
+  // discovered yet. Drives both a pre-Discover warning banner and a confirm.
+  const FIRST_TIME_LARGE_THRESHOLD = 500;
+  const isFirstTimeLargeLibrary = clipCount >= FIRST_TIME_LARGE_THRESHOLD && opps.length === 0;
+
   const handleDiscover = useCallback(async () => {
     if (isBlockedSync("content_forge")) {
       showToast("Content Forge is disabled — enable it in Monitor → Free LLM Gates.");
@@ -1960,13 +2025,27 @@ export function ContentForge() {
           "Re-discover anyway? This spends tokens."
       )
     ) return;
+    // First-time large-library guard: the very first Discover for a fresh client
+    // workspace with a big freshly-mined library is the single biggest spend
+    // moment. Warn before it (mutually exclusive with the re-discover confirm
+    // above: that fires when opps exist, this when they don't).
+    if (isFirstTimeLargeLibrary) {
+      const cap = cfBudget
+        ? ` Today's cap: $${cfBudget.daily_limit_usd || "∞"} / ${cfBudget.daily_call_limit || "∞"} calls.`
+        : "";
+      if (!window.confirm(
+        `This workspace has ${clipCount.toLocaleString()} mined clips and no opportunities yet. ` +
+        `Discover with Target="${(discoverTarget || "global")}" runs the LLM across that scope now.` +
+        `${cap}\n\nTip: scope Target/Folder to one country for your first pass. Continue?`
+      )) return;
+    }
     recordUsage("content_forge");
     setDiscovering(true);
     setProgress(`Discovering (${tier} tier)…`);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { showToast("Not signed in — discovery skipped."); return; }
-      const body = { tier };
+      const body = { tier, workspace_id: getActiveWorkspaceSlug() };
       // Discovery TARGET (the LLM hint) — independent of the filter dropdown.
       const target = (discoverTarget || "").trim();
       if (target && target !== "global" && target !== "__custom__") body.country = target;
@@ -2032,7 +2111,7 @@ export function ContentForge() {
       setDiscovering(false);
       loadBudgetState(); // a run may have crossed a daily limit — refresh the banner
     }
-  }, [tier, discoverTarget, maxOpps, model, clipCount, opps.length, cfBudget, loadOpps, loadBudgetState, showToast]);
+  }, [tier, discoverTarget, maxOpps, model, clipCount, opps.length, isFirstTimeLargeLibrary, cfBudget, folder, clipsPerPass, loadOpps, loadBudgetState, showToast]);
 
   if (!cfAccess) {
     return (
@@ -2296,6 +2375,33 @@ export function ContentForge() {
                 .
               </>
             )}
+          </span>
+        </div>
+      )}
+
+      {/* First-time large-library cost callout — only when not already blocked
+          by the kill-switch banner above (that one takes priority). */}
+      {isFirstTimeLargeLibrary && !(cfBudget && (cfBudget.enabled === false || cfBudget.blocked)) && (
+        <div
+          role="note"
+          style={{
+            display: "flex", alignItems: "center", gap: 10, margin: "10px 0",
+            padding: "10px 14px", borderRadius: 8, fontSize: 13,
+            background: "rgba(230,168,72,.10)",
+            border: "1px solid rgba(230,168,72,.45)",
+            color: "var(--c-amber, #e6a848)",
+          }}
+        >
+          <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
+          <span style={{ minWidth: 0 }}>
+            <strong>{clipCount.toLocaleString()} clips</strong> mined for this workspace and nothing
+            discovered yet. <strong>Discover</strong> runs an LLM over every clip you target — this could be
+            a large first bill.{" "}
+            {cfBudget && (
+              <>Today's cap: <strong>${cfBudget.daily_limit_usd || "∞"}</strong> / {cfBudget.daily_call_limit || "∞"} calls
+              (Monitor → API Budgets &amp; Limits). </>
+            )}
+            Consider scoping <strong>Target</strong> to one country/folder for your first pass.
           </span>
         </div>
       )}

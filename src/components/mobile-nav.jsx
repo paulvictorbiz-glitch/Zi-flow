@@ -43,6 +43,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useIsMobile } from "../lib/use-is-mobile.js";
+import { searchReels, reelSearchLabel } from "../lib/reel-search.js";
 
 /* Preferred order for the 4 primary slots. Filtered through canViewView so a
    restricted role's bar backfills from its own visible tabs — the 4 slots are
@@ -98,19 +99,9 @@ export function MobileNav({
     [badges, primaryTabs]
   );
 
-  /* Global reel search — same filter the topbar search uses (title, number,
-     logline, shot plan), capped at 8. */
-  const searchResults = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return reels
-      .filter((r) => !r.archivedAt &&
-        ((r.title || "").toLowerCase().includes(q) ||
-         String(r.display_number || r.id || "").toLowerCase().includes(q) ||
-         (r.logline || "").toLowerCase().includes(q) ||
-         (r.script || "").toLowerCase().includes(q)))
-      .slice(0, 8);
-  }, [query, reels]);
+  /* Global reel search — the SAME matcher the topbar search uses (title,
+     number, logline, shot plan), capped at 8. See lib/reel-search.js. */
+  const searchResults = useMemo(() => searchReels(reels, query), [query, reels]);
 
   const closeSheet = () => { setMoreOpen(false); setQuery(""); };
 
@@ -178,7 +169,7 @@ export function MobileNav({
                   <li key={reel.id} className="mb-sheet-result"
                       onClick={() => openReel(reel)}>
                     <span className="mb-sheet-result-id">
-                      {reel.display_number ? "#" + reel.display_number : reel.id}
+                      {reelSearchLabel(reel)}
                     </span>
                     <span className="mb-sheet-result-title">{reel.title || "(untitled)"}</span>
                   </li>

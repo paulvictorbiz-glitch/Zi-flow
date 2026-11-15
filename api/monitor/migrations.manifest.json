@@ -1,5 +1,5 @@
 {
-  "generated": "2026-07-23T18:35:24.462Z",
+  "generated": "2026-07-27T08:02:03.410Z",
   "migrations": [
     {
       "version": "0001_init.sql",
@@ -456,6 +456,10 @@
     {
       "version": "0115_workspaces.sql",
       "checksum": "9bf36d120780291f5c1c9f79887b0ddbb7bb7a4784b6d2f92a2291d3f104b5a5"
+    },
+    {
+      "version": "0116_ingest_workspace_scoping.sql",
+      "checksum": "a30db3098afe89808c2b49cbb58a37f2e0cc267304eb2843a97d49fbbf5eb0cb"
     }
   ]
 }

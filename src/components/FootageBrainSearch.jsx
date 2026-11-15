@@ -671,20 +671,20 @@ function FootageResultCard({ result, onAdd, onPreview, added }) {
           >
             📺 Preview
           </button>
-          {/* Source on Drive — deep-links to the original on Google
-              Drive so the editor can pull the full-res file when
-              needed. Only shown for clips that carry a drive_url
-              (originals sourced from Google Drive). */}
-          {result.drive_url && (
+          {/* Play/open on Drive — the PRIMARY playback path. Footage
+              processed on a laptop and synced to the box isn't streamable
+              from the box (only the light index is there), so the Google
+              Drive copy is how it actually plays back. */}
+          {result.drive_url ? (
             <a
               href={result.drive_url}
               target="_blank"
               rel="noopener noreferrer"
-              title="Open the original source file on Google Drive"
+              title="Open / play the original source file on Google Drive"
               style={{
                 padding: "6px 12px",
-                backgroundColor: "transparent",
-                color: "var(--c-green, var(--accent))",
+                backgroundColor: "var(--c-green, var(--accent))",
+                color: "var(--bg)",
                 border: "1px solid var(--c-green, var(--accent))",
                 borderRadius: "3px",
                 cursor: "pointer",
@@ -695,8 +695,23 @@ function FootageResultCard({ result, onAdd, onPreview, added }) {
                 alignItems: "center",
               }}
             >
-              ⬇ Source on Drive
+              ▶ Play on Drive
             </a>
+          ) : (
+            <span
+              title="This clip isn't linked to a Google Drive source yet, so it can't be played back from the app. Link Drive in Ingest Admin."
+              style={{
+                padding: "6px 12px",
+                fontSize: 11,
+                color: "var(--c-amber, var(--fg-mute))",
+                border: "1px dashed var(--c-amber-soft, var(--border))",
+                borderRadius: "3px",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              ⚠ No Drive source
+            </span>
           )}
         </div>
       </div>
