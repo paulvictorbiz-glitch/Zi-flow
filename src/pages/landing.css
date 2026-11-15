@@ -104,6 +104,23 @@
   box-shadow: 0 0 18px -2px rgba(86, 230, 255, 0.6);
 }
 
+/* Easter egg: the period after the hero headline is a disguised button to
+   the 3D portfolio. Looks like plain text until hovered. */
+.lp-easter-dot {
+  all: unset;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  border-radius: 3px;
+  transition: color 0.2s, text-shadow 0.2s;
+}
+.lp-easter-dot:hover,
+.lp-easter-dot:focus-visible {
+  color: var(--lp-cyan);
+  text-shadow: 0 0 12px rgba(86, 230, 255, 0.7);
+}
+
 /* ── Hero ───────────────────────────────────────────────── */
 .lp-hero { position: relative; padding: 72px 22px 60px; text-align: center; overflow: hidden; }
 .lp-hero-glow {

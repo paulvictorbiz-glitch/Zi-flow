@@ -10,8 +10,21 @@
 
 import React, { useEffect } from "react";
 import { DPill } from "../components.jsx";
+import { useIsMobile } from "../../lib/use-is-mobile.js";
 
 export function Modal({ title, subtitle, children, onClose, onSubmit, submitLabel }) {
+  /* Mobile shell (T1): at ≤768px styles-mobile.css turns the .m-shell into a
+     bottom sheet (C-SHELL-PRIMITIVES) — lock body scroll behind it so the page
+     can't rubber-band under the sheet on touch. isMobile is the frozen C-HOOK
+     contract; on desktop the effect body never runs, so ≥769px behavior is
+     byte-identical to before. */
+  const { isMobile } = useIsMobile();
+  useEffect(() => {
+    if (!isMobile) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [isMobile]);
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -30,7 +43,9 @@ export function Modal({ title, subtitle, children, onClose, onSubmit, submitLabe
         </div>
         <div className="m-body">{children}</div>
         <div className="m-foot">
-          <span className="mono dim">Esc to cancel · ⌘↵ to submit</span>
+          {/* m-kbd-hint: hidden ≤768px by styles-mobile.css — keyboard
+              shortcuts are meaningless on touch. Untouched on desktop. */}
+          <span className="mono dim m-kbd-hint">Esc to cancel · ⌘↵ to submit</span>
           <div style={{ display: "flex", gap: 8 }}>
             <DPill onClick={onClose}>Cancel</DPill>
             <DPill primary onClick={onSubmit}>{submitLabel}</DPill>

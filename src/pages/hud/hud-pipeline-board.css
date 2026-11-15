@@ -1,0 +1,265 @@
+/* =========================================================
+   HUD Pipeline Board — scoped styles (.hudpb-* ONLY)
+   Renders inside BOTH the flat HudModal body and the pinned HudDock.
+   CRITICAL: no transform / perspective on ANY ancestor of a draggable
+   chip — native HTML5 DnD breaks under a transformed ancestor. This
+   whole subtree is transform-free by design.
+   Inherits app CSS vars (Solarin-safe): --bg-*, --fg*, --border,
+   --c-cyan, --line-hard, --f-mono, etc., with literal fallbacks.
+   ========================================================= */
+
+.hudpb-root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: auto;
+  box-sizing: border-box;
+  color: var(--fg, #e6e8ee);
+  font-family: var(--f-sans, system-ui, sans-serif);
+}
+
+.hudpb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.hudpb-title {
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg, #e6e8ee);
+}
+
+.hudpb-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hudpb-link {
+  background: none;
+  border: 1px solid var(--line-hard, rgba(255, 255, 255, 0.16));
+  border-radius: 4px;
+  color: var(--c-cyan, #2dd4bf);
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 11px;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.12s, color 0.12s;
+}
+.hudpb-link:hover {
+  border-color: var(--c-cyan, #2dd4bf);
+}
+
+.hudpb-grid {
+  display: grid;
+  gap: 3px;
+  align-items: stretch;
+  overflow: auto;
+  min-width: 0;
+  padding-bottom: 2px;
+}
+
+.hudpb-corner {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim, #8a90a0);
+  padding: 5px 6px;
+  background: var(--bg-1, #0e1016);
+  display: flex;
+  align-items: center;
+}
+
+.hudpb-colhead {
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim, #8a90a0);
+  padding: 5px 6px;
+  background: var(--bg-1, #0e1016);
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hudpb-lanehead {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg, #e6e8ee);
+  padding: 6px 6px;
+  background: var(--bg-2, rgba(20, 22, 28, 0.85));
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hudpb-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 3px;
+  border-radius: 3px;
+  background: var(--bg-0, rgba(8, 9, 12, 0.5));
+  border: 1px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
+}
+.hudpb-cell.is-empty {
+  background: var(--bg-0, rgba(8, 9, 12, 0.28));
+}
+.hudpb-cell.is-target {
+  border-color: var(--c-cyan, #2dd4bf);
+  background: var(--c-cyan-soft, rgba(45, 212, 191, 0.12));
+}
+
+.hudpb-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  background: var(--bg-2, rgba(30, 34, 44, 0.9));
+  border: 1px solid var(--line-hard, rgba(255, 255, 255, 0.12));
+  cursor: grab;
+  min-width: 0;
+  transition: border-color 0.1s, opacity 0.1s;
+}
+.hudpb-chip:hover {
+  border-color: var(--c-cyan, #2dd4bf);
+}
+.hudpb-chip:active {
+  cursor: grabbing;
+}
+.hudpb-chip.is-dragging {
+  opacity: 0.4;
+}
+
+.hudpb-chip-num {
+  flex: 0 0 auto;
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--c-cyan, #2dd4bf);
+}
+
+.hudpb-chip-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--fg, #e6e8ee);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hudpb-empty {
+  padding: 14px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-dim, #8a90a0);
+}
+
+.hudpb-hint {
+  flex: 0 0 auto;
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 9px;
+  color: var(--fg-dim, #8a90a0);
+  letter-spacing: 0.02em;
+}
+
+/* Inline schedule-date prompt (drop into Posted) */
+.hudpb-sched-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.hudpb-sched {
+  width: 100%;
+  max-width: 300px;
+  background: var(--bg-1, #14161d);
+  border: 1px solid var(--line-hard, rgba(255, 255, 255, 0.16));
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hudpb-sched-title {
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg, #e6e8ee);
+}
+.hudpb-sched-sub {
+  font-size: 11px;
+  color: var(--fg-dim, #8a90a0);
+}
+.hudpb-sched-input {
+  background: var(--bg-2, rgba(20, 22, 28, 0.85));
+  border: 1px solid var(--line-hard, rgba(255, 255, 255, 0.16));
+  border-radius: 4px;
+  color: var(--fg, #e6e8ee);
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 12px;
+  padding: 7px 9px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.hudpb-sched-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.hudpb-btn {
+  background: var(--bg-2, rgba(30, 34, 44, 0.9));
+  border: 1px solid var(--line-hard, rgba(255, 255, 255, 0.16));
+  border-radius: 4px;
+  color: var(--fg, #e6e8ee);
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 11px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.hudpb-btn:hover {
+  border-color: var(--c-cyan, #2dd4bf);
+}
+.hudpb-btn.is-primary {
+  background: var(--c-cyan, #2dd4bf);
+  border-color: var(--c-cyan, #2dd4bf);
+  color: #04120f;
+  font-weight: 700;
+}

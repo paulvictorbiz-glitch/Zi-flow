@@ -3,6 +3,12 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./theme-accessible.css";
 import "./styles-solarin.css";
+/* Mobile additive overrides — MUST stay the LAST stylesheet import
+   (C-CASCADE-ORDER): every rule inside is gated behind @media
+   (max-width: …) so desktop rendering is byte-for-byte untouched, and
+   importing it last lets its gated rules win over styles.css +
+   styles-solarin.css at mobile widths without !important escalation. */
+import "./styles-mobile.css";
 import { App } from "./app.jsx";
 import { initPerfTracker } from "./lib/perf-tracker.js";
 
