@@ -13,9 +13,9 @@
  * It is also called automatically by `npm run migrate:apply`.
  */
 import { readFileSync, readdirSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { migrationChecksums } from "./migration-checksum.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, "..", "supabase", "migrations");
@@ -29,7 +29,7 @@ const diskFiles = readdirSync(MIGRATIONS_DIR)
 const diskMap = new Map(
   diskFiles.map((file) => {
     const content = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
-    return [file, createHash("sha256").update(content).digest("hex")];
+    return [file, migrationChecksums(content).checksum];
   })
 );
 

@@ -18,9 +18,9 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, readdirSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { migrationChecksums, checksumMatches } from "./migration-checksum.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, "..", "supabase", "migrations");
@@ -41,15 +41,15 @@ const supabase = createClient(url, key, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const sha = (s) => createHash("sha256").update(s).digest("hex");
-
 function localMigrations() {
   return readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
     .sort()
     .map((file) => {
       const body = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
-      return { version: file, body, checksum: sha(body) };
+      // Records the LF-normalized checksum, so it no longer depends on the
+      // machine's line endings. Comparison also accepts the CRLF form.
+      return { version: file, body, ...migrationChecksums(body) };
     });
 }
 
@@ -118,7 +118,7 @@ async function main() {
     if (!rec) {
       pending.push(m);
       console.log(`  [ pending ]  ${m.version}`);
-    } else if (rec.checksum && rec.checksum !== m.checksum) {
+    } else if (rec.checksum && !checksumMatches(rec.checksum, m)) {
       drifted.push(m);
       console.log(`  [ CHANGED ]  ${m.version}  (file edited since it was applied)`);
     } else {

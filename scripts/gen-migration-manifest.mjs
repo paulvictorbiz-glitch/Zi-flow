@@ -11,18 +11,20 @@
  * also refreshes it on apply).
  */
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { migrationChecksums } from "./migration-checksum.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, "..", "supabase", "migrations");
 const OUT = join(__dirname, "..", "api", "monitor", "migrations.manifest.json");
 
 const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
+// checksum = LF-normalized (canonical); checksum_crlf matches rows applied from
+// a CRLF checkout before line endings were normalized. See migration-checksum.mjs.
 const migrations = files.map((file) => ({
   version: file,
-  checksum: createHash("sha256").update(readFileSync(join(MIGRATIONS_DIR, file), "utf8")).digest("hex"),
+  ...migrationChecksums(readFileSync(join(MIGRATIONS_DIR, file), "utf8")),
 }));
 
 writeFileSync(OUT, JSON.stringify({ generated: new Date().toISOString(), migrations }, null, 2) + "\n");

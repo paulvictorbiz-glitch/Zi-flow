@@ -1,0 +1,3 @@
+# Migration checksums hash file bytes; keep SQL as LF on every OS.
+# See scripts/migration-checksum.mjs.
+supabase/migrations/*.sql text eol=lf

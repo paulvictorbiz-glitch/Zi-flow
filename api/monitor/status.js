@@ -116,7 +116,9 @@ async function checkMigrations() {
   for (const m of expected) {
     if (!applied.has(m.version)) { missing.push(m.version); continue; }
     const dbSum = applied.get(m.version);
-    if (dbSum && m.checksum && dbSum !== m.checksum) changed.push(m.version);
+    // Accept either line-ending form: rows applied from a Windows (CRLF)
+    // checkout hashed differently from LF ones. See scripts/migration-checksum.mjs.
+    if (dbSum && m.checksum && dbSum !== m.checksum && dbSum !== m.checksum_crlf) changed.push(m.version);
   }
   // In DB but not in the codebase → applied something we don't have a file for.
   const expectedVersions = new Set(expected.map((m) => m.version));
