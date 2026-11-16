@@ -18,6 +18,13 @@ import {
 
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
+// "Sync to box" is hidden: its backend route (POST /fb/api/sync/push + /status)
+// was lost with the July 2026 recovery machine and exists in no backend copy,
+// so the button always errored. UI + SyncToBoxModal are kept for a rebuild —
+// flip this back on once the route exists again.
+// DEADWEIGHT(sync-to-box backend lost; delete SyncToBoxModal + syncRootToBox/syncStatus if never rebuilt, review-by: 2027-02)
+const SYNC_TO_BOX_ENABLED = false;
+
 export function ScanRootAdminPanel({ activeSlug, onChanged }) {
   const { workspaces } = useWorkspace();
   const [roots, setRoots] = useState(null);
@@ -76,10 +83,13 @@ export function ScanRootAdminPanel({ activeSlug, onChanged }) {
         border: "1px solid var(--line-soft)", borderRadius: 6, padding: "10px 12px" }}>
         This panel runs against the <strong>local</strong> FootageBrain backend on this machine.
         Register a folder on <strong>this computer</strong>, Scan to transcribe & index it locally,
-        Link Drive so every clip has a shareable source, then <strong>Sync to box</strong> to
-        publish the light data (metadata + transcripts + search vectors — never the raw video)
-        so the team can search it in the app. Playback opens from Google Drive, so a file must be
-        Drive-linked before it can be synced.
+        Link Drive so every clip has a shareable source
+        {SYNC_TO_BOX_ENABLED ? (
+          <>, then <strong>Sync to box</strong> to
+          publish the light data (metadata + transcripts + search vectors — never the raw video)
+          so the team can search it in the app. Playback opens from Google Drive, so a file must be
+          Drive-linked before it can be synced.</>
+        ) : <>. Publishing to the team's box index is temporarily unavailable.</>}
       </div>
 
       {/* ── Register a new scan root ─────────────────────────────────────── */}
@@ -140,7 +150,7 @@ export function ScanRootAdminPanel({ activeSlug, onChanged }) {
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <DPill onClick={() => doScan(r)}>Scan</DPill>
             <DPill onClick={() => setDriveRoot(r)}>Link Drive</DPill>
-            <DPill onClick={() => setSyncRoot(r)}>Sync to box</DPill>
+            {SYNC_TO_BOX_ENABLED && <DPill onClick={() => setSyncRoot(r)}>Sync to box</DPill>}
             <DPill onClick={() => setReassignRoot(r)}>Reassign</DPill>
           </span>
         </div>
